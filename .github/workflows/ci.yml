@@ -32,6 +32,20 @@ jobs:
       - name: Start API and DB
         run: docker compose up -d db api
 
+      - name: Wait for API runtime dependencies
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if docker compose exec -T api python -c "import alembic" >/dev/null 2>&1; then
+              echo "API runtime ready for migrations."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting API dependencies." >&2
+          docker compose logs --tail 120 api >&2 || true
+          exit 1
+
       - name: Run database migrations
         run: docker compose exec -T api python -m alembic upgrade heads
 
