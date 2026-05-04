@@ -32,6 +32,22 @@ Use esta lista para fechar o SaaS por impacto e risco, não por volume de funcio
   - match por `payment.id` e por `payment.externalReference`
 - [ ] Garantir `401` ao enviar webhook sem `Asaas-Access-Token`.
 
+## 2.1) Guardas de plano (não vender recurso que não pode entregar)
+
+- [ ] Plano **basic/free_30d** não acessa recursos financeiros de nível superior sem addon.
+- [ ] Addon `finance-intermediate` libera endpoints de nível **intermediate** (ex.: `/finance/advanced-summary`).
+- [ ] Addon `finance-management` libera endpoints de nível **management** (ex.: `/finance/cashflow`).
+- [ ] Mensagens de bloqueio retornam `403` com detalhe claro para upgrade/addon.
+
+### Validação automática (guardas de plano)
+
+- [ ] Rodar `bash scripts/smoke-plan-guards.sh`.
+- [ ] Garantir sequência:
+  - basic + `finance_mode=intermediate` => `403` em `/finance/advanced-summary`
+  - basic + addon `finance-intermediate` => `200` em `/finance/advanced-summary`
+  - basic + `finance_mode=management` => `403` em `/finance/cashflow`
+  - basic + addon `finance-management` => `200` em `/finance/cashflow`
+
 ## 3) Operação segura
 
 - [ ] Migrações versionadas e aplicadas (`python -m alembic upgrade heads`).

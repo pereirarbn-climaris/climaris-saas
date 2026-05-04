@@ -55,6 +55,9 @@ jobs:
       - name: Run Asaas webhook smoke test
         run: bash scripts/smoke-asaas-webhook.sh
 
+      - name: Run plan guard smoke test
+        run: bash scripts/smoke-plan-guards.sh
+
       - name: Stop compose stack
         if: always()
         run: docker compose down -v --remove-orphans
