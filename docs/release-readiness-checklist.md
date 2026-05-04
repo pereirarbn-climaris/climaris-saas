@@ -20,8 +20,17 @@ Use esta lista para fechar o SaaS por impacto e risco, não por volume de funcio
 
 - [ ] Configurar gateway (Asaas) por tenant.
 - [ ] Confirmar webhook com autenticação ativa (`/api/v1/webhooks/asaas/{token}`).
-- [ ] Validar cenários: pagamento aprovado, vencimento, cancelamento, falha.
+- [ ] Validar cenários: pagamento aprovado, vencimento, não correspondência (evento sem match), falha.
 - [ ] Conferir bloqueios/liberações por status de plano.
+
+### Validação automática (cobrança)
+
+- [ ] Rodar `bash scripts/smoke-asaas-webhook.sh`.
+- [ ] Garantir transições no banco:
+  - `pending -> overdue` em `PAYMENT_OVERDUE`
+  - `overdue -> paid` em `PAYMENT_CONFIRMED`
+  - match por `payment.id` e por `payment.externalReference`
+- [ ] Garantir `401` ao enviar webhook sem `Asaas-Access-Token`.
 
 ## 3) Operação segura
 

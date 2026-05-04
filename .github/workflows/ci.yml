@@ -52,6 +52,9 @@ jobs:
       - name: Run critical smoke test
         run: bash scripts/smoke-critical-flow.sh
 
+      - name: Run Asaas webhook smoke test
+        run: bash scripts/smoke-asaas-webhook.sh
+
       - name: Stop compose stack
         if: always()
         run: docker compose down -v --remove-orphans
