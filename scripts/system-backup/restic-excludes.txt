@@ -1,0 +1,32 @@
+# Sistemas de ficheiros virtuais e voláteis
+/proc
+/sys
+/dev
+/run
+/tmp
+**/.DS_Store
+/lost+found
+/swapfile
+# Restic: não fazer back-up de si (se cache/rep estiver noutro sítio afinar)
+/var/cache/restic
+/var/lib/system-backup/staging/lost+found
+# Caches (regeneram-se)
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/node_modules
+**/.venv
+**/dist
+**/.next
+# Docker: imagens/camadas recriam-se; volumes nomeados (dados) ficam em
+# /var/lib/docker/volumes — incluído no backup. Overlay é pesado e desnecessário
+/var/lib/docker/overlay2
+/var/lib/docker/overlay
+/var/lib/docker/buildkit
+/var/lib/docker/image
+# Snapshots/clone zfs
+/.zfs
+# Típico: montar backup noutro disco; exclua se tiver
+/mnt/backup-*
+# ISO em loop
+# /mnt

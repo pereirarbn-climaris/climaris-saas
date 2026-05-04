@@ -1,0 +1,307 @@
+.wrap {
+  display: grid;
+  gap: 1rem;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.searchRow {
+  min-width: 220px;
+}
+
+.btnPrimary {
+  background: #06a8f7;
+  color: #fff;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.9rem;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.msgErr {
+  color: #a02828;
+  font-size: 0.9rem;
+}
+
+.empty {
+  color: #7d8b9b;
+}
+
+.tableWrap {
+  overflow: auto;
+  border: 1px solid #e3e9ef;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #eef2f6;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table th {
+  font-size: 0.82rem;
+  color: #607182;
+  background: #f8fafc;
+}
+
+.clickableRow {
+  cursor: pointer;
+}
+
+.clickableRow:hover td {
+  background: #f7fbff;
+}
+
+.clickableRow:focus-visible td {
+  outline: 2px solid #06a8f7;
+  outline-offset: -2px;
+}
+
+.budgetId {
+  color: #102a43;
+}
+
+.totalCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.linkRow {
+  margin-right: 0.5rem;
+  background: transparent;
+  border: 0;
+  color: #1273c7;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.actionsCell {
+  white-space: nowrap;
+}
+
+.rowHint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-right: 0.35rem;
+  border: 1px solid #d8e3ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #7a8b9c;
+}
+
+.rowHintIcon {
+  display: inline-flex;
+  width: 0.95rem;
+  height: 0.95rem;
+  opacity: 0.9;
+  transform: translateX(0);
+  transition: transform 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+}
+
+.rowHintIcon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.clickableRow:hover .rowHintIcon {
+  transform: translateX(2px);
+  opacity: 1;
+  color: #1273c7;
+}
+
+.iconAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-right: 0.35rem;
+  border: 1px solid #d8e3ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #1273c7;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.iconSvg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.iconAction:hover:not(:disabled) {
+  background: #eef6ff;
+  border-color: #b9d8f5;
+}
+
+.iconAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.statusDraft {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.statusSent {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.statusApproved {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.statusRejected {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.statusExpired {
+  color: #475569;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+.previewBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 20, 30, 0.62);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 1rem;
+}
+
+.previewModal {
+  width: min(1100px, 96vw);
+  height: min(92vh, 920px);
+  background: #fff;
+  border-radius: 0.9rem;
+  border: 1px solid #d6e2ef;
+  position: relative;
+  overflow: hidden;
+}
+
+.previewBottomActions {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.previewModal:hover .previewBottomActions,
+.previewModal:focus-within .previewBottomActions {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.previewFabWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.previewFab {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: #0d83d8;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(7, 53, 96, 0.3);
+  transition: all 0.15s ease;
+}
+
+.previewFab:hover {
+  background: #1496f1;
+  border-color: rgba(255, 255, 255, 0.62);
+}
+
+.previewFabClose {
+  background: #0a6db6;
+}
+
+.previewFabClose:hover {
+  background: #095a98;
+}
+
+.previewTooltip {
+  position: absolute;
+  right: calc(100% + 0.45rem);
+  top: 50%;
+  transform: translateY(-50%) translateX(4px);
+  background: rgba(8, 20, 34, 0.92);
+  color: #fff;
+  padding: 0.22rem 0.45rem;
+  border-radius: 0.35rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.previewFabWrap:hover .previewTooltip,
+.previewFabWrap:focus-within .previewTooltip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.previewFrame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}

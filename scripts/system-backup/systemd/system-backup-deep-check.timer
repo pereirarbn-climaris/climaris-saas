@@ -1,0 +1,11 @@
+[Unit]
+Description=Verificação profunda (read-data) semanal, domingos 04:00
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+RandomizedDelaySec=15m
+Unit=system-backup-deep-check.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

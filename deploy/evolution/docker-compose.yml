@@ -1,0 +1,70 @@
+services:
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: evolution_api
+    restart: unless-stopped
+    depends_on:
+      - evolution-redis
+      - evolution-postgres
+    env_file:
+      - .env
+    volumes:
+      - evolution_instances:/evolution/instances
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - evolution_net
+
+  evolution-manager:
+    image: evoapicloud/evolution-manager:latest
+    container_name: evolution_manager
+    restart: unless-stopped
+    # Workaround: imagem usa `gzip_proxied ... must-revalidate`, valor inválido no Nginx (crash loop).
+    # Ver: https://github.com/EvolutionAPI/evolution-manager-v2/issues/18
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if [ -f /etc/nginx/conf.d/nginx.conf ]; then
+          sed -i 's/ must-revalidate//g' /etc/nginx/conf.d/nginx.conf
+        fi
+        exec /start.sh
+    ports:
+      - "127.0.0.1:3001:80"
+    networks:
+      - evolution_net
+
+  evolution-redis:
+    image: redis:7-alpine
+    container_name: evolution_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - evolution_redis:/data
+    networks:
+      - evolution_net
+
+  evolution-postgres:
+    image: postgres:15-alpine
+    container_name: evolution_postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+      POSTGRES_USER: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - evolution_postgres:/var/lib/postgresql/data
+    networks:
+      - evolution_net
+
+volumes:
+  evolution_instances:
+  evolution_redis:
+  evolution_postgres:
+
+networks:
+  evolution_net:
+    driver: bridge

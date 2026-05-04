@@ -1,0 +1,28 @@
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Nested local repositories/worktrees
+climaris-erp-hp/
+
+# Dependencies (root-level installs / stray node_modules)
+node_modules/
+
+# Logs and local SSH server files (never publish)
+tmp_api_logs.txt
+authorized_keys
+known_hosts
+
+# Frontend generated/mobile artifacts
+frontend/android/
+frontend/.env.production
+.venv/

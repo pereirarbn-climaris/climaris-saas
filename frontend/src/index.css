@@ -1,0 +1,227 @@
+/* Design tokens — espelhe estes valores no tema do app nativo (React Native) para consistência web + mobile. */
+:root {
+  color-scheme: light dark;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* ========== CORES ========== */
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --color-text-subtle: #94a3b8;
+  --color-surface: #f8fafc;
+  --color-surface-elevated: #ffffff;
+  --color-border: #e2e8f0;
+  --color-primary: #0284c7;
+  --color-primary-hover: #0369a1;
+  --color-primary-light: #0ea5e9;
+  --color-focus-ring: rgba(14, 165, 233, 0.35);
+  --color-success: #15803d;
+  --color-success-light: #22c55e;
+  --color-error: #b91c1c;
+  --color-error-light: #ef4444;
+  --color-warning: #d97706;
+  --color-warning-light: #f59e0b;
+  --color-hero-start: #0ea5e9;
+  --color-hero-mid: #0284c7;
+  --color-hero-end: #0369a1;
+
+  /* ========== TIPOGRAFIA ========== */
+  /* Tamanhos de fonte padronizados */
+  --font-size-xs: 0.6875rem;    /* 11px - labels pequenos, badges */
+  --font-size-sm: 0.75rem;      /* 12px - texto secundario, captions */
+  --font-size-base: 0.875rem;   /* 14px - texto padrao do app */
+  --font-size-md: 0.9375rem;    /* 15px - texto enfatizado */
+  --font-size-lg: 1rem;         /* 16px - titulos de secao */
+  --font-size-xl: 1.125rem;     /* 18px - titulos de card */
+  --font-size-2xl: 1.25rem;     /* 20px - titulos de pagina */
+  --font-size-3xl: 1.5rem;      /* 24px - titulos grandes */
+  --font-size-4xl: 2rem;        /* 32px - hero titles */
+
+  /* Pesos de fonte */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line heights */
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.625;
+
+  /* ========== ICONES ========== */
+  /* Tamanhos de icone padronizados */
+  --icon-size-xs: 0.875rem;     /* 14px - icones inline muito pequenos */
+  --icon-size-sm: 1rem;         /* 16px - icones de busca, inputs */
+  --icon-size-base: 1.125rem;   /* 18px - icones de navegacao */
+  --icon-size-md: 1.25rem;      /* 20px - icones de tabela, botoes */
+  --icon-size-lg: 1.375rem;     /* 22px - icones de stat cards */
+  --icon-size-xl: 1.5rem;       /* 24px - icones grandes */
+  --icon-size-2xl: 2rem;        /* 32px - icones hero */
+
+  /* Stroke width padronizado para icones */
+  --icon-stroke: 1.75;
+
+  /* ========== BOTOES ========== */
+  /* Alturas de botao */
+  --btn-height-sm: 2rem;        /* 32px */
+  --btn-height-base: 2.5rem;    /* 40px */
+  --btn-height-md: 2.75rem;     /* 44px - touch target */
+  --btn-height-lg: 3rem;        /* 48px */
+
+  /* Padding horizontal de botao */
+  --btn-padding-sm: 0.75rem;
+  --btn-padding-base: 1rem;
+  --btn-padding-md: 1.25rem;
+  --btn-padding-lg: 1.5rem;
+
+  /* Border radius de botao */
+  --btn-radius: 0.625rem;       /* 10px */
+
+  /* ========== CARDS ========== */
+  --card-radius: 1rem;          /* 16px */
+  --card-padding: 1.25rem;      /* 20px */
+  --card-padding-lg: 1.5rem;    /* 24px */
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
+  --card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
+
+  /* ========== STAT CARDS ========== */
+  --stat-card-icon-size: 2.75rem;     /* 44px - container do icone */
+  --stat-card-icon-radius: 0.75rem;   /* 12px */
+
+  /* ========== INPUTS ========== */
+  --input-height: 2.75rem;      /* 44px - touch target */
+  --input-padding-x: 0.875rem;
+  --input-padding-y: 0.625rem;
+  --input-radius: 0.625rem;     /* 10px */
+  --input-border: 1px solid var(--color-border);
+  --input-bg: var(--color-surface-elevated);
+
+  /* ========== TABELAS ========== */
+  --table-row-height: 3.5rem;   /* 56px */
+  --table-cell-padding-x: 1rem;
+  --table-cell-padding-y: 0.75rem;
+  --table-header-bg: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+
+  /* ========== AVATARES ========== */
+  --avatar-size-sm: 2rem;       /* 32px */
+  --avatar-size-base: 2.5rem;   /* 40px */
+  --avatar-size-lg: 3rem;       /* 48px */
+
+  /* ========== BADGES/PILLS ========== */
+  --badge-height: 1.5rem;       /* 24px */
+  --badge-padding-x: 0.625rem;
+  --badge-radius: 999px;
+  --badge-font-size: var(--font-size-xs);
+
+  /* ========== ESPACAMENTO ========== */
+  --space-1: 0.25rem;           /* 4px */
+  --space-2: 0.5rem;            /* 8px */
+  --space-3: 0.75rem;           /* 12px */
+  --space-4: 1rem;              /* 16px */
+  --space-5: 1.25rem;           /* 20px */
+  --space-6: 1.5rem;            /* 24px */
+  --space-8: 2rem;              /* 32px */
+  --space-10: 2.5rem;           /* 40px */
+  --space-12: 3rem;             /* 48px */
+
+  /* ========== LAYOUT ========== */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --space-page: clamp(1rem, 4vw, 1.75rem);
+  --space-safe-top: env(safe-area-inset-top, 0px);
+  --space-safe-right: env(safe-area-inset-right, 0px);
+  --space-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --space-safe-left: env(safe-area-inset-left, 0px);
+  --touch-target-min: 2.75rem;
+  --content-max-form: 26rem;
+  --content-max-hero: 26rem;
+
+  /* ========== ANIMACOES ========== */
+  --motion-duration: 0.15s;
+  --motion-duration-slow: 0.25s;
+  --motion-easing: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-text: #f1f5f9;
+    --color-text-muted: #94a3b8;
+    --color-text-subtle: #64748b;
+    --color-surface: #0f172a;
+    --color-surface-elevated: #1e293b;
+    --color-border: #334155;
+    --color-primary: #38bdf8;
+    --color-primary-hover: #7dd3fc;
+    --color-focus-ring: rgba(56, 189, 248, 0.4);
+    --color-hero-start: #0369a1;
+    --color-hero-mid: #075985;
+    --color-hero-end: #0c4a6e;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration: 0.01ms;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Foco visível para teclado — não remove o outline sem substituto */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

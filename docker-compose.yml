@@ -1,0 +1,56 @@
+services:
+  api:
+    image: python:3.12-slim
+    container_name: erp_api
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: >
+      bash -c "pip install --no-cache-dir fastapi uvicorn[standard] sqlalchemy psycopg[binary] alembic pyjwt passlib email-validator slowapi pytest reportlab cryptography boto3 pillow python-multipart &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - .env
+    # Evolution (`deploy/evolution`) expõe o serviço como `evolution_api` na rede externa
+    # `evolution_evolution_net`. Usar URL interna evita erro de DNS no container da API
+    # (ex.: URLError: [Errno -2] Name or service not known ao usar https://evo...).
+    environment:
+      EVOLUTION_API_BASE_URL: http://evolution_api:8080
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app_net
+      - internal_net
+      - evolution_bridge
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: erp_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-erp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-erp_password}
+      POSTGRES_DB: ${POSTGRES_DB:-erp_db}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-erp_user} -d ${POSTGRES_DB:-erp_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal_net
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+
+networks:
+  app_net:
+  internal_net:
+    internal: true
+  evolution_bridge:
+    external: true
+    name: evolution_evolution_net
