@@ -58,6 +58,9 @@ jobs:
       - name: Run plan guard smoke test
         run: bash scripts/smoke-plan-guards.sh
 
+      - name: Check observability envelope
+        run: bash scripts/check-observability.sh
+
       - name: Stop compose stack
         if: always()
         run: docker compose down -v --remove-orphans

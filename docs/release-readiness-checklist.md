@@ -53,6 +53,8 @@ Use esta lista para fechar o SaaS por impacto e risco, não por volume de funcio
 - [ ] Migrações versionadas e aplicadas (`python -m alembic upgrade heads`).
 - [ ] Healthcheck estável (`/health`) no ambiente alvo.
 - [ ] Logs de erro e request id habilitados e revisáveis.
+- [ ] Verificação de observabilidade mínima passando (`bash scripts/check-observability.sh`).
+- [ ] Runbook de incidentes atualizado e acessível para operação (`docs/incident-response-runbook.md`).
 - [ ] Backups e restauração testados (`scripts/system-backup`).
 
 ## 4) Frontend pronto para release
