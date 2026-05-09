@@ -909,7 +909,7 @@ export function ClientFormPage() {
           <div>
             <h1 className={styles.title}>{isNew ? "Novo cliente" : "Editar cliente"}</h1>
             <p className={styles.lead}>
-              Cadastro completo para faturamento e operacao (CPF/CNPJ, fiscal, endereco e historico comercial).
+              Cadastro completo para faturamento e operação (CPF/CNPJ, fiscal, endereço e histórico comercial).
             </p>
           </div>
         </div>
@@ -941,7 +941,7 @@ export function ClientFormPage() {
             className={`${styles.tabBtn} ${activeTab === "budgets" ? styles.tabBtnActive : ""}`}
             onClick={() => setActiveTab("budgets")}
           >
-            Orcamentos ({clientBudgets.length})
+            Orçamentos ({clientBudgets.length})
           </button>
           <button
             type="button"
