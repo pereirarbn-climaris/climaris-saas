@@ -112,16 +112,16 @@ WHATSAPP_PREVENTIVE_WORKER_ENABLED: bool = _env_bool("WHATSAPP_PREVENTIVE_WORKER
 # X-Preventive-Cron-Secret (mesmo valor) sem JWT — útil para cron externo.
 PREVENTIVE_CRON_SECRET: str = os.getenv("PREVENTIVE_CRON_SECRET", "").strip()
 
+# IA fica reservada para a V2 do bot WhatsApp. A V1 deve usar apenas fluxos determinísticos
+# configuráveis por tenant. Mesmo que WHATSAPP_AI_INCOMING_ENABLED esteja true no .env,
+# a resposta automática por IA só liga quando AI_ASSISTANT_V2_ENABLED também estiver true.
+AI_ASSISTANT_V2_ENABLED: bool = _env_bool("AI_ASSISTANT_V2_ENABLED", False)
 # Resposta automática no WhatsApp via webhook Evolution → Anthropic Claude (`app.ai_assistant.generate_ai_response`).
-WHATSAPP_AI_INCOMING_ENABLED: bool = _env_bool("WHATSAPP_AI_INCOMING_ENABLED", False)
+WHATSAPP_AI_INCOMING_ENABLED: bool = AI_ASSISTANT_V2_ENABLED and _env_bool("WHATSAPP_AI_INCOMING_ENABLED", False)
 CLAUDE_API_KEY: str = os.getenv("CLAUDE_API_KEY", "").strip()
 # Haiku 4.5 (economia); sobrescreva com CLAUDE_MODEL no .env se precisar de outro ID da Anthropic.
 HAUKU_ECONOMY_MODEL: str = "claude-haiku-4-5-20251201"
 CLAUDE_MODEL: str = (os.getenv("CLAUDE_MODEL", "").strip() or HAUKU_ECONOMY_MODEL)
-
-# IA fica reservada para a V2 do bot WhatsApp. A V1 deve usar apenas fluxos determinísticos
-# configuráveis por tenant, então não monte rotas nem chame provedores de LLM quando esta flag estiver falsa.
-AI_ASSISTANT_V2_ENABLED: bool = _env_bool("AI_ASSISTANT_V2_ENABLED", False)
 
 # 2FA por e-mail no login de administradores. Só é aplicado se houver SMTP configurado (.env ou credencial `smtp` no painel com SMTP_ALLOW_DB_OVERRIDE).
 LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED", True)
