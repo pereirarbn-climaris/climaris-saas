@@ -129,3 +129,21 @@
   height: 100%;
   border: 0;
 }
+
+.clientReadonly {
+  margin: 0;
+  color: #2e4b67;
+}
+
+.clientChosen {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.clientChosenDoc {
+  color: #6e7d8c;
+  font-weight: normal;
+}

@@ -855,6 +855,7 @@ class ClientCreate(BaseModel):
     address_country: str | None = "Brasil"
     address_ibge_code: str | None = Field(default=None, max_length=7)
     preventive_campaign_opt_out: bool = False
+    is_active: bool = True
 
     @model_validator(mode="after")
     def _normalize_document(self) -> ClientCreate:
@@ -922,6 +923,7 @@ class ClientUpdate(BaseModel):
     address_country: str | None = None
     address_ibge_code: str | None = Field(default=None, max_length=7)
     preventive_campaign_opt_out: bool | None = None
+    is_active: bool | None = None
 
     @field_validator("address_state", mode="before")
     @classmethod
@@ -969,6 +971,29 @@ class ClientOut(BaseModel):
     address_country: str
     address_ibge_code: str | None = None
     preventive_campaign_opt_out: bool = False
+    is_active: bool = True
+
+
+class ClientAuditEntryOut(BaseModel):
+    """Histórico de alterações no cadastro do cliente."""
+
+    id: int
+    user_id: int | None = None
+    user_name: str | None = None
+    action: str
+    changes: dict[str, Any]
+    created_at: datetime
+
+
+class ClientCountOut(BaseModel):
+    total: int
+
+
+class ClientImportSummaryOut(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str]
 
 
 class EquipmentCreate(BaseModel):

@@ -3,8 +3,8 @@ import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams, use
 import { digitsOnlyPhoneForApi, formatPhoneBrDisplay, formatPhoneBrInput } from "../../lib/brMask";
 import {
   createClientEquipment,
+  getClient,
   listClientEquipments,
-  listClients,
   type ClientOut,
   type EquipmentOut,
 } from "../../api/clients";
@@ -50,6 +50,7 @@ import {
 import { sendWhatsappAppointmentReminder } from "../../api/whatsapp";
 import { registerPreventiveFromServiceOrder } from "../../api/preventiveMaintenance";
 import { sortByNameAsc } from "../../lib/localeSort";
+import { ClientPicker } from "../../components/ClientPicker";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./ServiceOrderFormPage.module.css";
@@ -362,7 +363,7 @@ export function ServiceOrderFormPage() {
   const readOnly = !canEdit;
   const tenantName = ctx?.tenant.name ?? "Sua empresa";
 
-  const [clients, setClients] = useState<ClientOut[]>([]);
+  const [selectedClient, setSelectedClient] = useState<ClientOut | null>(null);
   const [services, setServices] = useState<ServiceOut[]>([]);
   const [products, setProducts] = useState<ProductOut[]>([]);
   const [clientEquipments, setClientEquipments] = useState<EquipmentOut[]>([]);
@@ -383,13 +384,10 @@ export function ServiceOrderFormPage() {
   const [approveNotes, setApproveNotes] = useState("");
   const [activeTab, setActiveTab] = useState<OsTab>("combined");
   const [generalNotes, setGeneralNotes] = useState("");
-  const [clientSearch, setClientSearch] = useState("");
   const [serviceSearch, setServiceSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
-  const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
-  const [activeClientIndex, setActiveClientIndex] = useState(0);
   const [activeServiceIndex, setActiveServiceIndex] = useState(0);
   const [activeProductIndex, setActiveProductIndex] = useState(0);
   const [planningDay, setPlanningDay] = useState(() => formatDateInput(new Date()));
@@ -555,12 +553,8 @@ export function ServiceOrderFormPage() {
     const monthTitle = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(first);
     return { calendarYear, calendarMonth, cells, monthTitle };
   }, [calendarMonthYM]);
-  const selectedClient = useMemo(
-    () => clients.find((c) => c.id === Number(clientId)),
-    [clients, clientId],
-  );
-  const selectedClientAddress = useMemo(() => formatClientAddress(selectedClient), [selectedClient]);
-  const canOpenNavigation = useMemo(() => hasClientAddress(selectedClient), [selectedClient]);
+  const selectedClientAddress = useMemo(() => formatClientAddress(selectedClient ?? undefined), [selectedClient]);
+  const canOpenNavigation = useMemo(() => hasClientAddress(selectedClient ?? undefined), [selectedClient]);
   const navigationApps = useMemo<NavigationApp[]>(
     () => (isIosDevice() ? ["google", "waze", "apple"] : ["google", "waze"]),
     [],
@@ -579,18 +573,6 @@ export function ServiceOrderFormPage() {
       selectedServices.every((s) => (s.quantity ?? 1) <= 1 && s.equipment_id && s.equipment_id > 0),
     [selectedServices],
   );
-  const filteredClients = useMemo(() => {
-    const term = clientSearch.trim().toLowerCase();
-    const rows = !term
-      ? clients
-      : clients.filter(
-          (c) =>
-            c.name.toLowerCase().includes(term) ||
-            String(c.id).includes(term) ||
-            (c.document ?? "").toLowerCase().includes(term),
-        );
-    return sortByNameAsc(rows);
-  }, [clients, clientSearch]);
   const filteredServices = useMemo(() => {
     const term = serviceSearch.trim().toLowerCase();
     const rows = services.filter((s) => !selectedServices.some((sel) => sel.service_id === s.id));
@@ -611,10 +593,6 @@ export function ServiceOrderFormPage() {
       : rows.filter((p) => p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term));
     return sortByNameAsc(filtered);
   }, [products, productSearch, selectedProducts]);
-  const visibleClients = useMemo(
-    () => (clientDropdownOpen ? filteredClients.slice(0, 8) : []),
-    [filteredClients, clientDropdownOpen],
-  );
   const visibleServices = useMemo(
     () => (serviceDropdownOpen ? filteredServices.slice(0, 8) : []),
     [filteredServices, serviceDropdownOpen],
@@ -624,9 +602,6 @@ export function ServiceOrderFormPage() {
     [filteredProducts, productDropdownOpen],
   );
 
-  useEffect(() => {
-    setActiveClientIndex(0);
-  }, [clientSearch]);
   useEffect(() => {
     setActiveServiceIndex(0);
   }, [serviceSearch]);
@@ -665,13 +640,11 @@ export function ServiceOrderFormPage() {
       setLoading(true);
       setLoadErr("");
       try {
-        const [nextClients, nextServices, nextProducts] = await Promise.all([
-          listClients({ limit: 100 }),
+        const [nextServices, nextProducts] = await Promise.all([
           listServices({ limit: 100 }),
           listProducts({ limit: 100 }),
         ]);
         if (cancelled) return;
-        setClients(nextClients);
         setServices(nextServices.filter((s) => s.is_active || !isNew));
         setProducts(nextProducts.filter((p) => p.is_active || !isNew));
 
@@ -734,6 +707,25 @@ export function ServiceOrderFormPage() {
     if (!Number.isFinite(cid) || cid < 1) return;
     setClientId(String(cid));
   }, [isNew, searchParams]);
+
+  useEffect(() => {
+    const cid = Number(clientId);
+    if (!Number.isFinite(cid) || cid < 1) {
+      setSelectedClient(null);
+      return;
+    }
+    let cancelled = false;
+    void getClient(cid)
+      .then((c) => {
+        if (!cancelled) setSelectedClient(c);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedClient(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   useEffect(() => {
     const cid = Number(clientId);
@@ -1115,7 +1107,6 @@ export function ServiceOrderFormPage() {
 
     setSaving(true);
     try {
-      const selectedClient = clients.find((c) => c.id === Number(clientId));
       const generatedTitle = `OS - ${selectedClient?.name ?? `Cliente ${clientId}`}`;
       const created = await createServiceOrder({
         client_id: Number(clientId),
@@ -1707,7 +1698,7 @@ export function ServiceOrderFormPage() {
                   </label>
                   {isNew ? (
                     <>
-                      {selectedClient ? (
+                      {clientId && selectedClient ? (
                         <div className={styles.selectedPillWrap}>
                           <div className={styles.selectedPill}>
                             <span className={styles.selectedPillLabel}>Cliente selecionado</span>
@@ -1719,75 +1710,21 @@ export function ServiceOrderFormPage() {
                             className={styles.btnGhost}
                             onClick={() => {
                               setClientId("");
-                              setClientSearch("");
-                              setClientDropdownOpen(true);
                             }}
                           >
                             Trocar cliente
                           </button>
                         </div>
+                      ) : clientId ? (
+                        <p className={styles.loading}>Carregando cliente…</p>
                       ) : (
-                        <>
-                          <div className={styles.searchFieldWrap}>
-                            <span className={styles.searchFieldIcon}>
-                              <IconSearchField />
-                            </span>
-                            <input
-                              id="os-client"
-                              className={loginStyles.input}
-                              placeholder="Buscar cliente por nome ou documento…"
-                              value={clientSearch}
-                              onChange={(e) => setClientSearch(e.target.value)}
-                              onFocus={() => setClientDropdownOpen(true)}
-                              onClick={() => setClientDropdownOpen(true)}
-                              onBlur={() => {
-                                window.setTimeout(() => setClientDropdownOpen(false), 120);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "ArrowDown") {
-                                  e.preventDefault();
-                                  setActiveClientIndex((idx) => Math.min(idx + 1, Math.max(visibleClients.length - 1, 0)));
-                                } else if (e.key === "ArrowUp") {
-                                  e.preventDefault();
-                                  setActiveClientIndex((idx) => Math.max(idx - 1, 0));
-                                } else if (e.key === "Enter") {
-                                  if (visibleClients.length > 0) {
-                                    e.preventDefault();
-                                    const c = visibleClients[Math.min(activeClientIndex, visibleClients.length - 1)];
-                                    if (!c) return;
-                                    setClientId(String(c.id));
-                                    setClientSearch("");
-                                    setClientDropdownOpen(false);
-                                  }
-                                }
-                              }}
-                              autoComplete="off"
-                            />
-                          </div>
-                          {visibleClients.length > 0 ? (
-                            <div className={styles.searchResultList}>
-                              {visibleClients.map((c, idx) => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  className={`${styles.searchResultBtn} ${idx === activeClientIndex ? styles.searchResultBtnActive : ""}`}
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => {
-                                    setClientId(String(c.id));
-                                    setClientSearch("");
-                                    setClientDropdownOpen(false);
-                                  }}
-                                >
-                                  <span>{renderHighlightedText(c.name, clientSearch)}</span>
-                                  <small>{renderHighlightedText(c.document ?? "", clientSearch)}</small>
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                          {clientDropdownOpen && visibleClients.length === 0 ? (
-                            <p className={styles.emptySearch}>Nenhum cliente encontrado.</p>
-                          ) : null}
-                        </>
+                        <ClientPicker
+                          inputId="os-client"
+                          value={clientId}
+                          onChange={(id) => setClientId(id)}
+                          disabled={readOnly}
+                          pinned={selectedClient ?? undefined}
+                        />
                       )}
                     </>
                   ) : (
@@ -1799,7 +1736,7 @@ export function ServiceOrderFormPage() {
                 </div>
                 <div>
                   <p className={styles.metaLabel}>Contato</p>
-                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient)}</p>
+                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient ?? undefined)}</p>
                 </div>
               </div>
 
@@ -2650,7 +2587,7 @@ export function ServiceOrderFormPage() {
                 </div>
                 <div>
                   <dt>Contato</dt>
-                  <dd>{clientPreferredContact(selectedClient)}</dd>
+                  <dd>{clientPreferredContact(selectedClient ?? undefined)}</dd>
                 </div>
                 <div className={styles.closingFactsWide}>
                   <dt>Endereço</dt>
@@ -3036,7 +2973,7 @@ export function ServiceOrderFormPage() {
                 </div>
                 <div>
                   <p className={styles.metaLabel}>Contato</p>
-                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient)}</p>
+                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient ?? undefined)}</p>
                 </div>
               </div>
               <div className={styles.clientAddressBlock}>

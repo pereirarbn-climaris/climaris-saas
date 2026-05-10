@@ -7,11 +7,13 @@ import {
   deactivateClientEquipment,
   deleteClient,
   getClient,
+  listClientAudit,
   listClientServiceItemsLinks,
   listClientEquipmentDocuments,
   listClientEquipments,
   listEquipmentHistory,
   updateClientEquipment,
+  type ClientAuditEntryOut,
   type ClientServiceItemLinkRowOut,
   type EquipmentDocumentCreatePayload,
   type EquipmentDocumentWithEquipmentOut,
@@ -43,6 +45,7 @@ import {
 } from "../../lib/brMask";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
+import styles from "./ClientFormPage.module.css";
 
 function formatEquipmentHistorySource(source: string): string {
   if (source === "ordem_concluida") return "OS concluída";
@@ -50,7 +53,6 @@ function formatEquipmentHistorySource(source: string): string {
   if (source === "app") return "App";
   return source;
 }
-import styles from "./ClientFormPage.module.css";
 
 type FormState = {
   name: string;
@@ -74,6 +76,7 @@ type FormState = {
   /** Município IBGE (7 dígitos), exigido na NFS-e Nacional para o tomador. */
   address_ibge_code: string;
   preventive_campaign_opt_out: boolean;
+  is_active: boolean;
 };
 
 type EquipmentFormState = {
@@ -146,6 +149,7 @@ function emptyForm(): FormState {
     address_postal_code: "",
     address_ibge_code: "",
     preventive_campaign_opt_out: false,
+    is_active: true,
   };
 }
 
@@ -236,6 +240,7 @@ function fromClient(c: ClientOut): FormState {
     address_postal_code: formatCepInput(c.address_postal_code ?? ""),
     address_ibge_code: digitsOnly(c.address_ibge_code ?? "").slice(0, 7),
     preventive_campaign_opt_out: Boolean(c.preventive_campaign_opt_out),
+    is_active: c.is_active !== false,
   };
 }
 
@@ -295,6 +300,7 @@ function buildUpdatePayload(f: FormState): ClientUpdatePayload {
       return d.length === 7 ? d : null;
     })(),
     preventive_campaign_opt_out: Boolean(f.preventive_campaign_opt_out),
+    is_active: Boolean(f.is_active),
   };
   if (documentDigits) {
     p.document = documentDigits;
@@ -386,7 +392,7 @@ export function ClientFormPage() {
   const [regimeDetectedByLookup, setRegimeDetectedByLookup] = useState<boolean | null>(null);
   /** Só usado quando já há endereço salvo: se true, o botão “Consultar CNPJ” também aplica endereço da Receita. */
   const [cnpjIncludeAddress, setCnpjIncludeAddress] = useState(true);
-  const [activeTab, setActiveTab] = useState<"form" | "equipments" | "budgets" | "orders">("form");
+  const [activeTab, setActiveTab] = useState<"form" | "equipments" | "budgets" | "orders" | "audit">("form");
   const [clientBudgets, setClientBudgets] = useState<BudgetOut[]>([]);
   const [clientOrders, setClientOrders] = useState<ServiceOrderOut[]>([]);
   const [clientEquipments, setClientEquipments] = useState<EquipmentOut[]>([]);
@@ -410,6 +416,8 @@ export function ClientFormPage() {
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedErr, setRelatedErr] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [auditRows, setAuditRows] = useState<ClientAuditEntryOut[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
   /** Endereço já existe no banco (afeta padrão do CNPJ: só nomes, salvo se marcar “incluir endereço”). */
   const [addressPersisted, setAddressPersisted] = useState(false);
 
@@ -830,6 +838,28 @@ export function ClientFormPage() {
     };
   }, [activeTab, pmocDocumentFilters, idNum, isNew]);
 
+  useEffect(() => {
+    if (isNew || activeTab !== "audit" || !Number.isFinite(idNum) || idNum < 1) {
+      setAuditRows([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setAuditLoading(true);
+      try {
+        const rows = await listClientAudit(idNum);
+        if (!cancelled) setAuditRows(rows);
+      } catch {
+        if (!cancelled) setAuditRows([]);
+      } finally {
+        if (!cancelled) setAuditLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, idNum, isNew]);
+
   if (!ctx) {
     return <Navigate to="/login" replace />;
   }
@@ -878,6 +908,7 @@ export function ClientFormPage() {
           address_country: "Brasil",
           ...(ibgeCreate.length === 7 ? { address_ibge_code: ibgeCreate } : {}),
           preventive_campaign_opt_out: Boolean(form.preventive_campaign_opt_out),
+          is_active: Boolean(form.is_active),
         };
         if (digits) {
           payload.document = digits;
@@ -964,6 +995,15 @@ export function ClientFormPage() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === "audit"}
+            className={`${styles.tabBtn} ${activeTab === "audit" ? styles.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("audit")}
+          >
+            Histórico
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === "equipments"}
             className={`${styles.tabBtn} ${activeTab === "equipments" ? styles.tabBtnActive : ""}`}
             onClick={() => setActiveTab("equipments")}
@@ -991,7 +1031,42 @@ export function ClientFormPage() {
         </div>
       ) : null}
 
-      {activeTab === "form" ? (
+      {activeTab === "audit" && !isNew ? (
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Histórico do cadastro</h2>
+          <p className={styles.cepHint}>Alterações registradas automaticamente ao criar ou atualizar o cliente.</p>
+          {auditLoading ? <p className={styles.loading}>Carregando histórico…</p> : null}
+          {!auditLoading && auditRows.length === 0 ? (
+            <p className={styles.loading}>Nenhum evento registrado.</p>
+          ) : null}
+          {!auditLoading && auditRows.length > 0 ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Quando</th>
+                    <th>Usuário</th>
+                    <th>Ação</th>
+                    <th>Alterações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditRows.map((r) => (
+                    <tr key={r.id}>
+                      <td>{formatDateTime(r.created_at)}</td>
+                      <td>{r.user_name ?? "—"}</td>
+                      <td>{r.action}</td>
+                      <td>
+                        <pre className={styles.auditPre}>{JSON.stringify(r.changes, null, 2)}</pre>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
+      ) : activeTab === "form" ? (
       <form className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Identificação</h2>
@@ -1179,6 +1254,15 @@ export function ClientFormPage() {
             onChange={(e) => setField("email", e.target.value)}
             disabled={readOnly}
           />
+          <label className={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              checked={form.is_active}
+              onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+              disabled={readOnly}
+            />
+            Cliente ativo no cadastro
+          </label>
         </div>
 
         <div className={styles.section}>
@@ -2316,7 +2400,8 @@ export function ClientFormPage() {
               Excluir cliente
             </h3>
             <p className={styles.modalText}>
-              Esta ação exclui o cliente permanentemente. Deseja continuar?
+              Prefira desmarcar &quot;Cliente ativo no cadastro&quot; para inativar. A exclusão permanente só deve ser usada
+              quando não houver ordens, orçamentos, agendamentos ou NFS-e vinculados — caso contrário o sistema bloqueia.
             </p>
             <div className={styles.modalActions}>
               <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={deleting}>

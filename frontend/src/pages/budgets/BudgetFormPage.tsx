@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { createBudget, fetchBudgetPdfBlob, getBudget, type BudgetOut } from "../../api/budgets";
-import { listClients, type ClientOut } from "../../api/clients";
+import { getClient, type ClientOut } from "../../api/clients";
 import { listProducts, type ProductOut } from "../../api/products";
 import { listServices, type ServiceOut } from "../../api/services";
 import { sortByNameAsc } from "../../lib/localeSort";
+import { ClientPicker } from "../../components/ClientPicker";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./BudgetFormPage.module.css";
@@ -25,7 +26,7 @@ export function BudgetFormPage() {
   const idNum = budgetId ? Number(budgetId) : NaN;
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
 
-  const [clients, setClients] = useState<ClientOut[]>([]);
+  const [selectedClient, setSelectedClient] = useState<ClientOut | null>(null);
   const [services, setServices] = useState<ServiceOut[]>([]);
   const [products, setProducts] = useState<ProductOut[]>([]);
   const [budget, setBudget] = useState<BudgetOut | null>(null);
@@ -50,7 +51,6 @@ export function BudgetFormPage() {
   const readOnly = !isNew || !canEdit;
   const serviceMap = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
   const productMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
-  const clientsSorted = useMemo(() => sortByNameAsc(clients), [clients]);
   const servicesSorted = useMemo(() => sortByNameAsc(services), [services]);
   const productsSorted = useMemo(() => sortByNameAsc(products), [products]);
 
@@ -70,23 +70,17 @@ export function BudgetFormPage() {
       }, 0),
     [selectedProducts, productMap],
   );
-  const selectedClient = useMemo(
-    () => clients.find((c) => c.id === Number(clientId)),
-    [clients, clientId],
-  );
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       setLoading(true);
       try {
-        const [nextClients, nextServices, nextProducts] = await Promise.all([
-          listClients({ limit: 100 }),
+        const [nextServices, nextProducts] = await Promise.all([
           listServices({ limit: 100 }),
           listProducts({ limit: 100 }),
         ]);
         if (cancelled) return;
-        setClients(nextClients);
         setServices(nextServices.filter((s) => s.is_active || !isNew));
         setProducts(nextProducts.filter((p) => p.is_active || !isNew));
 
@@ -122,6 +116,25 @@ export function BudgetFormPage() {
     if (!Number.isFinite(cid) || cid < 1) return;
     setClientId(String(cid));
   }, [isNew, searchParams]);
+
+  useEffect(() => {
+    const cid = Number(clientId);
+    if (!Number.isFinite(cid) || cid < 1) {
+      setSelectedClient(null);
+      return;
+    }
+    let cancelled = false;
+    void getClient(cid)
+      .then((c) => {
+        if (!cancelled) setSelectedClient(c);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedClient(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   if (!ctx) return <Navigate to="/login" replace />;
   if (!isNew && (!budgetId || !Number.isFinite(idNum) || idNum < 1)) return <Navigate to="/app/budgets" replace />;
@@ -247,20 +260,31 @@ export function BudgetFormPage() {
           <label className={loginStyles.label} htmlFor="budget-client">
             Cliente
           </label>
-          <select
-            id="budget-client"
-            className={loginStyles.input}
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            disabled={readOnly}
-          >
-            <option value="">Selecione...</option>
-            {clientsSorted.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} - {c.document}
-              </option>
-            ))}
-          </select>
+          {readOnly ? (
+            <p className={styles.clientReadonly}>
+              <strong>{selectedClient?.name ?? (clientId ? `Cliente #${clientId}` : "—")}</strong>
+              {selectedClient?.document ? <span> — {selectedClient.document}</span> : null}
+            </p>
+          ) : clientId && selectedClient ? (
+            <div className={styles.clientChosen}>
+              <div>
+                <strong>{selectedClient.name}</strong>
+                {selectedClient.document ? <span className={styles.clientChosenDoc}> — {selectedClient.document}</span> : null}
+              </div>
+              <button type="button" className={styles.btnGhost} onClick={() => setClientId("")}>
+                Trocar cliente
+              </button>
+            </div>
+          ) : clientId ? (
+            <p className={styles.loading}>Carregando cliente…</p>
+          ) : (
+            <ClientPicker
+              inputId="budget-client"
+              value={clientId}
+              onChange={(id) => setClientId(id)}
+              pinned={selectedClient ?? undefined}
+            />
+          )}
 
           <label className={loginStyles.label} htmlFor="budget-observation">
             Observação

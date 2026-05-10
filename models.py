@@ -731,6 +731,7 @@ class Client(Base):
     address_country: Mapped[str] = mapped_column(String(60), nullable=False, default="Brasil")
     address_ibge_code: Mapped[str | None] = mapped_column(String(7))
     preventive_campaign_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -747,6 +748,26 @@ class Client(Base):
     )
     nfse_invoices: Mapped[list["NfseInvoice"]] = relationship(back_populates="client")
     historico_servicos: Mapped[list["HistoricoServico"]] = relationship(back_populates="client")
+    audit_logs: Mapped[list["ClientAuditLog"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan", order_by="ClientAuditLog.id.desc()"
+    )
+
+
+class ClientAuditLog(Base):
+    __tablename__ = "client_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    changes_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    client: Mapped["Client"] = relationship(back_populates="audit_logs")
+    user: Mapped["User | None"] = relationship()
 
 
 class Equipment(Base):

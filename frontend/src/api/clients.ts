@@ -42,6 +42,7 @@ export type ClientOut = {
   address_country: string;
   address_ibge_code: string | null;
   preventive_campaign_opt_out: boolean;
+  is_active: boolean;
 };
 
 export type ClientCreatePayload = {
@@ -66,6 +67,7 @@ export type ClientCreatePayload = {
   address_country?: string;
   address_ibge_code?: string;
   preventive_campaign_opt_out?: boolean;
+  is_active?: boolean;
 };
 
 export type EquipmentOut = {
@@ -240,6 +242,7 @@ export type ClientUpdatePayload = {
   address_country?: string | null;
   address_ibge_code?: string | null;
   preventive_campaign_opt_out?: boolean;
+  is_active?: boolean;
 };
 
 async function parseBody(response: Response): Promise<unknown> {
@@ -288,12 +291,22 @@ function jsonHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
-export async function listClients(params?: { q?: string; skip?: number; limit?: number }): Promise<ClientOut[]> {
+export type ClientStatusFilter = "active" | "inactive" | "all";
+
+export async function listClients(params?: {
+  q?: string;
+  skip?: number;
+  limit?: number;
+  status?: ClientStatusFilter;
+}): Promise<ClientOut[]> {
   if (isDemoMode()) {
     const q = params?.q?.trim().toLowerCase();
+    const st = params?.status ?? "active";
     let filtered = demoListClients();
+    if (st === "active") filtered = filtered.filter((c) => c.is_active !== false);
+    else if (st === "inactive") filtered = filtered.filter((c) => c.is_active === false);
     if (q) {
-      filtered = demoClients.filter(c => c.name.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
+      filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
     }
     return Promise.resolve(filtered);
   }
@@ -303,6 +316,7 @@ export async function listClients(params?: { q?: string; skip?: number; limit?: 
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
+  if (params?.status) sp.set("status", params.status);
   if (q) sp.set("q", q);
   const response = await fetch(apiUrl(`/api/v1/clients?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -324,6 +338,73 @@ export async function getClient(clientId: number): Promise<ClientOut> {
     throw new Error(errorMessage(body, "Não foi possível carregar o cliente.", response.status));
   }
   return body as ClientOut;
+}
+
+export type ClientAuditEntryOut = {
+  id: number;
+  user_id: number | null;
+  user_name: string | null;
+  action: string;
+  changes: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ClientImportSummaryOut = {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+};
+
+export async function countClients(params?: { q?: string; status?: ClientStatusFilter }): Promise<number> {
+  if (isDemoMode()) {
+    const rows = await listClients({ q: params?.q, status: params?.status ?? "active", limit: 10000 });
+    return Promise.resolve(rows.length);
+  }
+  const sp = new URLSearchParams();
+  if (params?.q?.trim()) sp.set("q", params.q.trim());
+  if (params?.status) sp.set("status", params.status);
+  const response = await fetch(apiUrl(`/api/v1/clients/count?${sp.toString()}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível contar clientes.", response.status));
+  return (body as { total: number }).total;
+}
+
+export async function exportClientsCsv(params?: { status?: ClientStatusFilter }): Promise<Blob> {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set("status", params.status);
+  const qs = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/clients/export${qs ? `?${qs}` : ""}`), { headers: bearer() });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível exportar.", response.status));
+  }
+  return response.blob();
+}
+
+export async function importClientsCsv(file: File): Promise<ClientImportSummaryOut> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Sessão expirada.");
+  const fd = new FormData();
+  fd.append("file", file);
+  const response = await fetch(apiUrl("/api/v1/clients/import"), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Importação falhou.", response.status));
+  return body as ClientImportSummaryOut;
+}
+
+export async function listClientAudit(clientId: number, limit = 200): Promise<ClientAuditEntryOut[]> {
+  if (isDemoMode()) {
+    return Promise.resolve([]);
+  }
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/audit?limit=${limit}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar histórico.", response.status));
+  return body as ClientAuditEntryOut[];
 }
 
 export async function createClient(payload: ClientCreatePayload): Promise<ClientOut> {

@@ -106,6 +106,7 @@ export const demoClients: ClientOut[] = [
     address_country: "BR",
     address_ibge_code: "3550308",
     preventive_campaign_opt_out: false,
+    is_active: true,
   },
   {
     id: 2,
@@ -131,6 +132,7 @@ export const demoClients: ClientOut[] = [
     address_country: "BR",
     address_ibge_code: "3550308",
     preventive_campaign_opt_out: false,
+    is_active: true,
   },
   {
     id: 3,
@@ -156,6 +158,7 @@ export const demoClients: ClientOut[] = [
     address_country: "BR",
     address_ibge_code: "3550308",
     preventive_campaign_opt_out: false,
+    is_active: true,
   },
 ];
 
@@ -708,6 +711,7 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     address_country: payload.address_country ?? "BR",
     address_ibge_code: payload.address_ibge_code ?? null,
     preventive_campaign_opt_out: payload.preventive_campaign_opt_out ?? false,
+    is_active: payload.is_active ?? true,
   };
   demoClientsState = [row, ...demoClientsState];
   return { ...row };

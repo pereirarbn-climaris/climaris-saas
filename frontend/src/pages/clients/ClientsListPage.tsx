@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
-import { listClients, type ClientOut } from "../../api/clients";
+import {
+  countClients,
+  exportClientsCsv,
+  importClientsCsv,
+  listClients,
+  type ClientOut,
+  type ClientStatusFilter,
+} from "../../api/clients";
 import { digitsOnly, formatPhoneBrDisplay, whatsappMeUrl } from "../../lib/brMask";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
@@ -52,6 +59,8 @@ export function ClientsListPage() {
   const [err, setErr] = useState("");
   const [sortKey, setSortKey] = useState<ClientSortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [statusFilter, setStatusFilter] = useState<ClientStatusFilter>("active");
+  const [totalCount, setTotalCount] = useState(0);
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
 
@@ -64,15 +73,20 @@ export function ClientsListPage() {
     setLoading(true);
     setErr("");
     try {
-      const list = await listClients({ q: q || undefined, limit: 100 });
+      const [list, total] = await Promise.all([
+        listClients({ q: q || undefined, limit: 500, status: statusFilter }),
+        countClients({ q: q || undefined, status: statusFilter }),
+      ]);
       setRows(list);
+      setTotalCount(total);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setRows([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, statusFilter]);
 
   useEffect(() => {
     void load();
@@ -98,12 +112,12 @@ export function ClientsListPage() {
   }, [rows, sortKey, sortDir]);
 
   const totals = useMemo(() => {
-    const total = rows.length;
+    const total = totalCount;
     const empresas = rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length;
     const pessoas = rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length;
-    const ativos = rows.filter((c) => Boolean((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim())).length;
+    const ativos = rows.filter((c) => c.is_active).length;
     return { total, empresas, pessoas, ativos };
-  }, [rows]);
+  }, [rows, totalCount]);
 
   function onSortHeader(key: ClientSortKey) {
     if (sortKey === key) {
@@ -117,6 +131,35 @@ export function ClientsListPage() {
   function sortAriaSort(key: ClientSortKey): "ascending" | "descending" | "none" {
     if (sortKey !== key) return "none";
     return sortDir === "asc" ? "ascending" : "descending";
+  }
+
+  async function onExportCsv() {
+    setErr("");
+    try {
+      const blob = await exportClientsCsv({
+        status: statusFilter === "all" ? "all" : statusFilter === "inactive" ? "inactive" : "active",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "clientes.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Erro ao exportar.");
+    }
+  }
+
+  async function onImportCsv(file: File) {
+    setErr("");
+    try {
+      const r = await importClientsCsv(file);
+      const extra = r.errors.length ? `\nAvisos: ${r.errors.slice(0, 5).join("; ")}` : "";
+      window.alert(`Importação concluída.\nCriados: ${r.created}\nAtualizados: ${r.updated}\nIgnorados: ${r.skipped}${extra}`);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Erro na importação.");
+    }
   }
 
   return (
@@ -172,7 +215,7 @@ export function ClientsListPage() {
         <article className={styles.statCard}>
           <div className={styles.statHead}>
             <div>
-              <p className={styles.statLabel}>Ativos</p>
+              <p className={styles.statLabel}>Cadastro ativo</p>
               <p className={styles.statValue}>{totals.ativos}</p>
             </div>
             <span className={styles.statIconWrap} aria-hidden>
@@ -210,17 +253,22 @@ export function ClientsListPage() {
         </div>
 
         <div className={styles.toolbarActions}>
-          <button type="button" className={styles.btnGhost}>
-            <span className={styles.btnIcon} aria-hidden>
-              <svg viewBox="0 0 24 24">
-                <path d="M4 6h16" />
-                <path d="M7 12h10" />
-                <path d="M10 18h4" />
-              </svg>
-            </span>
-            Filtros
-          </button>
-          <button type="button" className={styles.btnGhost}>
+          <div className={styles.filterBlock}>
+            <label className={styles.toolbarMiniLabel} htmlFor="clients-status">
+              Status
+            </label>
+            <select
+              id="clients-status"
+              className={styles.selectFilter}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as ClientStatusFilter)}
+            >
+              <option value="active">Ativos no cadastro</option>
+              <option value="inactive">Inativos</option>
+              <option value="all">Todos</option>
+            </select>
+          </div>
+          <button type="button" className={styles.btnGhost} onClick={() => void onExportCsv()}>
             <span className={styles.btnIcon} aria-hidden>
               <svg viewBox="0 0 24 24">
                 <path d="M12 3v12" />
@@ -228,8 +276,30 @@ export function ClientsListPage() {
                 <path d="M5 21h14" />
               </svg>
             </span>
-            Exportar
+            Exportar CSV
           </button>
+          {ctx?.user.role === "admin" ? (
+            <label className={styles.btnGhost}>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className={styles.fileHidden}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void onImportCsv(f);
+                }}
+              />
+              <span className={styles.btnIcon} aria-hidden>
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 3v12" />
+                  <path d="m17 8-5-5-5 5" />
+                  <path d="M5 21h14" />
+                </svg>
+              </span>
+              Importar CSV
+            </label>
+          ) : null}
           {canEdit ? (
             <Link className={styles.btnPrimary} to="/app/clients/new">
               <span className={styles.btnIcon} aria-hidden>
@@ -326,7 +396,7 @@ export function ClientsListPage() {
             <tbody>
               {sortedRows.map((c) => {
                 const wa = whatsappMeUrl(c.whatsapp);
-                const ativo = Boolean((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim());
+                const cadastroAtivo = c.is_active !== false;
                 return (
                   <tr
                     key={c.id}
@@ -372,8 +442,8 @@ export function ClientsListPage() {
                       )}
                     </td>
                     <td>
-                      <span className={`${styles.statusPill} ${ativo ? styles.statusOk : styles.statusWarn}`}>
-                        {ativo ? "Ativo" : "Inativo"}
+                      <span className={`${styles.statusPill} ${cadastroAtivo ? styles.statusOk : styles.statusWarn}`}>
+                        {cadastroAtivo ? "Ativo" : "Inativo"}
                       </span>
                     </td>
                     <td className={`${tableStyles.tailCol} ${tableStyles.rowHint}`} aria-hidden="true">
@@ -398,7 +468,9 @@ export function ClientsListPage() {
       ) : null}
 
       {!loading && rows.length > 0 ? (
-        <p className={styles.listFoot}>Mostrando {sortedRows.length} de {rows.length} clientes</p>
+        <p className={styles.listFoot}>
+          Mostrando {sortedRows.length} de {totalCount} cliente{totalCount === 1 ? "" : "s"}
+        </p>
       ) : null}
     </div>
   );

@@ -549,3 +549,12 @@
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+.auditPre {
+  margin: 0;
+  font-size: 0.75rem;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
