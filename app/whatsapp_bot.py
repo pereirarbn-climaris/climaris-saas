@@ -34,6 +34,175 @@ DEFAULT_HANDOFF_MESSAGE = "Certo! Vou encaminhar seu atendimento para uma pessoa
 DEFAULT_HANDOFF_KEYWORDS = ["atendente", "humano", "pessoa", "suporte", "financeiro"]
 MENU_KEYWORDS = {"menu", "inicio", "início", "oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"}
 
+DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "slug": "orcamento-valores",
+        "name": "Orçamento e valores",
+        "description": "Coleta dados básicos para orçamento, limpeza, instalação ou manutenção.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["1", "orçamento", "orcamento", "valor", "preço", "preco", "limpeza"],
+        "priority": 10,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": (
+                    "Claro! Para preparar seu orçamento, me envie em uma mensagem:\n"
+                    "- serviço desejado\n- cidade/bairro\n- quantidade de equipamentos\n- uma breve descrição do problema"
+                ),
+                "actions": {"save_as": "dados_orcamento"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "end",
+                "message_template": (
+                    "Recebido, {nome_cliente}! Nossa equipe vai analisar e retornar com o orçamento. "
+                    "Se preferir atendimento imediato, digite *atendente*."
+                ),
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "agendamento-visita",
+        "name": "Agendar visita",
+        "description": "Coleta melhor dia/horário para visita técnica.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["2", "agendar", "agenda", "visita", "horário", "horario"],
+        "priority": 20,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": "Perfeito. Informe o melhor dia/horário, endereço e uma referência do local.",
+                "actions": {"save_as": "preferencia_agendamento"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "end",
+                "message_template": (
+                    "Obrigado! Vamos conferir a agenda e confirmar a visita. "
+                    "Caso seja urgente, digite *atendente*."
+                ),
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "financeiro-pagamentos",
+        "name": "Financeiro e pagamentos",
+        "description": "Direciona dúvidas de pagamento, segunda via e financeiro.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["3", "financeiro", "pagamento", "boleto", "pix", "segunda via"],
+        "priority": 30,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "menu",
+                "message_template": "Como podemos ajudar no financeiro?",
+                "options": [
+                    {
+                        "key": "1",
+                        "label": "Segunda via / link de pagamento",
+                        "message": "Informe CPF/CNPJ ou número da OS para localizarmos seu pagamento.",
+                    },
+                    {
+                        "key": "2",
+                        "label": "Confirmar pagamento",
+                        "message": "Envie o comprovante por aqui. Nossa equipe vai validar e retornar.",
+                    },
+                    {"key": "3", "label": "Falar com financeiro", "handoff": True},
+                ],
+                "sort_order": 100,
+            }
+        ],
+    },
+    {
+        "slug": "fechamento-os",
+        "name": "Fechamento de OS",
+        "description": "Mensagem automática quando uma ordem de serviço é concluída.",
+        "enabled": True,
+        "trigger_type": "system_event",
+        "trigger_keywords": [],
+        "system_event": "service_order_done",
+        "priority": 5,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "menu",
+                "message_template": (
+                    "Olá {nome_cliente}! Sua OS #{numero_os} foi finalizada.\n"
+                    "Serviço: {titulo_os}\nValor: R$ {valor_total}\n\nEscolha uma opção:"
+                ),
+                "options": [
+                    {
+                        "key": "1",
+                        "label": "Formas de pagamento",
+                        "message": "Nossa equipe vai enviar as formas de pagamento disponíveis para esta OS.",
+                    },
+                    {
+                        "key": "2",
+                        "label": "Solicitar nota fiscal",
+                        "message": "Certo. Envie CPF/CNPJ, razão social/nome completo e e-mail para emissão da nota.",
+                    },
+                    {"key": "3", "label": "Falar com atendente", "handoff": True},
+                ],
+                "sort_order": 100,
+            }
+        ],
+    },
+    {
+        "slug": "nota-fiscal",
+        "name": "Nota fiscal",
+        "description": "Coleta dados para solicitação de nota fiscal.",
+        "enabled": True,
+        "trigger_type": "keyword",
+        "trigger_keywords": ["nota", "nf", "nfs", "nfse", "nota fiscal"],
+        "priority": 40,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": "Para solicitar nota fiscal, envie CPF/CNPJ, razão social/nome completo e e-mail.",
+                "actions": {"save_as": "dados_nf"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "end",
+                "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "falar-atendente",
+        "name": "Falar com atendente",
+        "description": "Pausa o bot e transfere para atendimento humano.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["4", "atendente", "humano", "pessoa"],
+        "priority": 50,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "menu",
+                "message_template": "Vou chamar um atendente para continuar seu atendimento.",
+                "options": [{"key": "1", "label": "Continuar com atendente", "handoff": True}],
+                "sort_order": 100,
+            }
+        ],
+    },
+]
+
 
 class SafeFormatDict(dict):
     def __missing__(self, key: str) -> str:
@@ -375,6 +544,47 @@ def delete_step(db: Session, *, tenant_id: int, flow_id: int, step_id: int) -> N
     row = get_step(db, tenant_id=tenant_id, flow_id=flow_id, step_id=step_id)
     db.delete(row)
     db.commit()
+
+
+def seed_default_flows(db: Session, *, tenant_id: int) -> dict[str, Any]:
+    get_or_create_settings(db, tenant_id=tenant_id)
+    existing_slugs = {
+        row[0]
+        for row in db.execute(
+            select(WhatsappBotFlow.slug).where(WhatsappBotFlow.tenant_id == tenant_id)
+        ).all()
+    }
+    created = 0
+    skipped = 0
+    for template in DEFAULT_FLOW_TEMPLATES:
+        if template["slug"] in existing_slugs:
+            skipped += 1
+            continue
+        payload = dict(template)
+        steps = payload.pop("steps", [])
+        flow = WhatsappBotFlow(
+            tenant_id=tenant_id,
+            slug=payload["slug"],
+            name=payload["name"],
+            description=payload.get("description"),
+            enabled=bool(payload.get("enabled", True)),
+            trigger_type=payload.get("trigger_type") or "keyword",
+            trigger_keywords_json=_json_dumps(payload.get("trigger_keywords") or []),
+            system_event=payload.get("system_event"),
+            priority=int(payload.get("priority") or 100),
+        )
+        db.add(flow)
+        db.flush()
+        for step_payload in steps:
+            db.add(_build_step(flow.id, step_payload))
+        existing_slugs.add(flow.slug)
+        created += 1
+    db.commit()
+    return {
+        "created_flows": created,
+        "skipped_existing": skipped,
+        "flows": list_flows(db, tenant_id=tenant_id),
+    }
 
 
 def _get_session(db: Session, *, tenant_id: int, client_whatsapp: str) -> WhatsappBotSession | None:
