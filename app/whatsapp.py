@@ -27,6 +27,7 @@ from app.routers.service_orders import (
 )
 from app.ai_assistant import generate_ai_response
 from app.config import (
+    AI_ASSISTANT_V2_ENABLED,
     EVOLUTION_API_BASE_URL,
     EVOLUTION_API_KEY,
     EVOLUTION_CORS_REQUEST_ORIGIN,
@@ -1655,6 +1656,7 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             payload={"message_id": incoming_message_id},
             job_id=None,
         )
+    bot_handled = False
     if event_name.lower() == "messages.upsert" and incoming_sender and incoming_text:
         data_block = data.get("data") if isinstance(data, dict) else {}
         key_block = data_block.get("key") if isinstance(data_block, dict) else {}
@@ -1665,6 +1667,7 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
                 from app.whatsapp_bot import handle_incoming_text_and_send
 
                 if handle_incoming_text_and_send(db, tenant_id=tenant_id, sender=incoming_sender, text=incoming_text):
+                    bot_handled = True
                     append_event(
                         db,
                         tenant_id=tenant_id,
@@ -1688,12 +1691,14 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             job_id=None,
         )
     if (
-        WHATSAPP_AI_INCOMING_ENABLED
+        AI_ASSISTANT_V2_ENABLED
+        and WHATSAPP_AI_INCOMING_ENABLED
         and event_name.lower() == "messages.upsert"
         and incoming_message_id
         and not already_processed
         and not action_type
         and not preventive_handled
+        and not bot_handled
     ):
         from_me_ai, remote_ai, plain_text = _incoming_from_me_remote_and_plain_text(data)
         if (
