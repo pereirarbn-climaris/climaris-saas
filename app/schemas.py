@@ -941,6 +941,21 @@ class ClientOut(BaseModel):
     address_ibge_code: str | None = None
 
 
+class ClientListSummaryOut(BaseModel):
+    total: int
+    companies: int
+    individuals: int
+    active: int
+
+
+class ClientListOut(BaseModel):
+    items: list[ClientOut]
+    total: int
+    skip: int
+    limit: int
+    summary: ClientListSummaryOut
+
+
 class EquipmentCreate(BaseModel):
     tipo: EquipmentType = EquipmentType.AR_CONDICIONADO
     identificacao: str = Field(..., min_length=1, max_length=120)

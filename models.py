@@ -563,6 +563,7 @@ class Client(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "document", name="uq_clients_tenant_document"),
         UniqueConstraint("tenant_id", "phone", name="uq_clients_tenant_phone"),
+        UniqueConstraint("tenant_id", "whatsapp", name="uq_clients_tenant_whatsapp"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

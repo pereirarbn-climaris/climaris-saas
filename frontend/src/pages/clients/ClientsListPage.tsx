@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
-import { listClients, type ClientOut } from "../../api/clients";
+import {
+  listClientsPage,
+  type ClientContactFilter,
+  type ClientListSummaryOut,
+  type ClientOut,
+  type ClientTaxIdFilter,
+} from "../../api/clients";
 import { digitsOnly, formatPhoneBrDisplay, whatsappMeUrl } from "../../lib/brMask";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
@@ -8,6 +14,17 @@ import styles from "./ClientsListPage.module.css";
 
 type ClientSortKey = "name" | "email" | "phone" | "whatsapp";
 type SortDir = "asc" | "desc";
+type KindFilter = "all" | ClientTaxIdFilter;
+type ContactFilter = "all" | ClientContactFilter;
+
+const PAGE_SIZE = 50;
+
+const EMPTY_SUMMARY: ClientListSummaryOut = {
+  total: 0,
+  companies: 0,
+  individuals: 0,
+  active: 0,
+};
 
 function compareText(a: string, b: string, dir: SortDir): number {
   const c = a.localeCompare(b, "pt-BR", { sensitivity: "base" });
@@ -42,41 +59,111 @@ function avatarClass(seed: number): string {
   return [styles.avatarA, styles.avatarB, styles.avatarC, styles.avatarD, styles.avatarE][i] ?? styles.avatarA;
 }
 
+function csvEscape(value: string | number | null | undefined): string {
+  const text = value == null ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildClientsCsv(rows: ClientOut[]): string {
+  const header = [
+    "ID",
+    "Nome",
+    "Nome fantasia",
+    "Tipo",
+    "Documento",
+    "E-mail",
+    "Telefone",
+    "WhatsApp",
+    "Cidade",
+    "UF",
+  ];
+  const lines = rows.map((c) => [
+    c.id,
+    c.name,
+    c.trade_name,
+    c.tax_id_kind,
+    c.document,
+    c.email,
+    c.phone,
+    c.whatsapp,
+    c.address_city,
+    c.address_state,
+  ].map(csvEscape).join(","));
+  return [header.map(csvEscape).join(","), ...lines].join("\n");
+}
+
+function downloadCsv(filename: string, csv: string): void {
+  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function ClientsListPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const navigate = useNavigate();
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<ClientOut[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<ClientListSummaryOut>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState("");
   const [sortKey, setSortKey] = useState<ClientSortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [showFilters, setShowFilters] = useState(false);
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+  const canLoadMore = rows.length < total;
 
   useEffect(() => {
     const t = window.setTimeout(() => setQ(input.trim()), 400);
     return () => window.clearTimeout(t);
   }, [input]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const loadPage = useCallback(async (skip: number, append: boolean) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     setErr("");
     try {
-      const list = await listClients({ q: q || undefined, limit: 100 });
-      setRows(list);
+      const page = await listClientsPage({
+        q: q || undefined,
+        tax_id_kind: kindFilter === "all" ? undefined : kindFilter,
+        contact: contactFilter === "all" ? undefined : contactFilter,
+        skip,
+        limit: PAGE_SIZE,
+      });
+      setRows((prev) => (append ? [...prev, ...page.items] : page.items));
+      setTotal(page.total);
+      setSummary(page.summary);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
-      setRows([]);
+      if (!append) {
+        setRows([]);
+        setTotal(0);
+        setSummary(EMPTY_SUMMARY);
+      }
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [q]);
+  }, [contactFilter, kindFilter, q]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadPage(0, false);
+  }, [loadPage]);
 
   const sortedRows = useMemo(() => {
     const list = [...rows];
@@ -97,13 +184,12 @@ export function ClientsListPage() {
     return list;
   }, [rows, sortKey, sortDir]);
 
-  const totals = useMemo(() => {
-    const total = rows.length;
-    const empresas = rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length;
-    const pessoas = rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length;
-    const ativos = rows.filter((c) => Boolean((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim())).length;
-    return { total, empresas, pessoas, ativos };
-  }, [rows]);
+  const totals = useMemo(() => ({
+    total: summary.total,
+    empresas: summary.companies,
+    pessoas: summary.individuals,
+    ativos: summary.active,
+  }), [summary]);
 
   function onSortHeader(key: ClientSortKey) {
     if (sortKey === key) {
@@ -117,6 +203,40 @@ export function ClientsListPage() {
   function sortAriaSort(key: ClientSortKey): "ascending" | "descending" | "none" {
     if (sortKey !== key) return "none";
     return sortDir === "asc" ? "ascending" : "descending";
+  }
+
+  async function onExport() {
+    setExporting(true);
+    setErr("");
+    try {
+      const allRows: ClientOut[] = [];
+      let skip = 0;
+      let remoteTotal = 0;
+      do {
+        const page = await listClientsPage({
+          q: q || undefined,
+          tax_id_kind: kindFilter === "all" ? undefined : kindFilter,
+          contact: contactFilter === "all" ? undefined : contactFilter,
+          skip,
+          limit: 200,
+        });
+        allRows.push(...page.items);
+        remoteTotal = page.total;
+        if (page.items.length === 0) break;
+        skip += page.items.length;
+      } while (skip < remoteTotal && remoteTotal > 0);
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadCsv(`clientes-${stamp}.csv`, buildClientsCsv(allRows));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Não foi possível exportar clientes.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function clearFilters() {
+    setKindFilter("all");
+    setContactFilter("all");
   }
 
   return (
@@ -136,7 +256,7 @@ export function ClientsListPage() {
               </svg>
             </span>
           </div>
-          <p className={styles.statHint}>{totals.total > 0 ? `Cadastrados no sistema` : "Sem registros"}</p>
+          <p className={styles.statHint}>{totals.total > 0 ? "No filtro atual" : "Sem registros"}</p>
         </article>
         <article className={styles.statCard}>
           <div className={styles.statHead}>
@@ -210,7 +330,12 @@ export function ClientsListPage() {
         </div>
 
         <div className={styles.toolbarActions}>
-          <button type="button" className={styles.btnGhost}>
+          <button
+            type="button"
+            className={styles.btnGhost}
+            onClick={() => setShowFilters((value) => !value)}
+            aria-expanded={showFilters}
+          >
             <span className={styles.btnIcon} aria-hidden>
               <svg viewBox="0 0 24 24">
                 <path d="M4 6h16" />
@@ -220,7 +345,7 @@ export function ClientsListPage() {
             </span>
             Filtros
           </button>
-          <button type="button" className={styles.btnGhost}>
+          <button type="button" className={styles.btnGhost} onClick={() => void onExport()} disabled={exporting}>
             <span className={styles.btnIcon} aria-hidden>
               <svg viewBox="0 0 24 24">
                 <path d="M12 3v12" />
@@ -228,7 +353,7 @@ export function ClientsListPage() {
                 <path d="M5 21h14" />
               </svg>
             </span>
-            Exportar
+            {exporting ? "Exportando..." : "Exportar"}
           </button>
           {canEdit ? (
             <Link className={styles.btnPrimary} to="/app/clients/new">
@@ -243,6 +368,30 @@ export function ClientsListPage() {
           ) : null}
         </div>
       </div>
+
+      {showFilters ? (
+        <div className={styles.filterPanel}>
+          <label className={styles.filterField}>
+            <span>Tipo de cliente</span>
+            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)}>
+              <option value="all">Todos</option>
+              <option value="cnpj">Empresas</option>
+              <option value="cpf">Pessoas fisicas</option>
+            </select>
+          </label>
+          <label className={styles.filterField}>
+            <span>Contato</span>
+            <select value={contactFilter} onChange={(e) => setContactFilter(e.target.value as ContactFilter)}>
+              <option value="all">Todos</option>
+              <option value="with">Com e-mail, telefone ou WhatsApp</option>
+              <option value="without">Sem contato cadastrado</option>
+            </select>
+          </label>
+          <button type="button" className={styles.btnGhost} onClick={clearFilters}>
+            Limpar filtros
+          </button>
+        </div>
+      ) : null}
 
       {err ? <p className={styles.msgErr}>{err}</p> : null}
 
@@ -398,7 +547,21 @@ export function ClientsListPage() {
       ) : null}
 
       {!loading && rows.length > 0 ? (
-        <p className={styles.listFoot}>Mostrando {sortedRows.length} de {rows.length} clientes</p>
+        <div className={styles.listFoot}>
+          <span className={styles.listFootCount}>
+            Mostrando {sortedRows.length} de {total} clientes
+          </span>
+          {canLoadMore ? (
+            <button
+              type="button"
+              className={styles.btnGhost}
+              onClick={() => void loadPage(rows.length, true)}
+              disabled={loadingMore}
+            >
+              {loadingMore ? "Carregando..." : "Carregar mais"}
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

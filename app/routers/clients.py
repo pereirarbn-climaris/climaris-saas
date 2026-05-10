@@ -6,11 +6,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.client_service import (
+    client_dependency_counts,
+    client_filter_conditions,
+    client_has_contact_condition,
+    ensure_unique_client_contact,
+    strip_optional,
+)
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.routers.equipment_documents import serialize_equipment_document_out
 from app.schemas import (
     ClientCreate,
+    ClientListOut,
+    ClientListSummaryOut,
     ClientOut,
     ClientServiceItemLinkRowOut,
     ClientUpdate,
@@ -45,19 +54,55 @@ def list_clients(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
 ) -> list[Client]:
-    query = select(Client).where(Client.tenant_id == current_user.tenant_id)
-    if q:
-        term = f"%{q}%"
-        query = query.where(
-            or_(
-                Client.name.ilike(term),
-                Client.document.ilike(term),
-                Client.email.ilike(term),
-                Client.phone.ilike(term),
-                Client.whatsapp.ilike(term),
-            )
-        )
+    query = select(Client).where(*client_filter_conditions(current_user.tenant_id, q=q))
     return db.execute(query.order_by(Client.id.desc()).offset(skip).limit(limit)).scalars().all()
+
+
+@router.get("/page", response_model=ClientListOut)
+def list_clients_page(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    q: Annotated[str | None, Query(description="Filter by name, document, email, phone or WhatsApp")] = None,
+    tax_id_kind: Annotated[str | None, Query(pattern="^(cpf|cnpj)$")] = None,
+    contact: Annotated[str | None, Query(pattern="^(with|without)$")] = None,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ClientListOut:
+    conditions = client_filter_conditions(
+        current_user.tenant_id,
+        q=q,
+        tax_id_kind=tax_id_kind,
+        contact=contact,
+    )
+    total = db.execute(select(func.count()).select_from(Client).where(*conditions)).scalar_one()
+    companies = db.execute(
+        select(func.count()).select_from(Client).where(*conditions, Client.tax_id_kind == "cnpj")
+    ).scalar_one()
+    individuals = db.execute(
+        select(func.count()).select_from(Client).where(*conditions, Client.tax_id_kind == "cpf")
+    ).scalar_one()
+    active = db.execute(
+        select(func.count())
+        .select_from(Client)
+        .where(*conditions, client_has_contact_condition())
+    ).scalar_one()
+    items = (
+        db.execute(select(Client).where(*conditions).order_by(Client.id.desc()).offset(skip).limit(limit))
+        .scalars()
+        .all()
+    )
+    return ClientListOut(
+        items=items,
+        total=total,
+        skip=skip,
+        limit=limit,
+        summary=ClientListSummaryOut(
+            total=total,
+            companies=companies,
+            individuals=individuals,
+            active=active,
+        ),
+    )
 
 
 @router.get("/{client_id}", response_model=ClientOut)
@@ -85,7 +130,8 @@ def create_client(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> Client:
-    phone = (payload.phone or "").strip() or None
+    phone = strip_optional(payload.phone)
+    whatsapp = strip_optional(payload.whatsapp)
     if payload.document:
         existing = db.execute(
             select(Client).where(Client.tenant_id == current_user.tenant_id, Client.document == payload.document)
@@ -95,15 +141,8 @@ def create_client(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Já existe um cliente com este CPF/CNPJ nesta empresa.",
             )
-    if phone:
-        existing_phone = db.execute(
-            select(Client).where(Client.tenant_id == current_user.tenant_id, Client.phone == phone)
-        ).scalar_one_or_none()
-        if existing_phone:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Já existe um cliente com este telefone nesta empresa.",
-            )
+    ensure_unique_client_contact(db, tenant_id=current_user.tenant_id, field="phone", value=phone)
+    ensure_unique_client_contact(db, tenant_id=current_user.tenant_id, field="whatsapp", value=whatsapp)
 
     client = Client(
         tenant_id=current_user.tenant_id,
@@ -111,7 +150,7 @@ def create_client(
         document=payload.document,
         tax_id_kind=payload.tax_id_kind,  # set by ClientCreate validator (infer CPF/CNPJ from digits)
         phone=phone,
-        whatsapp=payload.whatsapp,
+        whatsapp=whatsapp,
         email=payload.email.lower() if payload.email else None,
         trade_name=payload.trade_name,
         state_registration=payload.state_registration,
@@ -152,12 +191,6 @@ def update_client(
 
     fields_set = payload.model_fields_set
 
-    def _strip_opt(v: str | None) -> str | None:
-        if v is None:
-            return None
-        s = v.strip()
-        return s or None
-
     if "tax_id_kind" in fields_set and payload.tax_id_kind is not None:
         client.tax_id_kind = payload.tax_id_kind
 
@@ -196,63 +229,65 @@ def update_client(
         client.name = str(payload.name).strip()
 
     if "phone" in fields_set:
-        phone = _strip_opt(payload.phone)
-        if phone:
-            existing_phone = db.execute(
-                select(Client).where(
-                    Client.tenant_id == current_user.tenant_id,
-                    Client.phone == phone,
-                    Client.id != client_id,
-                )
-            ).scalar_one_or_none()
-            if existing_phone:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Já existe um cliente com este telefone nesta empresa.",
-                )
+        phone = strip_optional(payload.phone)
+        ensure_unique_client_contact(
+            db,
+            tenant_id=current_user.tenant_id,
+            field="phone",
+            value=phone,
+            client_id=client_id,
+        )
         client.phone = phone
 
     if "whatsapp" in fields_set:
-        client.whatsapp = payload.whatsapp
+        whatsapp = strip_optional(payload.whatsapp)
+        ensure_unique_client_contact(
+            db,
+            tenant_id=current_user.tenant_id,
+            field="whatsapp",
+            value=whatsapp,
+            client_id=client_id,
+        )
+        client.whatsapp = whatsapp
 
     if "email" in fields_set:
         client.email = payload.email.lower() if payload.email else None
 
     if "trade_name" in fields_set:
-        client.trade_name = _strip_opt(payload.trade_name)
+        client.trade_name = strip_optional(payload.trade_name)
 
     if "state_registration" in fields_set:
-        client.state_registration = _strip_opt(payload.state_registration)
+        client.state_registration = strip_optional(payload.state_registration)
 
     if "ie_indicator" in fields_set:
         client.ie_indicator = payload.ie_indicator
 
     if "municipal_registration" in fields_set:
-        client.municipal_registration = _strip_opt(payload.municipal_registration)
+        client.municipal_registration = strip_optional(payload.municipal_registration)
 
     if "address_street" in fields_set:
-        client.address_street = _strip_opt(payload.address_street)
+        client.address_street = strip_optional(payload.address_street)
 
     if "address_number" in fields_set:
-        client.address_number = _strip_opt(payload.address_number)
+        client.address_number = strip_optional(payload.address_number)
 
     if "address_complement" in fields_set:
-        client.address_complement = _strip_opt(payload.address_complement)
+        client.address_complement = strip_optional(payload.address_complement)
 
     if "address_district" in fields_set:
-        client.address_district = _strip_opt(payload.address_district)
+        client.address_district = strip_optional(payload.address_district)
 
     if "address_city" in fields_set:
-        client.address_city = _strip_opt(payload.address_city)
+        client.address_city = strip_optional(payload.address_city)
 
     if "address_state" in fields_set:
         client.address_state = payload.address_state
 
     if "address_postal_code" in fields_set:
-        client.address_postal_code = _strip_opt(payload.address_postal_code)
+        client.address_postal_code = strip_optional(payload.address_postal_code)
 
     if "address_country" in fields_set:
-        client.address_country = _strip_opt(payload.address_country) or "Brasil"
+        client.address_country = strip_optional(payload.address_country) or "Brasil"
 
     if "address_ibge_code" in fields_set:
         client.address_ibge_code = payload.address_ibge_code
@@ -277,6 +312,17 @@ def delete_client(
     ).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    dependency_counts = client_dependency_counts(db, tenant_id=current_user.tenant_id, client_id=client.id)
+    blockers = [f"{count} {label}" for label, count in dependency_counts.items() if count]
+    if blockers:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Não é possível excluir este cliente porque ele possui vínculos com "
+                f"{', '.join(blockers)}. Remova ou finalize esses vínculos antes de excluir."
+            ),
+        )
 
     db.delete(client)
     db.commit()
