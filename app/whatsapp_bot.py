@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from string import Formatter
 from typing import Any
 
@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from models import (
     Client,
+    FinanceEntry,
+    FinanceEntryStatus,
+    FinanceEntryType,
     ServiceOrder,
     Tenant,
     WhatsappBotFlow,
@@ -111,7 +114,7 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                     {
                         "key": "1",
                         "label": "Segunda via / link de pagamento",
-                        "message": "Informe CPF/CNPJ ou número da OS para localizarmos seu pagamento.",
+                        "next_step_key": "consultar-pendencias",
                     },
                     {
                         "key": "2",
@@ -121,6 +124,13 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                     {"key": "3", "label": "Falar com financeiro", "handoff": True},
                 ],
                 "sort_order": 100,
+            },
+            {
+                "step_key": "consultar-pendencias",
+                "kind": "action",
+                "message_template": "Vou consultar suas pendências financeiras.",
+                "actions": {"builtin": "finance_open_entries"},
+                "sort_order": 200,
             }
         ],
     },
@@ -548,16 +558,20 @@ def delete_step(db: Session, *, tenant_id: int, flow_id: int, step_id: int) -> N
 
 def seed_default_flows(db: Session, *, tenant_id: int) -> dict[str, Any]:
     get_or_create_settings(db, tenant_id=tenant_id)
-    existing_slugs = {
-        row[0]
+    existing_flows = {
+        row.slug: row
         for row in db.execute(
-            select(WhatsappBotFlow.slug).where(WhatsappBotFlow.tenant_id == tenant_id)
-        ).all()
+            select(WhatsappBotFlow)
+            .where(WhatsappBotFlow.tenant_id == tenant_id)
+            .options(selectinload(WhatsappBotFlow.steps))
+        ).scalars().all()
     }
     created = 0
     skipped = 0
     for template in DEFAULT_FLOW_TEMPLATES:
-        if template["slug"] in existing_slugs:
+        existing = existing_flows.get(template["slug"])
+        if existing is not None:
+            _patch_existing_default_flow(db, existing, template)
             skipped += 1
             continue
         payload = dict(template)
@@ -577,7 +591,7 @@ def seed_default_flows(db: Session, *, tenant_id: int) -> dict[str, Any]:
         db.flush()
         for step_payload in steps:
             db.add(_build_step(flow.id, step_payload))
-        existing_slugs.add(flow.slug)
+        existing_flows[flow.slug] = flow
         created += 1
     db.commit()
     return {
@@ -585,6 +599,32 @@ def seed_default_flows(db: Session, *, tenant_id: int) -> dict[str, Any]:
         "skipped_existing": skipped,
         "flows": list_flows(db, tenant_id=tenant_id),
     }
+
+
+def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: dict[str, Any]) -> None:
+    existing_step_keys = {step.step_key for step in flow.steps}
+    for step_payload in template.get("steps") or []:
+        if step_payload.get("step_key") not in existing_step_keys:
+            db.add(_build_step(flow.id, step_payload))
+
+    if template.get("slug") != "financeiro-pagamentos":
+        return
+    first = next((step for step in flow.steps if step.step_key == "inicio"), None)
+    if first is None:
+        return
+    options = _json_loads(first.options_json, [])
+    changed = False
+    for option in options:
+        if str(option.get("key") or "").strip() != "1":
+            continue
+        old_message = str(option.get("message") or "").strip()
+        if old_message == "Informe CPF/CNPJ ou número da OS para localizarmos seu pagamento.":
+            option.pop("message", None)
+            option["next_step_key"] = "consultar-pendencias"
+            changed = True
+    if changed:
+        first.options_json = _json_dumps(options)
+        db.add(first)
 
 
 def _get_session(db: Session, *, tenant_id: int, client_whatsapp: str) -> WhatsappBotSession | None:
@@ -649,6 +689,126 @@ def _format_options(options: list[dict[str, Any]]) -> str:
         elif label:
             lines.append(label)
     return "\n".join(lines)
+
+
+def _money_brl(value: Any) -> str:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f"R$ {amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _date_br(value: date | datetime | None) -> str:
+    if value is None:
+        return "sem vencimento"
+    return value.strftime("%d/%m/%Y")
+
+
+def _status_finance_pt(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else str(value or "")
+    return {
+        "pending": "pendente",
+        "overdue": "vencido",
+        "paid": "pago",
+        "cancelled": "cancelado",
+    }.get(raw, raw)
+
+
+def _finance_entry_matches(db: Session, *, tenant_id: int, client_whatsapp: str, context: dict[str, Any]) -> list[FinanceEntry]:
+    digits = _digits(client_whatsapp)
+    variants = {digits}
+    if digits.startswith("55"):
+        variants.add(digits[2:])
+    if len(digits) > 11:
+        variants.add(digits[-11:])
+        variants.add(digits[-10:])
+    variant_list = [v for v in variants if v]
+
+    service_order_id: int | None = None
+    for key in ("service_order_id", "numero_os"):
+        raw = context.get(key)
+        try:
+            if raw not in (None, ""):
+                service_order_id = int(str(raw))
+                break
+        except (TypeError, ValueError):
+            continue
+
+    conditions = []
+    if variant_list:
+        conditions.append(FinanceEntry.recipient_whatsapp.in_(variant_list))
+    if service_order_id is not None:
+        conditions.append(FinanceEntry.service_order_id == service_order_id)
+
+    client_id = context.get("cliente_id")
+    try:
+        client_id_int = int(str(client_id)) if client_id not in (None, "") else None
+    except (TypeError, ValueError):
+        client_id_int = None
+    if client_id_int is not None:
+        conditions.append(FinanceEntry.service_order.has(ServiceOrder.client_id == client_id_int))
+
+    if not conditions:
+        return []
+
+    return db.execute(
+        select(FinanceEntry)
+        .where(
+            FinanceEntry.tenant_id == tenant_id,
+            FinanceEntry.entry_type == FinanceEntryType.INCOME,
+            FinanceEntry.status.in_([FinanceEntryStatus.PENDING, FinanceEntryStatus.OVERDUE]),
+            or_(*conditions),
+        )
+        .order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc())
+        .limit(5)
+    ).scalars().all()
+
+
+def _finance_open_entries_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+) -> str:
+    entries = _finance_entry_matches(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    if not entries:
+        return (
+            "Não encontrei cobranças em aberto vinculadas a este WhatsApp. "
+            "Envie CPF/CNPJ ou número da OS para um atendente localizar, ou digite *atendente*."
+        )
+
+    lines = ["Encontrei estas cobranças em aberto:"]
+    for entry in entries:
+        provider = (entry.payment_provider or "").strip()
+        gateway = (entry.gateway_payment_id or "").strip()
+        gateway_hint = ""
+        if provider or gateway:
+            gateway_hint = f" | cobrança {provider or 'gateway'} {gateway}".strip()
+        lines.append(
+            f"- #{entry.id}: {entry.description} | {_money_brl(entry.amount)} | "
+            f"venc. {_date_br(entry.due_date)} | {_status_finance_pt(entry.status)}{gateway_hint}"
+        )
+    lines.append(
+        "Se precisar da segunda via/link atualizado, responda *atendente* que o financeiro continua por aqui."
+    )
+    return "\n".join(lines)
+
+
+def _reply_for_action_step(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    step: WhatsappBotStep,
+    context: dict[str, Any],
+) -> str:
+    actions = _json_loads(step.actions_json, {})
+    builtin = str(actions.get("builtin") or "").strip()
+    if builtin == "finance_open_entries":
+        return _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    return _reply_for_step(step, context)
 
 
 def _reply_for_step(step: WhatsappBotStep, context: dict[str, Any]) -> str:
@@ -743,7 +903,11 @@ def _start_flow(
             "paused_until": None,
             "context": context,
         }
-    reply = _reply_for_step(step, context)
+    reply = (
+        _reply_for_action_step(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, step=step, context=context)
+        if step.kind == "action"
+        else _reply_for_step(step, context)
+    )
     ended = step.kind == "end" or not _step_expects_reply(step)
     if persist_session:
         if ended:
@@ -926,7 +1090,17 @@ def route_message(
                     "paused_until": None,
                     "context": context,
                 }
-            reply = _reply_for_step(next_step, context)
+            reply = (
+                _reply_for_action_step(
+                    db,
+                    tenant_id=tenant_id,
+                    client_whatsapp=normalized_client,
+                    step=next_step,
+                    context=context,
+                )
+                if next_step.kind == "action"
+                else _reply_for_step(next_step, context)
+            )
             ended = next_step.kind == "end" or not _step_expects_reply(next_step)
             if persist_session:
                 if ended:
