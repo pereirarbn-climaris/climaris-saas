@@ -64,6 +64,12 @@ export type WhatsappBotSeedDefaultsResponse = {
   flows: WhatsappBotFlow[];
 };
 
+export type WhatsappBotStatus = {
+  entitlement_active: boolean;
+  entitlement_status: string | null;
+  blocked_reason: string | null;
+};
+
 export type WhatsappBotSession = {
   id: number;
   tenant_id: number;
@@ -77,6 +83,14 @@ export type WhatsappBotSession = {
   last_outgoing_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type WhatsappBotEvent = {
+  id: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  job_id: number | null;
+  created_at: string;
 };
 
 function authHeaders(json = false): HeadersInit {
@@ -108,6 +122,13 @@ export async function getWhatsappBotSettings(): Promise<WhatsappBotSettings> {
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o bot."));
   return body as WhatsappBotSettings;
+}
+
+export async function getWhatsappBotStatus(): Promise<WhatsappBotStatus> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/bot/status"), { headers: authHeaders() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o status do módulo WhatsApp."));
+  return body as WhatsappBotStatus;
 }
 
 export async function patchWhatsappBotSettings(patch: Partial<{
@@ -294,4 +315,11 @@ export async function clearWhatsappBotSession(sessionId: number): Promise<void> 
   });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível limpar a conversa."));
+}
+
+export async function listWhatsappBotEvents(): Promise<WhatsappBotEvent[]> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/bot/events"), { headers: authHeaders() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o histórico do bot."));
+  return body as WhatsappBotEvent[];
 }

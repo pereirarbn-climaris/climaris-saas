@@ -265,6 +265,12 @@ class WhatsappBotSeedDefaultsResponse(BaseModel):
     flows: list[WhatsappBotFlowOut]
 
 
+class WhatsappBotStatusOut(BaseModel):
+    entitlement_active: bool
+    entitlement_status: str | None = None
+    blocked_reason: str | None = None
+
+
 class WhatsappBotSessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -280,3 +286,11 @@ class WhatsappBotSessionOut(BaseModel):
     last_outgoing_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class WhatsappBotEventOut(BaseModel):
+    id: int
+    event_type: str
+    payload: dict[str, Any]
+    job_id: int | None = None
+    created_at: datetime

@@ -147,6 +147,25 @@ def create_asaas_payment(
     return True, None, pay_id, invoice_url
 
 
+def get_asaas_payment_invoice_url(
+    *,
+    api_key: str,
+    sandbox: bool,
+    payment_id: str,
+) -> tuple[bool, str | None, str | None]:
+    """GET /payments/{id}. Retorna (ok, erro, invoice_url)."""
+    pid = (payment_id or "").strip()
+    if not pid:
+        return False, "ID da cobrança ausente.", None
+    ok, err, data = asaas_api_json("GET", f"/payments/{pid}", api_key=api_key, sandbox=sandbox)
+    if not ok or data is None:
+        return False, err, None
+    if not isinstance(data, dict):
+        return False, "Resposta inválida ao consultar cobrança.", None
+    invoice_url = str(data.get("invoiceUrl") or data.get("bankSlipUrl") or "").strip() or None
+    return True, None, invoice_url
+
+
 def delete_asaas_webhook(*, api_key: str, sandbox: bool, webhook_id: str) -> tuple[bool, str | None]:
     """DELETE /webhooks/{id}. HTTP 404 conta como sucesso (já remoto)."""
     wid = (webhook_id or "").strip()

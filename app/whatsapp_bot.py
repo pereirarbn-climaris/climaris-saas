@@ -12,6 +12,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.asaas_client import get_asaas_payment_invoice_url
+from app.security import decrypt_platform_secret
 from models import (
     Budget,
     BudgetStatus,
@@ -19,9 +21,11 @@ from models import (
     FinanceEntry,
     FinanceEntryStatus,
     FinanceEntryType,
+    FinanceGatewayProvider,
     OrderStatus,
     ServiceOrder,
     Tenant,
+    TenantFinanceGateway,
     WhatsappBotFlow,
     WhatsappBotSession,
     WhatsappBotSettings,
@@ -44,7 +48,7 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
     {
         "slug": "orcamento-valores",
         "name": "Orçamento e valores",
-        "description": "Coleta dados básicos para orçamento, limpeza, instalação ou manutenção.",
+        "description": "Coleta dados para orçamento de limpeza, instalação ou manutenção e abre rascunho no SaaS.",
         "enabled": True,
         "trigger_type": "menu_option",
         "trigger_keywords": ["1", "orçamento", "orcamento", "valor", "preço", "preco", "limpeza"],
@@ -54,8 +58,11 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                 "step_key": "inicio",
                 "kind": "question",
                 "message_template": (
-                    "Claro! Para preparar seu orçamento, me envie em uma mensagem:\n"
-                    "- serviço desejado\n- cidade/bairro\n- quantidade de equipamentos\n- uma breve descrição do problema"
+                    "Perfeito! Para agilizar seu orçamento, me envie em uma única mensagem:\n"
+                    "1) serviço desejado (limpeza, manutenção, instalação etc.)\n"
+                    "2) cidade/bairro\n"
+                    "3) quantidade e tipo dos equipamentos\n"
+                    "4) urgência e uma breve descrição do problema"
                 ),
                 "actions": {"save_as": "dados_orcamento"},
                 "next_step_key": "final",
@@ -65,7 +72,7 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                 "step_key": "final",
                 "kind": "action",
                 "message_template": (
-                    "Recebido, {nome_cliente}! Nossa equipe vai analisar e retornar com o orçamento. "
+                    "Recebido, {nome_cliente}! Já registrei sua solicitação para nossa equipe montar o orçamento. "
                     "Se preferir atendimento imediato, digite *atendente*."
                 ),
                 "actions": {"builtin": "create_budget_draft"},
@@ -76,7 +83,7 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
     {
         "slug": "agendamento-visita",
         "name": "Agendar visita",
-        "description": "Coleta melhor dia/horário para visita técnica.",
+        "description": "Coleta preferência de agenda e abre OS de solicitação para confirmação da equipe.",
         "enabled": True,
         "trigger_type": "menu_option",
         "trigger_keywords": ["2", "agendar", "agenda", "visita", "horário", "horario"],
@@ -85,7 +92,10 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             {
                 "step_key": "inicio",
                 "kind": "question",
-                "message_template": "Perfeito. Informe o melhor dia/horário, endereço e uma referência do local.",
+                "message_template": (
+                    "Perfeito. Para solicitar a visita, envie:\n"
+                    "1) melhor dia/horário\n2) endereço completo\n3) referência do local\n4) breve descrição do serviço"
+                ),
                 "actions": {"save_as": "preferencia_agendamento"},
                 "next_step_key": "final",
                 "sort_order": 100,
@@ -94,7 +104,7 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                 "step_key": "final",
                 "kind": "action",
                 "message_template": (
-                    "Obrigado! Vamos conferir a agenda e confirmar a visita. "
+                    "Obrigado! Sua solicitação foi registrada para conferência da agenda. "
                     "Caso seja urgente, digite *atendente*."
                 ),
                 "actions": {"builtin": "create_schedule_request"},
@@ -105,7 +115,7 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
     {
         "slug": "financeiro-pagamentos",
         "name": "Financeiro e pagamentos",
-        "description": "Direciona dúvidas de pagamento, segunda via e financeiro.",
+        "description": "Consulta cobranças abertas por WhatsApp/OS e direciona dúvidas financeiras.",
         "enabled": True,
         "trigger_type": "menu_option",
         "trigger_keywords": ["3", "financeiro", "pagamento", "boleto", "pix", "segunda via"],
@@ -114,17 +124,17 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             {
                 "step_key": "inicio",
                 "kind": "menu",
-                "message_template": "Como podemos ajudar no financeiro?",
+                "message_template": "Como podemos ajudar no financeiro hoje?",
                 "options": [
                     {
                         "key": "1",
-                        "label": "Segunda via / link de pagamento",
+                        "label": "Ver pendências / segunda via",
                         "next_step_key": "consultar-pendencias",
                     },
                     {
                         "key": "2",
                         "label": "Confirmar pagamento",
-                        "message": "Envie o comprovante por aqui. Nossa equipe vai validar e retornar.",
+                        "message": "Pode enviar o comprovante por aqui. Nossa equipe vai validar e retornar.",
                     },
                     {"key": "3", "label": "Falar com financeiro", "handoff": True},
                 ],
@@ -159,8 +169,8 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                 "options": [
                     {
                         "key": "1",
-                        "label": "Formas de pagamento",
-                        "message": "Nossa equipe vai enviar as formas de pagamento disponíveis para esta OS.",
+                        "label": "Ver pagamento desta OS",
+                        "next_step_key": "consultar-pagamento-os",
                     },
                     {
                         "key": "2",
@@ -170,6 +180,13 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                     {"key": "3", "label": "Falar com atendente", "handoff": True},
                 ],
                 "sort_order": 100,
+            },
+            {
+                "step_key": "consultar-pagamento-os",
+                "kind": "action",
+                "message_template": "Vou consultar as cobranças abertas desta OS.",
+                "actions": {"builtin": "finance_open_entries"},
+                "sort_order": 150,
             },
             {
                 "step_key": "coletar-dados-nf",
@@ -834,6 +851,30 @@ def _finance_entry_matches(db: Session, *, tenant_id: int, client_whatsapp: str,
     ).scalars().all()
 
 
+def _asaas_invoice_url_for_entry(db: Session, *, tenant_id: int, entry: FinanceEntry) -> str | None:
+    payment_id = (entry.gateway_payment_id or "").strip()
+    if not payment_id:
+        return None
+    gateway = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
+        )
+    ).scalar_one_or_none()
+    if gateway is None or not gateway.asaas_api_key_encrypted:
+        return None
+    try:
+        api_key = decrypt_platform_secret(gateway.asaas_api_key_encrypted)
+        ok, _, url = get_asaas_payment_invoice_url(
+            api_key=api_key,
+            sandbox=bool(gateway.asaas_sandbox),
+            payment_id=payment_id,
+        )
+    except Exception:
+        return None
+    return url if ok and url else None
+
+
 def _finance_open_entries_reply(
     db: Session,
     *,
@@ -855,13 +896,14 @@ def _finance_open_entries_reply(
         gateway_hint = ""
         if provider or gateway:
             gateway_hint = f" | cobrança {provider or 'gateway'} {gateway}".strip()
+        invoice_url = _asaas_invoice_url_for_entry(db, tenant_id=tenant_id, entry=entry)
         lines.append(
             f"- #{entry.id}: {entry.description} | {_money_brl(entry.amount)} | "
             f"venc. {_date_br(entry.due_date)} | {_status_finance_pt(entry.status)}{gateway_hint}"
         )
-    lines.append(
-        "Se precisar da segunda via/link atualizado, responda *atendente* que o financeiro continua por aqui."
-    )
+        if invoice_url:
+            lines.append(f"  Link de pagamento: {invoice_url}")
+    lines.append("Se precisar ajustar forma de pagamento, responda *atendente* que o financeiro continua por aqui.")
     return "\n".join(lines)
 
 

@@ -6,3 +6,5 @@ signxml>=3.2.0
 lxml>=5.0.0
 # Certificado A1 (.pfx) e TLS mTLS — usado em app/nfse_pfx_ssl.py e routers/nfse.py
 cryptography>=41.0.0
+# Testes automatizados
+pytest>=8.0.0

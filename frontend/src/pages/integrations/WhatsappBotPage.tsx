@@ -6,7 +6,9 @@ import {
   clearWhatsappBotSession,
   deleteWhatsappBotFlow,
   deleteWhatsappBotStep,
+  getWhatsappBotStatus,
   getWhatsappBotSettings,
+  listWhatsappBotEvents,
   listWhatsappBotSessions,
   listWhatsappBotFlows,
   patchWhatsappBotFlow,
@@ -14,9 +16,11 @@ import {
   patchWhatsappBotStep,
   seedWhatsappBotDefaultFlows,
   testWhatsappBotMessage,
+  type WhatsappBotEvent,
   type WhatsappBotFlow,
   type WhatsappBotSession,
   type WhatsappBotSettings,
+  type WhatsappBotStatus,
   type WhatsappBotStep,
   type WhatsappBotTestResponse,
 } from "../../api/whatsappBot";
@@ -150,8 +154,10 @@ export function WhatsappBotPage() {
   const canView = role === "admin" || role === "receptionist";
 
   const [settings, setSettings] = useState<WhatsappBotSettings | null>(null);
+  const [moduleStatus, setModuleStatus] = useState<WhatsappBotStatus | null>(null);
   const [flows, setFlows] = useState<WhatsappBotFlow[]>([]);
   const [sessions, setSessions] = useState<WhatsappBotSession[]>([]);
+  const [events, setEvents] = useState<WhatsappBotEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
@@ -203,10 +209,25 @@ export function WhatsappBotPage() {
     setLoading(true);
     setErr("");
     try {
-      const [st, fl, ss] = await Promise.all([getWhatsappBotSettings(), listWhatsappBotFlows(), listWhatsappBotSessions()]);
+      const status = await getWhatsappBotStatus();
+      setModuleStatus(status);
+      if (!status.entitlement_active) {
+        setSettings(null);
+        setFlows([]);
+        setSessions([]);
+        setEvents([]);
+        return;
+      }
+      const [st, fl, ss, ev] = await Promise.all([
+        getWhatsappBotSettings(),
+        listWhatsappBotFlows(),
+        listWhatsappBotSessions(),
+        listWhatsappBotEvents(),
+      ]);
       setSettings(st);
       setFlows(fl);
       setSessions(ss);
+      setEvents(ev);
       setEnabled(st.enabled);
       setWelcome(st.welcome_message);
       setFallback(st.fallback_message);
@@ -522,6 +543,32 @@ export function WhatsappBotPage() {
         <Link to="/app" className={styles.btnGhost}>
           Voltar ao painel
         </Link>
+      </div>
+    );
+  }
+
+  if (!loading && moduleStatus && !moduleStatus.entitlement_active) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.hero}>
+          <div className={styles.heroInner}>
+            <p className={styles.eyebrow}>Integrações</p>
+            <h1 className={styles.heroTitle}>Bot WhatsApp</h1>
+            <p className={styles.heroLead}>As configurações do bot ficam disponíveis após liberação do módulo WhatsApp.</p>
+            <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
+              <Link to="/app/marketplace" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
+                Abrir Loja de integrações
+              </Link>
+            </p>
+          </div>
+        </header>
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>Acesso bloqueado</h2>
+          <p className={styles.hint}>
+            {moduleStatus.blocked_reason ?? "Módulo WhatsApp não contratado ou pendente de aprovação."}
+            {moduleStatus.entitlement_status ? ` Status atual: ${moduleStatus.entitlement_status}.` : ""}
+          </p>
+        </section>
       </div>
     );
   }
@@ -980,6 +1027,39 @@ export function WhatsappBotPage() {
               <p className={styles.hint} style={{ marginTop: "0.75rem" }}>
                 Nenhuma conversa ativa ou pausada no bot ainda.
               </p>
+            )}
+          </section>
+
+          <section className={styles.card} style={{ marginTop: "1.25rem" }}>
+            <h2 className={styles.cardTitle}>Histórico do bot</h2>
+            <p className={styles.hint}>
+              Últimos eventos de entrada, resposta e falha do bot. Use para auditar o que aconteceu no WhatsApp real.
+            </p>
+            {events.length ? (
+              <div className={styles.tableWrap} style={{ marginTop: "1rem" }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Quando</th>
+                      <th>Evento</th>
+                      <th>Job</th>
+                      <th>Payload</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {events.map((event) => (
+                      <tr key={event.id}>
+                        <td>{formatDateTime(event.created_at)}</td>
+                        <td>{event.event_type}</td>
+                        <td>{event.job_id ?? "—"}</td>
+                        <td className={styles.mono}>{JSON.stringify(event.payload).slice(0, 220)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className={styles.hint} style={{ marginTop: "0.75rem" }}>Nenhum evento do bot registrado ainda.</p>
             )}
           </section>
         </>
