@@ -64,6 +64,21 @@ export type WhatsappBotSeedDefaultsResponse = {
   flows: WhatsappBotFlow[];
 };
 
+export type WhatsappBotSession = {
+  id: number;
+  tenant_id: number;
+  client_whatsapp: string;
+  current_flow_id: number | null;
+  current_flow_name: string | null;
+  current_step_key: string | null;
+  context: Record<string, unknown>;
+  paused_until: string | null;
+  last_incoming_at: string | null;
+  last_outgoing_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 function authHeaders(json = false): HeadersInit {
   const token = getAccessToken();
   if (!token) throw new Error("Sessão expirada.");
@@ -263,4 +278,20 @@ export async function testWhatsappBotMessage(payload: {
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível testar o bot."));
   return body as WhatsappBotTestResponse;
+}
+
+export async function listWhatsappBotSessions(): Promise<WhatsappBotSession[]> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/bot/sessions"), { headers: authHeaders() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar as conversas do bot."));
+  return body as WhatsappBotSession[];
+}
+
+export async function clearWhatsappBotSession(sessionId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/whatsapp/bot/sessions/${sessionId}`), {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível limpar a conversa."));
 }
