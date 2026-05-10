@@ -20,10 +20,33 @@ import {
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./WhatsappIntegrationPage.module.css";
 
-const DEFAULT_STEP_OPTIONS = `[
-  { "key": "1", "label": "Receber informações", "message": "Perfeito! Nossa equipe vai continuar por aqui." },
-  { "key": "2", "label": "Falar com atendente", "handoff": true }
-]`;
+type StepOptionDraft = {
+  key: string;
+  label: string;
+  message: string;
+  next_step_key: string;
+  handoff: boolean;
+  aliasesText: string;
+};
+
+const DEFAULT_OPTION_ROWS: StepOptionDraft[] = [
+  {
+    key: "1",
+    label: "Receber informações",
+    message: "Perfeito! Nossa equipe vai continuar por aqui.",
+    next_step_key: "",
+    handoff: false,
+    aliasesText: "",
+  },
+  {
+    key: "2",
+    label: "Falar com atendente",
+    message: "",
+    next_step_key: "",
+    handoff: true,
+    aliasesText: "atendente, humano",
+  },
+];
 
 function keywordsToText(items: string[]): string {
   return items.join(", ");
@@ -36,10 +59,6 @@ function textToKeywords(value: string): string[] {
     .filter(Boolean);
 }
 
-function jsonString(value: unknown): string {
-  return JSON.stringify(value ?? {}, null, 2);
-}
-
 function parseJsonObject(value: string, label: string): Record<string, unknown> {
   if (!value.trim()) return {};
   const parsed = JSON.parse(value) as unknown;
@@ -49,13 +68,44 @@ function parseJsonObject(value: string, label: string): Record<string, unknown> 
   return parsed as Record<string, unknown>;
 }
 
-function parseJsonArray(value: string, label: string): Array<Record<string, unknown>> {
-  if (!value.trim()) return [];
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${label} deve ser uma lista JSON.`);
+function stringFromUnknown(value: unknown): string {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function optionRowsFromOptions(options: Array<Record<string, unknown>>): StepOptionDraft[] {
+  if (!options.length) return [];
+  return options.map((option, index) => {
+    const aliases = Array.isArray(option.aliases) ? option.aliases.map(stringFromUnknown).filter(Boolean) : [];
+    return {
+      key: stringFromUnknown(option.key || option.value) || String(index + 1),
+      label: stringFromUnknown(option.label || option.text),
+      message: stringFromUnknown(option.message),
+      next_step_key: stringFromUnknown(option.next_step_key || option.next),
+      handoff: Boolean(option.handoff),
+      aliasesText: aliases.join(", "),
+    };
+  });
+}
+
+function optionsFromRows(rows: StepOptionDraft[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const row of rows) {
+    const key = row.key.trim();
+    const label = row.label.trim();
+    const message = row.message.trim();
+    const next = row.next_step_key.trim();
+    const aliases = textToKeywords(row.aliasesText);
+    if (!key && !label && !message && !next && !row.handoff && !aliases.length) continue;
+    out.push({
+      key: key || label,
+      label: label || key,
+      ...(message ? { message } : {}),
+      ...(next ? { next_step_key: next } : {}),
+      ...(row.handoff ? { handoff: true } : {}),
+      ...(aliases.length ? { aliases } : {}),
+    });
   }
-  return parsed.map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : { value: item }));
+  return out;
 }
 
 function firstStep(flow: WhatsappBotFlow | null): WhatsappBotStep | null {
@@ -107,8 +157,8 @@ export function WhatsappBotPage() {
   const [stepKey, setStepKey] = useState("inicio");
   const [stepKind, setStepKind] = useState("message");
   const [stepMessage, setStepMessage] = useState("");
-  const [stepOptions, setStepOptions] = useState("[]");
-  const [stepActions, setStepActions] = useState("{}");
+  const [stepOptionRows, setStepOptionRows] = useState<StepOptionDraft[]>([]);
+  const [stepSaveAs, setStepSaveAs] = useState("");
   const [stepNext, setStepNext] = useState("");
   const [stepOrder, setStepOrder] = useState<number>(100);
 
@@ -171,8 +221,8 @@ export function WhatsappBotPage() {
       setStepKey("inicio");
       setStepKind("message");
       setStepMessage("");
-      setStepOptions("[]");
-      setStepActions("{}");
+      setStepOptionRows([]);
+      setStepSaveAs("");
       setStepNext("");
       setStepOrder(100);
       return;
@@ -180,8 +230,8 @@ export function WhatsappBotPage() {
     setStepKey(selectedStep.step_key);
     setStepKind(selectedStep.kind);
     setStepMessage(selectedStep.message_template);
-    setStepOptions(jsonString(selectedStep.options));
-    setStepActions(jsonString(selectedStep.actions));
+    setStepOptionRows(optionRowsFromOptions(selectedStep.options));
+    setStepSaveAs(stringFromUnknown(selectedStep.actions.save_as));
     setStepNext(selectedStep.next_step_key ?? "");
     setStepOrder(selectedStep.sort_order);
   }, [selectedStep, editingStepId]);
@@ -237,8 +287,8 @@ export function WhatsappBotPage() {
     setErr("");
     setOk("");
     try {
-      const options = stepKind === "menu" ? parseJsonArray(stepOptions, "Opções") : [];
-      const actions = parseJsonObject(stepActions, "Ações");
+      const options = optionsFromRows(stepOptionRows);
+      const actions = stepSaveAs.trim() ? { save_as: stepSaveAs.trim() } : {};
       const flow = await createWhatsappBotFlow({
         slug: flowSlug || flowName,
         name: flowName,
@@ -320,8 +370,8 @@ export function WhatsappBotPage() {
     setErr("");
     setOk("");
     try {
-      const options = parseJsonArray(stepOptions, "Opções");
-      const actions = parseJsonObject(stepActions, "Ações");
+      const options = optionsFromRows(stepOptionRows);
+      const actions = stepSaveAs.trim() ? { save_as: stepSaveAs.trim() } : {};
       if (selectedStep && !creatingStep) {
         await patchWhatsappBotStep(selectedFlow.id, selectedStep.id, {
           step_key: stepKey,
@@ -358,10 +408,25 @@ export function WhatsappBotPage() {
     setStepKey(`passo-${(selectedFlow?.steps.length ?? 0) + 1}`);
     setStepKind("message");
     setStepMessage("Digite a mensagem deste passo.");
-    setStepOptions("[]");
-    setStepActions("{}");
+    setStepOptionRows([]);
+    setStepSaveAs("");
     setStepNext("");
     setStepOrder(((selectedFlow?.steps.length ?? 0) + 1) * 100);
+  }
+
+  function updateOptionRow(index: number, patch: Partial<StepOptionDraft>) {
+    setStepOptionRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function removeOptionRow(index: number) {
+    setStepOptionRows((rows) => rows.filter((_, i) => i !== index));
+  }
+
+  function addOptionRow() {
+    setStepOptionRows((rows) => [
+      ...rows,
+      { key: String(rows.length + 1), label: "", message: "", next_step_key: "", handoff: false, aliasesText: "" },
+    ]);
   }
 
   async function onDeleteStep(step: WhatsappBotStep) {
@@ -645,6 +710,22 @@ export function WhatsappBotPage() {
                 <input id="step-next" className={styles.textInput} value={stepNext} disabled={!canConfigure} onChange={(e) => setStepNext(e.target.value)} />
                 <label className={styles.fieldLabel} htmlFor="step-order" style={{ marginTop: "0.85rem" }}>Ordem</label>
                 <input id="step-order" type="number" className={styles.textInput} value={stepOrder} disabled={!canConfigure} onChange={(e) => setStepOrder(Number(e.target.value || 100))} />
+                {stepKind === "question" ? (
+                  <>
+                    <label className={styles.fieldLabel} htmlFor="step-save-as" style={{ marginTop: "0.85rem" }}>
+                      Salvar resposta como
+                    </label>
+                    <input
+                      id="step-save-as"
+                      className={styles.textInput}
+                      value={stepSaveAs}
+                      disabled={!canConfigure}
+                      onChange={(e) => setStepSaveAs(e.target.value)}
+                      placeholder="Ex.: cidade, dados_orcamento"
+                    />
+                    <p className={styles.hint}>Use uma chave simples para guardar a resposta no contexto do atendimento.</p>
+                  </>
+                ) : null}
               </div>
               <div>
                 <label className={styles.fieldLabel} htmlFor="step-message">Mensagem do passo</label>
@@ -653,20 +734,112 @@ export function WhatsappBotPage() {
               </div>
             </div>
 
-            <div className={styles.grid}>
-              <div>
-                <label className={styles.fieldLabel} htmlFor="step-options">Opções JSON</label>
-                <textarea id="step-options" className={styles.textarea} value={stepOptions} disabled={!canConfigure} onChange={(e) => setStepOptions(e.target.value)} />
-                <button type="button" className={styles.btnGhost} style={{ marginTop: "0.5rem" }} disabled={!canConfigure} onClick={() => setStepOptions(DEFAULT_STEP_OPTIONS)}>
-                  Usar exemplo
-                </button>
+            <section className={styles.card} style={{ marginTop: "1rem", background: "var(--color-surface, #f8f9fb)" }}>
+              <div className={styles.row} style={{ justifyContent: "space-between" }}>
+                <div>
+                  <h3 className={styles.cardTitle} style={{ marginBottom: "0.25rem" }}>Opções e respostas</h3>
+                  <p className={styles.hint} style={{ marginTop: 0 }}>
+                    Use para passos do tipo menu. Cada opção pode responder direto, ir para outro passo ou chamar atendente.
+                  </p>
+                </div>
+                {canConfigure ? (
+                  <div className={styles.actions} style={{ marginTop: 0 }}>
+                    <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => setStepOptionRows(DEFAULT_OPTION_ROWS)}>
+                      Usar exemplo
+                    </button>
+                    <button type="button" className={styles.btnPrimary} disabled={busy} onClick={addOptionRow}>
+                      Adicionar opção
+                    </button>
+                  </div>
+                ) : null}
               </div>
-              <div>
-                <label className={styles.fieldLabel} htmlFor="step-actions">Ações JSON</label>
-                <textarea id="step-actions" className={styles.textarea} value={stepActions} disabled={!canConfigure} onChange={(e) => setStepActions(e.target.value)} />
-                <p className={styles.hint}>Para pergunta, use por exemplo: {"{\"save_as\":\"cidade\"}"}.</p>
-              </div>
-            </div>
+
+              {stepOptionRows.length ? (
+                <div className={styles.checkGrid} style={{ marginTop: "1rem" }}>
+                  {stepOptionRows.map((row, index) => (
+                    <div key={index} className={styles.card}>
+                      <div className={styles.grid} style={{ marginBottom: 0 }}>
+                        <div>
+                          <label className={styles.fieldLabel} htmlFor={`option-key-${index}`}>Opção digitada</label>
+                          <input
+                            id={`option-key-${index}`}
+                            className={styles.textInput}
+                            value={row.key}
+                            disabled={!canConfigure}
+                            onChange={(e) => updateOptionRow(index, { key: e.target.value })}
+                            placeholder="Ex.: 1"
+                          />
+                          <label className={styles.fieldLabel} htmlFor={`option-label-${index}`} style={{ marginTop: "0.75rem" }}>Texto no menu</label>
+                          <input
+                            id={`option-label-${index}`}
+                            className={styles.textInput}
+                            value={row.label}
+                            disabled={!canConfigure}
+                            onChange={(e) => updateOptionRow(index, { label: e.target.value })}
+                            placeholder="Ex.: Orçamento"
+                          />
+                          <label className={styles.fieldLabel} htmlFor={`option-alias-${index}`} style={{ marginTop: "0.75rem" }}>Atalhos opcionais</label>
+                          <input
+                            id={`option-alias-${index}`}
+                            className={styles.textInput}
+                            value={row.aliasesText}
+                            disabled={!canConfigure}
+                            onChange={(e) => updateOptionRow(index, { aliasesText: e.target.value })}
+                            placeholder="Ex.: orçamento, valor"
+                          />
+                        </div>
+                        <div>
+                          <label className={styles.fieldLabel} htmlFor={`option-message-${index}`}>Resposta imediata</label>
+                          <textarea
+                            id={`option-message-${index}`}
+                            className={styles.textarea}
+                            value={row.message}
+                            disabled={!canConfigure || row.handoff}
+                            onChange={(e) => updateOptionRow(index, { message: e.target.value })}
+                            placeholder="Mensagem enviada quando esta opção não aponta para outro passo."
+                          />
+                          <label className={styles.fieldLabel} htmlFor={`option-next-${index}`} style={{ marginTop: "0.75rem" }}>Ir para passo</label>
+                          <input
+                            id={`option-next-${index}`}
+                            className={styles.textInput}
+                            value={row.next_step_key}
+                            disabled={!canConfigure || row.handoff}
+                            onChange={(e) => updateOptionRow(index, { next_step_key: e.target.value })}
+                            placeholder="Ex.: coletar-cidade"
+                          />
+                          <label className={styles.checkRow} style={{ marginTop: "0.75rem" }}>
+                            <input
+                              type="checkbox"
+                              checked={row.handoff}
+                              disabled={!canConfigure}
+                              onChange={(e) =>
+                                updateOptionRow(index, {
+                                  handoff: e.target.checked,
+                                  message: e.target.checked ? "" : row.message,
+                                  next_step_key: e.target.checked ? "" : row.next_step_key,
+                                })
+                              }
+                            />
+                            Falar com atendente e pausar bot
+                          </label>
+                          {canConfigure ? (
+                            <div className={styles.actions}>
+                              <button type="button" className={styles.btnDanger} disabled={busy} onClick={() => removeOptionRow(index)}>
+                                Remover opção
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className={styles.hint} style={{ marginTop: "0.75rem" }}>
+                  Nenhuma opção configurada para este passo. Para mensagens simples ou perguntas abertas, isso é normal.
+                </p>
+              )}
+            </section>
 
             {canConfigure ? (
               <div className={styles.actions}>
