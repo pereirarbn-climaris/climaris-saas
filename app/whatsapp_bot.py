@@ -226,6 +226,24 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
         ],
     },
     {
+        "slug": "consulta-status",
+        "name": "Consultar status",
+        "description": "Consulta últimos orçamentos e ordens de serviço pelo WhatsApp do cliente.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["6", "status", "andamento", "acompanhar", "consulta", "pedido", "os"],
+        "priority": 35,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "action",
+                "message_template": "Vou consultar os registros vinculados ao seu WhatsApp.",
+                "actions": {"builtin": "lookup_status"},
+                "sort_order": 100,
+            }
+        ],
+    },
+    {
         "slug": "nota-fiscal",
         "name": "Nota fiscal",
         "description": "Coleta dados para solicitação de nota fiscal.",
@@ -855,6 +873,106 @@ def _status_finance_pt(value: Any) -> str:
     }.get(raw, raw)
 
 
+def _status_budget_pt(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else str(value or "")
+    return {
+        "draft": "rascunho",
+        "sent": "enviado",
+        "approved": "aprovado",
+        "rejected": "recusado",
+        "expired": "expirado",
+    }.get(raw, raw)
+
+
+def _status_order_pt(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else str(value or "")
+    return {
+        "open": "aberta",
+        "approved": "aprovada",
+        "scheduled": "agendada",
+        "in_progress": "em andamento",
+        "done": "concluída",
+        "cancelled": "cancelada",
+    }.get(raw, raw)
+
+
+def _context_client_id(context: dict[str, Any]) -> int | None:
+    raw = context.get("cliente_id")
+    try:
+        return int(str(raw)) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _ids_from_text(value: str | None) -> list[int]:
+    ids: list[int] = []
+    for raw in re.findall(r"\d+", value or ""):
+        try:
+            n = int(raw)
+        except ValueError:
+            continue
+        if n > 0 and n not in ids:
+            ids.append(n)
+    return ids[:5]
+
+
+def _lookup_status_reply(db: Session, *, tenant_id: int, client_whatsapp: str, context: dict[str, Any]) -> str:
+    client_id = _context_client_id(context)
+    explicit_ids = _ids_from_text(str(context.get("mensagem_cliente") or ""))
+
+    budget_conditions = []
+    order_conditions = []
+    if client_id is not None:
+        budget_conditions.append(Budget.client_id == client_id)
+        order_conditions.append(ServiceOrder.client_id == client_id)
+    if explicit_ids:
+        budget_conditions.append(Budget.id.in_(explicit_ids))
+        order_conditions.append(ServiceOrder.id.in_(explicit_ids))
+
+    if not budget_conditions and not order_conditions:
+        return (
+            "Não encontrei seu cadastro pelo WhatsApp. Envie o número do orçamento/OS ou digite *atendente* "
+            "para a equipe consultar manualmente."
+        )
+
+    budgets = db.execute(
+        select(Budget)
+        .where(Budget.tenant_id == tenant_id, or_(*budget_conditions))
+        .order_by(Budget.created_at.desc(), Budget.id.desc())
+        .limit(3)
+    ).scalars().all() if budget_conditions else []
+    orders = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.tenant_id == tenant_id, or_(*order_conditions))
+        .order_by(ServiceOrder.opened_at.desc(), ServiceOrder.id.desc())
+        .limit(3)
+    ).scalars().all() if order_conditions else []
+
+    if not budgets and not orders:
+        return (
+            "Não encontrei orçamento ou OS em aberto para este WhatsApp/número informado. "
+            "Digite *atendente* para a equipe conferir."
+        )
+
+    lines = ["Encontrei estes registros:"]
+    if budgets:
+        lines.append("\nOrçamentos:")
+        for budget in budgets:
+            lines.append(
+                f"- Orçamento #{budget.id}: {budget.title} | status {_status_budget_pt(budget.status)} | "
+                f"criado em {_date_br(budget.created_at)}"
+            )
+    if orders:
+        lines.append("\nOrdens de serviço:")
+        for order in orders:
+            lines.append(
+                f"- OS #{order.id}: {order.title} | status {_status_order_pt(order.status)} | "
+                f"aberta em {_date_br(order.opened_at)}"
+            )
+    lines.append("\nPara detalhes ou alteração, digite *atendente*.")
+    return "\n".join(lines)
+
+
 def _finance_entry_matches(db: Session, *, tenant_id: int, client_whatsapp: str, context: dict[str, Any]) -> list[FinanceEntry]:
     digits = _digits(client_whatsapp)
     variants = {digits}
@@ -1239,6 +1357,8 @@ def _reply_for_action_step(
 ) -> str:
     actions = _json_loads(step.actions_json, {})
     builtin = str(actions.get("builtin") or "").strip()
+    if builtin == "lookup_status":
+        return _lookup_status_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
     if builtin == "finance_open_entries":
         return _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
     if builtin == "create_budget_draft":
@@ -1446,6 +1566,8 @@ def route_message(
     settings = get_or_create_settings(db, tenant_id=tenant_id)
     normalized_client = _normalize_client_whatsapp(client_whatsapp)
     context = _base_context(db, tenant_id=tenant_id, client_whatsapp=normalized_client, extra=context_extra)
+    if message_text.strip():
+        context["mensagem_cliente"] = message_text.strip()
     if not settings.enabled and not ignore_enabled:
         return {"matched": False, "reply_text": None, "context": context, "ended": True, "handoff": False}
 

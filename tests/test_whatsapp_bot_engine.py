@@ -17,6 +17,7 @@ def test_source_declares_core_bot_actions():
     assert "finance_open_entries" in source
     assert "register_nf_request" in source
     assert "register_satisfaction_feedback" in source
+    assert "lookup_status" in source
 
 
 def test_template_render_missing_variables_are_blank():
@@ -36,6 +37,7 @@ def test_default_flows_include_core_business_actions():
     assert flows["orcamento-valores"]["steps"][-1]["actions"]["builtin"] == "create_budget_draft"
     assert flows["agendamento-visita"]["steps"][-1]["actions"]["builtin"] == "create_schedule_request"
     assert flows["financeiro-pagamentos"]["steps"][1]["actions"]["builtin"] == "finance_open_entries"
+    assert flows["consulta-status"]["steps"][-1]["actions"]["builtin"] == "lookup_status"
     assert flows["nota-fiscal"]["steps"][-1]["actions"]["builtin"] == "register_nf_request"
     assert flows["pesquisa-satisfacao"]["steps"][-1]["actions"]["builtin"] == "register_satisfaction_feedback"
 
