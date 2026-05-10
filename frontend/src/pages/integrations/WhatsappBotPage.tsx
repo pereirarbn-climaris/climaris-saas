@@ -10,6 +10,7 @@ import {
   patchWhatsappBotFlow,
   patchWhatsappBotSettings,
   patchWhatsappBotStep,
+  seedWhatsappBotDefaultFlows,
   testWhatsappBotMessage,
   type WhatsappBotFlow,
   type WhatsappBotSettings,
@@ -203,6 +204,28 @@ export function WhatsappBotPage() {
       setOk("Configurações do bot salvas.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Falha ao salvar configurações.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSeedDefaults() {
+    if (!canConfigure) return;
+    setBusy(true);
+    setErr("");
+    setOk("");
+    try {
+      const result = await seedWhatsappBotDefaultFlows();
+      setFlows(result.flows);
+      if (result.flows.length) setSelectedFlowId(result.flows[0].id);
+      setEditingStepId(null);
+      setOk(
+        result.created_flows > 0
+          ? `${result.created_flows} fluxo(s) pronto(s) criados. ${result.skipped_existing} já existiam.`
+          : "Os fluxos prontos já existiam para este workspace.",
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Falha ao criar fluxos prontos.");
     } finally {
       setBusy(false);
     }
@@ -490,8 +513,24 @@ export function WhatsappBotPage() {
                   ))}
                 </div>
               ) : (
-                <p className={styles.hint}>Nenhum fluxo criado ainda. Use o formulário ao lado para criar o primeiro.</p>
+                <>
+                  <p className={styles.hint}>Nenhum fluxo criado ainda. Comece pelos modelos prontos ou use o formulário ao lado.</p>
+                  {canConfigure ? (
+                    <div className={styles.actions}>
+                      <button type="button" className={styles.btnPrimary} disabled={busy} onClick={() => void onSeedDefaults()}>
+                        Criar fluxos prontos
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
+              {flows.length && canConfigure ? (
+                <div className={styles.actions}>
+                  <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => void onSeedDefaults()}>
+                    Completar com modelos faltantes
+                  </button>
+                </div>
+              ) : null}
             </section>
 
             <section className={styles.card}>

@@ -259,6 +259,12 @@ class WhatsappBotTestResponse(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class WhatsappBotSeedDefaultsResponse(BaseModel):
+    created_flows: int
+    skipped_existing: int
+    flows: list[WhatsappBotFlowOut]
+
+
 class WhatsappBotSessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
