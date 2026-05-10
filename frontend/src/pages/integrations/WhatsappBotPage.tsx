@@ -3,9 +3,11 @@ import { Link, useOutletContext } from "react-router-dom";
 import {
   createWhatsappBotFlow,
   createWhatsappBotStep,
+  clearWhatsappBotSession,
   deleteWhatsappBotFlow,
   deleteWhatsappBotStep,
   getWhatsappBotSettings,
+  listWhatsappBotSessions,
   listWhatsappBotFlows,
   patchWhatsappBotFlow,
   patchWhatsappBotSettings,
@@ -13,6 +15,7 @@ import {
   seedWhatsappBotDefaultFlows,
   testWhatsappBotMessage,
   type WhatsappBotFlow,
+  type WhatsappBotSession,
   type WhatsappBotSettings,
   type WhatsappBotStep,
   type WhatsappBotTestResponse,
@@ -113,6 +116,33 @@ function firstStep(flow: WhatsappBotFlow | null): WhatsappBotStep | null {
   return [...flow.steps].sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)[0] ?? null;
 }
 
+function formatDateTime(value: string | null): string {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}
+
+function isPaused(session: WhatsappBotSession): boolean {
+  return Boolean(session.paused_until && new Date(session.paused_until).getTime() > Date.now());
+}
+
+function contextPreview(context: Record<string, unknown>): string {
+  const entries = Object.entries(context)
+    .filter(([, value]) => value != null && String(value).trim())
+    .slice(0, 4);
+  if (!entries.length) return "—";
+  return entries.map(([key, value]) => `${key}: ${String(value).slice(0, 60)}`).join(" | ");
+}
+
 export function WhatsappBotPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const role = ctx?.user.role;
@@ -121,6 +151,7 @@ export function WhatsappBotPage() {
 
   const [settings, setSettings] = useState<WhatsappBotSettings | null>(null);
   const [flows, setFlows] = useState<WhatsappBotFlow[]>([]);
+  const [sessions, setSessions] = useState<WhatsappBotSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
@@ -172,9 +203,10 @@ export function WhatsappBotPage() {
     setLoading(true);
     setErr("");
     try {
-      const [st, fl] = await Promise.all([getWhatsappBotSettings(), listWhatsappBotFlows()]);
+      const [st, fl, ss] = await Promise.all([getWhatsappBotSettings(), listWhatsappBotFlows(), listWhatsappBotSessions()]);
       setSettings(st);
       setFlows(fl);
+      setSessions(ss);
       setEnabled(st.enabled);
       setWelcome(st.welcome_message);
       setFallback(st.fallback_message);
@@ -462,6 +494,22 @@ export function WhatsappBotPage() {
       setTestResult(result);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Falha ao testar bot.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onClearSession(session: WhatsappBotSession) {
+    if (!window.confirm(`Limpar conversa do bot com ${session.client_whatsapp}?`)) return;
+    setBusy(true);
+    setErr("");
+    setOk("");
+    try {
+      await clearWhatsappBotSession(session.id);
+      setSessions((rows) => rows.filter((row) => row.id !== session.id));
+      setOk("Conversa limpa. O próximo contato começará um novo fluxo.");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Falha ao limpar conversa.");
     } finally {
       setBusy(false);
     }
@@ -872,6 +920,67 @@ export function WhatsappBotPage() {
                 <pre className={styles.mono} style={{ whiteSpace: "pre-wrap" }}>{testResult.reply_text ?? "(sem resposta)"}</pre>
               </div>
             ) : null}
+          </section>
+
+          <section className={styles.card} style={{ marginTop: "1.25rem" }}>
+            <div className={styles.row} style={{ justifyContent: "space-between" }}>
+              <div>
+                <h2 className={styles.cardTitle}>Conversas recentes</h2>
+                <p className={styles.hint} style={{ marginTop: 0 }}>
+                  Acompanhe sessões abertas, pausas para atendimento humano e contexto coletado pelo bot.
+                </p>
+              </div>
+              <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => void refresh()}>
+                Atualizar conversas
+              </button>
+            </div>
+
+            {sessions.length ? (
+              <div className={styles.tableWrap} style={{ marginTop: "1rem" }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Cliente</th>
+                      <th>Status</th>
+                      <th>Fluxo / passo</th>
+                      <th>Contexto</th>
+                      <th>Atualizado</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessions.map((session) => {
+                      const paused = isPaused(session);
+                      return (
+                        <tr key={session.id}>
+                          <td className={styles.mono}>{session.client_whatsapp}</td>
+                          <td>
+                            <span className={`${styles.badge} ${paused ? styles.badgeWarn : styles.badgeOk}`}>
+                              {paused ? `Pausado até ${formatDateTime(session.paused_until)}` : "Em fluxo"}
+                            </span>
+                          </td>
+                          <td>
+                            {session.current_flow_name ?? "—"}
+                            {session.current_step_key ? <span className={styles.mono}> / {session.current_step_key}</span> : null}
+                          </td>
+                          <td>{contextPreview(session.context)}</td>
+                          <td>{formatDateTime(session.updated_at)}</td>
+                          <td>
+                            <button type="button" className={styles.btnDanger} disabled={busy} onClick={() => void onClearSession(session)}>
+                              Limpar / reativar
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className={styles.hint} style={{ marginTop: "0.75rem" }}>
+                Nenhuma conversa ativa ou pausada no bot ainda.
+              </p>
+            )}
           </section>
         </>
       )}

@@ -620,6 +620,7 @@ def _upsert_session(
     row.context_json = _json_dumps(context)
     row.paused_until = paused_until
     row.last_incoming_at = now
+    row.last_outgoing_at = now
     db.add(row)
     return row
 

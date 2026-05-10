@@ -272,7 +272,9 @@ class WhatsappBotSessionOut(BaseModel):
     tenant_id: int
     client_whatsapp: str
     current_flow_id: int | None
+    current_flow_name: str | None = None
     current_step_key: str | None
+    context: dict[str, Any] = Field(default_factory=dict)
     paused_until: datetime | None
     last_incoming_at: datetime | None
     last_outgoing_at: datetime | None

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -261,13 +264,59 @@ def test_bot_message(
 def list_bot_sessions(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> list[WhatsappBotSession]:
+) -> list[dict]:
     _require_whatsapp_module(db, current_user.tenant_id)
-    from sqlalchemy import select
-
-    return db.execute(
+    rows = db.execute(
         select(WhatsappBotSession)
         .where(WhatsappBotSession.tenant_id == current_user.tenant_id)
+        .options(selectinload(WhatsappBotSession.current_flow))
         .order_by(WhatsappBotSession.updated_at.desc(), WhatsappBotSession.id.desc())
         .limit(100)
     ).scalars().all()
+    result: list[dict] = []
+    for row in rows:
+        try:
+            context = json.loads(row.context_json or "{}")
+        except (TypeError, ValueError):
+            context = {}
+        result.append(
+            {
+                "id": row.id,
+                "tenant_id": row.tenant_id,
+                "client_whatsapp": row.client_whatsapp,
+                "current_flow_id": row.current_flow_id,
+                "current_flow_name": row.current_flow.name if row.current_flow else None,
+                "current_step_key": row.current_step_key,
+                "context": context if isinstance(context, dict) else {},
+                "paused_until": row.paused_until,
+                "last_incoming_at": row.last_incoming_at,
+                "last_outgoing_at": row.last_outgoing_at,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+        )
+    return result
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def clear_bot_session(
+    session_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    row = db.execute(
+        select(WhatsappBotSession).where(
+            WhatsappBotSession.id == session_id,
+            WhatsappBotSession.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sessão do bot não encontrada.")
+    db.delete(row)
+    db.commit()
+    return None
