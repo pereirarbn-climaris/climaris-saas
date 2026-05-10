@@ -3,14 +3,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================
+   CLIMARIS DESIGN SYSTEM - TOKENS
+   Referência: DESIGN_SYSTEM.md
+   ============================================ */
+
 :root {
+  /* ========== CORES CORE ========== */
   --background: oklch(0.98 0.005 240);
   --foreground: oklch(0.2 0.02 250);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.2 0.02 250);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.2 0.02 250);
-  --primary: oklch(0.55 0.18 250);
+  --primary: oklch(0.55 0.18 230);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.95 0.01 240);
   --secondary-foreground: oklch(0.3 0.02 250);
@@ -22,21 +28,102 @@
   --destructive-foreground: oklch(0.577 0.245 27.325);
   --border: oklch(0.9 0.01 240);
   --input: oklch(0.92 0.01 240);
-  --ring: oklch(0.55 0.18 250);
-  --chart-1: oklch(0.55 0.18 250);
+  --ring: oklch(0.55 0.18 230);
+
+  /* ========== CORES SEMANTICAS ========== */
+  --success: oklch(0.55 0.15 145);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.7 0.15 70);
+  --warning-foreground: oklch(0.25 0.05 70);
+
+  /* ========== CHARTS ========== */
+  --chart-1: oklch(0.55 0.18 230);
   --chart-2: oklch(0.65 0.15 180);
   --chart-3: oklch(0.7 0.12 140);
   --chart-4: oklch(0.75 0.15 60);
   --chart-5: oklch(0.6 0.2 30);
-  --radius: 0.75rem;
+
+  /* ========== SIDEBAR ========== */
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.3 0.02 250);
-  --sidebar-primary: oklch(0.55 0.18 250);
+  --sidebar-primary: oklch(0.55 0.18 230);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.95 0.03 250);
-  --sidebar-accent-foreground: oklch(0.55 0.18 250);
+  --sidebar-accent: oklch(0.95 0.03 230);
+  --sidebar-accent-foreground: oklch(0.55 0.18 230);
   --sidebar-border: oklch(0.92 0.01 240);
-  --sidebar-ring: oklch(0.55 0.18 250);
+  --sidebar-ring: oklch(0.55 0.18 230);
+
+  /* ========== BORDER RADIUS ========== */
+  --radius: 0.75rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* ========== TIPOGRAFIA ========== */
+  --font-size-xs: 0.6875rem;
+  --font-size-sm: 0.75rem;
+  --font-size-base: 0.875rem;
+  --font-size-md: 0.9375rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.125rem;
+  --font-size-2xl: 1.25rem;
+  --font-size-3xl: 1.5rem;
+  --font-size-4xl: 2rem;
+
+  /* ========== ESPACAMENTO ========== */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-page: clamp(1rem, 4vw, 1.75rem);
+
+  /* ========== ICONES ========== */
+  --icon-size-xs: 0.875rem;
+  --icon-size-sm: 1rem;
+  --icon-size-base: 1.125rem;
+  --icon-size-md: 1.25rem;
+  --icon-size-lg: 1.375rem;
+  --icon-size-xl: 1.5rem;
+  --icon-size-2xl: 2rem;
+  --icon-stroke: 1.75;
+
+  /* ========== BOTOES ========== */
+  --btn-height-sm: 2rem;
+  --btn-height-base: 2.5rem;
+  --btn-height-md: 2.75rem;
+  --btn-height-lg: 3rem;
+
+  /* ========== INPUTS ========== */
+  --input-height: 2.75rem;
+
+  /* ========== CARDS ========== */
+  --card-padding: 1.25rem;
+  --card-padding-lg: 1.5rem;
+
+  /* ========== TABELAS ========== */
+  --table-row-height: 3.5rem;
+
+  /* ========== AVATARES ========== */
+  --avatar-size-sm: 2rem;
+  --avatar-size-base: 2.5rem;
+  --avatar-size-lg: 3rem;
+
+  /* ========== BADGES ========== */
+  --badge-height: 1.5rem;
+
+  /* ========== ANIMACOES ========== */
+  --motion-duration: 0.15s;
+  --motion-duration-slow: 0.25s;
+  --motion-easing: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ========== TOUCH TARGET ========== */
+  --touch-target-min: 2.75rem;
 }
 
 .dark {
@@ -46,7 +133,7 @@
   --card-foreground: oklch(0.95 0.01 240);
   --popover: oklch(0.2 0.02 250);
   --popover-foreground: oklch(0.95 0.01 240);
-  --primary: oklch(0.6 0.18 250);
+  --primary: oklch(0.65 0.18 230);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.25 0.02 250);
   --secondary-foreground: oklch(0.9 0.01 240);
@@ -58,25 +145,38 @@
   --destructive-foreground: oklch(0.95 0.01 240);
   --border: oklch(0.28 0.02 250);
   --input: oklch(0.28 0.02 250);
-  --ring: oklch(0.6 0.18 250);
-  --chart-1: oklch(0.6 0.18 250);
+  --ring: oklch(0.65 0.18 230);
+
+  /* Cores semanticas dark */
+  --success: oklch(0.65 0.18 145);
+  --success-foreground: oklch(0.15 0.02 145);
+  --warning: oklch(0.75 0.15 70);
+  --warning-foreground: oklch(0.2 0.05 70);
+
+  /* Charts dark */
+  --chart-1: oklch(0.65 0.18 230);
   --chart-2: oklch(0.65 0.15 180);
   --chart-3: oklch(0.7 0.12 140);
   --chart-4: oklch(0.75 0.15 60);
   --chart-5: oklch(0.6 0.2 30);
+
+  /* Sidebar dark */
   --sidebar: oklch(0.18 0.02 250);
   --sidebar-foreground: oklch(0.9 0.01 240);
-  --sidebar-primary: oklch(0.6 0.18 250);
+  --sidebar-primary: oklch(0.65 0.18 230);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.25 0.03 250);
+  --sidebar-accent: oklch(0.25 0.03 230);
   --sidebar-accent-foreground: oklch(0.9 0.01 240);
   --sidebar-border: oklch(0.28 0.02 250);
-  --sidebar-ring: oklch(0.6 0.18 250);
+  --sidebar-ring: oklch(0.65 0.18 230);
 }
 
 @theme inline {
-  --font-sans: 'Geist', 'Geist Fallback';
-  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  /* ========== FONTES ========== */
+  --font-sans: 'Geist', 'Geist Fallback', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', ui-monospace, monospace;
+
+  /* ========== CORES TAILWIND ========== */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -93,18 +193,28 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  /* ========== CHARTS ========== */
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+
+  /* ========== RADIUS ========== */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  /* ========== SIDEBAR ========== */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -121,5 +231,45 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* ========== UTILIDADES GLOBAIS ========== */
+@layer utilities {
+  /* Focus ring padronizado */
+  .focus-ring {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Touch target minimo (acessibilidade) */
+  .touch-target {
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+  }
+
+  /* Padding de pagina responsivo */
+  .page-padding {
+    padding-inline: var(--space-page);
+  }
+
+  /* Tamanhos de icone */
+  .icon-xs { width: var(--icon-size-xs); height: var(--icon-size-xs); }
+  .icon-sm { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+  .icon-base { width: var(--icon-size-base); height: var(--icon-size-base); }
+  .icon-md { width: var(--icon-size-md); height: var(--icon-size-md); }
+  .icon-lg { width: var(--icon-size-lg); height: var(--icon-size-lg); }
+  .icon-xl { width: var(--icon-size-xl); height: var(--icon-size-xl); }
+  .icon-2xl { width: var(--icon-size-2xl); height: var(--icon-size-2xl); }
+}
+
+/* ========== ANIMACOES ========== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
