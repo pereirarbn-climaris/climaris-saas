@@ -19,6 +19,24 @@ tenant, sem IA. A IA fica reservada para a V2.
 Observação: os arquivos `app/ai_assistant.py`, `app/routers/ai_settings.py`, `app/schemas_ai.py`,
 `frontend/src/api/ai.ts` e `frontend/src/pages/integrations/AiAssistantPage.tsx` devem ser tratados como material de V2.
 
+## Implementado nesta V1
+
+- Migration `20260510_0058_whatsapp_bot_v1.py`.
+- Modelos:
+  - `WhatsappBotSettings`
+  - `WhatsappBotFlow`
+  - `WhatsappBotStep`
+  - `WhatsappBotSession`
+- Schemas em `app/schemas_whatsapp_bot.py`.
+- Serviço determinístico em `app/whatsapp_bot.py`.
+- Rotas autenticadas em `/api/v1/whatsapp/bot`.
+- Integração com webhook Evolution depois da lógica existente de confirmação/remarcação de agenda.
+- Gatilho `service_order_done` ao concluir OS.
+- Frontend:
+  - API `frontend/src/api/whatsappBot.ts`
+  - página `/app/integrations/whatsapp-bot`
+  - menu lateral e busca global.
+
 ## O que já existe no sistema
 
 ### WhatsApp / Evolution
@@ -78,13 +96,11 @@ Observação: os arquivos `app/ai_assistant.py`, `app/routers/ai_settings.py`, `
 
 ## Lacunas para o bot V1
 
-1. Não há modelo de dados para menus, passos, opções e fluxos por tenant.
-2. Não há sessão de conversa genérica por cliente/WhatsApp.
-3. Não há roteador determinístico no webhook para menu inicial, palavras-chave e fallback.
-4. Não há gatilho de OS concluída para disparar mensagem de fechamento.
-5. Não há integração configurável entre bot, financeiro, links de pagamento e solicitação de NF.
-6. Não há página de "Bot WhatsApp" para o admin montar os fluxos.
-7. Não há simulador/testador do fluxo antes de ativar em produção.
+1. Integração configurável entre bot, financeiro, links de pagamento e solicitação de NF.
+2. Editor visual de fluxos com múltiplos passos avançados.
+3. Campanhas, recuperação de orçamento e reativação de clientes.
+4. Métricas/relatórios específicos de conversas do bot.
+5. Emissão fiscal automática por provedor fiscal.
 
 ## Modelagem inicial recomendada
 
