@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from models import (
+    Budget,
+    BudgetStatus,
     Client,
     FinanceEntry,
     FinanceEntryStatus,
@@ -60,11 +62,12 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             },
             {
                 "step_key": "final",
-                "kind": "end",
+                "kind": "action",
                 "message_template": (
                     "Recebido, {nome_cliente}! Nossa equipe vai analisar e retornar com o orçamento. "
                     "Se preferir atendimento imediato, digite *atendente*."
                 ),
+                "actions": {"builtin": "create_budget_draft"},
                 "sort_order": 200,
             },
         ],
@@ -607,6 +610,16 @@ def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: d
         if step_payload.get("step_key") not in existing_step_keys:
             db.add(_build_step(flow.id, step_payload))
 
+    if template.get("slug") == "orcamento-valores":
+        final = next((step for step in flow.steps if step.step_key == "final"), None)
+        if final is not None:
+            actions = _json_loads(final.actions_json, {})
+            if final.kind == "end" and not actions and "Recebido" in (final.message_template or ""):
+                final.kind = "action"
+                final.actions_json = _json_dumps({"builtin": "create_budget_draft"})
+                db.add(final)
+        return
+
     if template.get("slug") != "financeiro-pagamentos":
         return
     first = next((step for step in flow.steps if step.step_key == "inicio"), None)
@@ -796,6 +809,112 @@ def _finance_open_entries_reply(
     return "\n".join(lines)
 
 
+def _get_or_create_bot_client(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+) -> Client:
+    client_id = context.get("cliente_id")
+    try:
+        client_id_int = int(str(client_id)) if client_id not in (None, "") else None
+    except (TypeError, ValueError):
+        client_id_int = None
+    if client_id_int is not None:
+        found = db.execute(
+            select(Client).where(Client.id == client_id_int, Client.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+        if found is not None:
+            return found
+
+    digits = _digits(client_whatsapp)
+    variants = {digits}
+    if digits.startswith("55"):
+        variants.add(digits[2:])
+    if len(digits) > 11:
+        variants.add(digits[-11:])
+        variants.add(digits[-10:])
+    variant_list = [v for v in variants if v]
+    if variant_list:
+        found = db.execute(
+            select(Client)
+            .where(
+                Client.tenant_id == tenant_id,
+                or_(Client.whatsapp.in_(variant_list), Client.phone.in_(variant_list)),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if found is not None:
+            context["cliente_id"] = found.id
+            context["nome_cliente"] = found.name
+            return found
+
+    display_phone = digits[-11:] if len(digits) >= 11 else digits
+    name = str(context.get("nome_cliente") or "").strip()
+    if not name or name == "cliente":
+        name = f"Cliente WhatsApp {display_phone[-4:] or 'novo'}"
+    client = Client(
+        tenant_id=tenant_id,
+        name=name[:150],
+        document=None,
+        tax_id_kind="cpf",
+        phone=None,
+        whatsapp=display_phone or digits,
+        email=None,
+        address_country="Brasil",
+    )
+    db.add(client)
+    db.flush()
+    context["cliente_id"] = client.id
+    context["nome_cliente"] = client.name
+    return client
+
+
+def _create_budget_draft_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    raw_request = str(context.get("dados_orcamento") or context.get("mensagem_cliente") or "").strip()
+    if not raw_request:
+        raw_request = "Solicitação recebida via Bot WhatsApp."
+
+    if context.get("__dry_run"):
+        return (
+            f"[Simulação] Eu criaria um orçamento rascunho com estes dados:\n{raw_request}\n\n"
+            f"{fallback_message}"
+        )
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    budget = Budget(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        title=f"Orçamento WhatsApp - {client.name}"[:200],
+        description=(
+            "[Bot WhatsApp] Solicitação de orçamento coletada automaticamente.\n\n"
+            f"WhatsApp: {client_whatsapp}\n"
+            f"Dados informados: {raw_request}"
+        ),
+        status=BudgetStatus.DRAFT,
+        payment_method=None,
+        payment_terms=None,
+        warranty_terms=None,
+        validity_days=7,
+    )
+    db.add(budget)
+    db.flush()
+    context["budget_id"] = budget.id
+    return (
+        f"{fallback_message}\n\n"
+        f"Protocolo interno: orçamento #{budget.id}. "
+        "Nossa equipe vai completar valores/itens e retornar por aqui."
+    )
+
+
 def _reply_for_action_step(
     db: Session,
     *,
@@ -808,6 +927,14 @@ def _reply_for_action_step(
     builtin = str(actions.get("builtin") or "").strip()
     if builtin == "finance_open_entries":
         return _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    if builtin == "create_budget_draft":
+        return _create_budget_draft_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
     return _reply_for_step(step, context)
 
 
@@ -1177,12 +1304,14 @@ def test_message(
     if reset_session:
         _clear_session(db, _get_session(db, tenant_id=tenant_id, client_whatsapp=phone))
         db.commit()
+    dry_context = dict(context)
+    dry_context["__dry_run"] = True
     result = route_message(
         db,
         tenant_id=tenant_id,
         client_whatsapp=phone,
         message_text=message_text,
-        context_extra=context,
+        context_extra=dry_context,
         persist_session=True,
         ignore_enabled=True,
     )
