@@ -33,6 +33,7 @@ export type FormState = {
   address_city: string;
   address_state: string;
   address_postal_code: string;
+  is_active: boolean;
 };
 
 export type EquipmentFormState = {
@@ -109,6 +110,7 @@ export function emptyForm(): FormState {
     address_city: "",
     address_state: "",
     address_postal_code: "",
+    is_active: true,
   };
 }
 
@@ -195,6 +197,7 @@ export function fromClient(c: ClientOut): FormState {
     address_city: c.address_city ?? "",
     address_state: c.address_state ?? "",
     address_postal_code: formatCepInput(c.address_postal_code ?? ""),
+    is_active: c.is_active !== false,
   };
 }
 
@@ -244,6 +247,7 @@ export function buildUpdatePayload(f: FormState): ClientUpdatePayload {
     address_state: f.address_state.trim() ? f.address_state.trim().toUpperCase().slice(0, 2) : null,
     address_postal_code: digitsOnly(f.address_postal_code).slice(0, 8) || null,
     address_country: "Brasil",
+    is_active: f.is_active,
   };
   if (documentDigits) {
     payload.document = documentDigits;

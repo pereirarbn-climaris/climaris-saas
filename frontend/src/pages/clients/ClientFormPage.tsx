@@ -583,6 +583,7 @@ export function ClientFormPage() {
           address_state: form.address_state.trim() ? form.address_state.trim().toUpperCase().slice(0, 2) : undefined,
           address_postal_code: digitsOnly(form.address_postal_code).slice(0, 8) || undefined,
           address_country: "Brasil",
+          is_active: form.is_active,
         };
         if (digits) {
           payload.document = digits;
@@ -794,6 +795,19 @@ export function ClientFormPage() {
             onChange={(e) => setField("trade_name", e.target.value)}
             disabled={readOnly}
           />
+          <label className={loginStyles.label} htmlFor="c-status">
+            Status do cliente
+          </label>
+          <select
+            id="c-status"
+            className={loginStyles.select}
+            value={form.is_active ? "active" : "inactive"}
+            onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.value === "active" }))}
+            disabled={readOnly}
+          >
+            <option value="active">Ativo</option>
+            <option value="inactive">Inativo</option>
+          </select>
           <div className={styles.grid2}>
             <div>
               <label className={loginStyles.label} htmlFor="c-phone">

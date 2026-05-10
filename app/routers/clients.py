@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.client_service import (
     client_dependency_counts,
     client_filter_conditions,
-    client_has_contact_condition,
     ensure_unique_client_contact,
     strip_optional,
 )
@@ -65,6 +64,7 @@ def list_clients_page(
     q: Annotated[str | None, Query(description="Filter by name, document, email, phone or WhatsApp")] = None,
     tax_id_kind: Annotated[str | None, Query(pattern="^(cpf|cnpj)$")] = None,
     contact: Annotated[str | None, Query(pattern="^(with|without)$")] = None,
+    status_filter: Annotated[str | None, Query(alias="status", pattern="^(active|inactive)$")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> ClientListOut:
@@ -73,6 +73,7 @@ def list_clients_page(
         q=q,
         tax_id_kind=tax_id_kind,
         contact=contact,
+        status_filter=status_filter,
     )
     total = db.execute(select(func.count()).select_from(Client).where(*conditions)).scalar_one()
     companies = db.execute(
@@ -84,7 +85,7 @@ def list_clients_page(
     active = db.execute(
         select(func.count())
         .select_from(Client)
-        .where(*conditions, client_has_contact_condition())
+        .where(*conditions, Client.is_active.is_(True))
     ).scalar_one()
     items = (
         db.execute(select(Client).where(*conditions).order_by(Client.id.desc()).offset(skip).limit(limit))
@@ -165,6 +166,7 @@ def create_client(
         address_postal_code=payload.address_postal_code,
         address_country=payload.address_country or "Brasil",
         address_ibge_code=payload.address_ibge_code,
+        is_active=payload.is_active,
     )
     db.add(client)
     db.commit()
@@ -291,6 +293,9 @@ def update_client(
 
     if "address_ibge_code" in fields_set:
         client.address_ibge_code = payload.address_ibge_code
+
+    if "is_active" in fields_set and payload.is_active is not None:
+        client.is_active = payload.is_active
 
     db.commit()
     db.refresh(client)

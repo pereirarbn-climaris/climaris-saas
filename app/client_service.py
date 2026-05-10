@@ -29,6 +29,7 @@ def client_filter_conditions(
     q: str | None = None,
     tax_id_kind: str | None = None,
     contact: str | None = None,
+    status_filter: str | None = None,
 ) -> list[Any]:
     conditions: list[Any] = [Client.tenant_id == tenant_id]
     q = (q or "").strip()
@@ -49,6 +50,10 @@ def client_filter_conditions(
         conditions.append(client_has_contact_condition())
     elif contact == "without":
         conditions.append(~client_has_contact_condition())
+    if status_filter == "active":
+        conditions.append(Client.is_active.is_(True))
+    elif status_filter == "inactive":
+        conditions.append(Client.is_active.is_(False))
     return conditions
 
 

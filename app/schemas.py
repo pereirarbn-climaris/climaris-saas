@@ -829,6 +829,7 @@ class ClientCreate(BaseModel):
     address_postal_code: str | None = None
     address_country: str | None = "Brasil"
     address_ibge_code: str | None = Field(default=None, max_length=7)
+    is_active: bool = True
 
     @model_validator(mode="after")
     def _normalize_document(self) -> ClientCreate:
@@ -894,6 +895,7 @@ class ClientUpdate(BaseModel):
     address_postal_code: str | None = None
     address_country: str | None = None
     address_ibge_code: str | None = Field(default=None, max_length=7)
+    is_active: bool | None = None
 
     @field_validator("address_state", mode="before")
     @classmethod
@@ -939,6 +941,7 @@ class ClientOut(BaseModel):
     address_postal_code: str | None = None
     address_country: str
     address_ibge_code: str | None = None
+    is_active: bool
 
 
 class ClientListSummaryOut(BaseModel):

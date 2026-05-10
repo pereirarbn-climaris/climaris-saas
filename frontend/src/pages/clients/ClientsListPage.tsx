@@ -5,6 +5,7 @@ import {
   type ClientContactFilter,
   type ClientListSummaryOut,
   type ClientOut,
+  type ClientStatusFilter,
   type ClientTaxIdFilter,
 } from "../../api/clients";
 import { digitsOnly, formatPhoneBrDisplay, whatsappMeUrl } from "../../lib/brMask";
@@ -16,6 +17,7 @@ type ClientSortKey = "name" | "email" | "phone" | "whatsapp";
 type SortDir = "asc" | "desc";
 type KindFilter = "all" | ClientTaxIdFilter;
 type ContactFilter = "all" | ClientContactFilter;
+type StatusFilter = "all" | ClientStatusFilter;
 
 const PAGE_SIZE = 50;
 
@@ -74,6 +76,7 @@ function buildClientsCsv(rows: ClientOut[]): string {
     "E-mail",
     "Telefone",
     "WhatsApp",
+    "Status",
     "Cidade",
     "UF",
   ];
@@ -86,6 +89,7 @@ function buildClientsCsv(rows: ClientOut[]): string {
     c.email,
     c.phone,
     c.whatsapp,
+    c.is_active === false ? "Inativo" : "Ativo",
     c.address_city,
     c.address_state,
   ].map(csvEscape).join(","));
@@ -121,6 +125,7 @@ export function ClientsListPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const canLoadMore = rows.length < total;
@@ -142,6 +147,7 @@ export function ClientsListPage() {
         q: q || undefined,
         tax_id_kind: kindFilter === "all" ? undefined : kindFilter,
         contact: contactFilter === "all" ? undefined : contactFilter,
+        status: statusFilter === "all" ? undefined : statusFilter,
         skip,
         limit: PAGE_SIZE,
       });
@@ -159,7 +165,7 @@ export function ClientsListPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [contactFilter, kindFilter, q]);
+  }, [contactFilter, kindFilter, q, statusFilter]);
 
   useEffect(() => {
     void loadPage(0, false);
@@ -217,6 +223,7 @@ export function ClientsListPage() {
           q: q || undefined,
           tax_id_kind: kindFilter === "all" ? undefined : kindFilter,
           contact: contactFilter === "all" ? undefined : contactFilter,
+          status: statusFilter === "all" ? undefined : statusFilter,
           skip,
           limit: 200,
         });
@@ -237,6 +244,7 @@ export function ClientsListPage() {
   function clearFilters() {
     setKindFilter("all");
     setContactFilter("all");
+    setStatusFilter("all");
   }
 
   return (
@@ -380,6 +388,14 @@ export function ClientsListPage() {
             </select>
           </label>
           <label className={styles.filterField}>
+            <span>Status</span>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
+              <option value="all">Todos</option>
+              <option value="active">Ativos</option>
+              <option value="inactive">Inativos</option>
+            </select>
+          </label>
+          <label className={styles.filterField}>
             <span>Contato</span>
             <select value={contactFilter} onChange={(e) => setContactFilter(e.target.value as ContactFilter)}>
               <option value="all">Todos</option>
@@ -475,7 +491,7 @@ export function ClientsListPage() {
             <tbody>
               {sortedRows.map((c) => {
                 const wa = whatsappMeUrl(c.whatsapp);
-                const ativo = Boolean((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim());
+                const ativo = c.is_active !== false;
                 return (
                   <tr
                     key={c.id}

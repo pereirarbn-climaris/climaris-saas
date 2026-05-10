@@ -40,10 +40,12 @@ export type ClientOut = {
   address_postal_code: string | null;
   address_country: string;
   address_ibge_code: string | null;
+  is_active: boolean;
 };
 
 export type ClientTaxIdFilter = "cpf" | "cnpj";
 export type ClientContactFilter = "with" | "without";
+export type ClientStatusFilter = "active" | "inactive";
 
 export type ClientListSummaryOut = {
   total: number;
@@ -66,6 +68,7 @@ export type ClientListParams = {
   limit?: number;
   tax_id_kind?: ClientTaxIdFilter;
   contact?: ClientContactFilter;
+  status?: ClientStatusFilter;
 };
 
 export type ClientCreatePayload = {
@@ -88,6 +91,7 @@ export type ClientCreatePayload = {
   address_postal_code?: string;
   address_country?: string;
   address_ibge_code?: string;
+  is_active?: boolean;
 };
 
 export type EquipmentOut = {
@@ -260,6 +264,7 @@ export type ClientUpdatePayload = {
   address_postal_code?: string | null;
   address_country?: string | null;
   address_ibge_code?: string | null;
+  is_active?: boolean;
 };
 
 async function parseBody(response: Response): Promise<unknown> {
@@ -331,6 +336,11 @@ function filterDemoClients(params?: ClientListParams): ClientOut[] {
   } else if (params?.contact === "without") {
     filtered = filtered.filter((c) => !((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim()));
   }
+  if (params?.status === "active") {
+    filtered = filtered.filter((c) => c.is_active !== false);
+  } else if (params?.status === "inactive") {
+    filtered = filtered.filter((c) => c.is_active === false);
+  }
   return filtered;
 }
 
@@ -339,7 +349,7 @@ function summarizeClients(rows: ClientOut[]): ClientListSummaryOut {
     total: rows.length,
     companies: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length,
     individuals: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length,
-    active: rows.filter((c) => Boolean((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim())).length,
+    active: rows.filter((c) => c.is_active !== false).length,
   };
 }
 
@@ -387,6 +397,7 @@ export async function listClientsPage(params?: ClientListParams): Promise<Client
   if (q) sp.set("q", q);
   if (params?.tax_id_kind) sp.set("tax_id_kind", params.tax_id_kind);
   if (params?.contact) sp.set("contact", params.contact);
+  if (params?.status) sp.set("status", params.status);
   const response = await fetch(apiUrl(`/api/v1/clients/page?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {
