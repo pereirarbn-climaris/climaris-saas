@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.marketplace_util import tenant_has_marketplace_app
+from app.marketplace_util import tenant_entitlement_status_for_slug
 from app.plan_rules import normalize_plan_key
 from app.schemas_whatsapp_bot import (
     WhatsappBotFlowCreate,
     WhatsappBotFlowOut,
     WhatsappBotFlowPatch,
     WhatsappBotSeedDefaultsResponse,
+    WhatsappBotEventOut,
+    WhatsappBotStatusOut,
     WhatsappBotSessionOut,
     WhatsappBotSettingsOut,
     WhatsappBotSettingsPatch,
@@ -40,7 +43,7 @@ from app.whatsapp_bot import (
     update_settings,
     update_step,
 )
-from models import Tenant, User, UserRole, WhatsappBotSession
+from models import Tenant, User, UserRole, WhatsappBotSession, WhatsappMessageEvent
 
 router = APIRouter(prefix="/whatsapp/bot", tags=["whatsapp-bot"])
 
@@ -58,6 +61,29 @@ def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Módulo WhatsApp não contratado. Solicite na Loja de integrações.",
     )
+
+
+@router.get(
+    "/status",
+    response_model=WhatsappBotStatusOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_bot_module_status(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    if normalize_plan_key(tenant.active_plan) == "beta_internal":
+        return {"entitlement_active": True, "entitlement_status": "beta_internal", "blocked_reason": None}
+    ent_status = tenant_entitlement_status_for_slug(db, current_user.tenant_id, "whatsapp")
+    active = tenant_has_marketplace_app(db, current_user.tenant_id, "whatsapp")
+    return {
+        "entitlement_active": active,
+        "entitlement_status": ent_status.value if ent_status is not None else None,
+        "blocked_reason": None if active else "Módulo WhatsApp não contratado ou ainda não aprovado.",
+    }
 
 
 @router.get(
@@ -320,3 +346,48 @@ def clear_bot_session(
     db.delete(row)
     db.commit()
     return None
+
+
+@router.get(
+    "/events",
+    response_model=list[WhatsappBotEventOut],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def list_bot_events(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict]:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    rows = db.execute(
+        select(WhatsappMessageEvent)
+        .where(
+            WhatsappMessageEvent.tenant_id == current_user.tenant_id,
+            WhatsappMessageEvent.event_type.in_(
+                [
+                    "bot_incoming_replied",
+                    "bot_incoming_reply_failed",
+                    "bot_reply_sent",
+                    "bot_reply_failed",
+                    "incoming_text_processed",
+                ]
+            ),
+        )
+        .order_by(WhatsappMessageEvent.id.desc())
+        .limit(100)
+    ).scalars().all()
+    result: list[dict] = []
+    for row in rows:
+        try:
+            payload = json.loads(row.payload_json or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        result.append(
+            {
+                "id": row.id,
+                "event_type": row.event_type,
+                "payload": payload if isinstance(payload, dict) else {},
+                "job_id": row.job_id,
+                "created_at": row.created_at,
+            }
+        )
+    return result
