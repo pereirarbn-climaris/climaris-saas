@@ -165,11 +165,26 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                     {
                         "key": "2",
                         "label": "Solicitar nota fiscal",
-                        "message": "Certo. Envie CPF/CNPJ, razão social/nome completo e e-mail para emissão da nota.",
+                        "next_step_key": "coletar-dados-nf",
                     },
                     {"key": "3", "label": "Falar com atendente", "handoff": True},
                 ],
                 "sort_order": 100,
+            },
+            {
+                "step_key": "coletar-dados-nf",
+                "kind": "question",
+                "message_template": "Certo. Envie CPF/CNPJ, razão social/nome completo e e-mail para emissão da nota.",
+                "actions": {"save_as": "dados_nf"},
+                "next_step_key": "registrar-nf",
+                "sort_order": 200,
+            },
+            {
+                "step_key": "registrar-nf",
+                "kind": "action",
+                "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
+                "actions": {"builtin": "register_nf_request"},
+                "sort_order": 300,
             }
         ],
     },
@@ -192,8 +207,9 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             },
             {
                 "step_key": "final",
-                "kind": "end",
+                "kind": "action",
                 "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
+                "actions": {"builtin": "register_nf_request"},
                 "sort_order": 200,
             },
         ],
@@ -632,6 +648,34 @@ def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: d
                 db.add(final)
         return
 
+    if template.get("slug") == "fechamento-os":
+        first = next((step for step in flow.steps if step.step_key == "inicio"), None)
+        if first is not None:
+            options = _json_loads(first.options_json, [])
+            changed = False
+            for option in options:
+                if str(option.get("key") or "").strip() != "2":
+                    continue
+                old_message = str(option.get("message") or "").strip()
+                if old_message == "Certo. Envie CPF/CNPJ, razão social/nome completo e e-mail para emissão da nota.":
+                    option.pop("message", None)
+                    option["next_step_key"] = "coletar-dados-nf"
+                    changed = True
+            if changed:
+                first.options_json = _json_dumps(options)
+                db.add(first)
+        return
+
+    if template.get("slug") == "nota-fiscal":
+        final = next((step for step in flow.steps if step.step_key == "final"), None)
+        if final is not None:
+            actions = _json_loads(final.actions_json, {})
+            if final.kind == "end" and not actions and "encaminhar para o financeiro/fiscal" in (final.message_template or ""):
+                final.kind = "action"
+                final.actions_json = _json_dumps({"builtin": "register_nf_request"})
+                db.add(final)
+        return
+
     if template.get("slug") != "financeiro-pagamentos":
         return
     first = next((step for step in flow.steps if step.step_key == "inicio"), None)
@@ -968,6 +1012,74 @@ def _create_schedule_request_reply(
     )
 
 
+def _service_order_id_from_context(context: dict[str, Any]) -> int | None:
+    for key in ("service_order_id", "numero_os"):
+        raw = context.get(key)
+        try:
+            if raw not in (None, ""):
+                return int(str(raw))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _register_nf_request_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    nf_data = str(context.get("dados_nf") or context.get("mensagem_cliente") or "").strip()
+    if not nf_data:
+        nf_data = "Dados fiscais recebidos via Bot WhatsApp."
+
+    service_order_id = _service_order_id_from_context(context)
+    if context.get("__dry_run"):
+        target = f"OS #{service_order_id}" if service_order_id else "uma nova solicitação interna"
+        return (
+            f"[Simulação] Eu registraria a solicitação de NF em {target} com estes dados:\n{nf_data}\n\n"
+            f"{fallback_message}"
+        )
+
+    order: ServiceOrder | None = None
+    if service_order_id is not None:
+        order = db.execute(
+            select(ServiceOrder).where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    note = (
+        "\n\n[Bot WhatsApp] Solicitação de Nota Fiscal\n"
+        f"WhatsApp: {client_whatsapp}\n"
+        f"Dados fiscais informados: {nf_data}"
+    )
+    if order is None:
+        order = ServiceOrder(
+            tenant_id=tenant_id,
+            client_id=client.id,
+            title=f"Solicitação NF WhatsApp - {client.name}"[:200],
+            description=note.strip(),
+            discount_amount=0,
+            status=OrderStatus.OPEN,
+        )
+        db.add(order)
+        db.flush()
+    else:
+        existing = (order.description or "").rstrip()
+        order.description = f"{existing}{note}" if existing else note.strip()
+        db.add(order)
+        db.flush()
+
+    context["service_order_id"] = order.id
+    return (
+        f"{fallback_message}\n\n"
+        f"Protocolo interno: OS #{order.id}. "
+        "A equipe fiscal/financeira vai validar os dados e retornar por aqui."
+    )
+
+
 def _reply_for_action_step(
     db: Session,
     *,
@@ -990,6 +1102,14 @@ def _reply_for_action_step(
         )
     if builtin == "create_schedule_request":
         return _create_schedule_request_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    if builtin == "register_nf_request":
+        return _register_nf_request_reply(
             db,
             tenant_id=tenant_id,
             client_whatsapp=client_whatsapp,
