@@ -3,8 +3,8 @@ import { Link, Navigate, useNavigate, useOutletContext } from "react-router-dom"
 import { createPmocPlan } from "../../api/pmoc";
 import { listClients, type ClientOut } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
-import loginStyles from "../LoginPage.module.css";
 import styles from "./PmocPages.module.css";
+import baseStyles from "../listPageBase.module.css";
 
 export function PmocNewPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -95,24 +95,31 @@ export function PmocNewPage() {
       ) : (
         <form className={styles.section} onSubmit={onCreate}>
           <h2 className={styles.sectionTitle}>Cliente do estabelecimento</h2>
-          <input
-            className={loginStyles.input}
-            placeholder="Buscar cliente por nome, documento ou cidade"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            aria-label="Buscar cliente"
-          />
+          <div className={baseStyles.searchInputWrap}>
+            <span className={baseStyles.searchIcon}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+            </span>
+            <input
+              className={baseStyles.searchInput}
+              placeholder="Buscar cliente por nome, documento ou cidade"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              aria-label="Buscar cliente"
+            />
+          </div>
           {err ? <p className={styles.msgErr}>{err}</p> : null}
-          {loading ? <p className={styles.loading}>Carregando clientes…</p> : null}
+          {loading ? <p className={styles.loading}>Carregando clientes...</p> : null}
           {!loading ? (
-            <div style={{ marginTop: "0.65rem" }}>
+            <div style={{ marginTop: "var(--space-4)" }}>
               <label htmlFor="pmoc-client-select" className={styles.metaMuted}>
                 Selecione o cliente cujo endereço será coberto por este PMOC
               </label>
               <select
                 id="pmoc-client-select"
-                className={loginStyles.input}
-                style={{ marginTop: "0.35rem" }}
+                className={baseStyles.select}
                 value={clientId === "" ? "" : String(clientId)}
                 onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : "")}
               >
@@ -127,21 +134,24 @@ export function PmocNewPage() {
             </div>
           ) : null}
 
-          <h2 className={styles.sectionTitle} style={{ marginTop: "1rem" }}>
+          <h2 className={styles.sectionTitle} style={{ marginTop: "var(--space-6)" }}>
             Identificação do plano
           </h2>
-          <input
-            className={loginStyles.input}
-            placeholder="Título do PMOC (ex.: PMOC — Empresa XYZ)"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            aria-label="Título do PMOC"
-          />
+          <div className={baseStyles.searchInputWrap}>
+            <input
+              className={baseStyles.searchInput}
+              style={{ paddingLeft: "var(--input-padding-x)" }}
+              placeholder="Título do PMOC (ex.: PMOC — Empresa XYZ)"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              aria-label="Título do PMOC"
+            />
+          </div>
 
           {saveErr ? <p className={styles.msgErr}>{saveErr}</p> : null}
           <div className={styles.actions}>
             <button type="submit" className={styles.btnPrimary} disabled={saving}>
-              {saving ? "Criando…" : "Criar rascunho"}
+              {saving ? "Criando..." : "Criar rascunho"}
             </button>
           </div>
         </form>

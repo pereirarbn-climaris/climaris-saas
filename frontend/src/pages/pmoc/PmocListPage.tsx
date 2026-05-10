@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { listPmocPlans, type PmocPlanOut, type PmocPlanStatus } from "../../api/pmoc";
 import type { DashboardOutletContext } from "../dashboardContext";
-import loginStyles from "../LoginPage.module.css";
 import styles from "./PmocPages.module.css";
+import baseStyles from "../listPageBase.module.css";
 
 function statusLabel(s: PmocPlanStatus): string {
   const m: Record<PmocPlanStatus, string> = {
@@ -149,14 +149,22 @@ export function PmocListPage() {
 
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Busca</h2>
-        <input
-          className={loginStyles.input}
-          placeholder="Buscar por título, cliente ou notas"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
+        <div className={baseStyles.searchInputWrap}>
+          <span className={baseStyles.searchIcon}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+          </span>
+          <input
+            className={baseStyles.searchInput}
+            placeholder="Buscar por título, cliente ou notas"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+        </div>
         {err ? <p className={styles.msgErr}>{err}</p> : null}
-        {loading ? <p className={styles.loading}>Carregando…</p> : null}
+        {loading ? <p className={styles.loading}>Carregando...</p> : null}
       </div>
 
       {!loading ? (
