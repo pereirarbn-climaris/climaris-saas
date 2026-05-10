@@ -1293,6 +1293,30 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             job_id=None,
         )
     if event_name.lower() == "messages.upsert" and incoming_sender and incoming_text:
+        data_block = data.get("data") if isinstance(data, dict) else {}
+        key_block = data_block.get("key") if isinstance(data_block, dict) else {}
+        from_me = bool(key_block.get("fromMe")) if isinstance(key_block, dict) else False
+        remote_jid = str(key_block.get("remoteJid") or incoming_sender).strip().lower() if isinstance(key_block, dict) else incoming_sender
+        if not from_me and not remote_jid.endswith("@g.us") and not already_processed and not action_type:
+            try:
+                from app.whatsapp_bot import handle_incoming_text_and_send
+
+                if handle_incoming_text_and_send(db, tenant_id=tenant_id, sender=incoming_sender, text=incoming_text):
+                    append_event(
+                        db,
+                        tenant_id=tenant_id,
+                        event_type="bot_incoming_replied",
+                        payload={"sender": incoming_sender},
+                        job_id=None,
+                    )
+            except HTTPException as exc:
+                append_event(
+                    db,
+                    tenant_id=tenant_id,
+                    event_type="bot_incoming_reply_failed",
+                    payload={"sender": incoming_sender, "error": str(exc.detail)},
+                    job_id=None,
+                )
         append_event(
             db,
             tenant_id=tenant_id,

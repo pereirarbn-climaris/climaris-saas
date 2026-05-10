@@ -40,6 +40,7 @@ from app.routers.inventory import router as inventory_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
 from app.routers.whatsapp import router as whatsapp_router
+from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -373,6 +374,7 @@ app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
+app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
 
 # IA/LLM fica fora da V1 do bot WhatsApp. Não importe app.routers.ai_settings aqui até a V2
 # completar a modelagem/configuração própria, evitando expor endpoints ou quebrar o startup.
