@@ -19,6 +19,7 @@ from models import (
     FinanceEntry,
     FinanceEntryStatus,
     FinanceEntryType,
+    OrderStatus,
     ServiceOrder,
     Tenant,
     WhatsappBotFlow,
@@ -91,11 +92,12 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             },
             {
                 "step_key": "final",
-                "kind": "end",
+                "kind": "action",
                 "message_template": (
                     "Obrigado! Vamos conferir a agenda e confirmar a visita. "
                     "Caso seja urgente, digite *atendente*."
                 ),
+                "actions": {"builtin": "create_schedule_request"},
                 "sort_order": 200,
             },
         ],
@@ -620,6 +622,16 @@ def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: d
                 db.add(final)
         return
 
+    if template.get("slug") == "agendamento-visita":
+        final = next((step for step in flow.steps if step.step_key == "final"), None)
+        if final is not None:
+            actions = _json_loads(final.actions_json, {})
+            if final.kind == "end" and not actions and "Vamos conferir a agenda" in (final.message_template or ""):
+                final.kind = "action"
+                final.actions_json = _json_dumps({"builtin": "create_schedule_request"})
+                db.add(final)
+        return
+
     if template.get("slug") != "financeiro-pagamentos":
         return
     first = next((step for step in flow.steps if step.step_key == "inicio"), None)
@@ -915,6 +927,47 @@ def _create_budget_draft_reply(
     )
 
 
+def _create_schedule_request_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    preference = str(context.get("preferencia_agendamento") or context.get("mensagem_cliente") or "").strip()
+    if not preference:
+        preference = "Solicitação de agendamento recebida via Bot WhatsApp."
+
+    if context.get("__dry_run"):
+        return (
+            f"[Simulação] Eu criaria uma solicitação de OS/agendamento com estes dados:\n{preference}\n\n"
+            f"{fallback_message}"
+        )
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    order = ServiceOrder(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        title=f"Solicitação WhatsApp - {client.name}"[:200],
+        description=(
+            "[Bot WhatsApp] Solicitação de agendamento coletada automaticamente.\n\n"
+            f"WhatsApp: {client_whatsapp}\n"
+            f"Preferência informada: {preference}"
+        ),
+        discount_amount=0,
+        status=OrderStatus.OPEN,
+    )
+    db.add(order)
+    db.flush()
+    context["service_order_id"] = order.id
+    return (
+        f"{fallback_message}\n\n"
+        f"Protocolo interno: OS #{order.id}. "
+        "Nossa equipe vai confirmar disponibilidade e retornar por aqui."
+    )
+
+
 def _reply_for_action_step(
     db: Session,
     *,
@@ -929,6 +982,14 @@ def _reply_for_action_step(
         return _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
     if builtin == "create_budget_draft":
         return _create_budget_draft_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    if builtin == "create_schedule_request":
+        return _create_schedule_request_reply(
             db,
             tenant_id=tenant_id,
             client_whatsapp=client_whatsapp,
