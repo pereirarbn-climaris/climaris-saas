@@ -13,6 +13,7 @@ from app.schemas_whatsapp_bot import (
     WhatsappBotFlowCreate,
     WhatsappBotFlowOut,
     WhatsappBotFlowPatch,
+    WhatsappBotSeedDefaultsResponse,
     WhatsappBotSessionOut,
     WhatsappBotSettingsOut,
     WhatsappBotSettingsPatch,
@@ -30,6 +31,7 @@ from app.whatsapp_bot import (
     get_flow,
     get_or_create_settings,
     list_flows,
+    seed_default_flows,
     test_message,
     update_flow,
     update_settings,
@@ -82,6 +84,19 @@ def patch_bot_settings(
 ) -> dict:
     _require_whatsapp_module(db, current_user.tenant_id)
     return update_settings(db, tenant_id=current_user.tenant_id, patch=payload.model_dump(exclude_unset=True))
+
+
+@router.post(
+    "/seed-defaults",
+    response_model=WhatsappBotSeedDefaultsResponse,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def seed_bot_default_flows(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return seed_default_flows(db, tenant_id=current_user.tenant_id)
 
 
 @router.get(

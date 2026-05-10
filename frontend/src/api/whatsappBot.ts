@@ -58,6 +58,12 @@ export type WhatsappBotTestResponse = {
   context: Record<string, unknown>;
 };
 
+export type WhatsappBotSeedDefaultsResponse = {
+  created_flows: number;
+  skipped_existing: number;
+  flows: WhatsappBotFlow[];
+};
+
 function authHeaders(json = false): HeadersInit {
   const token = getAccessToken();
   if (!token) throw new Error("Sessão expirada.");
@@ -113,6 +119,16 @@ export async function listWhatsappBotFlows(): Promise<WhatsappBotFlow[]> {
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar os fluxos."));
   return body as WhatsappBotFlow[];
+}
+
+export async function seedWhatsappBotDefaultFlows(): Promise<WhatsappBotSeedDefaultsResponse> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/bot/seed-defaults"), {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível criar os fluxos prontos."));
+  return body as WhatsappBotSeedDefaultsResponse;
 }
 
 export async function createWhatsappBotFlow(payload: {
