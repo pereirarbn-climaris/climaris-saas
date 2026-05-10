@@ -21,6 +21,8 @@ const TONE_PRESETS = [
   { value: "__custom__", label: "Outro (personalizado)" },
 ] as const;
 
+const AI_ASSISTANT_V2_ENABLED = false;
+
 function formatDt(iso: string): string {
   try {
     return new Date(iso).toLocaleString("pt-BR", {
@@ -44,6 +46,39 @@ function truncate(s: string, max: number): string {
 export function AiAssistantPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const role = ctx?.user.role;
+
+  if (!AI_ASSISTANT_V2_ENABLED) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.hero}>
+          <div className={styles.heroInner}>
+            <p className={styles.eyebrow}>Integrações</p>
+            <h1 className={styles.heroTitle}>Assistente IA — reservado para V2</h1>
+            <p className={styles.heroLead}>
+              A V1 do bot WhatsApp usará fluxos determinísticos, menus e respostas pré-programadas por empresa. A camada de
+              IA fica desativada até a próxima fase do produto.
+            </p>
+            <div className={styles.heroLinks}>
+              <Link to="/app" className={styles.heroLink}>
+                Voltar ao painel
+              </Link>
+              <Link to="/app/integrations/whatsapp" className={styles.heroLink}>
+                WhatsApp (Evolution)
+              </Link>
+            </div>
+          </div>
+        </header>
+        <section className={`${styles.card} ${styles.cardWide}`}>
+          <h2 className={styles.cardTitle}>O que fica ativo agora</h2>
+          <p className={styles.hint}>
+            Configuração da conexão Evolution, lembretes de agendamento e o futuro construtor de bot sem IA. Nenhuma chamada
+            para endpoints de IA é feita nesta página enquanto a V2 estiver desligada.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   const isAdmin = role === "admin";
   const canView = role === "admin" || role === "receptionist";
 

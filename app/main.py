@@ -17,7 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 
-from app.config import CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
+from app.config import AI_ASSISTANT_V2_ENABLED, CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
 from app.limiter import limiter
 from app.middleware import RequestContextMiddleware
 from app.routers.auth import router as auth_router
@@ -89,6 +89,7 @@ def healthcheck(
     body: dict[str, str | bool] = {"status": "ok", "public_register_minimal": True}
     if extended:
         body["public_register_enabled"] = PUBLIC_REGISTER_ENABLED
+        body["ai_assistant_v2_enabled"] = AI_ASSISTANT_V2_ENABLED
     return body
 
 
@@ -372,6 +373,9 @@ app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
+
+# IA/LLM fica fora da V1 do bot WhatsApp. Não importe app.routers.ai_settings aqui até a V2
+# completar a modelagem/configuração própria, evitando expor endpoints ou quebrar o startup.
 
 
 @app.on_event("startup")
