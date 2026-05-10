@@ -177,7 +177,12 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                         "label": "Solicitar nota fiscal",
                         "next_step_key": "coletar-dados-nf",
                     },
-                    {"key": "3", "label": "Falar com atendente", "handoff": True},
+                    {
+                        "key": "3",
+                        "label": "Avaliar atendimento",
+                        "next_step_key": "coletar-avaliacao",
+                    },
+                    {"key": "4", "label": "Falar com atendente", "handoff": True},
                 ],
                 "sort_order": 100,
             },
@@ -202,6 +207,21 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                 "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
                 "actions": {"builtin": "register_nf_request"},
                 "sort_order": 300,
+            },
+            {
+                "step_key": "coletar-avaliacao",
+                "kind": "question",
+                "message_template": "De 0 a 10, qual nota você dá para o atendimento? Se quiser, inclua um comentário.",
+                "actions": {"save_as": "feedback_satisfacao"},
+                "next_step_key": "registrar-avaliacao",
+                "sort_order": 400,
+            },
+            {
+                "step_key": "registrar-avaliacao",
+                "kind": "action",
+                "message_template": "Obrigado pela avaliação! Sua opinião ajuda nossa equipe a melhorar continuamente.",
+                "actions": {"builtin": "register_satisfaction_feedback"},
+                "sort_order": 500,
             }
         ],
     },
@@ -227,6 +247,32 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
                 "kind": "action",
                 "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
                 "actions": {"builtin": "register_nf_request"},
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "pesquisa-satisfacao",
+        "name": "Pesquisa de satisfação",
+        "description": "Coleta nota e comentário do cliente após atendimento.",
+        "enabled": True,
+        "trigger_type": "keyword",
+        "trigger_keywords": ["avaliar", "avaliação", "avaliacao", "satisfação", "satisfacao", "nota atendimento"],
+        "priority": 45,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": "De 0 a 10, qual nota você dá para o atendimento? Se quiser, inclua um comentário.",
+                "actions": {"save_as": "feedback_satisfacao"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "action",
+                "message_template": "Obrigado pela avaliação! Sua opinião ajuda nossa equipe a melhorar continuamente.",
+                "actions": {"builtin": "register_satisfaction_feedback"},
                 "sort_order": 200,
             },
         ],
@@ -670,6 +716,7 @@ def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: d
         if first is not None:
             options = _json_loads(first.options_json, [])
             changed = False
+            has_satisfaction = any(str(option.get("next_step_key") or "") == "coletar-avaliacao" for option in options)
             for option in options:
                 if str(option.get("key") or "").strip() != "2":
                     continue
@@ -678,6 +725,13 @@ def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: d
                     option.pop("message", None)
                     option["next_step_key"] = "coletar-dados-nf"
                     changed = True
+            if not has_satisfaction:
+                for option in options:
+                    if str(option.get("key") or "").strip() == "3" and option.get("handoff"):
+                        option["key"] = "4"
+                        changed = True
+                options.append({"key": "3", "label": "Avaliar atendimento", "next_step_key": "coletar-avaliacao"})
+                changed = True
             if changed:
                 first.options_json = _json_dumps(options)
                 db.add(first)
@@ -1122,6 +1176,59 @@ def _register_nf_request_reply(
     )
 
 
+def _register_satisfaction_feedback_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    feedback = str(context.get("feedback_satisfacao") or context.get("mensagem_cliente") or "").strip()
+    if not feedback:
+        feedback = "Avaliação recebida via Bot WhatsApp."
+
+    service_order_id = _service_order_id_from_context(context)
+    if context.get("__dry_run"):
+        target = f"OS #{service_order_id}" if service_order_id else "uma nova solicitação interna"
+        return (
+            f"[Simulação] Eu registraria a avaliação em {target} com este conteúdo:\n{feedback}\n\n"
+            f"{fallback_message}"
+        )
+
+    order: ServiceOrder | None = None
+    if service_order_id is not None:
+        order = db.execute(
+            select(ServiceOrder).where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    note = (
+        "\n\n[Bot WhatsApp] Pesquisa de satisfação\n"
+        f"WhatsApp: {client_whatsapp}\n"
+        f"Avaliação: {feedback}"
+    )
+    if order is None:
+        order = ServiceOrder(
+            tenant_id=tenant_id,
+            client_id=client.id,
+            title=f"Feedback WhatsApp - {client.name}"[:200],
+            description=note.strip(),
+            discount_amount=0,
+            status=OrderStatus.OPEN,
+        )
+        db.add(order)
+        db.flush()
+    else:
+        existing = (order.description or "").rstrip()
+        order.description = f"{existing}{note}" if existing else note.strip()
+        db.add(order)
+        db.flush()
+
+    context["service_order_id"] = order.id
+    return f"{fallback_message}\n\nProtocolo interno: OS #{order.id}."
+
+
 def _reply_for_action_step(
     db: Session,
     *,
@@ -1152,6 +1259,14 @@ def _reply_for_action_step(
         )
     if builtin == "register_nf_request":
         return _register_nf_request_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    if builtin == "register_satisfaction_feedback":
+        return _register_satisfaction_feedback_reply(
             db,
             tenant_id=tenant_id,
             client_whatsapp=client_whatsapp,
