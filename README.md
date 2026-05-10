@@ -10,6 +10,11 @@ Base multi-tenant ERP backend with:
 - tenant calendar (timezone, business days, holidays)
 - technician calendar (work windows, breaks, unavailability)
 
+## WhatsApp bot V1
+
+O plano técnico do bot WhatsApp sem IA (menus, fluxos determinísticos e configuração por tenant) está em
+[`docs/whatsapp-bot-v1.md`](docs/whatsapp-bot-v1.md). A camada de IA fica reservada para V2 e permanece desativada por padrão.
+
 ## Run
 
 ```bash

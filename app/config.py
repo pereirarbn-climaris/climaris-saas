@@ -89,5 +89,9 @@ WHATSAPP_INTERACTIVE_BUTTONS_ENABLED: bool = _env_bool("WHATSAPP_INTERACTIVE_BUT
 WHATSAPP_REMINDER_WORKER_ENABLED: bool = _env_bool("WHATSAPP_REMINDER_WORKER_ENABLED", True)
 WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS: int = int(os.getenv("WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS", "60"))
 
+# IA fica reservada para a V2 do bot WhatsApp. A V1 deve usar apenas fluxos determinísticos
+# configuráveis por tenant, então não monte rotas nem chame provedores de LLM quando esta flag estiver falsa.
+AI_ASSISTANT_V2_ENABLED: bool = _env_bool("AI_ASSISTANT_V2_ENABLED", False)
+
 # 2FA por e-mail no login de administradores. Só é aplicado se houver SMTP configurado (.env ou credencial `smtp` no painel com SMTP_ALLOW_DB_OVERRIDE).
 LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED", True)

@@ -230,6 +230,15 @@ class Tenant(Base):
     whatsapp_reschedule_options: Mapped[list["WhatsappRescheduleOption"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    whatsapp_bot_settings: Mapped["WhatsappBotSettings | None"] = relationship(
+        back_populates="tenant", uselist=False, cascade="all, delete-orphan"
+    )
+    whatsapp_bot_flows: Mapped[list["WhatsappBotFlow"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    whatsapp_bot_sessions: Mapped[list["WhatsappBotSession"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     plan_change_logs: Mapped[list["TenantPlanChangeLog"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
@@ -1645,6 +1654,103 @@ class WhatsappRescheduleOption(Base):
     schedule: Mapped["Schedule"] = relationship()
     job: Mapped["WhatsappMessageJob | None"] = relationship()
     technician: Mapped["User | None"] = relationship()
+
+
+class WhatsappBotSettings(Base):
+    __tablename__ = "whatsapp_bot_settings"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_whatsapp_bot_settings_tenant"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    welcome_message: Mapped[str] = mapped_column(Text, nullable=False)
+    fallback_message: Mapped[str] = mapped_column(Text, nullable=False)
+    handoff_message: Mapped[str] = mapped_column(Text, nullable=False)
+    handoff_keywords_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    handoff_pause_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=240)
+    business_hours_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="whatsapp_bot_settings")
+
+
+class WhatsappBotFlow(Base):
+    __tablename__ = "whatsapp_bot_flows"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_whatsapp_bot_flow_tenant_slug"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False, default="keyword")
+    trigger_keywords_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    system_event: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="whatsapp_bot_flows")
+    steps: Mapped[list["WhatsappBotStep"]] = relationship(
+        back_populates="flow", cascade="all, delete-orphan", order_by="WhatsappBotStep.sort_order"
+    )
+    sessions: Mapped[list["WhatsappBotSession"]] = relationship(back_populates="current_flow")
+
+
+class WhatsappBotStep(Base):
+    __tablename__ = "whatsapp_bot_steps"
+    __table_args__ = (UniqueConstraint("flow_id", "step_key", name="uq_whatsapp_bot_step_flow_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    flow_id: Mapped[int] = mapped_column(ForeignKey("whatsapp_bot_flows.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="message")
+    message_template: Mapped[str] = mapped_column(Text, nullable=False)
+    options_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validation_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_step_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    flow: Mapped["WhatsappBotFlow"] = relationship(back_populates="steps")
+
+
+class WhatsappBotSession(Base):
+    __tablename__ = "whatsapp_bot_sessions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "client_whatsapp", name="uq_whatsapp_bot_session_tenant_client"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_whatsapp: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    current_flow_id: Mapped[int | None] = mapped_column(
+        ForeignKey("whatsapp_bot_flows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    current_step_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    context_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_incoming_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_outgoing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="whatsapp_bot_sessions")
+    current_flow: Mapped["WhatsappBotFlow | None"] = relationship(back_populates="sessions")
 
 
 class TechnicianWorkWindow(Base):

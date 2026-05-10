@@ -112,6 +112,7 @@ export function DashboardPage() {
   const isAgendaRoute = location.pathname.startsWith("/app/agenda");
   const isPmocRoute = location.pathname.startsWith("/app/pmoc");
   const isMarketplaceRoute = location.pathname.startsWith("/app/marketplace");
+  const isWhatsappBotRoute = location.pathname.startsWith("/app/integrations/whatsapp-bot");
   const isWhatsappRoute = location.pathname.startsWith("/app/integrations/whatsapp");
   const isMercadoLivreRoute = location.pathname.startsWith("/app/integrations/mercado-livre");
   const pageTitle = isAdminRoute
@@ -136,6 +137,8 @@ export function DashboardPage() {
               ? "PMOC"
             : isMarketplaceRoute
               ? "Loja de integrações"
+            : isWhatsappBotRoute
+              ? "Bot WhatsApp"
             : isWhatsappRoute
               ? "WhatsApp"
             : isMercadoLivreRoute
@@ -381,6 +384,8 @@ export function DashboardPage() {
       ["configuração financeiro", "/app/finance/settings"],
       ["financeiro", "/app/finance"],
       ["mercado livre", "/app/marketplace"],
+      ["bot whatsapp", "/app/integrations/whatsapp-bot"],
+      ["chatbot", "/app/integrations/whatsapp-bot"],
       ["whatsapp", "/app/integrations/whatsapp"],
       ["integra", "/app/marketplace"],
       ["admin", "/app/admin"],
@@ -669,6 +674,19 @@ export function DashboardPage() {
                   <NavIconPackage className={styles.navSvg} />
                 </span>
                 <span className={styles.navLabel}>WhatsApp</span>
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/app/integrations/whatsapp-bot"
+                title="Bot WhatsApp"
+                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
+                onClick={closeSidebar}
+              >
+                <span className={styles.navIcon} aria-hidden>
+                  <NavIconPackage className={styles.navSvg} />
+                </span>
+                <span className={styles.navLabel}>Bot WhatsApp</span>
               </NavLink>
             </li>
           </ul>
@@ -1184,6 +1202,9 @@ export function DashboardPage() {
               </button>
               <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp")}>
                 WhatsApp
+              </button>
+              <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp-bot")}>
+                Bot WhatsApp
               </button>
             </div>
           </aside>

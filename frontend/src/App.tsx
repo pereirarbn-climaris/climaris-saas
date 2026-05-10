@@ -36,6 +36,7 @@ import { FinanceSettingsPage } from "./pages/finance/FinanceSettingsPage";
 import { StockPage } from "./pages/inventory/StockPage";
 import { MercadoLivreCallbackPage } from "./pages/integrations/MercadoLivreCallbackPage";
 import { MercadoLivreIntegrationPage } from "./pages/integrations/MercadoLivreIntegrationPage";
+import { WhatsappBotPage } from "./pages/integrations/WhatsappBotPage";
 import { WhatsappIntegrationPage } from "./pages/integrations/WhatsappIntegrationPage";
 import { MarketplacePage } from "./pages/marketplace/MarketplacePage";
 import { PlatformMarketplacePage } from "./pages/PlatformMarketplacePage";
@@ -102,6 +103,7 @@ export default function App() {
         <Route path="finance/settings/machines" element={<FinanceMachinesPage />} />
         <Route path="agenda" element={<TechnicianSchedulePage />} />
         <Route path="marketplace" element={<MarketplacePage />} />
+        <Route path="integrations/whatsapp-bot" element={<WhatsappBotPage />} />
         <Route path="integrations/whatsapp" element={<WhatsappIntegrationPage />} />
         <Route path="integrations/mercado-livre/callback" element={<MercadoLivreCallbackPage />} />
         <Route path="integrations/mercado-livre" element={<MercadoLivreIntegrationPage />} />
