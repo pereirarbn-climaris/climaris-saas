@@ -40,6 +40,35 @@ export type ClientOut = {
   address_postal_code: string | null;
   address_country: string;
   address_ibge_code: string | null;
+  is_active: boolean;
+};
+
+export type ClientTaxIdFilter = "cpf" | "cnpj";
+export type ClientContactFilter = "with" | "without";
+export type ClientStatusFilter = "active" | "inactive";
+
+export type ClientListSummaryOut = {
+  total: number;
+  companies: number;
+  individuals: number;
+  active: number;
+};
+
+export type ClientListOut = {
+  items: ClientOut[];
+  total: number;
+  skip: number;
+  limit: number;
+  summary: ClientListSummaryOut;
+};
+
+export type ClientListParams = {
+  q?: string;
+  skip?: number;
+  limit?: number;
+  tax_id_kind?: ClientTaxIdFilter;
+  contact?: ClientContactFilter;
+  status?: ClientStatusFilter;
 };
 
 export type ClientCreatePayload = {
@@ -62,6 +91,7 @@ export type ClientCreatePayload = {
   address_postal_code?: string;
   address_country?: string;
   address_ibge_code?: string;
+  is_active?: boolean;
 };
 
 export type EquipmentOut = {
@@ -234,6 +264,7 @@ export type ClientUpdatePayload = {
   address_postal_code?: string | null;
   address_country?: string | null;
   address_ibge_code?: string | null;
+  is_active?: boolean;
 };
 
 async function parseBody(response: Response): Promise<unknown> {
@@ -258,6 +289,7 @@ function errorMessage(body: unknown, fallback: string, status: number): string {
     const d = o.detail;
     if (typeof d === "string") {
       const lower = d.toLowerCase();
+      if (lower.includes("whatsapp")) return "Já existe um cliente com este WhatsApp nesta empresa.";
       if (lower.includes("telefone")) return "Já existe um cliente com este telefone nesta empresa.";
       if (lower.includes("cpf/cnpj") || lower.includes("document")) {
         return "Já existe um cliente com este CPF/CNPJ nesta empresa.";
@@ -282,14 +314,51 @@ function jsonHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
+function filterDemoClients(params?: ClientListParams): ClientOut[] {
+  const q = params?.q?.trim().toLowerCase();
+  let filtered = demoListClients();
+  if (q) {
+    filtered = filtered.filter((c) =>
+      [
+        c.name,
+        c.document,
+        c.email,
+        c.phone,
+        c.whatsapp,
+      ].some((value) => (value ?? "").toLowerCase().includes(q)),
+    );
+  }
+  if (params?.tax_id_kind) {
+    filtered = filtered.filter((c) => (c.tax_id_kind || "").toLowerCase() === params.tax_id_kind);
+  }
+  if (params?.contact === "with") {
+    filtered = filtered.filter((c) => Boolean((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim()));
+  } else if (params?.contact === "without") {
+    filtered = filtered.filter((c) => !((c.email ?? "").trim() || (c.phone ?? "").trim() || (c.whatsapp ?? "").trim()));
+  }
+  if (params?.status === "active") {
+    filtered = filtered.filter((c) => c.is_active !== false);
+  } else if (params?.status === "inactive") {
+    filtered = filtered.filter((c) => c.is_active === false);
+  }
+  return filtered;
+}
+
+function summarizeClients(rows: ClientOut[]): ClientListSummaryOut {
+  return {
+    total: rows.length,
+    companies: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length,
+    individuals: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length,
+    active: rows.filter((c) => c.is_active !== false).length,
+  };
+}
+
 export async function listClients(params?: { q?: string; skip?: number; limit?: number }): Promise<ClientOut[]> {
   if (isDemoMode()) {
-    const q = params?.q?.trim().toLowerCase();
-    let filtered = demoListClients();
-    if (q) {
-      filtered = demoClients.filter(c => c.name.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
-    }
-    return Promise.resolve(filtered);
+    const filtered = filterDemoClients(params);
+    const skip = params?.skip ?? 0;
+    const limit = params?.limit ?? filtered.length;
+    return Promise.resolve(filtered.slice(skip, skip + limit));
   }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
@@ -304,6 +373,37 @@ export async function listClients(params?: { q?: string; skip?: number; limit?: 
     throw new Error(errorMessage(body, "Não foi possível listar clientes.", response.status));
   }
   return body as ClientOut[];
+}
+
+export async function listClientsPage(params?: ClientListParams): Promise<ClientListOut> {
+  if (isDemoMode()) {
+    const filtered = filterDemoClients(params);
+    const skip = params?.skip ?? 0;
+    const limit = params?.limit ?? 50;
+    return Promise.resolve({
+      items: filtered.slice(skip, skip + limit),
+      total: filtered.length,
+      skip,
+      limit,
+      summary: summarizeClients(filtered),
+    });
+  }
+  const q = params?.q?.trim();
+  const skip = params?.skip ?? 0;
+  const limit = params?.limit ?? 50;
+  const sp = new URLSearchParams();
+  sp.set("skip", String(skip));
+  sp.set("limit", String(limit));
+  if (q) sp.set("q", q);
+  if (params?.tax_id_kind) sp.set("tax_id_kind", params.tax_id_kind);
+  if (params?.contact) sp.set("contact", params.contact);
+  if (params?.status) sp.set("status", params.status);
+  const response = await fetch(apiUrl(`/api/v1/clients/page?${sp.toString()}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível listar clientes.", response.status));
+  }
+  return body as ClientListOut;
 }
 
 export async function getClient(clientId: number): Promise<ClientOut> {

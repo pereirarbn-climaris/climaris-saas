@@ -102,6 +102,7 @@ export const demoClients: ClientOut[] = [
     address_postal_code: "01234000",
     address_country: "BR",
     address_ibge_code: null,
+    is_active: true,
   },
   {
     id: 2,
@@ -125,6 +126,7 @@ export const demoClients: ClientOut[] = [
     address_postal_code: "01310100",
     address_country: "BR",
     address_ibge_code: null,
+    is_active: true,
   },
   {
     id: 3,
@@ -148,6 +150,7 @@ export const demoClients: ClientOut[] = [
     address_postal_code: "01000000",
     address_country: "BR",
     address_ibge_code: null,
+    is_active: true,
   },
 ];
 
@@ -640,6 +643,7 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     address_postal_code: payload.address_postal_code ?? null,
     address_country: payload.address_country ?? "BR",
     address_ibge_code: payload.address_ibge_code ?? null,
+    is_active: payload.is_active ?? true,
   };
   demoClientsState = [row, ...demoClientsState];
   return { ...row };

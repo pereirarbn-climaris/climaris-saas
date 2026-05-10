@@ -15,7 +15,7 @@ from starlette.responses import Response
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError, SQLAlchemyError
 
 from app.config import AI_ASSISTANT_V2_ENABLED, CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
 from app.limiter import limiter
@@ -40,6 +40,9 @@ from app.routers.inventory import router as inventory_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
 from app.routers.whatsapp import router as whatsapp_router
+from app.routers.ai_settings import router as ai_settings_router
+from app.routers.nfse import router as nfse_router
+from app.routers.preventive_maintenance import router as preventive_maintenance_router
 from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
@@ -284,6 +287,53 @@ async def db_programming_error_handler(request: Request, exc: ProgrammingError) 
     )
 
 
+def _integrity_error_message(exc: IntegrityError) -> str:
+    text = str(getattr(exc, "orig", exc)).lower()
+    if "uq_clients_tenant_document" in text:
+        return "Já existe um cliente com este CPF/CNPJ nesta empresa."
+    if "uq_clients_tenant_phone" in text:
+        return "Já existe um cliente com este telefone nesta empresa."
+    if "uq_clients_tenant_whatsapp" in text:
+        return "Já existe um cliente com este WhatsApp nesta empresa."
+    if "foreign key" in text or "foreignkeyviolation" in text:
+        return "Não é possível concluir a operação porque existem registros vinculados."
+    if "unique" in text or "uniqueviolation" in text:
+        return "Já existe um registro com estes dados."
+    return "Não foi possível concluir a operação por conflito de integridade dos dados."
+
+
+@app.exception_handler(IntegrityError)
+async def db_integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    """Conflitos de chave única/FK devem ser acionáveis pelo usuário, não 500 genérico."""
+    error_id = str(uuid4())
+    rid = _request_id(request)
+    logging.getLogger("erp.errors").warning(
+        json.dumps(
+            {
+                "event": "db_integrity",
+                "request_id": rid,
+                "error_id": error_id,
+                "path": str(request.url.path),
+            },
+            default=str,
+        ),
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": {
+                "id": error_id,
+                "request_id": rid,
+                "status_code": 409,
+                "message": _integrity_error_message(exc),
+                "path": str(request.url.path),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+
+
 @app.exception_handler(SQLAlchemyError)
 async def db_sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
     """Outros erros de persistência (ex.: IntegrityError). Operational/Programming já têm handlers específicos."""
@@ -374,10 +424,10 @@ app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
+app.include_router(ai_settings_router, prefix=API_V1_PREFIX)
+app.include_router(nfse_router, prefix=API_V1_PREFIX)
+app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
-
-# IA/LLM fica fora da V1 do bot WhatsApp. Não importe app.routers.ai_settings aqui até a V2
-# completar a modelagem/configuração própria, evitando expor endpoints ou quebrar o startup.
 
 
 @app.on_event("startup")
