@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 from datetime import datetime, timezone
 
+import jwt as pyjwt
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import EVOLUTION_WEBHOOK_TOKEN, WHATSAPP_WEBHOOK_ENABLED
+from app.config import (
+    EVOLUTION_API_KEY,
+    EVOLUTION_WEBHOOK_JWT_SECRET,
+    EVOLUTION_WEBHOOK_JWT_USE_APIKEY,
+    EVOLUTION_WEBHOOK_TOKEN,
+    WHATSAPP_WEBHOOK_ENABLED,
+)
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.marketplace_util import tenant_has_marketplace_app
 from app.plan_rules import normalize_plan_key
+from app.security import JWT_ALGORITHM, JWT_SECRET_KEY
 from app.schemas_whatsapp import (
     WhatsappAppointmentMessageSettingsOut,
     WhatsappAppointmentMessageSettingsPatch,
@@ -48,6 +57,7 @@ from app.whatsapp import (
 from models import Tenant, User, UserRole, WhatsappMessageJob
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
+logger = logging.getLogger(__name__)
 
 
 def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
@@ -373,6 +383,106 @@ def chatbot_reply(
     )
 
 
+def _looks_like_jwt(value: str) -> bool:
+    parts = value.split(".")
+    return len(parts) == 3 and all(len(p) > 0 for p in parts)
+
+
+def _verify_hs256_jwt_webhook(token: str, secret: str) -> bool:
+    if not secret or not _looks_like_jwt(token):
+        return False
+    try:
+        pyjwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"verify_signature": True, "verify_exp": True},
+            leeway=120,
+        )
+        return True
+    except pyjwt.PyJWTError:
+        return False
+
+
+def _verify_climaris_session_jwt_webhook(token: str, query_tenant_id: int | None) -> bool:
+    """JWT emitido pelo login Climaris (HS256 + JWT_SECRET_KEY). Alguns setups colocam esse token na URL do webhook na Evolution."""
+    if not JWT_SECRET_KEY or JWT_SECRET_KEY == "change-me-in-production" or not _looks_like_jwt(token):
+        return False
+    try:
+        payload = pyjwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM] if JWT_ALGORITHM else ["HS256"],
+            options={"verify_signature": True, "verify_exp": True},
+            leeway=120,
+        )
+    except pyjwt.PyJWTError:
+        return False
+    tid = payload.get("tenant_id")
+    if tid is None:
+        return False
+    try:
+        tid_int = int(tid)
+    except (TypeError, ValueError):
+        return False
+    if query_tenant_id is not None and tid_int != int(query_tenant_id):
+        return False
+    return True
+
+
+def _tenant_id_from_climaris_jwt_token(token: str | None) -> int | None:
+    """Extrai tenant_id de um JWT Climaris válido (segunda decodificação; volume baixo em webhook)."""
+    if not token or not str(token).strip():
+        return None
+    p = str(token).strip()
+    if not JWT_SECRET_KEY or JWT_SECRET_KEY == "change-me-in-production" or not _looks_like_jwt(p):
+        return None
+    try:
+        payload = pyjwt.decode(
+            p,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM] if JWT_ALGORITHM else ["HS256"],
+            options={"verify_signature": True, "verify_exp": True},
+            leeway=120,
+        )
+    except pyjwt.PyJWTError:
+        return None
+    tid = payload.get("tenant_id")
+    if tid is None:
+        return None
+    try:
+        return int(tid)
+    except (TypeError, ValueError):
+        return None
+
+
+def _evolution_webhook_auth_configured() -> bool:
+    return bool(
+        EVOLUTION_WEBHOOK_TOKEN
+        or EVOLUTION_WEBHOOK_JWT_SECRET
+        or (EVOLUTION_WEBHOOK_JWT_USE_APIKEY and EVOLUTION_API_KEY)
+    )
+
+
+def _evolution_webhook_token_valid(provided: str | None, *, query_tenant_id: int | None) -> bool:
+    """Aceita token estático, JWT da Evolution (HS256 com segredo configurado) ou JWT de sessão Climaris (login)."""
+    if not provided or not str(provided).strip():
+        return False
+    p = str(provided).strip()
+    if EVOLUTION_WEBHOOK_TOKEN and p == EVOLUTION_WEBHOOK_TOKEN:
+        return True
+    if _looks_like_jwt(p):
+        # JWT de sessão do ERP (?token= no cadastro do webhook) antes de HS256 com API key:
+        # com EVOLUTION_WEBHOOK_JWT_USE_APIKEY=true, assinaturas diferentes falhariam na Evolution antes de chegar aqui.
+        if _verify_climaris_session_jwt_webhook(p, query_tenant_id):
+            return True
+        if EVOLUTION_WEBHOOK_JWT_SECRET and _verify_hs256_jwt_webhook(p, EVOLUTION_WEBHOOK_JWT_SECRET):
+            return True
+        if EVOLUTION_WEBHOOK_JWT_USE_APIKEY and EVOLUTION_API_KEY and _verify_hs256_jwt_webhook(p, EVOLUTION_API_KEY):
+            return True
+    return False
+
+
 @router.post("/webhook/evolution", response_model=WhatsappWebhookAck, include_in_schema=False)
 def evolution_webhook(
     request: Request,
@@ -381,15 +491,38 @@ def evolution_webhook(
     tenant_id: int | None = Query(default=None, ge=1),
     token: str | None = Query(default=None),
     x_webhook_token: str | None = Header(default=None),
+    # Evolution API v2 envia AUTHENTICATION_API_KEY como header "apikey" no webhook.
+    apikey: str | None = Header(default=None, alias="apikey"),
 ) -> dict:
-    del request
+    auth_hdr = (request.headers.get("authorization") or request.headers.get("Authorization") or "").strip()
+    bearer: str | None = None
+    if auth_hdr.lower().startswith("bearer "):
+        bearer = auth_hdr[7:].strip()
+
     if not WHATSAPP_WEBHOOK_ENABLED:
         return {"status": "ignored"}
-    provided_token = token or x_webhook_token
-    if EVOLUTION_WEBHOOK_TOKEN and provided_token != EVOLUTION_WEBHOOK_TOKEN:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Webhook token inválido.")
-    resolved_tenant_id = tenant_id or tenant_id_from_webhook_payload(db, payload if isinstance(payload, dict) else {})
+    provided_token = token or x_webhook_token or apikey or bearer
+    if _evolution_webhook_auth_configured():
+        if not _evolution_webhook_token_valid(provided_token, query_tenant_id=tenant_id):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Webhook token inválido.")
+    resolved_tenant_id = (
+        tenant_id
+        or tenant_id_from_webhook_payload(db, payload if isinstance(payload, dict) else {})
+        or _tenant_id_from_climaris_jwt_token(provided_token)
+    )
     if not resolved_tenant_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant do webhook não identificado.")
-    consume_evolution_webhook(db, tenant_id=resolved_tenant_id, payload=payload if isinstance(payload, dict) else {})
+    try:
+        consume_evolution_webhook(db, tenant_id=resolved_tenant_id, payload=payload if isinstance(payload, dict) else {})
+    except Exception:
+        logger.exception(
+            "Falha ao processar webhook Evolution (tenant_id=%s); rollback e ACK 200 para não derrubar o worker.",
+            resolved_tenant_id,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("Rollback após falha no webhook Evolution.")
+        # ACK para a Evolution parar retry agressivo; evento pode ser reprocessado manualmente ou via logs.
+        return {"status": "ok", "handler_error": True}
     return {"status": "ok"}

@@ -16,13 +16,14 @@ import {
 } from "../../api/finance";
 import styles from "./FinanceAccountsPage.module.css";
 
-type AccountKind = "checking" | "savings" | "investment" | "digital_wallet" | "other";
+type AccountKind = "checking" | "savings" | "investment" | "digital_wallet" | "cash" | "other";
 
 const KIND_LABEL: Record<AccountKind, string> = {
   checking: "Conta corrente",
   savings: "Conta poupança",
   investment: "Conta de investimento",
   digital_wallet: "Carteira digital",
+  cash: "Caixa / dinheiro",
   other: "Outros",
 };
 

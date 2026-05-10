@@ -161,6 +161,17 @@ def brasilapi_json_to_lookup(data: dict[str, Any], digits_14: str) -> CnpjLookup
     if cnae is not None:
         main_activity = str(cnae)
 
+    mei_raw = data.get("opcao_pelo_mei")
+    optante_mei: bool | None = None
+    if isinstance(mei_raw, bool):
+        optante_mei = mei_raw
+    elif isinstance(mei_raw, str):
+        mei_norm = mei_raw.strip().lower()
+        if mei_norm in {"sim", "s", "true", "1"}:
+            optante_mei = True
+        elif mei_norm in {"nao", "não", "n", "false", "0"}:
+            optante_mei = False
+
     return CnpjLookupOut(
         source="brasilapi",
         tax_id=tax_id,
@@ -170,7 +181,34 @@ def brasilapi_json_to_lookup(data: dict[str, Any], digits_14: str) -> CnpjLookup
         founded=None,
         main_activity=main_activity,
         address=addr_out,
+        optante_mei=optante_mei,
     )
+
+
+def _extract_optante_mei_from_company(company: dict[str, Any]) -> bool | None:
+    """Detecta enquadramento MEI no payload CNPJá (open/commercial)."""
+    # CNPJá costuma expor blocos `simei` e `simples` em `company`.
+    # Ex.: company.simei.optant = true/false
+    simei = company.get("simei")
+    if isinstance(simei, dict):
+        for key in ("optant", "isOptant", "enabled"):
+            val = simei.get(key)
+            if isinstance(val, bool):
+                return val
+
+    simples = company.get("simples")
+    if isinstance(simples, dict):
+        mei_info = simples.get("mei")
+        if isinstance(mei_info, dict):
+            for key in ("optant", "isOptant", "enabled"):
+                val = mei_info.get(key)
+                if isinstance(val, bool):
+                    return val
+        # Alguns payloads simplificam para `simples.mei: true/false`.
+        mei_flag = simples.get("mei")
+        if isinstance(mei_flag, bool):
+            return mei_flag
+    return None
 
 
 def office_payload_to_lookup(data: dict[str, Any], source: Literal["open", "commercial"]) -> CnpjLookupOut:
@@ -211,6 +249,7 @@ def office_payload_to_lookup(data: dict[str, Any], source: Literal["open", "comm
 
     founded = data.get("founded")
     founded_s = str(founded) if founded is not None else None
+    optante_mei = _extract_optante_mei_from_company(company)
 
     return CnpjLookupOut(
         source=source,
@@ -221,4 +260,5 @@ def office_payload_to_lookup(data: dict[str, Any], source: Literal["open", "comm
         founded=founded_s,
         main_activity=main_activity,
         address=addr_out,
+        optante_mei=optante_mei,
     )

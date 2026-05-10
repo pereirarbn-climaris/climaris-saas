@@ -234,6 +234,14 @@ function jsonHeaders(): HeadersInit {
   return { ...bearer(), "Content-Type": "application/json" };
 }
 
+export type TrustedDeviceOut = {
+  id: number;
+  expires_at: string;
+  created_at: string;
+  last_used_at: string | null;
+  is_current_browser: boolean;
+};
+
 export async function loginRequest(payload: {
   email: string;
   password: string;
@@ -242,10 +250,12 @@ export async function loginRequest(payload: {
   captcha_answer?: string;
   two_factor_token?: string;
   two_factor_code?: string;
+  trust_this_device?: boolean;
 }): Promise<TokenResponse> {
   try {
     const response = await fetch(apiUrl("/api/v1/auth/login"), {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -534,4 +544,38 @@ export async function resetTenantUserPassword(userId: number): Promise<UserProvi
     throw new Error(errorMessage(body, "Não foi possível redefinir a senha."));
   }
   return body as UserProvisionOut;
+}
+
+export async function listTrustedDevices(): Promise<TrustedDeviceOut[]> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/trusted-devices"), {
+    headers: bearer(),
+    credentials: "include",
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar dispositivos confiáveis."));
+  return body as TrustedDeviceOut[];
+}
+
+export async function deleteTrustedDevice(deviceId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/auth/me/trusted-devices/${deviceId}`), {
+    method: "DELETE",
+    headers: bearer(),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível revogar o dispositivo."));
+  }
+}
+
+export async function deleteAllTrustedDevices(): Promise<void> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/trusted-devices"), {
+    method: "DELETE",
+    headers: bearer(),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível revogar os dispositivos."));
+  }
 }

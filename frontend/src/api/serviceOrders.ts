@@ -22,6 +22,8 @@ export type ServiceOrderOut = {
     quantity: number;
     unit_price: number;
     duration_minutes: number;
+    service_name?: string | null;
+    periodicidade_meses?: number | null;
   }>;
   product_items: Array<{
     id: number;
@@ -74,6 +76,7 @@ export type SuggestedSlotOut = {
   technician_id: number;
   starts_at: string;
   ends_at: string;
+  shift?: "morning" | "afternoon" | null;
 };
 
 export type RescheduleOptionOut = {

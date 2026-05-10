@@ -26,8 +26,16 @@ def _cors_origins() -> list[str]:
 _DEFAULT_CAPACITOR_CORS_ORIGINS: tuple[str, ...] = (
     "https://localhost",
     "http://localhost",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "capacitor://localhost",
     "ionic://localhost",
+)
+
+# Produção Climaris (SPA + Evolution Manager em subdomínios distintos). Sobrescreva/estenda com CORS_ORIGINS.
+_DEFAULT_CLIMARIS_PROD_CORS_ORIGINS: tuple[str, ...] = (
+    "https://app.climaris.com.br",
+    "https://evo.climaris.com.br",
 )
 
 
@@ -35,7 +43,12 @@ def _merged_cors_origins() -> list[str]:
     from_env = _cors_origins()
     out: list[str] = []
     seen: set[str] = set()
-    for o in from_env + list(_DEFAULT_CAPACITOR_CORS_ORIGINS):
+    merged = (
+        from_env
+        + list(_DEFAULT_CLIMARIS_PROD_CORS_ORIGINS)
+        + list(_DEFAULT_CAPACITOR_CORS_ORIGINS)
+    )
+    for o in merged:
         if o not in seen:
             seen.add(o)
             out.append(o)
@@ -45,8 +58,8 @@ def _merged_cors_origins() -> list[str]:
 # Cadastro inicial público (POST /api/v1/auth/register). Desligue em ambientes só bootstrap.
 PUBLIC_REGISTER_ENABLED: bool = _env_bool("PUBLIC_REGISTER_ENABLED", True)
 
-# CORS: env (ex. dev) + app nativo Capacitor. Antes: só env; vazio = sem CORS (ok para SPA
-# e API no mesmo host no browser, mas o APK precisa de origens acima.
+# CORS: CORS_ORIGINS (env) primeiro, depois defaults produção Climaris + Capacitor.
+# Webhooks server→server não usam CORS; isto atende requisições do browser (SPA / painéis).
 CORS_ORIGINS: list[str] = _merged_cors_origins()
 
 # Base pública usada em links de confirmação de e-mail (frontend).
@@ -80,14 +93,50 @@ EVOLUTION_CORS_REQUEST_ORIGIN: str = (
     os.getenv("EVOLUTION_CORS_REQUEST_ORIGIN", "").strip().rstrip("/") or APP_PUBLIC_URL
 )
 EVOLUTION_INSTANCE: str = os.getenv("EVOLUTION_INSTANCE", "").strip()
+# Token estático no path/query do webhook (ex.: ?token=...). A Evolution pode enviar JWT em vez de string fixa.
 EVOLUTION_WEBHOOK_TOKEN: str = os.getenv("EVOLUTION_WEBHOOK_TOKEN", "").strip()
+# Validação HS256 do JWT que a Evolution envia em ?token= ou Authorization: Bearer (mesmo valor que jwt_key no webhook da Evolution).
+EVOLUTION_WEBHOOK_JWT_SECRET: str = os.getenv("EVOLUTION_WEBHOOK_JWT_SECRET", "").strip()
+# Se true, tenta validar o JWT também com EVOLUTION_API_KEY (quando o jwt_key na Evolution = AUTHENTICATION_API_KEY).
+EVOLUTION_WEBHOOK_JWT_USE_APIKEY: bool = _env_bool("EVOLUTION_WEBHOOK_JWT_USE_APIKEY", False)
 WHATSAPP_WEBHOOK_ENABLED: bool = _env_bool("WHATSAPP_WEBHOOK_ENABLED", False)
 
-# Mensagens interativas (botões) na Evolution podem variar por versão/provider.
-# Deixe desativado para priorizar entrega estável por texto simples.
+# Mensagens interativas (botões reply) — lembretes de agenda; preventiva usa só texto.
 WHATSAPP_INTERACTIVE_BUTTONS_ENABLED: bool = _env_bool("WHATSAPP_INTERACTIVE_BUTTONS_ENABLED", False)
 WHATSAPP_REMINDER_WORKER_ENABLED: bool = _env_bool("WHATSAPP_REMINDER_WORKER_ENABLED", True)
 WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS: int = int(os.getenv("WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS", "60"))
+# Lembrete preventivo automático (vencimento = hoje), mesmo ciclo do worker de agenda.
+WHATSAPP_PREVENTIVE_WORKER_ENABLED: bool = _env_bool("WHATSAPP_PREVENTIVE_WORKER_ENABLED", False)
+
+# Opcional: permite chamar POST /api/v1/preventive-maintenance/run-due-cron com header
+# X-Preventive-Cron-Secret (mesmo valor) sem JWT — útil para cron externo.
+PREVENTIVE_CRON_SECRET: str = os.getenv("PREVENTIVE_CRON_SECRET", "").strip()
+
+# Resposta automática no WhatsApp via webhook Evolution → Anthropic Claude (`app.ai_assistant.generate_ai_response`).
+WHATSAPP_AI_INCOMING_ENABLED: bool = _env_bool("WHATSAPP_AI_INCOMING_ENABLED", False)
+CLAUDE_API_KEY: str = os.getenv("CLAUDE_API_KEY", "").strip()
+# Haiku 4.5 (economia); sobrescreva com CLAUDE_MODEL no .env se precisar de outro ID da Anthropic.
+HAUKU_ECONOMY_MODEL: str = "claude-haiku-4-5-20251201"
+CLAUDE_MODEL: str = (os.getenv("CLAUDE_MODEL", "").strip() or HAUKU_ECONOMY_MODEL)
 
 # 2FA por e-mail no login de administradores. Só é aplicado se houver SMTP configurado (.env ou credencial `smtp` no painel com SMTP_ALLOW_DB_OVERRIDE).
 LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED", True)
+# Lembrar dispositivo (cookie HTTP-only + tabela login_trusted_devices) após 2FA.
+LOGIN_ADMIN_TRUST_DEVICE_ENABLED: bool = _env_bool("LOGIN_ADMIN_TRUST_DEVICE_ENABLED", True)
+
+TRUST_DEVICE_DAYS: int = max(1, int(os.getenv("TRUST_DEVICE_DAYS", "30")))
+TRUST_COOKIE_NAME: str = (os.getenv("TRUST_COOKIE_NAME", "climaris_tf_trust").strip() or "climaris_tf_trust")
+_trust_domain_raw = os.getenv("TRUST_COOKIE_DOMAIN", "").strip()
+TRUST_COOKIE_DOMAIN: str | None = _trust_domain_raw if _trust_domain_raw else None
+
+
+def _trust_cookie_secure_default() -> bool:
+    raw = os.getenv("TRUST_COOKIE_SECURE", "").strip().lower()
+    if raw in ("0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    return APP_PUBLIC_URL.lower().startswith("https://")
+
+
+TRUST_COOKIE_SECURE: bool = _trust_cookie_secure_default()

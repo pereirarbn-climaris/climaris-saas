@@ -96,3 +96,28 @@ export function digitsOnlyPhoneForApi(masked: string): string {
   if (d[2] === "9") return d.slice(0, 11);
   return d.slice(0, 10);
 }
+
+/** Máscara monetária BR para input (digitação em centavos). */
+export function formatCurrencyBrlInput(raw: string): string {
+  const d = digitsOnly(raw).slice(0, 14);
+  if (!d) return "";
+  const n = Number(d) / 100;
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+export function parseCurrencyBrlInput(masked: string): number {
+  const d = digitsOnly(masked);
+  if (!d) return 0;
+  return Number(d) / 100;
+}
+
+/** Valor numérico → texto mascarado para editar lançamento existente. */
+export function amountToCurrencyBrlInput(amount: number): string {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n < 0) return "";
+  const cents = Math.round(n * 100);
+  return formatCurrencyBrlInput(String(cents));
+}

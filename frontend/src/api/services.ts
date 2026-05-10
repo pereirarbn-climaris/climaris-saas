@@ -9,7 +9,16 @@ export type ServiceOut = {
   description: string | null;
   price: number;
   duration_minutes: number;
+  equipment_type_tags: string | null;
+  btu_min: number | null;
+  btu_max: number | null;
+  service_category: string | null;
+  applies_residential: boolean;
+  applies_commercial: boolean;
   is_active: boolean;
+  nfse_codigo_tributacao_nacional: string | null;
+  nfse_codigo_nbs: string | null;
+  periodicidade_meses: 6 | 12 | null;
   product_inputs: Array<{
     id: number;
     product_id: number;
@@ -31,7 +40,16 @@ export type ServiceCreatePayload = {
   description?: string | null;
   price: number;
   duration_minutes: number;
+  equipment_type_tags?: string | null;
+  btu_min?: number | null;
+  btu_max?: number | null;
+  service_category?: string | null;
+  applies_residential?: boolean;
+  applies_commercial?: boolean;
   is_active?: boolean;
+  nfse_codigo_tributacao_nacional?: string | null;
+  nfse_codigo_nbs?: string | null;
+  periodicidade_meses?: 6 | 12 | null;
   product_inputs?: ServiceProductInputPayload[];
 };
 
@@ -40,7 +58,16 @@ export type ServiceUpdatePayload = {
   description?: string | null;
   price?: number;
   duration_minutes?: number;
+  equipment_type_tags?: string | null;
+  btu_min?: number | null;
+  btu_max?: number | null;
+  service_category?: string | null;
+  applies_residential?: boolean;
+  applies_commercial?: boolean;
   is_active?: boolean;
+  nfse_codigo_tributacao_nacional?: string | null;
+  nfse_codigo_nbs?: string | null;
+  periodicidade_meses?: 6 | 12 | null;
   product_inputs?: ServiceProductInputPayload[];
 };
 
@@ -122,7 +149,16 @@ export async function createService(payload: ServiceCreatePayload): Promise<Serv
       demoCreateService({
         ...payload,
         description: payload.description ?? null,
+        equipment_type_tags: payload.equipment_type_tags ?? null,
+        btu_min: payload.btu_min ?? null,
+        btu_max: payload.btu_max ?? null,
+        service_category: payload.service_category ?? null,
+        applies_residential: payload.applies_residential ?? true,
+        applies_commercial: payload.applies_commercial ?? true,
         is_active: payload.is_active ?? true,
+        nfse_codigo_tributacao_nacional: payload.nfse_codigo_tributacao_nacional ?? null,
+        nfse_codigo_nbs: payload.nfse_codigo_nbs ?? null,
+        periodicidade_meses: payload.periodicidade_meses ?? null,
         product_inputs: [],
       }),
     );

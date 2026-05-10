@@ -40,6 +40,9 @@ from app.routers.inventory import router as inventory_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
 from app.routers.whatsapp import router as whatsapp_router
+from app.routers.ai_settings import router as ai_settings_router
+from app.routers.nfse import router as nfse_router
+from app.routers.preventive_maintenance import router as preventive_maintenance_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -273,7 +276,7 @@ async def db_programming_error_handler(request: Request, exc: ProgrammingError) 
                 "status_code": 500,
                 "message": (
                     "Erro de esquema no banco (tabela/coluna ausente ou incompatível). "
-                    "Na API, execute: alembic upgrade head"
+                    "Na API, execute: alembic upgrade heads"
                 ),
                 "path": str(request.url.path),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -342,7 +345,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
                 "message": (
                     "Erro interno inesperado no servidor. Tente de novo em instantes. "
                     "Se repetir, avise o suporte com o request_id desta resposta. "
-                    "Em ambiente próprio, confira `docker compose logs api` e rode `alembic upgrade head`."
+                    "Em ambiente próprio, confira `docker compose logs api` e rode `alembic upgrade heads`."
                 ),
                 "path": str(request.url.path),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -372,6 +375,9 @@ app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
+app.include_router(ai_settings_router, prefix=API_V1_PREFIX)
+app.include_router(nfse_router, prefix=API_V1_PREFIX)
+app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 
 
 @app.on_event("startup")

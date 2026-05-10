@@ -10,8 +10,15 @@ if [[ ! -f "$EVOLUTION_DIR/.env" ]]; then
   exit 1
 fi
 
+echo "==> Rede externa evolution_evolution_net (API Climaris ↔ Evolution)"
+docker network create evolution_evolution_net 2>/dev/null || true
+
 echo "==> Subindo stack Evolution"
-docker compose -f "$EVOLUTION_DIR/docker-compose.yml" --env-file "$EVOLUTION_DIR/.env" up -d
+UP_ARGS=(up -d)
+if [[ "${EVOLUTION_FORCE_RECREATE:-0}" == "1" ]]; then
+  UP_ARGS+=(--force-recreate)
+fi
+docker compose -f "$EVOLUTION_DIR/docker-compose.yml" --env-file "$EVOLUTION_DIR/.env" "${UP_ARGS[@]}"
 
 echo "==> Status dos containers"
 docker compose -f "$EVOLUTION_DIR/docker-compose.yml" --env-file "$EVOLUTION_DIR/.env" ps

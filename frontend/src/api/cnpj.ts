@@ -20,6 +20,7 @@ export type CnpjLookupResult = {
   founded: string | null;
   main_activity: string | null;
   address: CnpjAddress | null;
+  optante_mei?: boolean | null;
 };
 
 export type CnpjCommercialResult = CnpjLookupResult & {

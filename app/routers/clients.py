@@ -110,6 +110,7 @@ def create_client(
         name=payload.name,
         document=payload.document,
         tax_id_kind=payload.tax_id_kind,  # set by ClientCreate validator (infer CPF/CNPJ from digits)
+        optante_mei=bool(payload.optante_mei),
         phone=phone,
         whatsapp=payload.whatsapp,
         email=payload.email.lower() if payload.email else None,
@@ -126,6 +127,7 @@ def create_client(
         address_postal_code=payload.address_postal_code,
         address_country=payload.address_country or "Brasil",
         address_ibge_code=payload.address_ibge_code,
+        preventive_campaign_opt_out=bool(payload.preventive_campaign_opt_out),
     )
     db.add(client)
     db.commit()
@@ -160,6 +162,8 @@ def update_client(
 
     if "tax_id_kind" in fields_set and payload.tax_id_kind is not None:
         client.tax_id_kind = payload.tax_id_kind
+    if "optante_mei" in fields_set and payload.optante_mei is not None:
+        client.optante_mei = bool(payload.optante_mei)
 
     if "document" in fields_set:
         if payload.document is not None:
@@ -256,6 +260,9 @@ def update_client(
 
     if "address_ibge_code" in fields_set:
         client.address_ibge_code = payload.address_ibge_code
+
+    if "preventive_campaign_opt_out" in fields_set and payload.preventive_campaign_opt_out is not None:
+        client.preventive_campaign_opt_out = bool(payload.preventive_campaign_opt_out)
 
     db.commit()
     db.refresh(client)

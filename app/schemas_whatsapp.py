@@ -30,6 +30,7 @@ class WhatsappTemplateSendRequest(BaseModel):
 
 class WhatsappWebhookAck(BaseModel):
     status: str = "ok"
+    handler_error: bool | None = None
 
 
 class WhatsappAppointmentMessageSettingsPatch(BaseModel):

@@ -626,6 +626,8 @@ def create_service(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="duration_minutes must be at least 1.")
     if payload.price < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="price must be greater than or equal to 0.")
+    if payload.btu_min is not None and payload.btu_max is not None and payload.btu_min > payload.btu_max:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="btu_min cannot be greater than btu_max.")
 
     existing = db.execute(
         select(Service).where(Service.tenant_id == current_user.tenant_id, Service.name == name)
@@ -641,7 +643,16 @@ def create_service(
         description=payload.description,
         price=payload.price,
         duration_minutes=payload.duration_minutes,
+        equipment_type_tags=(payload.equipment_type_tags.strip() if payload.equipment_type_tags else None),
+        btu_min=payload.btu_min,
+        btu_max=payload.btu_max,
+        service_category=(payload.service_category.strip().lower() if payload.service_category else None),
+        applies_residential=bool(payload.applies_residential),
+        applies_commercial=bool(payload.applies_commercial),
         is_active=payload.is_active,
+        nfse_codigo_tributacao_nacional=(payload.nfse_codigo_tributacao_nacional or "").strip() or None,
+        nfse_codigo_nbs=(payload.nfse_codigo_nbs or "").strip() or None,
+        periodicidade_meses=payload.periodicidade_meses,
     )
     db.add(service)
     db.flush()
@@ -732,6 +743,8 @@ def update_service(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="duration_minutes must be at least 1.")
     if payload.price is not None and payload.price < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="price must be greater than or equal to 0.")
+    if payload.btu_min is not None and payload.btu_max is not None and payload.btu_min > payload.btu_max:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="btu_min cannot be greater than btu_max.")
 
     next_name = payload.name.strip() if payload.name is not None else None
     if next_name and next_name != service.name:
@@ -749,8 +762,26 @@ def update_service(
         service.price = payload.price
     if payload.duration_minutes is not None:
         service.duration_minutes = payload.duration_minutes
+    if "equipment_type_tags" in payload.model_fields_set:
+        service.equipment_type_tags = (payload.equipment_type_tags or "").strip() or None
+    if "btu_min" in payload.model_fields_set:
+        service.btu_min = payload.btu_min
+    if "btu_max" in payload.model_fields_set:
+        service.btu_max = payload.btu_max
+    if "service_category" in payload.model_fields_set:
+        service.service_category = (payload.service_category or "").strip().lower() or None
+    if payload.applies_residential is not None:
+        service.applies_residential = bool(payload.applies_residential)
+    if payload.applies_commercial is not None:
+        service.applies_commercial = bool(payload.applies_commercial)
     if payload.is_active is not None:
         service.is_active = payload.is_active
+    if "nfse_codigo_tributacao_nacional" in payload.model_fields_set:
+        service.nfse_codigo_tributacao_nacional = (payload.nfse_codigo_tributacao_nacional or "").strip() or None
+    if "nfse_codigo_nbs" in payload.model_fields_set:
+        service.nfse_codigo_nbs = (payload.nfse_codigo_nbs or "").strip() or None
+    if "periodicidade_meses" in payload.model_fields_set:
+        service.periodicidade_meses = payload.periodicidade_meses
     if payload.product_inputs is not None:
         _ensure_unique_service_product_inputs(payload.product_inputs)
         for row in list(service.product_inputs):
@@ -817,6 +848,7 @@ def _service_order_detail_options(*, for_stock: bool = False):
             order_techs,
         )
     return (
+        selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.service),
         selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.equipment),
         selectinload(ServiceOrder.product_items),
         schedule_techs,
@@ -972,7 +1004,7 @@ def list_service_orders(
         select(ServiceOrder)
         .where(ServiceOrder.tenant_id == current_user.tenant_id)
         .options(
-            selectinload(ServiceOrder.service_items),
+            selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.service),
             selectinload(ServiceOrder.product_items),
             selectinload(ServiceOrder.schedules),
         )
@@ -1837,48 +1869,27 @@ def technicians_day_availability(
     return TechnicianDayAvailabilityOut(day=day, technicians=availability)
 
 
-@router.get(
-    "/technicians/next-slots",
-    response_model=list[SuggestedSlotOut],
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
-)
-@limiter.limit("30/minute")
-def technicians_next_slots(
-    request: Request,
-    service_order_id: int,
+def suggest_booking_slots(
+    db: Session,
+    *,
+    tenant: Tenant,
+    tenant_id: int,
+    duration_minutes: int,
     from_at: datetime,
-    db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
     technician_id: int | None = None,
-    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    limit: int = 4,
     allow_overtime: bool = False,
-    split_days: Annotated[int | None, Query(ge=2, le=10)] = None,
 ) -> list[SuggestedSlotOut]:
-    technician_id = _enforce_technician_scope(current_user, technician_id)
-    tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
+    """Encaixa horários como o botão da OS: até 4 opções alternando manhã/tarde e respeitando jornada e conflitos dos técnicos."""
     tz = _tenant_tz(tenant)
     now_utc = datetime.now(timezone.utc)
     holidays = set(
-        db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == current_user.tenant_id)).scalars().all()
+        db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == tenant_id)).scalars().all()
     )
-    order = db.execute(
-        select(ServiceOrder)
-        .where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(selectinload(ServiceOrder.service_items))
-    ).scalar_one_or_none()
-    if order is None or not order.service_items:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found or has no services.")
-
-    total_duration_minutes = sum(max(i.quantity, 1) * max(i.duration_minutes, 1) for i in order.service_items)
-    if split_days is not None and split_days > 1:
-        duration_minutes = max(1, total_duration_minutes // split_days)
-        if total_duration_minutes % split_days != 0:
-            duration_minutes += 1
-    else:
-        duration_minutes = total_duration_minutes
+    duration_minutes = max(1, int(duration_minutes))
 
     tech_query = select(User).where(
-        User.tenant_id == current_user.tenant_id,
+        User.tenant_id == tenant_id,
         User.role == UserRole.TECHNICIAN,
         User.is_active.is_(True),
     )
@@ -1895,7 +1906,7 @@ def technicians_next_slots(
     suggestions: list[SuggestedSlotOut] = []
     day_cursor = from_local.date()
     attempts = 0
-    max_suggestions = min(limit, 4)
+    max_suggestions = min(max(1, int(limit)), 4)
     while len(suggestions) < max_suggestions and attempts < 60:
         attempts += 1
         if _is_holiday_blocked(day_cursor, holidays) or day_cursor.weekday() not in business_days:
@@ -1925,7 +1936,7 @@ def technicians_next_slots(
                         if allow_overtime:
                             _check_technician_start_rules(
                                 db=db,
-                                tenant_id=current_user.tenant_id,
+                                tenant_id=tenant_id,
                                 technician_id=tech.id,
                                 starts_at=probe,
                                 tenant_tz=tz,
@@ -1933,7 +1944,7 @@ def technicians_next_slots(
                         else:
                             _check_technician_work_rules(
                                 db=db,
-                                tenant_id=current_user.tenant_id,
+                                tenant_id=tenant_id,
                                 technician_id=tech.id,
                                 starts_at=probe,
                                 ends_at=candidate_end,
@@ -1941,7 +1952,7 @@ def technicians_next_slots(
                             )
                         _check_technician_conflict(
                             db=db,
-                            tenant_id=current_user.tenant_id,
+                            tenant_id=tenant_id,
                             technician_id=tech.id,
                             starts_at=probe,
                             ends_at=candidate_end,
@@ -1951,6 +1962,7 @@ def technicians_next_slots(
                                 technician_id=tech.id,
                                 starts_at=probe,
                                 ends_at=candidate_end,
+                                shift=shift_name,
                             )
                         )
                         found_for_shift = True
@@ -1963,6 +1975,56 @@ def technicians_next_slots(
         day_cursor += timedelta(days=1)
 
     return suggestions
+
+
+@router.get(
+    "/technicians/next-slots",
+    response_model=list[SuggestedSlotOut],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+@limiter.limit("30/minute")
+def technicians_next_slots(
+    request: Request,
+    service_order_id: int,
+    from_at: datetime,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    technician_id: int | None = None,
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    allow_overtime: bool = False,
+    split_days: Annotated[int | None, Query(ge=2, le=10)] = None,
+) -> list[SuggestedSlotOut]:
+    technician_id = _enforce_technician_scope(current_user, technician_id)
+    tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(selectinload(ServiceOrder.service_items))
+    ).scalar_one_or_none()
+    if order is None or not order.service_items:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found or has no services.")
+
+    total_duration_minutes = sum(max(i.quantity, 1) * max(i.duration_minutes, 1) for i in order.service_items)
+    if split_days is not None and split_days > 1:
+        duration_minutes = max(1, total_duration_minutes // split_days)
+        if total_duration_minutes % split_days != 0:
+            duration_minutes += 1
+    else:
+        duration_minutes = total_duration_minutes
+
+    if from_at.tzinfo is None:
+        from_at = from_at.replace(tzinfo=timezone.utc)
+
+    return suggest_booking_slots(
+        db,
+        tenant=tenant,
+        tenant_id=current_user.tenant_id,
+        duration_minutes=duration_minutes,
+        from_at=from_at,
+        technician_id=technician_id,
+        limit=limit,
+        allow_overtime=allow_overtime,
+    )
 
 
 @router.post(

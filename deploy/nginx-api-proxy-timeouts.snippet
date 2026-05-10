@@ -1,0 +1,6 @@
+# Incluir dentro do bloco `location` que faz proxy para a API (ex.: /api/v1/).
+# Evita HTTP 502 quando uma única requisição demora (Evolution/WhatsApp).
+proxy_connect_timeout 75s;
+proxy_send_timeout 300s;
+proxy_read_timeout 300s;
+send_timeout 300s;

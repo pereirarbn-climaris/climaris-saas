@@ -11,6 +11,10 @@ export type ProductOut = {
   sale_price: number;
   unit_price: number;
   stock_quantity: number;
+  compatible_equipment_tags: string | null;
+  btu_min: number | null;
+  btu_max: number | null;
+  application_scope: string | null;
   is_active: boolean;
 };
 
@@ -32,6 +36,10 @@ export type ProductCreatePayload = {
   purchase_price: number;
   sale_price: number;
   stock_quantity?: number;
+  compatible_equipment_tags?: string | null;
+  btu_min?: number | null;
+  btu_max?: number | null;
+  application_scope?: string | null;
   is_active?: boolean;
 };
 
@@ -41,6 +49,10 @@ export type ProductUpdatePayload = {
   purchase_price?: number;
   sale_price?: number;
   stock_quantity?: number;
+  compatible_equipment_tags?: string | null;
+  btu_min?: number | null;
+  btu_max?: number | null;
+  application_scope?: string | null;
   is_active?: boolean;
 };
 
@@ -147,6 +159,10 @@ export async function createProduct(payload: ProductCreatePayload): Promise<Prod
       demoCreateProduct({
         ...payload,
         stock_quantity: payload.stock_quantity ?? 0,
+        compatible_equipment_tags: payload.compatible_equipment_tags ?? null,
+        btu_min: payload.btu_min ?? null,
+        btu_max: payload.btu_max ?? null,
+        application_scope: payload.application_scope ?? null,
         is_active: payload.is_active ?? true,
       }),
     );

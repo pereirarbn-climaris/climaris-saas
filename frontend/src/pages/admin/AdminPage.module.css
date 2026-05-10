@@ -92,10 +92,45 @@
   margin-bottom: 0.6rem;
 }
 
+.fiscalDpsDefaults {
+  margin: 1rem 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+}
+
+.fiscalSubheading {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+}
+
 .row2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.5rem 1rem;
+}
+
+.cepRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cepInputGrow {
+  flex: 1;
+  min-width: 7.5rem;
+}
+
+.cepHint {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin: 0.25rem 0 0;
+  line-height: 1.35;
 }
 
 .colorRow {
@@ -361,6 +396,47 @@
   margin: 0;
   font-size: 0.8125rem;
   color: var(--color-error);
+}
+
+.testStatusCard {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.7rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 70%, var(--color-surface));
+}
+
+.testStatusHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.testBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid var(--color-border);
+}
+
+.testBadgeOk {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-border));
+}
+
+.testBadgeError {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 14%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+}
+
+.testBadgeIdle {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text-subtle) 14%, var(--color-surface-elevated));
 }
 
 /* Users */

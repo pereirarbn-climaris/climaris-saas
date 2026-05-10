@@ -2,12 +2,16 @@ import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 import {
   demoCreateFinanceCategory,
+  demoDeleteFinanceCategory,
+  demoPatchFinanceCategory,
   demoCreateFinanceEntry,
   demoCreateFinanceFee,
   demoDeleteFinanceEntry,
   demoDeleteFinanceFee,
   demoGetFinanceSettings,
   demoGetFinanceSummary,
+  demoGetFinanceBalanceSnapshot,
+  demoListFinanceAccounts,
   demoListFinanceCategories,
   demoListFinanceEntries,
   demoListFinanceFees,
@@ -55,6 +59,7 @@ export type FinanceEntryOut = {
   settlement_plan?: string | null;
   paid_at: string | null;
   notes: string | null;
+  service_order_id?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -124,11 +129,15 @@ export async function listFinanceEntries(params: {
   status?: FinanceEntryStatus;
   entry_type?: FinanceEntryType;
   date_basis?: FinanceEntryDateBasis;
+  service_order_id?: number;
 }): Promise<FinanceEntryOut[]> {
   if (isDemoMode()) {
     let rows = demoListFinanceEntries();
     if (params.status) rows = rows.filter((item) => item.status === params.status);
     if (params.entry_type) rows = rows.filter((item) => item.entry_type === params.entry_type);
+    if (params.service_order_id != null) {
+      rows = rows.filter((item) => item.service_order_id === params.service_order_id);
+    }
     return Promise.resolve(rows);
   }
   const sp = new URLSearchParams();
@@ -137,6 +146,7 @@ export async function listFinanceEntries(params: {
   if (params.status) sp.set("status", params.status);
   if (params.entry_type) sp.set("entry_type", params.entry_type);
   if (params.date_basis) sp.set("date_basis", params.date_basis);
+  if (params.service_order_id != null) sp.set("service_order_id", String(params.service_order_id));
   const response = await fetch(apiUrl(`/api/v1/finance/entries?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível listar lançamentos."));
@@ -163,6 +173,7 @@ export async function createFinanceEntry(payload: {
   category_id?: number | null;
   status?: FinanceEntryStatus;
   notes?: string | null;
+  service_order_id?: number | null;
 }): Promise<FinanceEntryOut> {
   if (isDemoMode()) return Promise.resolve(demoCreateFinanceEntry(payload));
   const response = await fetch(apiUrl("/api/v1/finance/entries"), {
@@ -214,7 +225,7 @@ export type FinanceBankAccountOut = {
   tenant_id: number;
   name: string;
   bank_name: string | null;
-  account_type: "checking" | "savings" | "investment" | "digital_wallet" | "other";
+  account_type: "checking" | "savings" | "investment" | "digital_wallet" | "cash" | "other";
   initial_balance: number;
   is_active: boolean;
   created_at: string;
@@ -247,17 +258,52 @@ export type FinanceCashflowOut = {
   closing_balance: number;
 };
 
+export type FinanceAccountBalanceRowOut = {
+  id: number;
+  name: string;
+  initial_balance: number;
+  current_balance: number;
+  projected_balance: number;
+};
+
+export type FinanceBalanceSnapshotOut = {
+  date_basis: string;
+  period_end: string;
+  as_of: string;
+  initial_balance_total: number;
+  current_balance_total: number;
+  projected_balance_total: number;
+  accounts: FinanceAccountBalanceRowOut[];
+};
+
 export async function listFinanceAccounts(): Promise<FinanceBankAccountOut[]> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoListFinanceAccounts());
+  }
   const response = await fetch(apiUrl("/api/v1/finance/accounts"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível listar contas bancárias."));
   return body as FinanceBankAccountOut[];
 }
 
+export async function getFinanceBalanceSnapshot(params: {
+  end_date: string;
+  date_basis: FinanceEntryDateBasis;
+}): Promise<FinanceBalanceSnapshotOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoGetFinanceBalanceSnapshot(params));
+  }
+  const sp = new URLSearchParams({ end_date: params.end_date, date_basis: params.date_basis });
+  const response = await fetch(apiUrl(`/api/v1/finance/balance-snapshot?${sp.toString()}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar saldos das contas."));
+  return body as FinanceBalanceSnapshotOut;
+}
+
 export async function createFinanceAccount(payload: {
   name: string;
   bank_name?: string | null;
-  account_type?: "checking" | "savings" | "investment" | "digital_wallet" | "other";
+  account_type?: "checking" | "savings" | "investment" | "digital_wallet" | "cash" | "other";
   initial_balance?: number;
   is_active?: boolean;
 }): Promise<FinanceBankAccountOut> {
@@ -377,12 +423,20 @@ export async function createFinanceEntryAsaasCharge(
   };
 }
 
-export async function deleteFinanceEntry(entryId: number): Promise<void> {
+export async function deleteFinanceEntry(
+  entryId: number,
+  params?: { edit_scope?: "single" | "future" | "all" },
+): Promise<void> {
   if (isDemoMode()) {
-    demoDeleteFinanceEntry(entryId);
+    demoDeleteFinanceEntry(entryId, params?.edit_scope ?? "single");
     return Promise.resolve();
   }
-  const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}`), {
+  const sp = new URLSearchParams();
+  if (params?.edit_scope && params.edit_scope !== "single") {
+    sp.set("edit_scope", params.edit_scope);
+  }
+  const q = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}${q ? `?${q}` : ""}`), {
     method: "DELETE",
     headers: bearer(),
   });
@@ -410,6 +464,35 @@ export async function createFinanceCategory(payload: { name: string; color?: str
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível criar categoria."));
   return body as FinanceCategoryOut;
+}
+
+export async function patchFinanceCategory(
+  categoryId: number,
+  payload: { name?: string; color?: string | null },
+): Promise<FinanceCategoryOut> {
+  if (isDemoMode()) return Promise.resolve(demoPatchFinanceCategory(categoryId, payload));
+  const response = await fetch(apiUrl(`/api/v1/finance/categories/${categoryId}`), {
+    method: "PATCH",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível atualizar categoria."));
+  return body as FinanceCategoryOut;
+}
+
+export async function deleteFinanceCategory(categoryId: number): Promise<void> {
+  if (isDemoMode()) {
+    demoDeleteFinanceCategory(categoryId);
+    return Promise.resolve();
+  }
+  const response = await fetch(apiUrl(`/api/v1/finance/categories/${categoryId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.ok) return;
+  const body = await parseBody(response);
+  throw new Error(errMessage(body, "Não foi possível remover categoria."));
 }
 
 export type FinancePaymentFeeOut = {

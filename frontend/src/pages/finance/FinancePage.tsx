@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
+  createFinanceCategory,
   createFinanceEntry,
   createFinanceEntryAsaasCharge,
   deleteFinanceEntry,
+  getFinanceBalanceSnapshot,
   getFinanceGateways,
   getFinanceSettings,
   listFinanceAccounts,
@@ -12,6 +14,7 @@ import {
   listFinanceCategories,
   listFinanceEntries,
   patchFinanceEntry,
+  type FinanceBalanceSnapshotOut,
   type FinanceEntryDateBasis,
   type FinanceBankAccountOut,
   type FinanceCreditCardOut,
@@ -22,8 +25,12 @@ import {
   type FinanceSettingsOut,
   type FinanceEntryType,
 } from "../../api/finance";
-import { digitsOnlyPhoneForApi, formatPhoneBrDisplay, formatPhoneBrInput } from "../../lib/brMask";
-import type { DashboardOutletContext } from "../dashboardContext";
+import { NavIconX } from "../../components/dashboard/NavIcons";
+import {
+  amountToCurrencyBrlInput,
+  formatCurrencyBrlInput,
+  parseCurrencyBrlInput,
+} from "../../lib/brMask";
 import styles from "./FinancePage.module.css";
 
 function toDateInput(v: Date): string {
@@ -32,6 +39,14 @@ function toDateInput(v: Date): string {
 
 function money(v: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v ?? 0);
+}
+
+function shortIsoDate(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 function statusLabel(v: FinanceEntryStatus): string {
@@ -54,8 +69,23 @@ function modeLabel(m: FinanceSettingsOut["effective_mode"]): string {
   return "Básico";
 }
 
+function basisShortLabel(basis: string): string {
+  if (basis === "competence_date") return "competência";
+  if (basis === "expected_settlement_date") return "previsão de caixa";
+  return "vencimento";
+}
+
+function accountChipTooltip(
+  accountName: string,
+  snapshot: FinanceBalanceSnapshotOut,
+  current: number,
+  projected: number,
+): string {
+  const basis = basisShortLabel(snapshot.date_basis);
+  return `${accountName}: saldo realizado até ${shortIsoDate(snapshot.as_of)} (${basis}) — ${money(current)} · projetado até ${shortIsoDate(snapshot.period_end)} — ${money(projected)}`;
+}
+
 export function FinancePage() {
-  const { tenant } = useOutletContext<DashboardOutletContext>();
   const now = new Date();
   const startOfMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth(), 1), [now.getFullYear(), now.getMonth()]);
   const endOfMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth() + 1, 0), [now.getFullYear(), now.getMonth()]);
@@ -70,24 +100,22 @@ export function FinancePage() {
 
   const [description, setDescription] = useState("");
   const [entryType, setEntryType] = useState<FinanceEntryType>("income");
-  const [amount, setAmount] = useState("");
+  const [amountDisplay, setAmountDisplay] = useState("");
   const [dueDate, setDueDate] = useState(toDateInput(now));
-  const [competenceDate, setCompetenceDate] = useState(toDateInput(now));
-  const [settlementPlan, setSettlementPlan] = useState<"same_as_due" | "next_business_day">("same_as_due");
   const [listDateBasis, setListDateBasis] = useState<FinanceEntryDateBasis>("due_date");
   const [categoryId, setCategoryId] = useState<string>("");
   const [paymentMethod, setPaymentMethod] = useState("pix");
   const [paymentProvider, setPaymentProvider] = useState("");
   const [feePercent, setFeePercent] = useState("0");
   const [feeFixedAmount, setFeeFixedAmount] = useState("0");
-  const [recipientWhatsapp, setRecipientWhatsapp] = useState("");
   const [installments, setInstallments] = useState("1");
-  const [installmentIntervalMonths, setInstallmentIntervalMonths] = useState("1");
   const [financeAccountId, setFinanceAccountId] = useState("");
   const [creditCardId, setCreditCardId] = useState("");
 
   const [settings, setSettings] = useState<FinanceSettingsOut | null>(null);
-  const [entryStatus, setEntryStatus] = useState<FinanceEntryStatus>("pending");
+  const [balanceSnapshot, setBalanceSnapshot] = useState<FinanceBalanceSnapshotOut | null>(null);
+  /** Novo lançamento: marcar como já pago em vez de selector com 4 status */
+  const [newEntryMarkPaid, setNewEntryMarkPaid] = useState(false);
   const [showNewEntry, setShowNewEntry] = useState(false);
 
   const [gateways, setGateways] = useState<FinanceGatewaysOut | null>(null);
@@ -98,9 +126,18 @@ export function FinancePage() {
   const [chargeSubmitting, setChargeSubmitting] = useState(false);
   const [chargeResult, setChargeResult] = useState<{ paymentId: string; invoiceUrl: string | null } | null>(null);
   const [editingEntry, setEditingEntry] = useState<FinanceEntryOut | null>(null);
-  const [editAmount, setEditAmount] = useState("");
+  const [editDeletePhase, setEditDeletePhase] = useState<"idle" | "choose-scope">("idle");
+  const [editDescription, setEditDescription] = useState("");
+  const [editAmountDisplay, setEditAmountDisplay] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
+  const [editCompetenceDate, setEditCompetenceDate] = useState("");
   const [editStatus, setEditStatus] = useState<FinanceEntryStatus>("pending");
+  const [editPaymentMethod, setEditPaymentMethod] = useState("pix");
+  const [editPaymentProvider, setEditPaymentProvider] = useState("");
+  const [editFinanceAccountId, setEditFinanceAccountId] = useState("");
+  const [editCreditCardId, setEditCreditCardId] = useState("");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editNotes, setEditNotes] = useState("");
   const [editScope, setEditScope] = useState<"single" | "future" | "all">("single");
   const isIncome = entryType === "income";
   const showMachineField = isIncome && (paymentMethod === "credit_card" || paymentMethod === "debit_card");
@@ -110,6 +147,16 @@ export function FinancePage() {
     (!isIncome && paymentMethod === "debit_card");
   const showCreditCardField = !isIncome && paymentMethod === "credit_card";
   const showInstallmentsField = paymentMethod === "credit_card" || paymentMethod === "boleto";
+
+  const editEt = editingEntry?.entry_type;
+  const editInc = editEt === "income";
+  const editShowMachineField = Boolean(editInc && (editPaymentMethod === "credit_card" || editPaymentMethod === "debit_card"));
+  const editShowBankAccountField =
+    editingEntry != null &&
+    (editPaymentMethod === "pix" ||
+      (editInc && editPaymentMethod === "boleto") ||
+      (!editInc && editPaymentMethod === "debit_card"));
+  const editShowCreditCardField = editingEntry != null && !editInc && editPaymentMethod === "credit_card";
 
   const providerSuggestions = useMemo(() => {
     const seen = new Set<string>();
@@ -125,6 +172,26 @@ export function FinancePage() {
     return out.sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [paymentFees]);
 
+  async function pickCategoryOption(raw: string, setField: (id: string) => void) {
+    if (raw !== "__new__") {
+      setField(raw);
+      return;
+    }
+    const name = window.prompt("Nome da nova categoria");
+    if (!name?.trim()) return;
+    try {
+      const created = await createFinanceCategory({ name: name.trim() });
+      setCategories((prev) =>
+        [...prev.filter((c) => c.id !== created.id), { id: created.id, name: created.name }].sort((a, b) =>
+          a.name.localeCompare(b.name, "pt-BR"),
+        ),
+      );
+      setField(String(created.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível criar categoria.");
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -135,9 +202,10 @@ export function FinancePage() {
         setEntries([]);
         setCategories([]);
         setGateways(null);
+        setBalanceSnapshot(null);
         return;
       }
-      const [e, c, gw, fees, accs, ccs] = await Promise.all([
+      const [e, c, gw, fees, accs, ccs, snap] = await Promise.all([
         listFinanceEntries({
           start_date: startDate,
           end_date: endDate,
@@ -148,6 +216,7 @@ export function FinancePage() {
         listFinancePaymentFees(),
         listFinanceAccounts(),
         listFinanceCreditCards(),
+        getFinanceBalanceSnapshot({ end_date: endDate, date_basis: listDateBasis }),
       ]);
       setGateways(gw);
       setEntries(e);
@@ -155,6 +224,7 @@ export function FinancePage() {
       setPaymentFees(fees);
       setAccounts(accs);
       setCards(ccs);
+      setBalanceSnapshot(snap);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível carregar financeiro.");
     } finally {
@@ -165,6 +235,11 @@ export function FinancePage() {
   useEffect(() => {
     void loadAll();
   }, [startDate, endDate, listDateBasis]);
+
+  useEffect(() => {
+    if (!editShowMachineField) return;
+    setEditPaymentProvider((prev) => (prev.trim().toLowerCase() === "caixa" ? "" : prev));
+  }, [editPaymentMethod, editShowMachineField]);
 
   useEffect(() => {
     const provider = paymentProvider.trim().toLowerCase();
@@ -187,6 +262,8 @@ export function FinancePage() {
       setPaymentProvider("caixa");
     } else if (!showMachineField) {
       setPaymentProvider("");
+    } else {
+      setPaymentProvider((prev) => (prev.trim().toLowerCase() === "caixa" ? "" : prev));
     }
     if (!showMachineField) {
       setFeePercent("0");
@@ -200,14 +277,13 @@ export function FinancePage() {
     }
     if (!showInstallmentsField) {
       setInstallments("1");
-      setInstallmentIntervalMonths("1");
     }
   }, [paymentMethod, entryType, showMachineField, showBankAccountField, showCreditCardField, showInstallmentsField]);
 
   async function submitEntry(ev: FormEvent) {
     ev.preventDefault();
-    if (!description.trim() || !amount.trim()) return;
-    const amountNum = Number(amount);
+    const amountNum = parseCurrencyBrlInput(amountDisplay);
+    if (!description.trim() || !(amountNum > 0)) return;
     const installmentsNum = showInstallmentsField ? Number(installments || "1") : 1;
     const feeMatched = paymentFees.find(
       (x) =>
@@ -219,7 +295,6 @@ export function FinancePage() {
     const feePercentNum = feeMatched ? Number(feeMatched.fee_percent || 0) : Number(feePercent || "0");
     const feeFixedNum = feeMatched ? Number(feeMatched.fee_fixed_amount || 0) : Number(feeFixedAmount || "0");
     const feeCalculated = amountNum * (feePercentNum / 100) + feeFixedNum;
-    const wa = digitsOnlyPhoneForApi(recipientWhatsapp);
     try {
       await createFinanceEntry({
         description: description.trim(),
@@ -230,28 +305,25 @@ export function FinancePage() {
         fee_percent: feePercentNum,
         fee_fixed_amount: feeFixedNum,
         fee_amount: feeCalculated,
-        recipient_whatsapp: wa.length >= 10 ? wa : null,
+        recipient_whatsapp: null,
         installments: installmentsNum,
-        installment_interval_months: installmentsNum > 1 ? Number(installmentIntervalMonths || "1") : 1,
+        installment_interval_months: 1,
         finance_account_id: financeAccountId ? Number(financeAccountId) : null,
         credit_card_id: creditCardId ? Number(creditCardId) : null,
         due_date: dueDate,
-        competence_date: isIncome ? competenceDate : undefined,
-        ...(showMachineField ? { settlement_plan: settlementPlan } : {}),
+        competence_date: isIncome ? dueDate : undefined,
         category_id: categoryId ? Number(categoryId) : null,
-        status: entryStatus,
+        status: newEntryMarkPaid ? "paid" : "pending",
       });
       setDescription("");
-      setAmount("");
+      setAmountDisplay("");
       setCategoryId("");
-      setEntryStatus("pending");
+      setNewEntryMarkPaid(false);
       setPaymentMethod("pix");
       setPaymentProvider("");
       setFeePercent("0");
       setFeeFixedAmount("0");
-      setRecipientWhatsapp("");
       setInstallments("1");
-      setInstallmentIntervalMonths("1");
       setFinanceAccountId("");
       setCreditCardId("");
       setShowNewEntry(false);
@@ -270,44 +342,77 @@ export function FinancePage() {
     }
   }
 
-  async function markAsCancelled(entry: FinanceEntryOut) {
-    try {
-      await patchFinanceEntry(entry.id, { status: "cancelled" });
-      await loadAll();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Não foi possível cancelar lançamento.");
-    }
+  function closeEditModal() {
+    setEditingEntry(null);
+    setEditDeletePhase("idle");
   }
 
-  async function removeEntry(entry: FinanceEntryOut) {
-    if (!window.confirm(`Excluir "${entry.description}"?`)) return;
+  function openEditModal(entry: FinanceEntryOut) {
+    setEditDeletePhase("idle");
+    setEditingEntry(entry);
+    setEditDescription(entry.description ?? "");
+    setEditAmountDisplay(amountToCurrencyBrlInput(Number(entry.amount ?? 0)));
+    setEditDueDate(entry.due_date);
+    setEditCompetenceDate(entry.competence_date ?? entry.due_date);
+    setEditStatus(entry.status);
+    setEditPaymentMethod((entry.payment_method || "pix").toLowerCase());
+    setEditPaymentProvider(entry.payment_provider?.trim() ?? "");
+    setEditFinanceAccountId(entry.finance_account_id != null ? String(entry.finance_account_id) : "");
+    setEditCreditCardId(entry.credit_card_id != null ? String(entry.credit_card_id) : "");
+    setEditCategoryId(entry.category_id != null ? String(entry.category_id) : "");
+    setEditNotes(entry.notes?.trim() ?? "");
+    setEditScope("single");
+  }
+
+  function handleDeleteClick() {
+    if (!editingEntry) return;
+    const total = editingEntry.installment_total ?? 1;
+    if (total <= 1) {
+      if (!window.confirm(`Excluir "${editingEntry.description}"? Esta ação não pode ser desfeita.`)) return;
+      void runDeleteWithScope("single");
+      return;
+    }
+    setEditDeletePhase("choose-scope");
+  }
+
+  async function runDeleteWithScope(scope: "single" | "future" | "all") {
+    if (!editingEntry) return;
+    setError(null);
     try {
-      await deleteFinanceEntry(entry.id);
+      await deleteFinanceEntry(editingEntry.id, { edit_scope: scope });
+      closeEditModal();
       await loadAll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível excluir lançamento.");
     }
   }
 
-  function openEditModal(entry: FinanceEntryOut) {
-    setEditingEntry(entry);
-    setEditAmount(String(entry.amount ?? ""));
-    setEditDueDate(entry.due_date);
-    setEditStatus(entry.status);
-    setEditScope("single");
-  }
-
   async function submitEditEntry(ev: FormEvent) {
     ev.preventDefault();
-    if (!editingEntry) return;
+    if (!editingEntry || editDeletePhase === "choose-scope") return;
+    const amt = parseCurrencyBrlInput(editAmountDisplay);
+    if (!(amt > 0)) {
+      setError("Informe um valor válido.");
+      return;
+    }
+    setError(null);
     try {
       await patchFinanceEntry(editingEntry.id, {
-        amount: Number(editAmount),
+        description: editDescription.trim(),
+        amount: amt,
         due_date: editDueDate,
+        competence_date: editInc ? editCompetenceDate : undefined,
         status: editStatus,
+        payment_method: editPaymentMethod || null,
+        payment_provider: editShowMachineField ? editPaymentProvider.trim() || null : null,
+        finance_account_id: editFinanceAccountId ? Number(editFinanceAccountId) : null,
+        credit_card_id: editCreditCardId ? Number(editCreditCardId) : null,
+        category_id: editCategoryId ? Number(editCategoryId) : null,
+        recipient_whatsapp: null,
+        notes: editNotes.trim() || null,
         edit_scope: editScope,
       });
-      setEditingEntry(null);
+      closeEditModal();
       await loadAll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível atualizar lançamento.");
@@ -435,45 +540,22 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
   return e.due_date;
 }
 
-function shortIso(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-
   return (
     <section className={styles.page}>
-      <header className={styles.hero}>
-        <div className={styles.heroInner}>
+      <header className={styles.pageHeader}>
+        <div className={styles.pageHeaderRow}>
           <div>
-            <h1>Financeiro</h1>
-            <p>
-              Contas a receber e a pagar, taxas de maquininha e visão por período. Integrações com gateways (Asaas,
-              Mercado Pago) e conciliação automática entram na evolução do modo{" "}
-              <strong>Gestão completa</strong> — use categorias e lembretes por WhatsApp nos modos superiores.
-            </p>
-            <p className={styles.planPill}>
-              Plano do workspace: <strong>{tenant.active_plan}</strong>
-            </p>
+            <h1 className={styles.pageTitle}>Financeiro</h1>
+            {settings ? (
+              <p className={styles.pageSub}>
+                Modo <strong>{modeLabel(settings.effective_mode)}</strong> — entradas, saídas e saldos por período.
+              </p>
+            ) : (
+              <p className={styles.pageSub}>Carregando…</p>
+            )}
           </div>
-          {settings ? (
-            <div className={styles.badgeRow}>
-              <span className={styles.modeBadge}>Modo ativo: {modeLabel(settings.effective_mode)}</span>
-            </div>
-          ) : null}
         </div>
       </header>
-
-      <div className={styles.topConfigHint}>
-        <p className={styles.muted}>
-          Configurações, gateways, taxas de maquininha (Stone) e lembretes foram movidos para a página dedicada.
-        </p>
-        <Link to="/app/finance/settings" className={styles.inlineConfigLink}>
-          Abrir Configurações do Financeiro
-        </Link>
-      </div>
 
       {error ? (
         <p className={styles.error} role="alert">
@@ -484,48 +566,86 @@ function shortIso(iso: string): string {
       {settings && !settings.finance_enabled ? (
         <section className={styles.panel}>
           <p className={styles.locked}>
-            O financeiro está desativado. Ative em <strong>Configurações do Financeiro</strong>.
+            O financeiro está desativado. Ative em{" "}
+            <Link to="/app/finance/settings" className={styles.inlineConfigLink}>
+              Configurações do Financeiro
+            </Link>
+            .
           </p>
         </section>
       ) : null}
 
       {settings?.finance_enabled !== false ? (
         <>
-          <section className={styles.filtersBar}>
-            <div className={styles.filterQuickActions}>
-              <button type="button" className={styles.presetBtn} onClick={() => applyRangePreset("month")}>
-                Mês
-              </button>
-              <button type="button" className={styles.presetBtn} onClick={() => applyRangePreset("quarter")}>
-                Trimestre
-              </button>
-              <button type="button" className={styles.presetBtn} onClick={() => applyRangePreset("year")}>
-                Anual
-              </button>
-            </div>
-            <div className={styles.row2}>
-              <label className={styles.field}>
-                <span>De</span>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-              </label>
-              <label className={styles.field}>
-                <span>Até</span>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-              </label>
-            </div>
-            <label className={styles.field} style={{ maxWidth: "100%" }}>
-              <span>Período por</span>
-              <select
-                value={listDateBasis}
-                onChange={(e) => setListDateBasis(e.target.value as FinanceEntryDateBasis)}
-                aria-label="Critério de data do período"
-              >
-                <option value="due_date">Vencimento</option>
-                <option value="competence_date">Competência (receita)</option>
-                <option value="expected_settlement_date">Previsão de caixa (compensação)</option>
-              </select>
-            </label>
-          </section>
+          {balanceSnapshot ? (
+            <section
+              className={styles.balanceSection}
+              aria-label="Saldos das contas"
+              aria-busy={loading}
+            >
+              <div className={styles.balanceToolbar}>
+                <h2 className={styles.balanceHeading}>Resumo de saldos</h2>
+                <button
+                  type="button"
+                  className={styles.refreshBtn}
+                  onClick={() => void loadAll()}
+                  disabled={loading}
+                  aria-busy={loading}
+                  aria-label={loading ? "Atualizando dados financeiros" : "Atualizar saldos e movimentações"}
+                >
+                  {loading ? "Atualizando…" : "Atualizar"}
+                </button>
+              </div>
+              {loading ? <div className={styles.loadingStrip} aria-hidden /> : null}
+              <div className={styles.balanceMainCards}>
+                <article
+                  className={`${styles.balanceCard} ${styles.balanceCardCurrent}`}
+                  title={`Saldo realizado: soma das contas com lançamentos já pagos até ${shortIsoDate(balanceSnapshot.as_of)}, usando ${basisShortLabel(balanceSnapshot.date_basis)} como data de referência.`}
+                >
+                  <span className={styles.balanceCardLabel}>Saldo em conta</span>
+                  <span className={styles.balanceCardValue}>{money(balanceSnapshot.current_balance_total)}</span>
+                  <span className={styles.balanceCardHint}>
+                    Realizado até {shortIsoDate(balanceSnapshot.as_of)} (lançamentos pagos, critério:{" "}
+                    {basisShortLabel(balanceSnapshot.date_basis)}).
+                  </span>
+                </article>
+                <article
+                  className={`${styles.balanceCard} ${styles.balanceCardProjected}`}
+                  title={`Projeção até ${shortIsoDate(balanceSnapshot.period_end)}: inclui todos os lançamentos não cancelados cuja data (${basisShortLabel(balanceSnapshot.date_basis)}) cai até essa data — pagos ou pendentes.`}
+                >
+                  <span className={styles.balanceCardLabel}>Saldo projetado</span>
+                  <span className={styles.balanceCardValue}>{money(balanceSnapshot.projected_balance_total)}</span>
+                  <span className={styles.balanceCardHint}>
+                    Inclui pendências e vencidas até {shortIsoDate(balanceSnapshot.period_end)} — mesmo critério de data do
+                    período.
+                  </span>
+                </article>
+              </div>
+              {balanceSnapshot.accounts.length > 0 ? (
+                <div className={styles.accountBalances}>
+                  <span className={styles.accountBalancesTitle}>Por conta</span>
+                  <div className={styles.accountBalancesScroll}>
+                    {balanceSnapshot.accounts.map((a) => (
+                      <div
+                        key={a.id}
+                        className={styles.accountBalanceChip}
+                        title={accountChipTooltip(a.name, balanceSnapshot, a.current_balance, a.projected_balance)}
+                      >
+                        <span className={styles.accountBalanceName}>{a.name}</span>
+                        <span className={styles.accountBalanceValues}>
+                          <span className={styles.accountBalanceMono}>{money(a.current_balance)}</span>
+                          <span className={styles.accountBalanceArrow} aria-hidden>
+                            →
+                          </span>
+                          <span className={styles.accountBalanceMono}>{money(a.projected_balance)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           <div className={styles.cards}>
             <article className={`${styles.card} ${styles.cardIncome}`}>
@@ -546,23 +666,6 @@ function shortIso(iso: string): string {
             </article>
           </div>
 
-          <div className={styles.actionsRow}>
-            <button
-              type="button"
-              className={styles.primaryActionBtn}
-              onClick={() => {
-                setCompetenceDate(dueDate);
-                setSettlementPlan("same_as_due");
-                setShowNewEntry(true);
-              }}
-            >
-              Novo lançamento
-            </button>
-            <Link to="/app/finance/settings" className={styles.inlineConfigLink}>
-              Categoria e configurações
-            </Link>
-          </div>
-
           <section className={styles.entriesSection}>
             <div className={styles.entriesHead}>
               <h2 className={styles.sectionTitle} style={{ margin: 0 }}>
@@ -570,7 +673,53 @@ function shortIso(iso: string): string {
               </h2>
               {loading ? <span className={styles.muted}>Atualizando…</span> : null}
             </div>
-            <p className={styles.muted} style={{ marginTop: "0.25rem" }}>
+            <div className={styles.filtersBar} role="group" aria-label="Filtros do período das movimentações">
+              <div className={styles.filterQuickActions}>
+                <button type="button" className={styles.presetBtn} onClick={() => applyRangePreset("month")}>
+                  Mês
+                </button>
+                <button type="button" className={styles.presetBtn} onClick={() => applyRangePreset("quarter")}>
+                  Trimestre
+                </button>
+                <button type="button" className={styles.presetBtn} onClick={() => applyRangePreset("year")}>
+                  Anual
+                </button>
+              </div>
+              <div className={styles.filtersDates}>
+                <label className={styles.fieldCompact}>
+                  <span>De</span>
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                </label>
+                <label className={styles.fieldCompact}>
+                  <span>Até</span>
+                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                </label>
+              </div>
+              <label className={`${styles.fieldCompact} ${styles.fieldPeriod}`}>
+                <span>Período por</span>
+                <select
+                  value={listDateBasis}
+                  onChange={(e) => setListDateBasis(e.target.value as FinanceEntryDateBasis)}
+                  aria-label="Critério de data do período"
+                >
+                  <option value="due_date">Vencimento</option>
+                  <option value="competence_date">Competência (receita)</option>
+                  <option value="expected_settlement_date">Previsão de caixa (compensação)</option>
+                </select>
+              </label>
+              <div className={styles.filtersBarAction}>
+                <button
+                  type="button"
+                  className={styles.filtersBarNewBtn}
+                  onClick={() => {
+                    setShowNewEntry(true);
+                  }}
+                >
+                  Novo lançamento
+                </button>
+              </div>
+            </div>
+            <p className={styles.muted} style={{ marginTop: "0.35rem" }}>
               {listBasisHint}
             </p>
             {groupedByDay.length === 0 ? (
@@ -583,56 +732,57 @@ function shortIso(iso: string): string {
                     <ul className={styles.entries}>
                       {group.items.map((e) => (
                         <li key={e.id} className={styles.entryRow}>
-                          <div className={styles.entryMain}>
-                            <strong>{e.description}</strong>
-                            <div className={styles.entryMeta}>
-                              <span className={`${styles.statusBadge} ${statusBadgeClass(e.status)}`}>{statusLabel(e.status)}</span>
-                              <span>{e.entry_type === "income" ? "Entrada" : "Saída"}</span>
-                              <span>{e.category_name ?? "Sem categoria"}</span>
-                              <span>{e.payment_method ?? "—"}</span>
-                              {e.payment_provider ? <span>{e.payment_provider}</span> : null}
-                              {e.finance_account_id ? <span>Conta #{e.finance_account_id}</span> : null}
-                              {e.credit_card_id ? <span>Cartão #{e.credit_card_id}</span> : null}
-                              {e.recipient_whatsapp ? <span>WhatsApp: {formatPhoneBrDisplay(e.recipient_whatsapp)}</span> : null}
-                              {e.gateway_payment_id ? <span>Asaas: {e.gateway_payment_id}</span> : null}
-                              {e.competence_date ? <span>Competência {shortIso(e.competence_date)}</span> : null}
-                              {e.expected_settlement_date ? <span>Caixa prev. {shortIso(e.expected_settlement_date)}</span> : null}
-                              {(e.installment_total ?? 1) > 1 ? (
-                                <span>
-                                  Parcela {e.installment_number ?? 1}/{e.installment_total ?? 1}
-                                </span>
-                              ) : null}
+                          <button
+                            type="button"
+                            className={styles.entryClickArea}
+                            onClick={() => openEditModal(e)}
+                            aria-label={`Editar lançamento: ${e.description}`}
+                          >
+                            <div className={styles.entryMain}>
+                              <strong>{e.description}</strong>
+                              <div className={styles.entryMeta}>
+                                <span className={`${styles.statusBadge} ${statusBadgeClass(e.status)}`}>{statusLabel(e.status)}</span>
+                                <span>{e.entry_type === "income" ? "Entrada" : "Saída"}</span>
+                                <span>{e.category_name ?? "Sem categoria"}</span>
+                                <span>{e.payment_method ?? "—"}</span>
+                                {e.payment_provider ? <span>{e.payment_provider}</span> : null}
+                                {e.finance_account_id ? <span>Conta #{e.finance_account_id}</span> : null}
+                                {e.credit_card_id ? <span>Cartão #{e.credit_card_id}</span> : null}
+                                {e.gateway_payment_id ? <span>Asaas: {e.gateway_payment_id}</span> : null}
+                                {e.competence_date ? <span>Competência {shortIsoDate(e.competence_date)}</span> : null}
+                                {e.expected_settlement_date ? <span>Caixa prev. {shortIsoDate(e.expected_settlement_date)}</span> : null}
+                                {(e.installment_total ?? 1) > 1 ? (
+                                  <span>
+                                    Parcela {e.installment_number ?? 1}/{e.installment_total ?? 1}
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
-                          </div>
-                          <div className={styles.entryAmount}>
-                            <strong className={e.entry_type === "income" ? styles.amountIncome : styles.amountExpense}>
-                              {e.entry_type === "income" ? "+" : "-"} {money(e.amount)}
-                            </strong>
-                            <span>Líquido {money(e.net_amount)}</span>
-                          </div>
-                          <div className={styles.entryActions}>
-                            {e.entry_type === "income" && !e.gateway_payment_id && gateways?.asaas.connected ? (
+                            <div className={styles.entryAmount}>
+                              <strong className={e.entry_type === "income" ? styles.amountIncome : styles.amountExpense}>
+                                {e.entry_type === "income" ? "+" : "-"} {money(e.amount)}
+                              </strong>
+                              <span>Líquido {money(e.net_amount)}</span>
+                            </div>
+                          </button>
+                          {e.entry_type === "income" && !e.gateway_payment_id && gateways?.asaas.connected ? (
+                            <div className={styles.entryQuickActions}>
                               <button type="button" onClick={() => openChargeModal(e)}>
                                 Cobrar Asaas
                               </button>
-                            ) : null}
-                            <button type="button" onClick={() => openEditModal(e)}>
-                              Editar
-                            </button>
-                            {e.status !== "paid" ? (
+                              {e.status !== "paid" ? (
+                                <button type="button" onClick={() => void markAsPaid(e)}>
+                                  Baixar
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : e.status !== "paid" ? (
+                            <div className={styles.entryQuickActions}>
                               <button type="button" onClick={() => void markAsPaid(e)}>
                                 Baixar
                               </button>
-                            ) : null}
-                            {e.status !== "cancelled" ? (
-                              <button type="button" onClick={() => void markAsCancelled(e)}>
-                                Cancelar
-                              </button>
-                            ) : null}
-                            <button type="button" className={styles.btnDanger} onClick={() => void removeEntry(e)}>
-                              Excluir
-                            </button>
-                          </div>
+                            </div>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -646,154 +796,153 @@ function shortIso(iso: string): string {
 
       {showNewEntry ? (
         <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Novo lançamento financeiro">
-          <div className={styles.modalCard}>
+          <div className={`${styles.modalCard} ${styles.modalCardFinance}`}>
             <header className={styles.modalHeader}>
-              <h3>Novo lançamento</h3>
+              <div className={styles.modalTitleBlock}>
+                <h3>Novo lançamento</h3>
+                <p className={styles.modalSubtitle}>Registre valores que entram ou saem das contas do workspace.</p>
+              </div>
               <button type="button" className={styles.modalClose} onClick={() => setShowNewEntry(false)}>
                 Fechar
               </button>
             </header>
-            <p className={styles.modalIntro}>
-              Preencha os dados do lançamento. Os campos mudam automaticamente conforme o meio de pagamento.
-            </p>
-            <form className={styles.modalForm} onSubmit={submitEntry}>
-              <label className={styles.modalField}>
-                <span>Descrição</span>
-                <input
-                  placeholder="Ex.: Manutenção mensal cliente XPTO"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  autoComplete="off"
-                  autoFocus
-                />
-              </label>
-              <div className={styles.row2}>
+            <form className={styles.modalFormFinance} onSubmit={submitEntry}>
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionLabel}>Dados principais</div>
                 <label className={styles.modalField}>
-                  <span>Tipo (entrada/saída)</span>
-                  <select value={entryType} onChange={(e) => setEntryType(e.target.value as FinanceEntryType)}>
-                    <option value="income">Entrada (receita)</option>
-                    <option value="expense">Saída (despesa)</option>
-                  </select>
+                  <span>Descrição</span>
+                  <input
+                    placeholder="Ex.: OS #12 — manutenção contrato mensal"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    autoComplete="off"
+                    autoFocus
+                  />
                 </label>
-                <label className={styles.modalField}>
-                  <span>Valor bruto (R$)</span>
-                  <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
-                </label>
-              </div>
-              <div className={styles.row2}>
-                <label className={styles.modalField}>
-                  <span>Vencimento (1ª parcela)</span>
-                  <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                </label>
-                <label className={styles.modalField}>
-                  <span>Status inicial</span>
-                  <select value={entryStatus} onChange={(e) => setEntryStatus(e.target.value as FinanceEntryStatus)}>
-                    <option value="pending">Pendente</option>
-                    <option value="paid">Pago</option>
-                    <option value="overdue">Vencido</option>
-                    <option value="cancelled">Cancelado</option>
-                  </select>
-                </label>
-              </div>
-              {isIncome ? (
-                <label className={styles.modalField}>
-                  <span>Data competência (reconhecimento da receita)</span>
-                  <input type="date" value={competenceDate} onChange={(e) => setCompetenceDate(e.target.value)} />
-                </label>
-              ) : null}
-              <div className={styles.row2}>
-                <label className={styles.modalField}>
-                  <span>Meio de pagamento</span>
-                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-                    <option value="pix">PIX</option>
-                    <option value="cash">Dinheiro</option>
-                    <option value="credit_card">Cartão de crédito</option>
-                    <option value="debit_card">Cartão de débito</option>
-                    <option value="boleto">Boleto</option>
-                  </select>
-                </label>
-                {showMachineField ? (
+                <div className={styles.modalGridTipoPaid}>
                   <label className={styles.modalField}>
-                    <span>Maquininha</span>
-                    <input
-                      placeholder="Ex.: Stone"
-                      value={paymentProvider}
-                      list="provider-suggestions"
-                      onChange={(e) => setPaymentProvider(e.target.value)}
-                    />
-                  </label>
-                ) : (
-                  <div />
-                )}
-              </div>
-              <datalist id="provider-suggestions">
-                {providerSuggestions.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              {showMachineField ? (
-                <>
-                  <label className={styles.modalField}>
-                    <span>Previsão de compensação (caixa)</span>
-                    <select value={settlementPlan} onChange={(e) => setSettlementPlan(e.target.value as typeof settlementPlan)}>
-                      <option value="same_as_due">No dia do vencimento da parcela</option>
-                      <option value="next_business_day">D+1 útil após o vencimento da parcela</option>
+                    <span>Tipo</span>
+                    <select value={entryType} onChange={(e) => setEntryType(e.target.value as FinanceEntryType)}>
+                      <option value="income">Receita</option>
+                      <option value="expense">Despesa</option>
                     </select>
                   </label>
-                  <p className={styles.muted}>Taxa calculada automaticamente pela maquininha e parcelas. Valor bruto e taxas são divididos entre as parcelas.</p>
-                </>
-              ) : null}
-              {showInstallmentsField ? (
+                  <label className={styles.modalCheck}>
+                    <input
+                      type="checkbox"
+                      checked={newEntryMarkPaid}
+                      onChange={(e) => setNewEntryMarkPaid(e.target.checked)}
+                    />
+                    <span>Já está pago ou liquidado</span>
+                  </label>
+                </div>
+                <div className={styles.modalValorVencGrid}>
+                  <div className={styles.modalField}>
+                    <span>Valor</span>
+                    <div className={styles.moneyInputWrap}>
+                      <span className={styles.moneyPrefix}>R$</span>
+                      <input
+                        inputMode="numeric"
+                        value={amountDisplay}
+                        onChange={(e) => setAmountDisplay(formatCurrencyBrlInput(e.target.value))}
+                        aria-label="Valor em reais"
+                      />
+                    </div>
+                  </div>
+                  <label className={styles.modalField}>
+                    <span>Vencimento</span>
+                    <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                  </label>
+                </div>
+              </div>
+
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionLabel}>Pagamento</div>
                 <div className={styles.row2}>
+                  <label className={styles.modalField}>
+                    <span>Meio</span>
+                    <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                      <option value="pix">PIX</option>
+                      <option value="cash">Dinheiro</option>
+                      <option value="credit_card">Cartão de crédito</option>
+                      <option value="debit_card">Cartão de débito</option>
+                      <option value="boleto">Boleto</option>
+                    </select>
+                  </label>
+                  {showMachineField ? (
+                    <label className={styles.modalField}>
+                      <span>Maquininha</span>
+                      <select value={paymentProvider} onChange={(e) => setPaymentProvider(e.target.value)}>
+                        <option value="">Selecionar</option>
+                        {paymentProvider && !providerSuggestions.some((n) => n === paymentProvider) ? (
+                          <option value={paymentProvider}>{paymentProvider}</option>
+                        ) : null}
+                        {providerSuggestions.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <div />
+                  )}
+                </div>
+                {showMachineField ? (
+                  <p className={styles.modalHintLine}>
+                    {providerSuggestions.length === 0
+                      ? "Nenhuma maquininha nas taxas ainda. Cadastre taxas por provedor em Financeiro para preencher a lista."
+                      : "Taxas e parcelas seguem o cadastro de cada maquininha."}
+                  </p>
+                ) : null}
+                {showInstallmentsField ? (
                   <label className={styles.modalField}>
                     <span>Parcelas</span>
                     <input type="number" min="1" max="24" step="1" value={installments} onChange={(e) => setInstallments(e.target.value)} />
                   </label>
-                  <label className={styles.modalField}>
-                    <span>Intervalo entre parcelas (meses)</span>
-                    <input type="number" min="1" max="12" step="1" value={installmentIntervalMonths} onChange={(e) => setInstallmentIntervalMonths(e.target.value)} />
-                  </label>
-                </div>
-              ) : null}
-              {showBankAccountField || showCreditCardField ? (
-                <div className={styles.row2}>
-                  {showBankAccountField ? (
-                    <label className={styles.modalField}>
-                      <span>{isIncome ? "Banco de recebimento" : "Conta de saída"}</span>
-                      <select value={financeAccountId} onChange={(e) => setFinanceAccountId(e.target.value)}>
-                        <option value="">Selecionar conta</option>
-                        {accounts.map((a) => (
-                          <option key={a.id} value={String(a.id)}>
-                            {a.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : (
-                    <div />
-                  )}
-                  {showCreditCardField ? (
-                    <label className={styles.modalField}>
-                      <span>Cartão do banco (saída)</span>
-                      <select value={creditCardId} onChange={(e) => setCreditCardId(e.target.value)}>
-                        <option value="">Selecionar cartão</option>
-                        {cards.map((c) => (
-                          <option key={c.id} value={String(c.id)}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : (
-                    <div />
-                  )}
-                </div>
-              ) : null}
-              <div className={styles.row2}>
+                ) : null}
+                {showBankAccountField || showCreditCardField ? (
+                  <div className={styles.row2}>
+                    {showBankAccountField ? (
+                      <label className={styles.modalField}>
+                        <span>{isIncome ? "Conta de recebimento" : "Conta de saída"}</span>
+                        <select value={financeAccountId} onChange={(e) => setFinanceAccountId(e.target.value)}>
+                          <option value="">Selecionar</option>
+                          {accounts.map((a) => (
+                            <option key={a.id} value={String(a.id)}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <div />
+                    )}
+                    {showCreditCardField ? (
+                      <label className={styles.modalField}>
+                        <span>Cartão</span>
+                        <select value={creditCardId} onChange={(e) => setCreditCardId(e.target.value)}>
+                          <option value="">Selecionar</option>
+                          {cards.map((c) => (
+                            <option key={c.id} value={String(c.id)}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <div />
+                    )}
+                  </div>
+                ) : null}
                 <label className={styles.modalField}>
-                  <span>Categoria (gerenciar em Configurações)</span>
-                  <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                    <option value="">Sem categoria</option>
+                  <span>Categoria</span>
+                  <select
+                    value={categoryId}
+                    onChange={(e) => void pickCategoryOption(e.target.value, setCategoryId)}
+                  >
+                    <option value="">Nenhuma</option>
+                    <option value="__new__">+ Nova categoria…</option>
                     {categories.map((c) => (
                       <option key={c.id} value={String(c.id)}>
                         {c.name}
@@ -801,24 +950,14 @@ function shortIso(iso: string): string {
                     ))}
                   </select>
                 </label>
-                <label className={styles.modalField}>
-                  <span>WhatsApp do cliente (opcional)</span>
-                  <input
-                    type="tel"
-                    inputMode="tel"
-                    value={recipientWhatsapp}
-                    onChange={(e) => setRecipientWhatsapp(formatPhoneBrInput(e.target.value))}
-                    autoComplete="tel"
-                    placeholder="(11) 9xxxx-xxxx"
-                  />
-                </label>
               </div>
+
               <div className={styles.modalActions}>
                 <button type="button" className={styles.modalBtnGhost} onClick={() => setShowNewEntry(false)}>
-                  Cancelar
+                  Descartar
                 </button>
                 <button type="submit" className={styles.modalBtnPrimary}>
-                  Salvar lançamento
+                  Salvar
                 </button>
               </div>
             </form>
@@ -891,25 +1030,51 @@ function shortIso(iso: string): string {
 
       {editingEntry ? (
         <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Editar lançamento">
-          <div className={styles.modalCard}>
+          <div className={`${styles.modalCard} ${styles.modalCardFinance}`}>
             <header className={styles.modalHeader}>
-              <h3>Editar lançamento</h3>
-              <button type="button" className={styles.modalClose} onClick={() => setEditingEntry(null)}>
-                Fechar
+              <div className={styles.modalTitleBlock}>
+                <h3>Editar lançamento</h3>
+                {(editingEntry.installment_total ?? 1) > 1 ? (
+                  <p className={styles.modalSubtitle}>
+                    Parcela {editingEntry.installment_number ?? 1} de {editingEntry.installment_total}
+                  </p>
+                ) : (
+                  <p className={styles.modalSubtitle}>Altere os campos e salve.</p>
+                )}
+              </div>
+              <button type="button" className={styles.modalIconClose} onClick={closeEditModal} aria-label="Fechar">
+                <NavIconX />
               </button>
             </header>
-            <form className={styles.modalForm} onSubmit={submitEditEntry}>
-              <div className={styles.row2}>
+            <form className={styles.modalFormFinance} onSubmit={submitEditEntry}>
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionLabel}>Lançamento</div>
                 <label className={styles.modalField}>
-                  <span>Valor</span>
-                  <input type="number" min="0" step="0.01" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
+                  <span>Descrição</span>
+                  <input
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    autoComplete="off"
+                  />
                 </label>
-                <label className={styles.modalField}>
-                  <span>Vencimento</span>
-                  <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
-                </label>
-              </div>
-              <div className={styles.row2}>
+                <div className={styles.modalValorVencGrid}>
+                  <div className={styles.modalField}>
+                    <span>Valor</span>
+                    <div className={styles.moneyInputWrap}>
+                      <span className={styles.moneyPrefix}>R$</span>
+                      <input
+                        inputMode="numeric"
+                        value={editAmountDisplay}
+                        onChange={(e) => setEditAmountDisplay(formatCurrencyBrlInput(e.target.value))}
+                        aria-label="Valor em reais"
+                      />
+                    </div>
+                  </div>
+                  <label className={styles.modalField}>
+                    <span>Vencimento</span>
+                    <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
+                  </label>
+                </div>
                 <label className={styles.modalField}>
                   <span>Status</span>
                   <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as FinanceEntryStatus)}>
@@ -919,27 +1084,156 @@ function shortIso(iso: string): string {
                     <option value="cancelled">Cancelado</option>
                   </select>
                 </label>
-                {(editingEntry.installment_total ?? 1) > 1 ? (
+                {editInc ? (
                   <label className={styles.modalField}>
-                    <span>Aplicar em</span>
+                    <span>Competência (receita)</span>
+                    <input type="date" value={editCompetenceDate} onChange={(e) => setEditCompetenceDate(e.target.value)} />
+                  </label>
+                ) : null}
+              </div>
+
+              <div className={styles.modalSection}>
+                <div className={styles.modalSectionLabel}>Pagamento</div>
+                <div className={styles.row2}>
+                  <label className={styles.modalField}>
+                    <span>Meio</span>
+                    <select value={editPaymentMethod} onChange={(e) => setEditPaymentMethod(e.target.value)}>
+                      <option value="pix">PIX</option>
+                      <option value="cash">Dinheiro</option>
+                      <option value="credit_card">Cartão de crédito</option>
+                      <option value="debit_card">Cartão de débito</option>
+                      <option value="boleto">Boleto</option>
+                    </select>
+                  </label>
+                  {editShowMachineField ? (
+                    <label className={styles.modalField}>
+                      <span>Maquininha</span>
+                      <select value={editPaymentProvider} onChange={(e) => setEditPaymentProvider(e.target.value)}>
+                        <option value="">Selecionar</option>
+                        {editPaymentProvider && !providerSuggestions.some((n) => n === editPaymentProvider) ? (
+                          <option value={editPaymentProvider}>{editPaymentProvider}</option>
+                        ) : null}
+                        {providerSuggestions.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <div />
+                  )}
+                </div>
+                {editShowMachineField ? (
+                  <p className={styles.modalHintLine}>
+                    {providerSuggestions.length === 0
+                      ? "Nenhuma maquininha nas taxas ainda. Cadastre taxas por provedor em Financeiro para preencher a lista."
+                      : "Taxas e parcelas seguem o cadastro de cada maquininha."}
+                  </p>
+                ) : null}
+                {editShowBankAccountField || editShowCreditCardField ? (
+                  <div className={styles.row2}>
+                    {editShowBankAccountField ? (
+                      <label className={styles.modalField}>
+                        <span>{editInc ? "Conta de recebimento" : "Conta de saída"}</span>
+                        <select value={editFinanceAccountId} onChange={(e) => setEditFinanceAccountId(e.target.value)}>
+                          <option value="">Selecionar</option>
+                          {accounts.map((a) => (
+                            <option key={a.id} value={String(a.id)}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <div />
+                    )}
+                    {editShowCreditCardField ? (
+                      <label className={styles.modalField}>
+                        <span>Cartão</span>
+                        <select value={editCreditCardId} onChange={(e) => setEditCreditCardId(e.target.value)}>
+                          <option value="">Selecionar</option>
+                          {cards.map((c) => (
+                            <option key={c.id} value={String(c.id)}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <div />
+                    )}
+                  </div>
+                ) : null}
+                <label className={styles.modalField}>
+                  <span>Categoria</span>
+                  <select
+                    value={editCategoryId}
+                    onChange={(e) => void pickCategoryOption(e.target.value, setEditCategoryId)}
+                  >
+                    <option value="">Nenhuma</option>
+                    <option value="__new__">+ Nova categoria…</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className={styles.modalField}>
+                <span>Observações</span>
+                <textarea
+                  className={styles.modalTextarea}
+                  rows={2}
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+
+              {(editingEntry.installment_total ?? 1) > 1 ? (
+                <div className={styles.modalScopeBanner}>
+                  <label className={styles.modalField} style={{ margin: 0 }}>
+                    <span>Alterações aplicam a</span>
                     <select value={editScope} onChange={(e) => setEditScope(e.target.value as "single" | "future" | "all")}>
                       <option value="single">Somente esta parcela</option>
-                      <option value="future">Esta e futuras</option>
+                      <option value="future">Esta e parcelas futuras</option>
                       <option value="all">Todas as parcelas</option>
                     </select>
                   </label>
-                ) : (
-                  <div />
-                )}
-              </div>
-              <div className={styles.modalActions}>
-                <button type="button" className={styles.modalBtnGhost} onClick={() => setEditingEntry(null)}>
-                  Cancelar
-                </button>
-                <button type="submit" className={styles.modalBtnPrimary}>
-                  Salvar alterações
-                </button>
-              </div>
+                </div>
+              ) : null}
+
+              {editDeletePhase === "choose-scope" ? (
+                <div className={styles.modalDeleteScope}>
+                  <p className={styles.modalHintLineStrong}>Este lançamento tem várias parcelas. O que deseja excluir?</p>
+                  <div className={styles.modalDeleteScopeBtns}>
+                    <button type="button" className={styles.modalBtnGhost} onClick={() => setEditDeletePhase("idle")}>
+                      Voltar
+                    </button>
+                    <button type="button" className={styles.modalBtnDangerGhost} onClick={() => void runDeleteWithScope("single")}>
+                      Só esta parcela
+                    </button>
+                    <button type="button" className={styles.modalBtnDangerGhost} onClick={() => void runDeleteWithScope("future")}>
+                      Esta e futuras
+                    </button>
+                    <button type="button" className={styles.modalBtnDanger} onClick={() => void runDeleteWithScope("all")}>
+                      Todas
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className={styles.modalEditFooter}>
+                  <button type="button" className={styles.modalBtnDanger} onClick={handleDeleteClick}>
+                    Excluir
+                  </button>
+                  <button type="submit" className={styles.modalBtnPrimary}>
+                    Salvar alterações
+                  </button>
+                </div>
+              )}
             </form>
           </div>
         </div>

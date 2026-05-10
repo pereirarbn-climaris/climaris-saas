@@ -37,11 +37,15 @@ import { StockPage } from "./pages/inventory/StockPage";
 import { MercadoLivreCallbackPage } from "./pages/integrations/MercadoLivreCallbackPage";
 import { MercadoLivreIntegrationPage } from "./pages/integrations/MercadoLivreIntegrationPage";
 import { WhatsappIntegrationPage } from "./pages/integrations/WhatsappIntegrationPage";
+import { AiAssistantPage } from "./pages/integrations/AiAssistantPage";
 import { MarketplacePage } from "./pages/marketplace/MarketplacePage";
 import { PlatformMarketplacePage } from "./pages/PlatformMarketplacePage";
 import { PmocDetailPage } from "./pages/pmoc/PmocDetailPage";
 import { PmocListPage } from "./pages/pmoc/PmocListPage";
 import { PmocNewPage } from "./pages/pmoc/PmocNewPage";
+import { TrustedDevicesPage } from "./pages/security/TrustedDevicesPage";
+import { NfsePage } from "./pages/fiscal/NfsePage";
+import { PreventiveMaintenancePage } from "./pages/preventive/PreventiveMaintenancePage";
 
 function RootRedirect() {
   if (!getAccessToken()) {
@@ -100,9 +104,13 @@ export default function App() {
         <Route path="finance/settings/accounts" element={<FinanceAccountsPage />} />
         <Route path="finance/settings/cards" element={<FinanceCardsPage />} />
         <Route path="finance/settings/machines" element={<FinanceMachinesPage />} />
+        <Route path="security/trusted-devices" element={<TrustedDevicesPage />} />
+        <Route path="fiscal/nfse" element={<NfsePage />} />
         <Route path="agenda" element={<TechnicianSchedulePage />} />
+        <Route path="preventive-maintenance" element={<PreventiveMaintenancePage />} />
         <Route path="marketplace" element={<MarketplacePage />} />
         <Route path="integrations/whatsapp" element={<WhatsappIntegrationPage />} />
+        <Route path="integrations/chat-ia" element={<AiAssistantPage />} />
         <Route path="integrations/mercado-livre/callback" element={<MercadoLivreCallbackPage />} />
         <Route path="integrations/mercado-livre" element={<MercadoLivreIntegrationPage />} />
         <Route path="pmoc/new" element={<PmocNewPage />} />

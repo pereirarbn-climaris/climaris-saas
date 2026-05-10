@@ -56,6 +56,7 @@ type FormState = {
   name: string;
   document: string;
   tax_id_kind: ClientTaxIdKind;
+  optante_mei: boolean;
   phone: string;
   whatsapp: string;
   email: string;
@@ -70,6 +71,9 @@ type FormState = {
   address_city: string;
   address_state: string;
   address_postal_code: string;
+  /** Município IBGE (7 dígitos), exigido na NFS-e Nacional para o tomador. */
+  address_ibge_code: string;
+  preventive_campaign_opt_out: boolean;
 };
 
 type EquipmentFormState = {
@@ -125,6 +129,7 @@ function emptyForm(): FormState {
     name: "",
     document: "",
     tax_id_kind: "cnpj",
+    optante_mei: false,
     phone: "",
     whatsapp: "",
     email: "",
@@ -139,6 +144,8 @@ function emptyForm(): FormState {
     address_city: "",
     address_state: "",
     address_postal_code: "",
+    address_ibge_code: "",
+    preventive_campaign_opt_out: false,
   };
 }
 
@@ -210,6 +217,7 @@ function fromClient(c: ClientOut): FormState {
     name: c.name,
     document: formatTaxDocumentInput(c.document ?? "", kind),
     tax_id_kind: kind,
+    optante_mei: Boolean(c.optante_mei),
     phone: formatPhoneBrInput(c.phone ?? ""),
     whatsapp: formatPhoneBrInput(c.whatsapp ?? ""),
     email: c.email ?? "",
@@ -226,16 +234,20 @@ function fromClient(c: ClientOut): FormState {
     address_city: c.address_city ?? "",
     address_state: c.address_state ?? "",
     address_postal_code: formatCepInput(c.address_postal_code ?? ""),
+    address_ibge_code: digitsOnly(c.address_ibge_code ?? "").slice(0, 7),
+    preventive_campaign_opt_out: Boolean(c.preventive_campaign_opt_out),
   };
 }
 
 function mergeCnpjLookup(prev: FormState, lu: CnpjLookupResult, mergeAddress = true): FormState {
+  const nextRegime = typeof lu.optante_mei === "boolean" ? lu.optante_mei : prev.optante_mei;
   if (!mergeAddress) {
     return {
       ...prev,
       name: lu.company_name.trim() || prev.name,
       trade_name:
         (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.trade_name,
+      optante_mei: nextRegime,
     };
   }
   const a = lu.address;
@@ -245,6 +257,7 @@ function mergeCnpjLookup(prev: FormState, lu: CnpjLookupResult, mergeAddress = t
     name: lu.company_name.trim() || prev.name,
     trade_name:
       (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.trade_name,
+    optante_mei: nextRegime,
     address_street: a?.street ?? prev.address_street,
     address_number: a?.number ?? prev.address_number,
     address_complement: a?.details ?? prev.address_complement,
@@ -260,6 +273,7 @@ function buildUpdatePayload(f: FormState): ClientUpdatePayload {
   const p: ClientUpdatePayload = {
     name: f.name.trim(),
     tax_id_kind: f.tax_id_kind,
+    optante_mei: Boolean(f.optante_mei),
     // `null` é serializado no JSON; `undefined` seria omitido e o backend não limpava o banco.
     phone: digitsOnlyPhoneForApi(f.phone) || null,
     whatsapp: digitsOnlyPhoneForApi(f.whatsapp) || null,
@@ -276,6 +290,11 @@ function buildUpdatePayload(f: FormState): ClientUpdatePayload {
     address_state: f.address_state.trim() ? f.address_state.trim().toUpperCase().slice(0, 2) : null,
     address_postal_code: digitsOnly(f.address_postal_code).slice(0, 8) || null,
     address_country: "Brasil",
+    address_ibge_code: (() => {
+      const d = digitsOnly(f.address_ibge_code).slice(0, 7);
+      return d.length === 7 ? d : null;
+    })(),
+    preventive_campaign_opt_out: Boolean(f.preventive_campaign_opt_out),
   };
   if (documentDigits) {
     p.document = documentDigits;
@@ -363,6 +382,8 @@ export function ClientFormPage() {
   const [cepErr, setCepErr] = useState("");
   const [cnpjLookupLoading, setCnpjLookupLoading] = useState(false);
   const [cnpjLookupErr, setCnpjLookupErr] = useState("");
+  const [cnpjLockedAfterLookup, setCnpjLockedAfterLookup] = useState(false);
+  const [regimeDetectedByLookup, setRegimeDetectedByLookup] = useState<boolean | null>(null);
   /** Só usado quando já há endereço salvo: se true, o botão “Consultar CNPJ” também aplica endereço da Receita. */
   const [cnpjIncludeAddress, setCnpjIncludeAddress] = useState(true);
   const [activeTab, setActiveTab] = useState<"form" | "equipments" | "budgets" | "orders">("form");
@@ -442,6 +463,13 @@ export function ClientFormPage() {
     if (docDigits.length < 14) setCnpjLookupErr("");
   }, [docDigits.length]);
 
+  useEffect(() => {
+    if (form.tax_id_kind !== "cnpj") {
+      setCnpjLockedAfterLookup(false);
+      setRegimeDetectedByLookup(null);
+    }
+  }, [form.tax_id_kind]);
+
   async function onBuscarCep() {
     if (readOnly) return;
     if (cepDigits.length !== 8) {
@@ -458,6 +486,7 @@ export function ClientFormPage() {
         if (cur !== cepDigits) return prev;
         // Substitui pelo retorno da API: se o novo CEP não tem complemento no ViaCEP, o campo zera (não mantém o do endereço antigo).
         const uf = (data.address_state ?? "").trim();
+        const ibgeFromCep = digitsOnly(data.address_ibge_code ?? "").slice(0, 7);
         return {
           ...prev,
           address_street: (data.address_street ?? "").trim(),
@@ -468,6 +497,7 @@ export function ClientFormPage() {
           address_postal_code: data.address_postal_code
             ? formatCepInput(data.address_postal_code)
             : formatCepInput(cepDigits),
+          address_ibge_code: ibgeFromCep.length === 7 ? ibgeFromCep : "",
         };
       });
       setMsg({
@@ -497,6 +527,8 @@ export function ClientFormPage() {
         if (cur !== docDigits) return prev;
         return mergeCnpjLookup(prev, lu, cnpjIncludeAddress);
       });
+      setCnpjLockedAfterLookup(true);
+      setRegimeDetectedByLookup(typeof lu.optante_mei === "boolean" ? lu.optante_mei : null);
       setMsg({
         kind: "ok",
         text: cnpjIncludeAddress
@@ -823,10 +855,12 @@ export function ClientFormPage() {
 
     setSaving(true);
     try {
+      const ibgeCreate = digitsOnly(form.address_ibge_code).slice(0, 7);
       if (isNew) {
         const payload: ClientCreatePayload = {
           name: form.name.trim(),
           tax_id_kind: form.tax_id_kind,
+          optante_mei: Boolean(form.optante_mei),
           phone: digitsOnlyPhoneForApi(form.phone) || undefined,
           whatsapp: digitsOnlyPhoneForApi(form.whatsapp) || undefined,
           email: form.email.trim() || undefined,
@@ -842,6 +876,8 @@ export function ClientFormPage() {
           address_state: form.address_state.trim() ? form.address_state.trim().toUpperCase().slice(0, 2) : undefined,
           address_postal_code: digitsOnly(form.address_postal_code).slice(0, 8) || undefined,
           address_country: "Brasil",
+          ...(ibgeCreate.length === 7 ? { address_ibge_code: ibgeCreate } : {}),
+          preventive_campaign_opt_out: Boolean(form.preventive_campaign_opt_out),
         };
         if (digits) {
           payload.document = digits;
@@ -988,10 +1024,25 @@ export function ClientFormPage() {
                     document: taxDocumentOnKindChange(prev.document, k),
                   }));
                 }}
-                disabled={readOnly}
+                disabled={readOnly || cnpjLockedAfterLookup}
               >
                 <option value="cnpj">CNPJ</option>
                 <option value="cpf">CPF</option>
+              </select>
+            </div>
+            <div>
+              <label className={loginStyles.label} htmlFor="c-mei">
+                Regime
+              </label>
+              <select
+                id="c-mei"
+                className={loginStyles.select}
+                value={form.optante_mei ? "mei" : "regular"}
+                onChange={(e) => setForm((prev) => ({ ...prev, optante_mei: e.target.value === "mei" }))}
+                disabled={readOnly}
+              >
+                <option value="regular">Empresa regular</option>
+                <option value="mei">MEI (NFS-e Nacional)</option>
               </select>
             </div>
             <div>
@@ -1007,9 +1058,24 @@ export function ClientFormPage() {
                 }
                 inputMode="numeric"
                 maxLength={form.tax_id_kind === "cpf" ? 14 : 18}
-                disabled={readOnly}
+                disabled={readOnly || (form.tax_id_kind === "cnpj" && cnpjLockedAfterLookup)}
                 aria-busy={form.tax_id_kind === "cnpj" && cnpjLookupLoading}
               />
+              {form.tax_id_kind === "cnpj" && cnpjLockedAfterLookup && !readOnly ? (
+                <p className={styles.cepHint}>
+                  CNPJ bloqueado após a consulta para evitar alterações acidentais.{" "}
+                  <button
+                    type="button"
+                    className={styles.linkButtonInline}
+                    onClick={() => {
+                      setCnpjLockedAfterLookup(false);
+                      setRegimeDetectedByLookup(null);
+                    }}
+                  >
+                    Alterar CNPJ
+                  </button>
+                </p>
+              ) : null}
             </div>
           </div>
           {form.tax_id_kind === "cnpj" && !readOnly ? (
@@ -1040,6 +1106,12 @@ export function ClientFormPage() {
                   ? "Consultando CNPJ…"
                   : "A consulta não roda sozinha: use o botão acima. O que vier da API só entra no formulário; para gravar no banco, clique em Salvar alterações."}
               </p>
+              {regimeDetectedByLookup !== null && !cnpjLookupLoading ? (
+                <p className={styles.cepHint}>
+                  Regime detectado automaticamente:{" "}
+                  <strong>{regimeDetectedByLookup ? "MEI (NFS-e Nacional)" : "Empresa regular"}</strong>.
+                </p>
+              ) : null}
             </div>
           ) : null}
           {cnpjLookupErr && !cnpjLookupLoading ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
@@ -1087,6 +1159,15 @@ export function ClientFormPage() {
               />
             </div>
           </div>
+          <label className={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              checked={form.preventive_campaign_opt_out}
+              onChange={(e) => setForm((prev) => ({ ...prev, preventive_campaign_opt_out: e.target.checked }))}
+              disabled={readOnly}
+            />
+            Não enviar campanhas de manutenção preventiva por WhatsApp
+          </label>
           <label className={loginStyles.label} htmlFor="c-email">
             E-mail
           </label>
@@ -1181,9 +1262,26 @@ export function ClientFormPage() {
               {cepErr && !cepLoading ? <p className={styles.msgErr}>{cepErr}</p> : null}
               {!readOnly && !cepLoading && !cepErr ? (
                 <p className={styles.cepHint}>
-                  Ao buscar outro CEP, logradouro, bairro, cidade, UF e complemento são substituídos pelo retorno da API (se não houver complemento no Correios, o campo fica vazio). O número não vem do CEP e não é alterado. Salve para gravar no banco.
+                  Ao buscar outro CEP, logradouro, bairro, cidade, UF, complemento e código IBGE do município são substituídos quando o serviço os informa. O número não vem do CEP e não é alterado. Salve para gravar no banco.
                 </p>
               ) : null}
+            </div>
+            <div>
+              <label className={loginStyles.label} htmlFor="c-ibge">
+                Código IBGE (município)
+              </label>
+              <input
+                id="c-ibge"
+                className={loginStyles.input}
+                value={form.address_ibge_code}
+                onChange={(e) => setField("address_ibge_code", digitsOnly(e.target.value).slice(0, 7))}
+                placeholder="7 dígitos — obrigatório p/ NFS-e Nacional"
+                maxLength={7}
+                inputMode="numeric"
+                autoComplete="off"
+                disabled={readOnly}
+              />
+              <p className={styles.cepHint}>Preenchido pela busca de CEP quando disponível. Obrigatório para emitir NFS-e nacional ao cliente.</p>
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <label className={loginStyles.label} htmlFor="c-street">

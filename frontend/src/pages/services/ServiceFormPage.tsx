@@ -9,17 +9,30 @@ import {
   type ServiceUpdatePayload,
 } from "../../api/services";
 import { listProducts, type ProductOut } from "../../api/products";
+import { getAiSettings } from "../../api/ai";
 import { formatBrlDisplay, formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./ServiceFormPage.module.css";
+
+type ServiceFormTab = "descricao" | "produtos" | "ia" | "fiscal";
 
 type FormState = {
   name: string;
   description: string;
   price: string;
   duration_minutes: string;
+  equipment_type_tags: string;
+  btu_min: string;
+  btu_max: string;
+  service_category: string;
+  applies_residential: boolean;
+  applies_commercial: boolean;
   is_active: boolean;
+  nfse_codigo_tributacao_nacional: string;
+  nfse_codigo_nbs: string;
+  /** "" | "6" | "12" — enviado como periodicidade_meses ou null */
+  periodicidade_meses: string;
   product_inputs: Array<{ product_id: string; quantity: string }>;
 };
 
@@ -29,7 +42,16 @@ function emptyForm(): FormState {
     description: "",
     price: numberToBrlInput(0),
     duration_minutes: "30",
+    equipment_type_tags: "",
+    btu_min: "",
+    btu_max: "",
+    service_category: "",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: "",
+    nfse_codigo_nbs: "",
+    periodicidade_meses: "",
     product_inputs: [],
   };
 }
@@ -54,6 +76,8 @@ export function ServiceFormPage() {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [products, setProducts] = useState<ProductOut[]>([]);
   const [productsLoadErr, setProductsLoadErr] = useState("");
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [activeTab, setActiveTab] = useState<ServiceFormTab>("descricao");
 
   const parsedPrice = useMemo(() => parseBrlInputToNumber(form.price), [form.price]);
   const parsedDuration = useMemo(() => Number(form.duration_minutes), [form.duration_minutes]);
@@ -70,6 +94,12 @@ export function ServiceFormPage() {
     [form.product_inputs, products],
   );
   const estimatedProfit = useMemo(() => parsedPrice - estimatedMaterialCost, [parsedPrice, estimatedMaterialCost]);
+
+  const periodicidadeApi = useMemo((): 6 | 12 | null => {
+    if (form.periodicidade_meses === "6") return 6;
+    if (form.periodicidade_meses === "12") return 12;
+    return null;
+  }, [form.periodicidade_meses]);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +127,27 @@ export function ServiceFormPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await getAiSettings();
+        if (!cancelled) setAiEnabled(Boolean(settings?.is_enabled));
+      } catch {
+        if (!cancelled) setAiEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!aiEnabled && activeTab === "ia") {
+      setActiveTab("descricao");
+    }
+  }, [aiEnabled, activeTab]);
+
+  useEffect(() => {
     if (isNew || !serviceId || !Number.isFinite(idNum) || idNum < 1) return;
     let cancelled = false;
     void (async () => {
@@ -110,7 +161,17 @@ export function ServiceFormPage() {
             description: s.description ?? "",
             price: numberToBrlInput(Number(s.price || 0)),
             duration_minutes: String(Number(s.duration_minutes || 30)),
+            equipment_type_tags: s.equipment_type_tags ?? "",
+            btu_min: s.btu_min != null ? String(s.btu_min) : "",
+            btu_max: s.btu_max != null ? String(s.btu_max) : "",
+            service_category: s.service_category ?? "",
+            applies_residential: s.applies_residential ?? true,
+            applies_commercial: s.applies_commercial ?? true,
             is_active: s.is_active,
+            nfse_codigo_tributacao_nacional: s.nfse_codigo_tributacao_nacional ?? "",
+            nfse_codigo_nbs: s.nfse_codigo_nbs ?? "",
+            periodicidade_meses:
+              s.periodicidade_meses === 6 || s.periodicidade_meses === 12 ? String(s.periodicidade_meses) : "",
             product_inputs: (s.product_inputs ?? []).map((i) => ({
               product_id: String(i.product_id),
               quantity: String(i.quantity),
@@ -138,15 +199,35 @@ export function ServiceFormPage() {
     if (readOnly) return;
 
     if (!form.name.trim()) {
+      setActiveTab("descricao");
       setMsg({ kind: "err", text: "Informe o nome do serviço." });
       return;
     }
     if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      setActiveTab("descricao");
       setMsg({ kind: "err", text: "Informe um preco valido (maior ou igual a zero)." });
       return;
     }
     if (!Number.isFinite(parsedDuration) || parsedDuration < 1) {
+      setActiveTab("descricao");
       setMsg({ kind: "err", text: "Informe o tempo de execucao em minutos (minimo 1)." });
+      return;
+    }
+    const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
+    const parsedBtuMax = form.btu_max.trim() ? Number(form.btu_max) : null;
+    if (parsedBtuMin != null && (!Number.isFinite(parsedBtuMin) || parsedBtuMin < 0)) {
+      if (aiEnabled) setActiveTab("ia");
+      setMsg({ kind: "err", text: "BTU mínimo inválido." });
+      return;
+    }
+    if (parsedBtuMax != null && (!Number.isFinite(parsedBtuMax) || parsedBtuMax < 0)) {
+      if (aiEnabled) setActiveTab("ia");
+      setMsg({ kind: "err", text: "BTU máximo inválido." });
+      return;
+    }
+    if (parsedBtuMin != null && parsedBtuMax != null && parsedBtuMin > parsedBtuMax) {
+      if (aiEnabled) setActiveTab("ia");
+      setMsg({ kind: "err", text: "BTU mínimo não pode ser maior que BTU máximo." });
       return;
     }
 
@@ -164,7 +245,16 @@ export function ServiceFormPage() {
           description: form.description.trim() || null,
           price: parsedPrice,
           duration_minutes: parsedDuration,
+          equipment_type_tags: form.equipment_type_tags.trim() || null,
+          btu_min: parsedBtuMin,
+          btu_max: parsedBtuMax,
+          service_category: form.service_category.trim() || null,
+          applies_residential: form.applies_residential,
+          applies_commercial: form.applies_commercial,
           is_active: form.is_active,
+          nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
+          nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
+          periodicidade_meses: periodicidadeApi,
           product_inputs: productInputs,
         };
         const created = await createService(payload);
@@ -175,7 +265,16 @@ export function ServiceFormPage() {
           description: form.description.trim() || null,
           price: parsedPrice,
           duration_minutes: parsedDuration,
+          equipment_type_tags: form.equipment_type_tags.trim() || null,
+          btu_min: parsedBtuMin,
+          btu_max: parsedBtuMax,
+          service_category: form.service_category.trim() || null,
+          applies_residential: form.applies_residential,
+          applies_commercial: form.applies_commercial,
           is_active: form.is_active,
+          nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
+          nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
+          periodicidade_meses: periodicidadeApi,
           product_inputs: productInputs,
         };
         await updateService(idNum, payload);
@@ -204,6 +303,8 @@ export function ServiceFormPage() {
       setMsg({ kind: "err", text: "Informe o tempo de execucao em minutos (minimo 1)." });
       return;
     }
+    const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
+    const parsedBtuMax = form.btu_max.trim() ? Number(form.btu_max) : null;
 
     const productInputs = form.product_inputs
       .map((row) => ({
@@ -221,7 +322,16 @@ export function ServiceFormPage() {
           description: form.description.trim() || null,
           price: parsedPrice,
           duration_minutes: parsedDuration,
+          equipment_type_tags: form.equipment_type_tags.trim() || null,
+          btu_min: parsedBtuMin,
+          btu_max: parsedBtuMax,
+          service_category: form.service_category.trim() || null,
+          applies_residential: form.applies_residential,
+          applies_commercial: form.applies_commercial,
           is_active: form.is_active,
+          nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
+          nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
+          periodicidade_meses: periodicidadeApi,
           product_inputs: productInputs,
         });
         navigate(`/app/services/${created.id}`);
@@ -234,7 +344,16 @@ export function ServiceFormPage() {
             description: form.description.trim() || null,
             price: parsedPrice,
             duration_minutes: parsedDuration,
+            equipment_type_tags: form.equipment_type_tags.trim() || null,
+            btu_min: parsedBtuMin,
+            btu_max: parsedBtuMax,
+            service_category: form.service_category.trim() || null,
+            applies_residential: form.applies_residential,
+            applies_commercial: form.applies_commercial,
             is_active: form.is_active,
+            nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
+            nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
+            periodicidade_meses: periodicidadeApi,
             product_inputs: productInputs,
           });
           navigate(`/app/services/${created.id}`);
@@ -315,200 +434,384 @@ export function ServiceFormPage() {
       </header>
 
       <form className={styles.form} onSubmit={onSubmit}>
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Dados do servico</h2>
-          <label className={loginStyles.label} htmlFor="s-name">
-            Nome
-          </label>
-          <input
-            id="s-name"
-            className={loginStyles.input}
-            value={form.name}
-            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-            required
-            disabled={readOnly}
-          />
+        <div className={styles.tabs} role="tablist" aria-label="Seções do serviço">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "descricao"}
+            className={`${styles.tabBtn} ${activeTab === "descricao" ? styles.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("descricao")}
+          >
+            Descrição do serviço
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "produtos"}
+            className={`${styles.tabBtn} ${activeTab === "produtos" ? styles.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("produtos")}
+          >
+            Produtos utilizados
+          </button>
+          {aiEnabled ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "ia"}
+              className={`${styles.tabBtn} ${activeTab === "ia" ? styles.tabBtnActive : ""}`}
+              onClick={() => setActiveTab("ia")}
+            >
+              IA
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "fiscal"}
+            className={`${styles.tabBtn} ${activeTab === "fiscal" ? styles.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("fiscal")}
+          >
+            Fiscal
+          </button>
+        </div>
 
-          <label className={loginStyles.label} htmlFor="s-desc">
-            Descricao (opcional)
-          </label>
-          <textarea
-            id="s-desc"
-            className={loginStyles.input}
-            value={form.description}
-            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-            rows={4}
-            disabled={readOnly}
-          />
-
-          <div className={styles.grid2}>
-            <div>
-              <label className={loginStyles.label} htmlFor="s-duration">
-                Tempo de execucao (min)
-              </label>
-              <input
-                id="s-duration"
-                className={loginStyles.input}
-                value={form.duration_minutes}
-                onChange={(e) => setForm((prev) => ({ ...prev, duration_minutes: e.target.value }))}
-                inputMode="numeric"
-                required
-                disabled={readOnly}
-              />
-            </div>
-            <div>
-              <label className={loginStyles.label} htmlFor="s-price">
-                Preco (R$)
-              </label>
-              <input
-                id="s-price"
-                className={loginStyles.input}
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                value={form.price}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    price: formatBrlInputFromDigits(e.target.value),
-                  }))
-                }
-                placeholder="R$ 0,00"
-                required
-                disabled={readOnly}
-              />
-            </div>
-          </div>
-
-          <label className={styles.checkboxRow}>
+        {activeTab === "descricao" ? (
+          <div className={styles.section}>
+            <h2 className={styles.sectionTitle}>Dados do servico</h2>
+            <label className={loginStyles.label} htmlFor="s-name">
+              Nome
+            </label>
             <input
-              type="checkbox"
-              checked={form.is_active}
-              onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+              id="s-name"
+              className={loginStyles.input}
+              value={form.name}
+              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+              required
               disabled={readOnly}
             />
-            Servico ativo
-          </label>
 
-          <h2 className={styles.sectionTitle}>Produtos utilizados (opcional)</h2>
-          {productsLoadErr ? <p className={styles.msgErr}>{productsLoadErr}</p> : null}
-          <div className={styles.productInputsCard}>
-            <div className={styles.productInputsToolbar}>
-              <span className={styles.productInputsToolbarLabel}>Materiais do serviço</span>
-              {canEdit ? (
-                <button
-                  type="button"
-                  className={styles.iconAddBtn}
-                  title="Adicionar produto"
-                  aria-label="Adicionar produto"
+            <label className={loginStyles.label} htmlFor="s-desc">
+              Descricao (opcional)
+            </label>
+            <textarea
+              id="s-desc"
+              className={loginStyles.input}
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              rows={4}
+              disabled={readOnly}
+            />
+
+            <div className={styles.grid2}>
+              <div>
+                <label className={loginStyles.label} htmlFor="s-duration">
+                  Tempo de execucao (min)
+                </label>
+                <input
+                  id="s-duration"
+                  className={loginStyles.input}
+                  value={form.duration_minutes}
+                  onChange={(e) => setForm((prev) => ({ ...prev, duration_minutes: e.target.value }))}
+                  inputMode="numeric"
+                  required
                   disabled={readOnly}
-                  onClick={() =>
+                />
+              </div>
+              <div>
+                <label className={loginStyles.label} htmlFor="s-price">
+                  Preco (R$)
+                </label>
+                <input
+                  id="s-price"
+                  className={loginStyles.input}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={form.price}
+                  onChange={(e) =>
                     setForm((prev) => ({
                       ...prev,
-                      product_inputs: [...prev.product_inputs, { product_id: "", quantity: "1" }],
+                      price: formatBrlInputFromDigits(e.target.value),
                     }))
                   }
-                >
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                </button>
-              ) : null}
+                  placeholder="R$ 0,00"
+                  required
+                  disabled={readOnly}
+                />
+              </div>
             </div>
-            {form.product_inputs.length === 0 ? (
-              <p className={styles.productInputsEmpty}>Nenhum produto vinculado. Use o botão + para incluir.</p>
-            ) : (
-              <>
-                <div
-                  className={`${styles.productInputsHead} ${canEdit ? styles.productInputsHeadWithActions : styles.productInputsHeadNoActions}`}
-                >
-                  <span>Produto</span>
-                  <span className={styles.productInputsHeadQty}>Quantidade</span>
-                  {canEdit ? <span className={styles.productInputsHeadAct} aria-hidden /> : null}
-                </div>
-                <ul className={styles.productInputsList}>
-                  {form.product_inputs.map((row, idx) => (
-                    <li
-                      key={`${idx}-${row.product_id}`}
-                      className={`${styles.productInputsRow} ${canEdit ? styles.productInputsRowWithActions : styles.productInputsRowNoActions}`}
-                    >
-                      <select
-                        className={`${loginStyles.input} ${styles.productSelectCompact}`}
-                        value={row.product_id}
-                        onChange={(e) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            product_inputs: prev.product_inputs.map((it, i) =>
-                              i === idx ? { ...it, product_id: e.target.value } : it,
-                            ),
-                          }))
-                        }
-                        disabled={readOnly}
+
+            <h2 className={styles.sectionTitle}>Manutenção preventiva</h2>
+            <p className={styles.sectionHint}>
+              Define a cada quantos meses este tipo de serviço deve ser refeito para alertas na Gestão preventiva (com histórico de realização por
+              cliente).
+            </p>
+            <label className={loginStyles.label} htmlFor="s-periodicidade">
+              Periodicidade de revisão
+            </label>
+            <select
+              id="s-periodicidade"
+              className={loginStyles.input}
+              value={form.periodicidade_meses}
+              onChange={(e) => setForm((prev) => ({ ...prev, periodicidade_meses: e.target.value }))}
+              disabled={readOnly}
+            >
+              <option value="">Não rastrear</option>
+              <option value="6">6 meses</option>
+              <option value="12">12 meses</option>
+            </select>
+          </div>
+        ) : null}
+
+        {activeTab === "produtos" ? (
+          <div className={styles.section}>
+            <h2 className={styles.sectionTitle}>Produtos utilizados (opcional)</h2>
+            {productsLoadErr ? <p className={styles.msgErr}>{productsLoadErr}</p> : null}
+            <div className={styles.productInputsCard}>
+              <div className={styles.productInputsToolbar}>
+                <span className={styles.productInputsToolbarLabel}>Materiais do serviço</span>
+                {canEdit ? (
+                  <button
+                    type="button"
+                    className={styles.iconAddBtn}
+                    title="Adicionar produto"
+                    aria-label="Adicionar produto"
+                    disabled={readOnly}
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        product_inputs: [...prev.product_inputs, { product_id: "", quantity: "1" }],
+                      }))
+                    }
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
+              {form.product_inputs.length === 0 ? (
+                <p className={styles.productInputsEmpty}>Nenhum produto vinculado. Use o botão + para incluir.</p>
+              ) : (
+                <>
+                  <div
+                    className={`${styles.productInputsHead} ${canEdit ? styles.productInputsHeadWithActions : styles.productInputsHeadNoActions}`}
+                  >
+                    <span>Produto</span>
+                    <span className={styles.productInputsHeadQty}>Quantidade</span>
+                    {canEdit ? <span className={styles.productInputsHeadAct} aria-hidden /> : null}
+                  </div>
+                  <ul className={styles.productInputsList}>
+                    {form.product_inputs.map((row, idx) => (
+                      <li
+                        key={`${idx}-${row.product_id}`}
+                        className={`${styles.productInputsRow} ${canEdit ? styles.productInputsRowWithActions : styles.productInputsRowNoActions}`}
                       >
-                        <option value="">Selecione</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={String(p.id)}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        className={`${loginStyles.input} ${styles.qtyInputCompact}`}
-                        value={row.quantity}
-                        onChange={(e) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            product_inputs: prev.product_inputs.map((it, i) =>
-                              i === idx ? { ...it, quantity: e.target.value } : it,
-                            ),
-                          }))
-                        }
-                        inputMode="decimal"
-                        placeholder="1"
-                        disabled={readOnly}
-                      />
-                      {canEdit ? (
-                        <button
-                          type="button"
-                          className={styles.iconTrashBtn}
-                          title="Remover produto"
-                          aria-label="Remover produto da lista"
-                          disabled={readOnly}
-                          onClick={() =>
+                        <select
+                          className={`${loginStyles.input} ${styles.productSelectCompact}`}
+                          value={row.product_id}
+                          onChange={(e) =>
                             setForm((prev) => ({
                               ...prev,
-                              product_inputs: prev.product_inputs.filter((_, i) => i !== idx),
+                              product_inputs: prev.product_inputs.map((it, i) =>
+                                i === idx ? { ...it, product_id: e.target.value } : it,
+                              ),
                             }))
                           }
+                          disabled={readOnly}
                         >
-                          <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-                            <path
-                              d="M9 3h6M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14"
-                              stroke="currentColor"
-                              strokeWidth="1.7"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
-          <div className={styles.profitSummary}>
-            <div>
-              <span>Custo estimado de materiais</span>
-              <strong>{formatBrlDisplay(estimatedMaterialCost)}</strong>
+                          <option value="">Selecione</option>
+                          {products.map((p) => (
+                            <option key={p.id} value={String(p.id)}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          className={`${loginStyles.input} ${styles.qtyInputCompact}`}
+                          value={row.quantity}
+                          onChange={(e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              product_inputs: prev.product_inputs.map((it, i) =>
+                                i === idx ? { ...it, quantity: e.target.value } : it,
+                              ),
+                            }))
+                          }
+                          inputMode="decimal"
+                          placeholder="1"
+                          disabled={readOnly}
+                        />
+                        {canEdit ? (
+                          <button
+                            type="button"
+                            className={styles.iconTrashBtn}
+                            title="Remover produto"
+                            aria-label="Remover produto da lista"
+                            disabled={readOnly}
+                            onClick={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                product_inputs: prev.product_inputs.filter((_, i) => i !== idx),
+                              }))
+                            }
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                              <path
+                                d="M9 3h6M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14"
+                                stroke="currentColor"
+                                strokeWidth="1.7"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
-            <div>
-              <span>Lucro estimado</span>
-              <strong>{formatBrlDisplay(Number.isFinite(estimatedProfit) ? estimatedProfit : 0)}</strong>
+            <div className={styles.profitSummary}>
+              <div>
+                <span>Custo estimado de materiais</span>
+                <strong>{formatBrlDisplay(estimatedMaterialCost)}</strong>
+              </div>
+              <div>
+                <span>Lucro estimado</span>
+                <strong>{formatBrlDisplay(Number.isFinite(estimatedProfit) ? estimatedProfit : 0)}</strong>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
+
+        {aiEnabled && activeTab === "ia" ? (
+          <div className={styles.section}>
+            <h2 className={styles.sectionTitle}>Compatibilidade técnica</h2>
+            <label className={loginStyles.label} htmlFor="s-eq-tags">
+              Tipos de equipamento (tags)
+            </label>
+            <input
+              id="s-eq-tags"
+              className={loginStyles.input}
+              value={form.equipment_type_tags}
+              onChange={(e) => setForm((prev) => ({ ...prev, equipment_type_tags: e.target.value }))}
+              placeholder="split, cassete, piso teto, climatizador..."
+              disabled={readOnly}
+            />
+            <div className={styles.grid2}>
+              <div>
+                <label className={loginStyles.label} htmlFor="s-btu-min">
+                  BTU mínimo (opcional)
+                </label>
+                <input
+                  id="s-btu-min"
+                  className={loginStyles.input}
+                  value={form.btu_min}
+                  onChange={(e) => setForm((prev) => ({ ...prev, btu_min: e.target.value }))}
+                  inputMode="numeric"
+                  disabled={readOnly}
+                />
+              </div>
+              <div>
+                <label className={loginStyles.label} htmlFor="s-btu-max">
+                  BTU máximo (opcional)
+                </label>
+                <input
+                  id="s-btu-max"
+                  className={loginStyles.input}
+                  value={form.btu_max}
+                  onChange={(e) => setForm((prev) => ({ ...prev, btu_max: e.target.value }))}
+                  inputMode="numeric"
+                  disabled={readOnly}
+                />
+              </div>
+            </div>
+            <label className={loginStyles.label} htmlFor="s-category">
+              Categoria do serviço
+            </label>
+            <input
+              id="s-category"
+              className={loginStyles.input}
+              value={form.service_category}
+              onChange={(e) => setForm((prev) => ({ ...prev, service_category: e.target.value }))}
+              placeholder="instalacao, limpeza, manutencao, reparo..."
+              disabled={readOnly}
+            />
+            <div className={styles.grid2}>
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={form.applies_residential}
+                  onChange={(e) => setForm((prev) => ({ ...prev, applies_residential: e.target.checked }))}
+                  disabled={readOnly}
+                />
+                Atende residencial
+              </label>
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={form.applies_commercial}
+                  onChange={(e) => setForm((prev) => ({ ...prev, applies_commercial: e.target.checked }))}
+                  disabled={readOnly}
+                />
+                Atende comercial
+              </label>
+            </div>
+
+            <label className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                disabled={readOnly}
+              />
+              Servico ativo
+            </label>
+          </div>
+        ) : null}
+
+        {activeTab === "fiscal" ? (
+          <div className={styles.section}>
+            <h2 className={styles.sectionTitle}>Fiscal — NFS-e nacional</h2>
+            <p className={styles.sectionHint}>
+              Este é o lugar principal para <strong>cTribNac</strong> e <strong>NBS</strong>: um par por tipo de serviço, conforme tabelas da Receita.
+              Ao montar uma OS, estes valores entram nos itens e têm prioridade sobre o padrão em Administração → Fiscal (que só completa se aqui
+              estiver vazio). Obrigatórios na NFS-e nacional quando este serviço for usado na emissão.
+            </p>
+            <div className={styles.grid2}>
+              <div>
+                <label className={loginStyles.label} htmlFor="s-nfse-trib">
+                  Código tributação nacional (cTribNac)
+                </label>
+                <input
+                  id="s-nfse-trib"
+                  className={loginStyles.input}
+                  value={form.nfse_codigo_tributacao_nacional}
+                  onChange={(e) => setForm((prev) => ({ ...prev, nfse_codigo_tributacao_nacional: e.target.value }))}
+                  placeholder="Ex.: conforme tabela nacional"
+                  maxLength={32}
+                  disabled={readOnly}
+                />
+              </div>
+              <div>
+                <label className={loginStyles.label} htmlFor="s-nfse-nbs">
+                  Código NBS
+                </label>
+                <input
+                  id="s-nfse-nbs"
+                  className={loginStyles.input}
+                  value={form.nfse_codigo_nbs}
+                  onChange={(e) => setForm((prev) => ({ ...prev, nfse_codigo_nbs: e.target.value }))}
+                  placeholder="Nomenclatura brasileira de serviços"
+                  maxLength={32}
+                  disabled={readOnly}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
         {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}

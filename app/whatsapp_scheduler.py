@@ -4,7 +4,12 @@ import logging
 import threading
 import time
 
-from app.config import WHATSAPP_REMINDER_WORKER_ENABLED, WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS
+from app.config import (
+    WHATSAPP_PREVENTIVE_WORKER_ENABLED,
+    WHATSAPP_REMINDER_WORKER_ENABLED,
+    WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS,
+)
+from app.preventive_maintenance import dispatch_preventive_due_today, flush_scheduled_preventive_whatsapp_jobs
 from app.whatsapp import dispatch_due_appointment_reminders
 
 _worker_thread: threading.Thread | None = None
@@ -20,6 +25,27 @@ def _worker_loop() -> None:
             logger.info("whatsapp reminder cycle: checked=%s sent=%s", result.get("checked"), result.get("sent"))
         except Exception:
             logger.exception("whatsapp reminder worker failed")
+        try:
+            flush_prev = flush_scheduled_preventive_whatsapp_jobs()
+            logger.info(
+                "preventive scheduled whatsapp flush: processed=%s failed=%s",
+                flush_prev.get("processed"),
+                flush_prev.get("failed"),
+            )
+        except Exception:
+            logger.exception("preventive scheduled whatsapp flush failed")
+        if WHATSAPP_PREVENTIVE_WORKER_ENABLED:
+            try:
+                prev = dispatch_preventive_due_today()
+                logger.info(
+                    "preventive maintenance cycle: checked=%s sent=%s (due=%s advance=%s)",
+                    prev.get("checked"),
+                    prev.get("sent"),
+                    prev.get("sent_due"),
+                    prev.get("sent_advance"),
+                )
+            except Exception:
+                logger.exception("preventive maintenance worker failed")
         _worker_stop.wait(interval)
 
 

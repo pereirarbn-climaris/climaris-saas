@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 from calendar import monthrange
 from uuid import uuid4
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -40,6 +41,8 @@ from app.schemas import (
     FinanceCategoryCreate,
     FinanceCategoryOut,
     FinanceCategorySummaryOut,
+    FinanceCategoryUpdate,
+    FinanceBalanceSnapshotOut,
     FinanceCashflowOut,
     FinanceCreditCardCreate,
     FinanceCreditCardOut,
@@ -71,6 +74,8 @@ from models import (
     TenantFinanceGateway,
     User,
     UserRole,
+    ServiceOrder,
+    OrderStatus,
 )
 
 router = APIRouter(tags=["finance"])
@@ -217,6 +222,31 @@ def _parse_date_basis(raw: str) -> str:
     return "due_date"
 
 
+def _entry_basis_date_value(entry: FinanceEntry, basis: str) -> date:
+    if basis == "competence_date":
+        return entry.competence_date
+    if basis == "expected_settlement_date":
+        return entry.expected_settlement_date
+    return entry.due_date
+
+
+def _entry_signed_cash_flow(entry: FinanceEntry) -> float:
+    amount = float(entry.amount or 0)
+    fee = float(entry.fee_amount or 0)
+    if entry.entry_type == FinanceEntryType.INCOME:
+        return amount - fee
+    return -(amount + fee)
+
+
+def _entry_matches_bank_account(entry: FinanceEntry, account: FinanceBankAccount) -> bool:
+    if entry.finance_account_id is not None and entry.finance_account_id == account.id:
+        return True
+    if (account.name or "").strip().lower() != "caixa":
+        return False
+    pm = (entry.payment_method or "").strip().lower()
+    return pm == "cash" and entry.finance_account_id is None
+
+
 def _entry_to_out(entry: FinanceEntry) -> dict:
     amount = float(entry.amount)
     fee_amount = float(entry.fee_amount or 0)
@@ -249,6 +279,7 @@ def _entry_to_out(entry: FinanceEntry) -> dict:
         "settlement_plan": entry.settlement_plan,
         "paid_at": entry.paid_at,
         "notes": entry.notes,
+        "service_order_id": entry.service_order_id,
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
     }
@@ -300,7 +331,7 @@ def _ensure_default_cash_account(db: Session, tenant_id: int) -> None:
             tenant_id=tenant_id,
             name="Caixa",
             bank_name="Caixa interno",
-            account_type=FinanceAccountType.OTHER,
+            account_type=FinanceAccountType.CASH,
             initial_balance=0,
             is_active=True,
         )
@@ -367,6 +398,7 @@ def list_finance_entries(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     date_basis: str = Query(default="due_date", description="due_date | competence_date | expected_settlement_date"),
+    service_order_id: int | None = Query(default=None, ge=1),
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[dict]:
@@ -387,6 +419,8 @@ def list_finance_entries(
         query = query.where(date_col >= start_date)
     if end_date is not None:
         query = query.where(date_col <= end_date)
+    if service_order_id is not None:
+        query = query.where(FinanceEntry.service_order_id == service_order_id)
     rows = db.execute(query.order_by(date_col.desc(), FinanceEntry.id.desc()).offset(skip).limit(limit)).scalars().all()
     return JSONResponse(content=jsonable_encoder([_entry_to_out(row) for row in rows]))
 
@@ -404,6 +438,40 @@ def create_finance_entry(
 ) -> dict:
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     _require_finance_enabled(db, tenant)
+    if payload.service_order_id is not None:
+        svc_order = db.execute(
+            select(ServiceOrder).where(
+                ServiceOrder.id == payload.service_order_id,
+                ServiceOrder.tenant_id == current_user.tenant_id,
+            )
+        ).scalar_one_or_none()
+        if svc_order is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+        if svc_order.status != OrderStatus.DONE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Só é possível lançar no financeiro após a OS estar concluída.",
+            )
+        if payload.entry_type != FinanceEntryType.INCOME:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lançamentos vinculados à OS devem ser receitas (entrada).",
+            )
+        dup = db.execute(
+            select(func.count())
+            .select_from(FinanceEntry)
+            .where(
+                FinanceEntry.tenant_id == current_user.tenant_id,
+                FinanceEntry.service_order_id == payload.service_order_id,
+                FinanceEntry.entry_type == FinanceEntryType.INCOME,
+                FinanceEntry.status != FinanceEntryStatus.CANCELLED,
+            )
+        ).scalar_one()
+        if int(dup or 0) > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Já existe lançamento financeiro ativo para esta OS.",
+            )
     if payload.category_id is not None:
         category = db.execute(
             select(FinanceCategory).where(
@@ -483,6 +551,7 @@ def create_finance_entry(
             installment_group_id=group_id,
             installment_number=idx + 1,
             installment_total=installments,
+            service_order_id=payload.service_order_id,
         )
         db.add(entry)
         created.append(entry)
@@ -769,7 +838,9 @@ def delete_finance_entry(
     entry_id: int,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    edit_scope: Literal["single", "future", "all"] = Query(default="single"),
 ) -> None:
+    del request
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     _require_finance_enabled(db, tenant)
     entry = db.execute(
@@ -780,7 +851,24 @@ def delete_finance_entry(
     ).scalar_one_or_none()
     if entry is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
-    db.delete(entry)
+
+    targets: list[FinanceEntry] = [entry]
+    if edit_scope != "single":
+        if not entry.installment_group_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lançamento não possui grupo de parcelas.",
+            )
+        q = select(FinanceEntry).where(
+            FinanceEntry.tenant_id == current_user.tenant_id,
+            FinanceEntry.installment_group_id == entry.installment_group_id,
+        )
+        if edit_scope == "future":
+            q = q.where(FinanceEntry.installment_number >= entry.installment_number)
+        targets = db.execute(q.order_by(FinanceEntry.installment_number.asc())).scalars().all()
+
+    for row in targets:
+        db.delete(row)
     db.commit()
     return None
 
@@ -931,6 +1019,86 @@ def create_finance_category(
     db.commit()
     db.refresh(row)
     return JSONResponse(content=jsonable_encoder(row))
+
+
+@router.patch(
+    "/finance/categories/{category_id}",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def patch_finance_category(
+    request: Request,
+    category_id: int,
+    payload: FinanceCategoryUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    del request
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nenhum campo para atualizar.",
+        )
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    _require_min_mode(db, tenant, "intermediate")
+    row = db.execute(
+        select(FinanceCategory).where(
+            FinanceCategory.id == category_id,
+            FinanceCategory.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Categoria não encontrada.")
+    if "name" in updates:
+        name_clean = updates["name"].strip()
+        dup = db.execute(
+            select(FinanceCategory).where(
+                FinanceCategory.tenant_id == current_user.tenant_id,
+                FinanceCategory.name == name_clean,
+                FinanceCategory.id != category_id,
+            )
+        ).scalar_one_or_none()
+        if dup is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe uma categoria com esse nome.")
+        row.name = name_clean
+    if "color" in updates:
+        raw_color = updates["color"]
+        row.color = raw_color.strip().upper() if raw_color and str(raw_color).strip() else None
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return JSONResponse(content=jsonable_encoder(row))
+
+
+@router.delete(
+    "/finance/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def delete_finance_category(
+    request: Request,
+    category_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    _require_min_mode(db, tenant, "intermediate")
+    row = db.execute(
+        select(FinanceCategory).where(
+            FinanceCategory.id == category_id,
+            FinanceCategory.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Categoria não encontrada.")
+    db.delete(row)
+    db.commit()
+    return None
 
 
 @router.get(
@@ -1233,6 +1401,98 @@ def get_finance_cashflow(
         "expenses": expenses,
         "net_flow": net_flow,
         "closing_balance": opening_balance + net_flow,
+    }
+
+
+@router.get(
+    "/finance/balance-snapshot",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+    response_model=FinanceBalanceSnapshotOut,
+)
+def get_finance_balance_snapshot(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    end_date: date = Query(..., description="Saldo projetado considera lançamentos até esta data (fim do período)."),
+    date_basis: str = Query(default="due_date", description="due_date | competence_date | expected_settlement_date"),
+) -> dict:
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    basis = _parse_date_basis(date_basis)
+    tzname = (tenant.timezone or "").strip() or "America/Sao_Paulo"
+    try:
+        tenant_tz = ZoneInfo(tzname)
+    except Exception:
+        tenant_tz = ZoneInfo("America/Sao_Paulo")
+    today = datetime.now(tenant_tz).date()
+
+    initial_total = float(
+        db.execute(
+            select(func.coalesce(func.sum(FinanceBankAccount.initial_balance), 0)).where(
+                FinanceBankAccount.tenant_id == current_user.tenant_id,
+                FinanceBankAccount.is_active.is_(True),
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    entries = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.tenant_id == current_user.tenant_id,
+            FinanceEntry.status != FinanceEntryStatus.CANCELLED,
+        )
+    ).scalars().all()
+
+    current_flow_total = 0.0
+    projected_flow_total = 0.0
+    for entry in entries:
+        bdv = _entry_basis_date_value(entry, basis)
+        signed = _entry_signed_cash_flow(entry)
+        if entry.status == FinanceEntryStatus.PAID and bdv <= today:
+            current_flow_total += signed
+        if bdv <= end_date:
+            projected_flow_total += signed
+
+    accounts = db.execute(
+        select(FinanceBankAccount)
+        .where(
+            FinanceBankAccount.tenant_id == current_user.tenant_id,
+            FinanceBankAccount.is_active.is_(True),
+        )
+        .order_by(FinanceBankAccount.name.asc())
+    ).scalars().all()
+
+    account_rows: list[dict] = []
+    for acc in accounts:
+        initial = float(acc.initial_balance or 0)
+        cur_flow = 0.0
+        proj_flow = 0.0
+        for entry in entries:
+            if not _entry_matches_bank_account(entry, acc):
+                continue
+            bdv = _entry_basis_date_value(entry, basis)
+            signed = _entry_signed_cash_flow(entry)
+            if entry.status == FinanceEntryStatus.PAID and bdv <= today:
+                cur_flow += signed
+            if bdv <= end_date:
+                proj_flow += signed
+        account_rows.append(
+            {
+                "id": acc.id,
+                "name": acc.name,
+                "initial_balance": initial,
+                "current_balance": initial + cur_flow,
+                "projected_balance": initial + proj_flow,
+            }
+        )
+
+    return {
+        "date_basis": basis,
+        "period_end": end_date,
+        "as_of": today,
+        "initial_balance_total": initial_total,
+        "current_balance_total": initial_total + current_flow_total,
+        "projected_balance_total": initial_total + projected_flow_total,
+        "accounts": account_rows,
     }
 
 

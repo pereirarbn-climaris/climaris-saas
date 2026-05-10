@@ -6,6 +6,192 @@
   padding-bottom: 2rem;
 }
 
+.pageHeader {
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pageHeaderRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+
+.pageSub {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.balanceSection {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.15rem 0;
+}
+
+.balanceToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.balanceHeading {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.refreshBtn {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.45rem 0.85rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.refreshBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+}
+
+.refreshBtn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.balanceMainCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.balanceCard {
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  padding: 1rem 1.1rem;
+  display: grid;
+  gap: 0.4rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.balanceCardCurrent {
+  border-color: color-mix(in srgb, var(--color-primary) 22%, var(--color-border));
+}
+
+.balanceCardProjected {
+  border-color: color-mix(in srgb, var(--color-text-muted) 18%, var(--color-border));
+}
+
+.balanceCardLabel {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.balanceCardValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.balanceCardCurrent .balanceCardValue {
+  color: color-mix(in srgb, #0f766e 88%, var(--color-text));
+}
+
+.balanceCardProjected .balanceCardValue {
+  color: var(--color-primary);
+}
+
+.balanceCardHint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.accountBalances {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.accountBalancesTitle {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.accountBalancesScroll {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+  scrollbar-width: thin;
+}
+
+.accountBalanceChip {
+  flex: 0 0 auto;
+  min-width: 11.5rem;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 0.55rem 0.7rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.accountBalanceName {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accountBalanceValues {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.accountBalanceMono {
+  font-variant-numeric: tabular-nums;
+}
+
+.accountBalanceArrow {
+  opacity: 0.45;
+  font-size: 0.75rem;
+}
+
 .hero {
   position: relative;
   overflow: hidden;
@@ -105,16 +291,88 @@
 .filtersBar {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg, 12px);
-  background: var(--color-surface-elevated);
-  padding: 0.8rem 0.95rem;
+  background: var(--color-surface);
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.55rem;
+  margin-bottom: 0.35rem;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 0.45rem 1rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.filtersDates {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.45rem 0.75rem;
+  flex-shrink: 0;
+}
+
+.fieldCompact {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.2rem;
+}
+
+.fieldCompact span {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fieldCompact input,
+.fieldCompact select {
+  min-width: 8.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8125rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.fieldPeriod {
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  max-width: 24rem;
+}
+
+.fieldPeriod select {
+  width: 100%;
+  min-width: 12rem;
 }
 
 .filterQuickActions {
   display: flex;
-  gap: 0.45rem;
-  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.filtersBarAction {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: flex-end;
+}
+
+.filtersBarNewBtn {
+  border: none;
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-primary);
+  color: #fff;
+  padding: 0.42rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.filtersBarNewBtn:hover {
+  filter: brightness(1.06);
 }
 
 .actionsRow {
@@ -482,7 +740,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0;
 }
 
 .entries {
@@ -495,18 +753,49 @@
 
 .entryRow {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.65rem 1rem;
   align-items: start;
   padding: 0.85rem 1rem;
   border-radius: var(--radius-md, 10px);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+  transition: border-color 0.15s ease;
 }
 
-@media (min-width: 720px) {
-  .entryRow {
-    grid-template-columns: 1fr auto auto;
+.entryRow:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+}
+
+.entryClickArea {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.65rem 1rem;
+  align-items: start;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 6px);
+}
+
+.entryClickArea:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 719px) {
+  .entryClickArea {
+    grid-template-columns: 1fr;
+  }
+
+  .entryAmount {
+    text-align: left;
   }
 }
 
@@ -570,6 +859,29 @@
 }
 
 .entryActions button:hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-elevated));
+}
+
+.entryQuickActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+.entryQuickActions button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.entryQuickActions button:hover {
   background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-elevated));
 }
 
@@ -861,6 +1173,240 @@
   gap: 0.75rem;
 }
 
+.modalCardFinance {
+  width: min(560px, 100%);
+  padding: 1.15rem 1.25rem 1.25rem;
+}
+
+.modalCardFinance .modalHeader {
+  align-items: flex-start;
+}
+
+.modalIconClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.modalIconClose:hover {
+  background: color-mix(in srgb, var(--color-text-muted) 8%, var(--color-surface));
+  color: var(--color-text);
+}
+
+.moneyInputWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: 0.35rem 0.55rem;
+  background: var(--color-surface);
+}
+
+.moneyPrefix {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.moneyInputWrap input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.moneyInputWrap input:focus {
+  outline: none;
+}
+
+.modalTextarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: 0.5rem 0.65rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+  resize: vertical;
+  min-height: 2.75rem;
+}
+
+.modalScopeBanner {
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-md, 10px);
+  border: 1px dashed color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+
+.modalHintLineStrong {
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.modalDeleteScope {
+  padding: 0.75rem 0;
+}
+
+.modalDeleteScopeBtns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.modalEditFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding-top: 0.5rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.modalTitleBlock {
+  min-width: 0;
+}
+
+.modalTitleBlock h3 {
+  margin: 0;
+}
+
+.modalSubtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+  max-width: 26rem;
+}
+
+.modalFormFinance {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0.25rem;
+}
+
+.modalSection {
+  display: grid;
+  gap: 0.65rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 92%, transparent);
+}
+
+.modalFormFinance > .modalDetails {
+  margin-top: 0.15rem;
+}
+
+.modalSectionLabel {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--color-text-muted);
+}
+
+.modalGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem 0.65rem;
+}
+
+.modalGridTipoPaid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem 0.75rem;
+  align-items: end;
+}
+
+.modalValorVencGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem 0.65rem;
+}
+
+.modalCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.modalCheck input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-primary);
+}
+
+.modalHintLine {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.modalDetails {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+  padding: 0;
+}
+
+.modalDetailsSummary {
+  list-style: none;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.modalDetailsSummary::-webkit-details-marker {
+  display: none;
+}
+
+.modalDetails[open] .modalDetailsSummary {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modalDetailsBody {
+  padding: 0.75rem 0.85rem 0.85rem;
+}
+
+@media (max-width: 540px) {
+  .modalGrid3 {
+    grid-template-columns: 1fr;
+  }
+
+  .modalGridTipoPaid {
+    grid-template-columns: 1fr;
+  }
+
+  .modalValorVencGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modalHeader {
   display: flex;
   align-items: center;
@@ -920,6 +1466,72 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.modalActionsWide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.35rem;
+}
+
+.modalDangerZone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.modalPrimaryZone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+@media (max-width: 520px) {
+  .modalPrimaryZone {
+    margin-left: 0;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .modalPrimaryZone .modalBtnGhost,
+  .modalPrimaryZone .modalBtnPrimary {
+    flex: 1;
+  }
+}
+
+.modalBtnDanger,
+.modalBtnDangerGhost {
+  border-radius: var(--radius-md, 9px);
+  padding: 0.45rem 0.85rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modalBtnDanger {
+  border: 1px solid color-mix(in srgb, var(--color-error, #b42318) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error, #b42318) 10%, var(--color-surface));
+  color: var(--color-error, #b42318);
+}
+
+.modalBtnDanger:hover {
+  filter: brightness(0.96);
+}
+
+.modalBtnDangerGhost {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.modalBtnDangerGhost:hover {
+  background: color-mix(in srgb, var(--color-text-muted) 8%, var(--color-surface));
 }
 
 .modalBtnGhost,

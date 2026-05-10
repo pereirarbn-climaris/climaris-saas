@@ -9,6 +9,8 @@ import type {
 } from "../api/clients";
 import type { ProductOut } from "../api/products";
 import type {
+  FinanceBankAccountOut,
+  FinanceBalanceSnapshotOut,
   FinanceCategoryOut,
   FinanceEntryOut,
   FinancePaymentFeeOut,
@@ -86,6 +88,7 @@ export const demoClients: ClientOut[] = [
     name: "Joao Silva",
     document: "12345678901",
     tax_id_kind: "cpf",
+    optante_mei: true,
     phone: "11999998888",
     whatsapp: "11999998888",
     email: "joao.silva@email.com",
@@ -101,7 +104,8 @@ export const demoClients: ClientOut[] = [
     address_state: "SP",
     address_postal_code: "01234000",
     address_country: "BR",
-    address_ibge_code: null,
+    address_ibge_code: "3550308",
+    preventive_campaign_opt_out: false,
   },
   {
     id: 2,
@@ -109,6 +113,7 @@ export const demoClients: ClientOut[] = [
     name: "Maria Oliveira",
     document: "98765432100",
     tax_id_kind: "cpf",
+    optante_mei: false,
     phone: "11988887777",
     whatsapp: "11988887777",
     email: "maria.oliveira@email.com",
@@ -124,7 +129,8 @@ export const demoClients: ClientOut[] = [
     address_state: "SP",
     address_postal_code: "01310100",
     address_country: "BR",
-    address_ibge_code: null,
+    address_ibge_code: "3550308",
+    preventive_campaign_opt_out: false,
   },
   {
     id: 3,
@@ -132,6 +138,7 @@ export const demoClients: ClientOut[] = [
     name: "Empresa ABC Ltda",
     document: "12345678000199",
     tax_id_kind: "cnpj",
+    optante_mei: false,
     phone: "1133334444",
     whatsapp: "1133334444",
     email: "contato@empresaabc.com.br",
@@ -147,7 +154,8 @@ export const demoClients: ClientOut[] = [
     address_state: "SP",
     address_postal_code: "01000000",
     address_country: "BR",
-    address_ibge_code: null,
+    address_ibge_code: "3550308",
+    preventive_campaign_opt_out: false,
   },
 ];
 
@@ -440,6 +448,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 45.0,
     unit_price: 45.0,
     stock_quantity: 50,
+    compatible_equipment_tags: null,
+    btu_min: null,
+    btu_max: null,
+    application_scope: null,
     is_active: true,
   },
   {
@@ -451,6 +463,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 280.0,
     unit_price: 280.0,
     stock_quantity: 20,
+    compatible_equipment_tags: null,
+    btu_min: null,
+    btu_max: null,
+    application_scope: null,
     is_active: true,
   },
   {
@@ -462,6 +478,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 750.0,
     unit_price: 750.0,
     stock_quantity: 8,
+    compatible_equipment_tags: "split",
+    btu_min: 9000,
+    btu_max: 18000,
+    application_scope: null,
     is_active: true,
   },
   {
@@ -473,6 +493,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 55.0,
     unit_price: 55.0,
     stock_quantity: 100,
+    compatible_equipment_tags: null,
+    btu_min: null,
+    btu_max: null,
+    application_scope: null,
     is_active: true,
   },
 ];
@@ -485,7 +509,16 @@ export const demoServices: ServiceOut[] = [
     description: "Servico completo de instalacao de ar condicionado split residencial ou comercial",
     price: 350.0,
     duration_minutes: 180,
+    equipment_type_tags: "split",
+    btu_min: null,
+    btu_max: null,
+    service_category: "instalacao",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: null,
+    nfse_codigo_nbs: null,
+    periodicidade_meses: null,
     product_inputs: [],
     estimated_material_cost: 0,
     estimated_profit: 350.0,
@@ -497,7 +530,16 @@ export const demoServices: ServiceOut[] = [
     description: "Limpeza e verificacao do sistema de ar condicionado",
     price: 150.0,
     duration_minutes: 60,
+    equipment_type_tags: null,
+    btu_min: null,
+    btu_max: null,
+    service_category: "manutencao",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: null,
+    nfse_codigo_nbs: null,
+    periodicidade_meses: 6,
     product_inputs: [],
     estimated_material_cost: 0,
     estimated_profit: 150.0,
@@ -509,7 +551,16 @@ export const demoServices: ServiceOut[] = [
     description: "Recarga de gas refrigerante com verificacao de vazamentos",
     price: 280.0,
     duration_minutes: 90,
+    equipment_type_tags: null,
+    btu_min: null,
+    btu_max: null,
+    service_category: "reparo",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: null,
+    nfse_codigo_nbs: null,
+    periodicidade_meses: null,
     product_inputs: [],
     estimated_material_cost: 0,
     estimated_profit: 280.0,
@@ -525,6 +576,19 @@ let demoFinanceCategoriesState: FinanceCategoryOut[] = [
   { id: 1, tenant_id: 1, name: "Servicos", color: "#0ea5e9", created_at: DEMO_TS },
   { id: 2, tenant_id: 1, name: "Despesas Operacionais", color: "#ef4444", created_at: DEMO_TS },
 ];
+let demoFinanceAccountsState: FinanceBankAccountOut[] = [
+  {
+    id: 1,
+    tenant_id: 1,
+    name: "Caixa",
+    bank_name: "Caixa interno",
+    account_type: "cash",
+    initial_balance: 500,
+    is_active: true,
+    created_at: DEMO_TS,
+    updated_at: DEMO_TS,
+  },
+];
 let demoFinanceEntriesState: FinanceEntryOut[] = [
   {
     id: 1,
@@ -537,6 +601,7 @@ let demoFinanceEntriesState: FinanceEntryOut[] = [
     amount: 500,
     payment_method: "pix",
     payment_provider: null,
+    finance_account_id: 1,
     fee_fixed_amount: 0,
     fee_percent: 0,
     fee_amount: 0,
@@ -552,6 +617,7 @@ let demoFinanceEntriesState: FinanceEntryOut[] = [
     settlement_plan: "same_as_due",
     paid_at: "2026-01-20T13:00:00.000Z",
     notes: null,
+    service_order_id: 501,
     created_at: DEMO_TS,
     updated_at: DEMO_TS,
   },
@@ -624,6 +690,7 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     name: payload.name,
     document: payload.document ?? null,
     tax_id_kind: payload.tax_id_kind ?? "cpf",
+    optante_mei: payload.optante_mei ?? false,
     phone: payload.phone ?? null,
     whatsapp: payload.whatsapp ?? null,
     email: payload.email ?? null,
@@ -640,6 +707,7 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     address_postal_code: payload.address_postal_code ?? null,
     address_country: payload.address_country ?? "BR",
     address_ibge_code: payload.address_ibge_code ?? null,
+    preventive_campaign_opt_out: payload.preventive_campaign_opt_out ?? false,
   };
   demoClientsState = [row, ...demoClientsState];
   return { ...row };
@@ -802,6 +870,80 @@ export function demoUpdateBudget(budgetId: number, payload: Partial<BudgetOut>):
   return { ...demoBudgetsState[idx] };
 }
 
+export function demoListFinanceAccounts() {
+  return demoFinanceAccountsState.map((item) => ({ ...item }));
+}
+
+function demoFinanceEntryBasisDate(e: FinanceEntryOut, basis: string): string {
+  if (basis === "competence_date") return e.competence_date ?? e.due_date;
+  if (basis === "expected_settlement_date") return e.expected_settlement_date ?? e.due_date;
+  return e.due_date;
+}
+
+function demoFinanceSignedFlow(e: FinanceEntryOut): number {
+  const amt = Number(e.amount || 0);
+  const fee = Number(e.fee_amount || 0);
+  if (e.entry_type === "income") return amt - fee;
+  return -(amt + fee);
+}
+
+function demoFinanceEntryMatchesAccount(e: FinanceEntryOut, acc: FinanceBankAccountOut): boolean {
+  if (e.finance_account_id != null && e.finance_account_id === acc.id) return true;
+  if (acc.name.trim().toLowerCase() !== "caixa") return false;
+  const pm = (e.payment_method || "").toLowerCase();
+  return pm === "cash" && e.finance_account_id == null;
+}
+
+export function demoGetFinanceBalanceSnapshot(params: { end_date: string; date_basis: string }): FinanceBalanceSnapshotOut {
+  const basis = (params.date_basis || "due_date").toLowerCase();
+  const endDate = params.end_date;
+  const today = new Date().toISOString().slice(0, 10);
+  const entries = demoFinanceEntriesState.filter((e) => e.status !== "cancelled");
+  let initialTotal = 0;
+  for (const a of demoFinanceAccountsState) {
+    if (a.is_active) initialTotal += Number(a.initial_balance || 0);
+  }
+  let currentFlowTotal = 0;
+  let projectedFlowTotal = 0;
+  for (const e of entries) {
+    const bdv = demoFinanceEntryBasisDate(e, basis);
+    const signed = demoFinanceSignedFlow(e);
+    if (e.status === "paid" && bdv <= today) currentFlowTotal += signed;
+    if (bdv <= endDate) projectedFlowTotal += signed;
+  }
+  const accounts = demoFinanceAccountsState
+    .filter((a) => a.is_active)
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+    .map((acc) => {
+      const initial = Number(acc.initial_balance || 0);
+      let curFlow = 0;
+      let projFlow = 0;
+      for (const e of entries) {
+        if (!demoFinanceEntryMatchesAccount(e, acc)) continue;
+        const bdv = demoFinanceEntryBasisDate(e, basis);
+        const signed = demoFinanceSignedFlow(e);
+        if (e.status === "paid" && bdv <= today) curFlow += signed;
+        if (bdv <= endDate) projFlow += signed;
+      }
+      return {
+        id: acc.id,
+        name: acc.name,
+        initial_balance: initial,
+        current_balance: initial + curFlow,
+        projected_balance: initial + projFlow,
+      };
+    });
+  return {
+    date_basis: basis,
+    period_end: endDate,
+    as_of: today,
+    initial_balance_total: initialTotal,
+    current_balance_total: initialTotal + currentFlowTotal,
+    projected_balance_total: initialTotal + projectedFlowTotal,
+    accounts,
+  };
+}
+
 export function demoListFinanceEntries() {
   return demoFinanceEntriesState.map((item) => ({ ...item }));
 }
@@ -825,27 +967,64 @@ export function demoCreateFinanceEntry(payload: Partial<FinanceEntryOut> & { des
     installment_group_id: null,
     installment_number: undefined,
     installment_total: undefined,
-    net_amount: payload.amount - (payload.fee_amount ?? 0),
+    net_amount:
+      payload.entry_type === "income"
+        ? payload.amount - (payload.fee_amount ?? 0)
+        : payload.amount + (payload.fee_amount ?? 0),
     due_date: payload.due_date,
     competence_date: payload.competence_date ?? payload.due_date,
     expected_settlement_date: payload.expected_settlement_date ?? payload.due_date,
     settlement_plan: payload.settlement_plan ?? "same_as_due",
     paid_at: null,
     notes: payload.notes ?? null,
+    service_order_id: payload.service_order_id ?? null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
   demoFinanceEntriesState = [row, ...demoFinanceEntriesState];
   return { ...row };
 }
-export function demoPatchFinanceEntry(entryId: number, payload: Partial<FinanceEntryOut>): FinanceEntryOut {
+export function demoPatchFinanceEntry(
+  entryId: number,
+  payload: Partial<FinanceEntryOut> & { edit_scope?: "single" | "future" | "all" },
+): FinanceEntryOut {
+  const scope = payload.edit_scope ?? "single";
   const idx = demoFinanceEntriesState.findIndex((item) => item.id === entryId);
   if (idx < 0) throw new Error("Lançamento não encontrado.");
-  demoFinanceEntriesState[idx] = { ...demoFinanceEntriesState[idx], ...payload, updated_at: new Date().toISOString() };
-  return { ...demoFinanceEntriesState[idx] };
+  const entry = demoFinanceEntriesState[idx]!;
+  const { edit_scope: _scopeIgnore, ...fields } = payload;
+  const patch = { ...fields } as Partial<FinanceEntryOut>;
+  if (scope === "single" || !entry.installment_group_id) {
+    demoFinanceEntriesState[idx] = { ...entry, ...patch, updated_at: new Date().toISOString() };
+    return { ...demoFinanceEntriesState[idx] };
+  }
+  const gid = entry.installment_group_id!;
+  const num = entry.installment_number ?? 1;
+  for (let i = 0; i < demoFinanceEntriesState.length; i++) {
+    const row = demoFinanceEntriesState[i]!;
+    if (row.installment_group_id !== gid) continue;
+    const include = scope === "all" ? true : (row.installment_number ?? 1) >= num;
+    if (!include) continue;
+    demoFinanceEntriesState[i] = { ...row, ...patch, updated_at: new Date().toISOString() };
+  }
+  const out = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (!out) throw new Error("Lançamento não encontrado.");
+  return { ...out };
 }
-export function demoDeleteFinanceEntry(entryId: number): void {
-  demoFinanceEntriesState = demoFinanceEntriesState.filter((item) => item.id !== entryId);
+export function demoDeleteFinanceEntry(entryId: number, edit_scope: "single" | "future" | "all" = "single"): void {
+  const entry = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (!entry) return;
+  if (edit_scope === "single" || !(entry.installment_group_id ?? "").trim()) {
+    demoFinanceEntriesState = demoFinanceEntriesState.filter((item) => item.id !== entryId);
+    return;
+  }
+  const gid = entry.installment_group_id!;
+  const num = entry.installment_number ?? 1;
+  demoFinanceEntriesState = demoFinanceEntriesState.filter((item) => {
+    if (item.installment_group_id !== gid) return true;
+    if (edit_scope === "all") return false;
+    return (item.installment_number ?? 1) < num;
+  });
 }
 export function demoListFinanceCategories() {
   return demoFinanceCategoriesState.map((item) => ({ ...item }));
@@ -860,6 +1039,34 @@ export function demoCreateFinanceCategory(payload: { name: string; color?: strin
   };
   demoFinanceCategoriesState = [row, ...demoFinanceCategoriesState];
   return { ...row };
+}
+
+export function demoPatchFinanceCategory(
+  id: number,
+  payload: { name?: string; color?: string | null },
+): FinanceCategoryOut {
+  const idx = demoFinanceCategoriesState.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error("Categoria não encontrada.");
+  const prev = demoFinanceCategoriesState[idx];
+  const row = { ...prev };
+  if (payload.name !== undefined) {
+    const n = payload.name.trim();
+    if (demoFinanceCategoriesState.some((c) => c.id !== id && c.name === n)) {
+      throw new Error("Já existe uma categoria com esse nome.");
+    }
+    row.name = n;
+  }
+  if (payload.color !== undefined) {
+    row.color = payload.color && payload.color.trim() ? payload.color.trim().toUpperCase() : null;
+  }
+  demoFinanceCategoriesState[idx] = row;
+  return { ...row };
+}
+
+export function demoDeleteFinanceCategory(id: number): void {
+  const next = demoFinanceCategoriesState.filter((c) => c.id !== id);
+  if (next.length === demoFinanceCategoriesState.length) throw new Error("Categoria não encontrada.");
+  demoFinanceCategoriesState = next;
 }
 export function demoListFinanceFees() {
   return demoFinancePaymentFeesState.map((item) => ({ ...item }));

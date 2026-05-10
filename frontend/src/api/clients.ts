@@ -24,6 +24,7 @@ export type ClientOut = {
   name: string;
   document: string | null;
   tax_id_kind: string;
+  optante_mei: boolean;
   phone: string | null;
   whatsapp: string | null;
   email: string | null;
@@ -40,12 +41,14 @@ export type ClientOut = {
   address_postal_code: string | null;
   address_country: string;
   address_ibge_code: string | null;
+  preventive_campaign_opt_out: boolean;
 };
 
 export type ClientCreatePayload = {
   name: string;
   document?: string;
   tax_id_kind?: ClientTaxIdKind;
+  optante_mei?: boolean;
   phone?: string;
   whatsapp?: string;
   email?: string;
@@ -62,6 +65,7 @@ export type ClientCreatePayload = {
   address_postal_code?: string;
   address_country?: string;
   address_ibge_code?: string;
+  preventive_campaign_opt_out?: boolean;
 };
 
 export type EquipmentOut = {
@@ -218,6 +222,7 @@ export type ClientUpdatePayload = {
   name?: string;
   document?: string;
   tax_id_kind?: ClientTaxIdKind;
+  optante_mei?: boolean;
   phone?: string | null;
   whatsapp?: string | null;
   email?: string | null;
@@ -234,6 +239,7 @@ export type ClientUpdatePayload = {
   address_postal_code?: string | null;
   address_country?: string | null;
   address_ibge_code?: string | null;
+  preventive_campaign_opt_out?: boolean;
 };
 
 async function parseBody(response: Response): Promise<unknown> {

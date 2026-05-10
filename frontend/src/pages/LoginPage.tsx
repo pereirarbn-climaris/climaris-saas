@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { forgotPasswordRequest, loginRequest, resendVerificationEmailRequest } from "../api/auth";
 import { isPlatformAdminEmail } from "../lib/platformAdmin";
@@ -62,6 +62,9 @@ const ShieldCheckIcon = () => (
 
 type LoginLocationState = { fromRegister?: boolean; registeredEmail?: string; emailVerificationPending?: boolean } | null;
 
+const FA_SESSION_KEY = "climaris_2fa_pending";
+const FA_SESSION_MAX_MS = 18 * 60 * 1000; // um pouco acima do TTL do backend (2FA)
+
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -82,6 +85,25 @@ export function LoginPage() {
   const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [trustThisDevice, setTrustThisDevice] = useState(false);
+  const submitLock = useRef(false);
+
+  useEffect(() => {
+    if (typeof sessionStorage === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem(FA_SESSION_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { email?: string; token?: string; at?: number };
+      if (!parsed.token || !parsed.at || Date.now() - parsed.at > FA_SESSION_MAX_MS) {
+        sessionStorage.removeItem(FA_SESSION_KEY);
+        return;
+      }
+      if (parsed.email) setEmail(parsed.email.trim().toLowerCase());
+      setTwoFactorToken(parsed.token);
+    } catch {
+      sessionStorage.removeItem(FA_SESSION_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     const st = location.state as LoginLocationState;
@@ -99,6 +121,7 @@ export function LoginPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitLock.current) return;
     const mail = email.trim().toLowerCase();
     if (!mail) {
       setMessage({ text: "Informe o e-mail.", kind: "error" });
@@ -109,6 +132,7 @@ export function LoginPage() {
       return;
     }
 
+    submitLock.current = true;
     setSubmitting(true);
     setCanResendVerification(false);
     setMessage({ text: "Entrando...", kind: "idle" });
@@ -121,6 +145,7 @@ export function LoginPage() {
         captcha_answer: captchaAnswer.trim() || undefined,
         two_factor_token: twoFactorToken ?? undefined,
         two_factor_code: twoFactorCode.trim() || undefined,
+        trust_this_device: twoFactorToken ? trustThisDevice : undefined,
       });
       if (result.captcha_required) {
         setCaptchaToken(result.captcha_token ?? null);
@@ -129,7 +154,12 @@ export function LoginPage() {
         return;
       }
       if (result.two_factor_required) {
-        setTwoFactorToken(result.two_factor_token ?? null);
+        const t = result.two_factor_token ?? null;
+        setTwoFactorToken(t);
+        setTrustThisDevice(false);
+        if (typeof sessionStorage !== "undefined" && t) {
+          sessionStorage.setItem(FA_SESSION_KEY, JSON.stringify({ email: mail, token: t, at: Date.now() }));
+        }
         setMessage({ text: "Enviamos um código de 2 fatores para seu e-mail.", kind: "success" });
         return;
       }
@@ -138,6 +168,8 @@ export function LoginPage() {
       setCaptchaAnswer("");
       setTwoFactorToken(null);
       setTwoFactorCode("");
+      setTrustThisDevice(false);
+      if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(FA_SESSION_KEY);
       setAccessToken(result.access_token);
       setTenantId(result.tenant_id);
       setMessage({
@@ -153,6 +185,7 @@ export function LoginPage() {
       setMessage({ text, kind: "error" });
       setCanResendVerification(text.toLowerCase().includes("e-mail ainda não confirmado"));
     } finally {
+      submitLock.current = false;
       setSubmitting(false);
     }
   }
@@ -279,7 +312,15 @@ export function LoginPage() {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEmail(v);
+                    if (twoFactorToken) {
+                      setTwoFactorToken(null);
+                      setTwoFactorCode("");
+                      if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(FA_SESSION_KEY);
+                    }
+                  }}
                   autoComplete="email"
                   spellCheck={false}
                   enterKeyHint="next"
@@ -348,26 +389,46 @@ export function LoginPage() {
             ) : null}
 
             {twoFactorToken ? (
-              <div className={styles.inputGroup}>
-                <label className={styles.label} htmlFor="login-2fa">
-                  Código de verificação (2FA)
-                </label>
-                <div className={styles.inputWrapper}>
-                  <ShieldCheckIcon />
-                  <input
-                    id="login-2fa"
-                    className={styles.inputWithIcon}
-                    type="text"
-                    required
-                    value={twoFactorCode}
-                    onChange={(e) => setTwoFactorCode(e.target.value)}
-                    autoComplete="one-time-code"
-                    inputMode="numeric"
-                    enterKeyHint="done"
-                    placeholder="000000"
-                  />
+              <>
+                <div className={styles.inputGroup}>
+                  <label className={styles.label} htmlFor="login-2fa">
+                    Código de verificação (2FA)
+                  </label>
+                  <p className={styles.fieldHint}>
+                    Digite os 6 dígitos enviados ao seu e-mail. Depois você pode marcar a opção abaixo para não repetir o código neste navegador.
+                  </p>
+                  <div className={styles.inputWrapper}>
+                    <ShieldCheckIcon />
+                    <input
+                      id="login-2fa"
+                      className={styles.inputWithIcon}
+                      type="text"
+                      required
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value)}
+                      autoComplete="one-time-code"
+                      inputMode="numeric"
+                      enterKeyHint="done"
+                      placeholder="000000"
+                    />
+                  </div>
                 </div>
-              </div>
+                <div className={styles.trustDevicePanel} role="group" aria-labelledby="login-trust-heading">
+                  <p id="login-trust-heading" className={styles.trustDeviceHeading}>
+                    Dispositivo confiável (opcional)
+                  </p>
+                  <label className={styles.trustDeviceRow}>
+                    <input
+                      type="checkbox"
+                      checked={trustThisDevice}
+                      onChange={(e) => setTrustThisDevice(e.target.checked)}
+                    />
+                    <span>
+                      Confiar neste dispositivo por 30 dias — na próxima vez não pedimos o código neste navegador.
+                    </span>
+                  </label>
+                </div>
+              </>
             ) : null}
 
             <button className={styles.primaryBtn} type="submit" disabled={submitting}>
