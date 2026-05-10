@@ -16,6 +16,11 @@ Base multi-tenant ERP backend with:
 
 **Painel Evolution (Manager) e URL correta da API:** o hostname `evolution_api` só existe **entre containers Docker** — não use no navegador. Guia passo a passo: **`deploy/evolution/README.md`** (127.0.0.1:3001 / :8080 ou túnel SSH).
 
+## WhatsApp bot V1
+
+O plano técnico do bot WhatsApp sem IA (menus, fluxos determinísticos e configuração por tenant) está em
+[`docs/whatsapp-bot-v1.md`](docs/whatsapp-bot-v1.md). A camada de IA fica reservada para V2 e permanece desativada por padrão.
+
 ## Run
 
 ```bash

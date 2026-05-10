@@ -17,7 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 
-from app.config import CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
+from app.config import AI_ASSISTANT_V2_ENABLED, CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
 from app.limiter import limiter
 from app.middleware import RequestContextMiddleware
 from app.routers.auth import router as auth_router
@@ -43,6 +43,7 @@ from app.routers.whatsapp import router as whatsapp_router
 from app.routers.ai_settings import router as ai_settings_router
 from app.routers.nfse import router as nfse_router
 from app.routers.preventive_maintenance import router as preventive_maintenance_router
+from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -92,6 +93,7 @@ def healthcheck(
     body: dict[str, str | bool] = {"status": "ok", "public_register_minimal": True}
     if extended:
         body["public_register_enabled"] = PUBLIC_REGISTER_ENABLED
+        body["ai_assistant_v2_enabled"] = AI_ASSISTANT_V2_ENABLED
     return body
 
 
@@ -378,6 +380,7 @@ app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
 app.include_router(ai_settings_router, prefix=API_V1_PREFIX)
 app.include_router(nfse_router, prefix=API_V1_PREFIX)
 app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
+app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
 
 
 @app.on_event("startup")

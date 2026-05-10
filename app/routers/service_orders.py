@@ -977,6 +977,13 @@ def patch_service_order_status(
         if order.closed_at is None:
             order.closed_at = datetime.now(timezone.utc)
         db.commit()
+        try:
+            from app.whatsapp_bot import dispatch_service_order_done_flow
+
+            dispatch_service_order_done_flow(db, tenant_id=current_user.tenant_id, order=order)
+        except Exception:
+            # O fechamento da OS não deve ser revertido se a automação WhatsApp estiver incompleta/indisponível.
+            db.rollback()
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Status inválido.")
 
