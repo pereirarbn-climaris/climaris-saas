@@ -11,7 +11,7 @@ import {
 } from "../../api/budgets";
 import { listClients } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
-import loginStyles from "../LoginPage.module.css";
+import baseStyles from "../listPageBase.module.css";
 import modern from "../listPageModern.module.css";
 import styles from "./BudgetsListPage.module.css";
 
@@ -211,13 +211,13 @@ export function BudgetsListPage() {
   return (
     <div className={`${styles.wrap} ${modern.page}`}>
       <div className={modern.toolbarCard}>
-        <div className={modern.filterCol}>
-          <label className={loginStyles.label} htmlFor="budget-status">
+        <div className={baseStyles.selectCol}>
+          <label className={baseStyles.selectLabel} htmlFor="budget-status">
             Status
           </label>
           <select
             id="budget-status"
-            className={loginStyles.input}
+            className={baseStyles.select}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as "all" | BudgetStatus)}
           >
@@ -229,11 +229,13 @@ export function BudgetsListPage() {
             <option value="expired">Expirado</option>
           </select>
         </div>
-        {canEdit ? (
-          <Link className={styles.btnPrimary} to="/app/budgets/new">
-            Novo orcamento
-          </Link>
-        ) : null}
+        <div className={baseStyles.btnCol}>
+          {canEdit ? (
+            <Link className={baseStyles.btnPrimary} to="/app/budgets/new">
+              Novo orcamento
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}

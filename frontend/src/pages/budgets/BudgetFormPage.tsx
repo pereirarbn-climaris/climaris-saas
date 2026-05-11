@@ -6,7 +6,7 @@ import { listProducts, type ProductOut } from "../../api/products";
 import { listServices, type ServiceOut } from "../../api/services";
 import { sortByNameAsc } from "../../lib/localeSort";
 import type { DashboardOutletContext } from "../dashboardContext";
-import loginStyles from "../LoginPage.module.css";
+import baseStyles from "../listPageBase.module.css";
 import styles from "./BudgetFormPage.module.css";
 
 type SelectedService = { service_id: number; quantity: number };
@@ -244,93 +244,107 @@ export function BudgetFormPage() {
       <form className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Dados gerais</h2>
-          <label className={loginStyles.label} htmlFor="budget-client">
-            Cliente
-          </label>
-          <select
-            id="budget-client"
-            className={loginStyles.input}
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            disabled={readOnly}
-          >
-            <option value="">Selecione...</option>
-            {clientsSorted.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} - {c.document}
-              </option>
-            ))}
-          </select>
+          <div className={baseStyles.selectCol}>
+            <label className={baseStyles.selectLabel} htmlFor="budget-client">
+              Cliente
+            </label>
+            <select
+              id="budget-client"
+              className={baseStyles.select}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              disabled={readOnly}
+            >
+              <option value="">Selecione...</option>
+              {clientsSorted.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} - {c.document}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <label className={loginStyles.label} htmlFor="budget-observation">
-            Observação
-          </label>
-          <textarea
-            id="budget-observation"
-            className={loginStyles.input}
-            value={observation}
-            onChange={(e) => setObservation(e.target.value)}
-            rows={3}
-            disabled={readOnly}
-            placeholder="Informações importantes para aprovação do cliente."
-          />
+          <div className={baseStyles.selectCol}>
+            <label className={baseStyles.selectLabel} htmlFor="budget-observation">
+              Observacao
+            </label>
+            <textarea
+              id="budget-observation"
+              className={baseStyles.select}
+              style={{ height: "auto", minHeight: "5rem", resize: "vertical" }}
+              value={observation}
+              onChange={(e) => setObservation(e.target.value)}
+              rows={3}
+              disabled={readOnly}
+              placeholder="Informacoes importantes para aprovacao do cliente."
+            />
+          </div>
         </div>
 
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Financeiro e garantia</h2>
-          <label className={loginStyles.label} htmlFor="budget-payment-method">
-            Forma de pagamento
-          </label>
-          <input
-            id="budget-payment-method"
-            className={loginStyles.input}
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
-            disabled={readOnly}
-            placeholder="PIX, boleto, cartao..."
-          />
-          <label className={loginStyles.label} htmlFor="budget-payment-terms">
-            Condicoes de pagamento
-          </label>
-          <textarea
-            id="budget-payment-terms"
-            className={loginStyles.input}
-            value={paymentTerms}
-            onChange={(e) => setPaymentTerms(e.target.value)}
-            rows={3}
-            disabled={readOnly}
-          />
-          <label className={loginStyles.label} htmlFor="budget-warranty">
-            Garantia
-          </label>
-          <textarea
-            id="budget-warranty"
-            className={loginStyles.input}
-            value={warrantyTerms}
-            onChange={(e) => setWarrantyTerms(e.target.value)}
-            rows={3}
-            disabled={readOnly}
-          />
-          <label className={loginStyles.label} htmlFor="budget-validity">
-            Validade (dias)
-          </label>
-          <input
-            id="budget-validity"
-            type="number"
-            min={1}
-            className={loginStyles.input}
-            value={validityDays}
-            onChange={(e) => setValidityDays(Math.max(1, Number(e.target.value) || 1))}
-            disabled={readOnly}
-          />
+          <div className={baseStyles.searchInputWrap}>
+            <input
+              id="budget-payment-method"
+              className={baseStyles.searchInput}
+              style={{ paddingLeft: "var(--input-padding-x)" }}
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              disabled={readOnly}
+              placeholder="Forma de pagamento (PIX, boleto, cartao...)"
+            />
+          </div>
+          <div className={baseStyles.selectCol}>
+            <label className={baseStyles.selectLabel} htmlFor="budget-payment-terms">
+              Condicoes de pagamento
+            </label>
+            <textarea
+              id="budget-payment-terms"
+              className={baseStyles.select}
+              style={{ height: "auto", minHeight: "4rem", resize: "vertical" }}
+              value={paymentTerms}
+              onChange={(e) => setPaymentTerms(e.target.value)}
+              rows={3}
+              disabled={readOnly}
+            />
+          </div>
+          <div className={baseStyles.selectCol}>
+            <label className={baseStyles.selectLabel} htmlFor="budget-warranty">
+              Garantia
+            </label>
+            <textarea
+              id="budget-warranty"
+              className={baseStyles.select}
+              style={{ height: "auto", minHeight: "4rem", resize: "vertical" }}
+              value={warrantyTerms}
+              onChange={(e) => setWarrantyTerms(e.target.value)}
+              rows={3}
+              disabled={readOnly}
+            />
+          </div>
+          <div className={baseStyles.selectCol}>
+            <label className={baseStyles.selectLabel} htmlFor="budget-validity">
+              Validade (dias)
+            </label>
+            <input
+              id="budget-validity"
+              type="number"
+              min={1}
+              className={baseStyles.searchInput}
+              style={{ paddingLeft: "var(--input-padding-x)", maxWidth: "120px" }}
+              value={validityDays}
+              onChange={(e) => setValidityDays(Math.max(1, Number(e.target.value) || 1))}
+              disabled={readOnly}
+            />
+          </div>
         </div>
 
         <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Serviços</h2>
+          <h2 className={styles.sectionTitle}>Servicos</h2>
           {!readOnly ? (
             <div className={styles.rowInline}>
-              <select className={loginStyles.input} value={servicePicker} onChange={(e) => setServicePicker(e.target.value)}>
-                <option value="">Selecione um serviço</option>
+              <select className={baseStyles.select} style={{ flex: 1 }} value={servicePicker} onChange={(e) => setServicePicker(e.target.value)}>
+                <option value="">Selecione um servico</option>
                 {servicesSorted.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -344,7 +358,7 @@ export function BudgetFormPage() {
           ) : null}
           {selectedServices.map((item) => (
             <div key={item.service_id} className={styles.rowInline}>
-              <span>{serviceMap.get(item.service_id)?.name ?? `Serviço #${item.service_id}`}</span>
+              <span>{serviceMap.get(item.service_id)?.name ?? `Servico #${item.service_id}`}</span>
               <input
                 type="number"
                 min={1}
@@ -365,7 +379,7 @@ export function BudgetFormPage() {
           <h2 className={styles.sectionTitle}>Produtos</h2>
           {!readOnly ? (
             <div className={styles.rowInline}>
-              <select className={loginStyles.input} value={productPicker} onChange={(e) => setProductPicker(e.target.value)}>
+              <select className={baseStyles.select} style={{ flex: 1 }} value={productPicker} onChange={(e) => setProductPicker(e.target.value)}>
                 <option value="">Selecione um produto</option>
                 {productsSorted.map((p) => (
                   <option key={p.id} value={p.id}>
