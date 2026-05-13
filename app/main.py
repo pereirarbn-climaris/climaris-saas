@@ -17,7 +17,13 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 
-from app.config import AI_ASSISTANT_V2_ENABLED, CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
+from app.config import (
+    AI_ASSISTANT_V2_ENABLED,
+    CORS_ORIGINS,
+    MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE,
+    PUBLIC_REGISTER_ENABLED,
+    public_api_base_url,
+)
 from app.limiter import limiter
 from app.middleware import RequestContextMiddleware
 from app.routers.auth import router as auth_router
@@ -36,6 +42,7 @@ from app.routers.public_portal import equipment_token_router, router as public_p
 from app.routers.service_orders import router as service_orders_router
 from app.routers.finance import router as finance_router
 from app.routers.webhooks_asaas import router as webhooks_asaas_router
+from app.routers.webhooks_mercadopago import router as webhooks_mercadopago_router
 from app.routers.inventory import router as inventory_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
@@ -84,7 +91,7 @@ def healthcheck(
     extended: Annotated[
         bool,
         Query(
-            description="Se true, inclui campos extras (ex.: public_register_enabled). "
+            description="Se true, inclui campos extras (ex.: public_register_enabled, política MP). "
             "O formato padrão permanece só status + public_register_minimal (compatível com clientes antigos)."
         ),
     ] = False,
@@ -94,6 +101,8 @@ def healthcheck(
     if extended:
         body["public_register_enabled"] = PUBLIC_REGISTER_ENABLED
         body["ai_assistant_v2_enabled"] = AI_ASSISTANT_V2_ENABLED
+        body["api_public_base_url_configured"] = bool(public_api_base_url())
+        body["mercadopago_webhook_signature_required"] = bool(MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE)
     return body
 
 
@@ -373,6 +382,7 @@ app.include_router(equipment_token_router, prefix=API_V1_PREFIX)
 app.include_router(budgets_router, prefix=API_V1_PREFIX)
 app.include_router(finance_router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_asaas_router, prefix=API_V1_PREFIX)
+app.include_router(webhooks_mercadopago_router, prefix=API_V1_PREFIX)
 app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)

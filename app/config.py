@@ -55,6 +55,16 @@ def _merged_cors_origins() -> list[str]:
     return out
 
 
+# JWT de sessão (Bearer). Mínimo 5 minutos.
+JWT_EXPIRE_MINUTES: int = max(5, int(os.getenv("JWT_EXPIRE_MINUTES", "60")))
+# Opcional: se definido (ex.: 1440), usuários admin usam este TTL; demais perfis usam JWT_EXPIRE_MINUTES.
+_jwt_admin_ttl_raw = os.getenv("JWT_EXPIRE_MINUTES_ADMIN", "").strip()
+JWT_EXPIRE_MINUTES_ADMIN: int | None = int(_jwt_admin_ttl_raw) if _jwt_admin_ttl_raw else None
+
+# Refresh token opaco (armazenado com hash) para renovar access JWT sem novo login.
+REFRESH_TOKEN_ENABLED: bool = _env_bool("REFRESH_TOKEN_ENABLED", True)
+REFRESH_TOKEN_DAYS: int = max(1, int(os.getenv("REFRESH_TOKEN_DAYS", "14")))
+
 # Cadastro inicial público (POST /api/v1/auth/register). Desligue em ambientes só bootstrap.
 PUBLIC_REGISTER_ENABLED: bool = _env_bool("PUBLIC_REGISTER_ENABLED", True)
 
@@ -68,6 +78,38 @@ APP_PUBLIC_URL: str = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:5173").strip
 # URL pública da API (mesmo host que recebe /api/v1 em produção). Usada para registrar webhooks Asaas
 # (POST …/api/v1/webhooks/asaas/{token}). Ex.: https://app.climaris.com.br
 API_PUBLIC_BASE_URL: str = os.getenv("API_PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+
+def public_api_base_url() -> str:
+    """
+    Base pública para montar /api/v1/... (webhooks, notification_url do MP/Asaas).
+
+    Ordem: API_PUBLIC_BASE_URL; se vazio, APP_PUBLIC_URL em HTTPS e não-localhost
+    (produção comum: Nginx no mesmo host do SPA encaminha /api/v1 para a API).
+    """
+    if API_PUBLIC_BASE_URL:
+        return API_PUBLIC_BASE_URL
+    app = APP_PUBLIC_URL.strip().rstrip("/")
+    if not app:
+        return ""
+    low = app.lower()
+    if "127.0.0.1" in low or "localhost" in low:
+        return ""
+    if low.startswith("https://"):
+        return app
+    return ""
+
+
+# Quando true, webhooks Mercado Pago de contas **não sandbox** exigem segredo de assinatura
+# (x-signature) configurado no tenant; caso contrário o endpoint responde 503.
+# Em produção defina MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE=true e configure o segredo no painel MP + Contas e carteiras.
+MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE: bool = _env_bool("MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE", False)
+
+
+def mercadopago_webhook_signature_enforced(*, gateway_sandbox: bool) -> bool:
+    """True se este deployment exige validação x-signature para credenciais de produção (não sandbox)."""
+    return bool(MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE) and not bool(gateway_sandbox)
+
 
 # SMTP (ex.: Hostinger) para envio de confirmação de e-mail.
 SMTP_HOST: str = os.getenv("SMTP_HOST", "").strip()
@@ -128,7 +170,7 @@ LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED
 # Lembrar dispositivo (cookie HTTP-only + tabela login_trusted_devices) após 2FA.
 LOGIN_ADMIN_TRUST_DEVICE_ENABLED: bool = _env_bool("LOGIN_ADMIN_TRUST_DEVICE_ENABLED", True)
 
-TRUST_DEVICE_DAYS: int = max(1, int(os.getenv("TRUST_DEVICE_DAYS", "30")))
+TRUST_DEVICE_DAYS: int = max(1, int(os.getenv("TRUST_DEVICE_DAYS", "60")))
 TRUST_COOKIE_NAME: str = (os.getenv("TRUST_COOKIE_NAME", "climaris_tf_trust").strip() or "climaris_tf_trust")
 _trust_domain_raw = os.getenv("TRUST_COOKIE_DOMAIN", "").strip()
 TRUST_COOKIE_DOMAIN: str | None = _trust_domain_raw if _trust_domain_raw else None

@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { SessionMaintenance } from "./components/SessionMaintenance";
 import { SmartHomeRedirect } from "./components/SmartHomeRedirect";
 import { getAccessToken } from "./lib/authStorage";
 import { CompleteRegistrationPage } from "./pages/CompleteRegistrationPage";
@@ -29,6 +30,8 @@ import { ServiceFormPage } from "./pages/services/ServiceFormPage";
 import { ServicesListPage } from "./pages/services/ServicesListPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 import { FinancePage } from "./pages/finance/FinancePage";
+import { FinanceMpEmbeddedCheckoutPage } from "./pages/finance/FinanceMpEmbeddedCheckoutPage";
+import { FinanceMpWalletBrickPage } from "./pages/finance/FinanceMpWalletBrickPage";
 import { FinanceAccountsPage } from "./pages/finance/FinanceAccountsPage";
 import { FinanceCardsPage } from "./pages/finance/FinanceCardsPage";
 import { FinanceMachinesPage } from "./pages/finance/FinanceMachinesPage";
@@ -64,7 +67,9 @@ function NotFoundRedirect() {
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <SessionMaintenance />
+      <Routes>
       <Route path="/p/e/:token" element={<PublicEquipmentPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
@@ -101,6 +106,8 @@ export default function App() {
         <Route path="budgets/new" element={<BudgetFormPage />} />
         <Route path="budgets/:budgetId" element={<BudgetFormPage />} />
         <Route path="finance" element={<FinancePage />} />
+        <Route path="finance/mercadopago-checkout" element={<FinanceMpEmbeddedCheckoutPage />} />
+        <Route path="finance/mercadopago-wallet" element={<FinanceMpWalletBrickPage />} />
         <Route path="finance/settings" element={<FinanceSettingsPage />} />
         <Route path="finance/settings/accounts" element={<FinanceAccountsPage />} />
         <Route path="finance/settings/cards" element={<FinanceCardsPage />} />
@@ -126,5 +133,6 @@ export default function App() {
       <Route path="/" element={<RootRedirect />} />
       <Route path="*" element={<NotFoundRedirect />} />
     </Routes>
+    </>
   );
 }

@@ -25,6 +25,10 @@ from app.schemas import (
     ServiceOrderOut,
     ServiceOrderStatusUpdate,
     ServiceOrderItemEquipmentUpdate,
+    ServiceOrderProductItemInput,
+    ServiceOrderProductItemQuantityPatch,
+    ServiceOrderServiceItemInput,
+    ServiceOrderServiceItemQuantityPatch,
     ServiceOut,
     ServiceUpdate,
     SuggestedSlotOut,
@@ -79,6 +83,14 @@ ENFORCE_EQUIPMENT_ON_SERVICE_ORDER = os.getenv("ENFORCE_EQUIPMENT_ON_SERVICE_ORD
     "yes",
     "on",
 )
+
+
+def _ensure_order_lines_editable(order: ServiceOrder) -> None:
+    if order.status in (OrderStatus.DONE, OrderStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.",
+        )
 
 
 def _apply_schedule_notes_to_open_schedules(order: ServiceOrder, notes: str | None) -> None:
@@ -1190,6 +1202,305 @@ def update_service_item_equipment(
         changed_by_user_id=current_user.id,
         source="app",
     )
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.post(
+    "/service-orders/{order_id}/service-items",
+    response_model=ServiceOrderOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def add_service_order_service_item(
+    request: Request,
+    order_id: int,
+    payload: ServiceOrderServiceItemInput,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(
+            selectinload(ServiceOrder.service_items),
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_order_lines_editable(order)
+    service = db.execute(
+        select(Service).where(Service.id == payload.service_id, Service.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Service {payload.service_id} not found.")
+    client = db.execute(select(Client).where(Client.id == order.client_id, Client.tenant_id == current_user.tenant_id)).scalar_one()
+    client_has_active_equipments = (
+        db.execute(
+            select(Equipment.id).where(Equipment.client_id == client.id, Equipment.ativo.is_(True)).limit(1)
+        ).scalar_one_or_none()
+        is not None
+    )
+    equipment_id: int | None = payload.equipment_id
+    if equipment_id is not None:
+        equipment = db.execute(
+            select(Equipment).where(
+                Equipment.id == equipment_id,
+                Equipment.client_id == client.id,
+                Equipment.ativo.is_(True),
+            )
+        ).scalar_one_or_none()
+        if equipment is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Equipamento inválido para este cliente ou inativo.",
+            )
+    if ENFORCE_EQUIPMENT_ON_SERVICE_ORDER and client_has_active_equipments and equipment_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vincule um equipamento em cada serviço desta OS.",
+        )
+    order_service_item = ServiceOrderServiceItem(
+        service_order_id=order.id,
+        service_id=service.id,
+        equipment_id=equipment_id,
+        quantity=max(payload.quantity, 1),
+        unit_price=service.price,
+        duration_minutes=service.duration_minutes,
+    )
+    db.add(order_service_item)
+    db.flush()
+    _create_equipment_link_audit(
+        db=db,
+        tenant_id=current_user.tenant_id,
+        service_order_id=order.id,
+        service_item_id=order_service_item.id,
+        previous_equipment_id=None,
+        new_equipment_id=equipment_id,
+        changed_by_user_id=current_user.id,
+        source="app",
+    )
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.patch(
+    "/service-orders/{order_id}/service-items/{service_item_id}",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def patch_service_order_service_item_quantity(
+    request: Request,
+    order_id: int,
+    service_item_id: int,
+    payload: ServiceOrderServiceItemQuantityPatch,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(selectinload(ServiceOrder.service_items))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_order_lines_editable(order)
+    service_item = db.execute(
+        select(ServiceOrderServiceItem).where(
+            ServiceOrderServiceItem.id == service_item_id,
+            ServiceOrderServiceItem.service_order_id == order.id,
+        )
+    ).scalar_one_or_none()
+    if service_item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service item not found.")
+    service_item.quantity = max(payload.quantity, 1)
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.delete(
+    "/service-orders/{order_id}/service-items/{service_item_id}",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def delete_service_order_service_item(
+    request: Request,
+    order_id: int,
+    service_item_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(selectinload(ServiceOrder.service_items))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_order_lines_editable(order)
+    if len(order.service_items) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A OS deve manter pelo menos um serviço.",
+        )
+    service_item = db.execute(
+        select(ServiceOrderServiceItem).where(
+            ServiceOrderServiceItem.id == service_item_id,
+            ServiceOrderServiceItem.service_order_id == order.id,
+        )
+    ).scalar_one_or_none()
+    if service_item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service item not found.")
+    db.delete(service_item)
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.post(
+    "/service-orders/{order_id}/product-items",
+    response_model=ServiceOrderOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def add_service_order_product_item(
+    request: Request,
+    order_id: int,
+    payload: ServiceOrderProductItemInput,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(selectinload(ServiceOrder.product_items))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_order_lines_editable(order)
+    product = db.execute(
+        select(Product).where(Product.id == payload.product_id, Product.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {payload.product_id} not found.")
+    add_qty = max(payload.quantity, 1)
+    existing = db.execute(
+        select(ServiceOrderProductItem).where(
+            ServiceOrderProductItem.service_order_id == order.id,
+            ServiceOrderProductItem.product_id == product.id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.quantity = existing.quantity + add_qty
+    else:
+        db.add(
+            ServiceOrderProductItem(
+                service_order_id=order.id,
+                product_id=product.id,
+                quantity=add_qty,
+                unit_price=product.sale_price,
+            )
+        )
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.patch(
+    "/service-orders/{order_id}/product-items/{product_item_id}",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def patch_service_order_product_item_quantity(
+    request: Request,
+    order_id: int,
+    product_item_id: int,
+    payload: ServiceOrderProductItemQuantityPatch,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(selectinload(ServiceOrder.product_items))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_order_lines_editable(order)
+    row = db.execute(
+        select(ServiceOrderProductItem).where(
+            ServiceOrderProductItem.id == product_item_id,
+            ServiceOrderProductItem.service_order_id == order.id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product item not found.")
+    row.quantity = max(payload.quantity, 1)
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.delete(
+    "/service-orders/{order_id}/product-items/{product_item_id}",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def delete_service_order_product_item(
+    request: Request,
+    order_id: int,
+    product_item_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder).where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_order_lines_editable(order)
+    row = db.execute(
+        select(ServiceOrderProductItem).where(
+            ServiceOrderProductItem.id == product_item_id,
+            ServiceOrderProductItem.service_order_id == order.id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product item not found.")
+    db.delete(row)
     db.commit()
     refreshed = db.execute(
         select(ServiceOrder)

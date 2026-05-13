@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { forgotPasswordRequest, loginRequest, resendVerificationEmailRequest } from "../api/auth";
 import { isPlatformAdminEmail } from "../lib/platformAdmin";
-import { setAccessToken, setTenantId } from "../lib/authStorage";
+import { setAccessToken, setRefreshToken, setTenantId, clearRefreshToken } from "../lib/authStorage";
 import styles from "./LoginPage.module.css";
 
 // Ícones SVG inline para melhor performance
@@ -64,6 +64,7 @@ type LoginLocationState = { fromRegister?: boolean; registeredEmail?: string; em
 
 const FA_SESSION_KEY = "climaris_2fa_pending";
 const FA_SESSION_MAX_MS = 18 * 60 * 1000; // um pouco acima do TTL do backend (2FA)
+const LAST_LOGIN_EMAIL_KEY = "climaris_last_login_email";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -86,6 +87,9 @@ export function LoginPage() {
   const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [trustThisDevice, setTrustThisDevice] = useState(false);
+  /** Desbloqueia campos após foco — ajuda o preenchimento automático do Chrome em inputs controlados. */
+  const [credentialFieldsUnlocked, setCredentialFieldsUnlocked] = useState(false);
+  const [rememberEmail, setRememberEmail] = useState(false);
   const submitLock = useRef(false);
 
   useEffect(() => {
@@ -118,6 +122,19 @@ export function LoginPage() {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    try {
+      const saved = localStorage.getItem(LAST_LOGIN_EMAIL_KEY);
+      if (saved?.trim()) {
+        setEmail(saved.trim().toLowerCase());
+        setRememberEmail(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -172,12 +189,22 @@ export function LoginPage() {
       if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(FA_SESSION_KEY);
       setAccessToken(result.access_token);
       setTenantId(result.tenant_id);
+      if (result.refresh_token) setRefreshToken(result.refresh_token);
+      else clearRefreshToken();
       setMessage({
         text: result.must_change_password
           ? "Login ok. Você precisa alterar a senha temporária (use o fluxo da API ou peça ao admin)."
           : "Login realizado com sucesso.",
         kind: "success",
       });
+      try {
+        if (typeof localStorage !== "undefined") {
+          if (rememberEmail) localStorage.setItem(LAST_LOGIN_EMAIL_KEY, mail);
+          else localStorage.removeItem(LAST_LOGIN_EMAIL_KEY);
+        }
+      } catch {
+        /* ignore */
+      }
       const goPlatform = result.is_platform_operator === true || isPlatformAdminEmail(mail);
       navigate(goPlatform ? "/operacao" : "/app", { replace: true });
     } catch (err) {
@@ -295,11 +322,19 @@ export function LoginPage() {
               Entrar na sua conta
             </h2>
             <p className={styles.cardSubtitle}>
-              Insira suas credenciais para acessar o painel
+              Insira suas credenciais para acessar o painel. A senha pode ser salva pelo{" "}
+              <strong>gerenciador de senhas do navegador</strong> (ex.: Chrome) ao entrar — o Climaris não armazena sua
+              senha.
             </p>
           </div>
 
-          <form className={styles.form} onSubmit={onSubmit} aria-busy={submitting} noValidate>
+          <form
+            className={styles.form}
+            onSubmit={onSubmit}
+            aria-busy={submitting}
+            noValidate
+            method="post"
+          >
             <div className={styles.inputGroup}>
               <label className={styles.label} htmlFor="login-email">
                 E-mail
@@ -308,10 +343,13 @@ export function LoginPage() {
                 <MailIcon />
                 <input
                   id="login-email"
+                  name="username"
                   className={styles.inputWithIcon}
                   type="email"
                   required
                   value={email}
+                  readOnly={!credentialFieldsUnlocked}
+                  onFocus={() => setCredentialFieldsUnlocked(true)}
                   onChange={(e) => {
                     const v = e.target.value;
                     setEmail(v);
@@ -321,7 +359,9 @@ export function LoginPage() {
                       if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(FA_SESSION_KEY);
                     }
                   }}
-                  autoComplete="email"
+                  onInput={(e) => setEmail((e.currentTarget as HTMLInputElement).value)}
+                  autoComplete="username"
+                  inputMode="email"
                   spellCheck={false}
                   enterKeyHint="next"
                   placeholder="seu@email.com"
@@ -337,11 +377,15 @@ export function LoginPage() {
                 <LockIcon />
                 <input
                   id="login-password"
+                  name="password"
                   className={styles.inputWithIcon}
                   type={showPassword ? "text" : "password"}
                   required
                   value={password}
+                  readOnly={!credentialFieldsUnlocked}
+                  onFocus={() => setCredentialFieldsUnlocked(true)}
                   onChange={(e) => setPassword(e.target.value)}
+                  onInput={(e) => setPassword((e.currentTarget as HTMLInputElement).value)}
                   autoComplete="current-password"
                   enterKeyHint="next"
                   placeholder="Digite sua senha"
@@ -358,6 +402,11 @@ export function LoginPage() {
                 </button>
               </div>
             </div>
+
+            <label className={styles.rememberEmailRow}>
+              <input type="checkbox" checked={rememberEmail} onChange={(e) => setRememberEmail(e.target.checked)} />
+              <span>Lembrar meu e-mail neste aparelho</span>
+            </label>
 
             <div className={styles.forgotRow}>
               <button type="button" className={styles.link} onClick={() => void onForgotPassword()} disabled={sendingForgot}>
@@ -424,7 +473,7 @@ export function LoginPage() {
                       onChange={(e) => setTrustThisDevice(e.target.checked)}
                     />
                     <span>
-                      Confiar neste dispositivo por 30 dias — na próxima vez não pedimos o código neste navegador.
+                      Confiar neste dispositivo — na próxima vez não pedimos o código 2FA neste navegador (prazo configurado no servidor).
                     </span>
                   </label>
                 </div>

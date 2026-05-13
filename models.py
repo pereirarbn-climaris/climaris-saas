@@ -509,6 +509,9 @@ class User(Base):
     trusted_login_devices: Mapped[list["LoginTrustedDevice"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    refresh_tokens: Mapped[list["LoginRefreshToken"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class TenantPlanChangeLog(Base):
@@ -695,6 +698,23 @@ class LoginTrustedDevice(Base):
     user: Mapped["User"] = relationship(back_populates="trusted_login_devices")
 
 
+class LoginRefreshToken(Base):
+    """Refresh token opaco (hash no banco) para emitir novos JWT de acesso sem novo login."""
+
+    __tablename__ = "login_refresh_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship(back_populates="refresh_tokens")
+
+
 class Client(Base):
     __tablename__ = "clients"
     __table_args__ = (
@@ -714,6 +734,8 @@ class Client(Base):
     email: Mapped[str | None] = mapped_column(String(255))
     # Nome fantasia (PJ); opcional.
     trade_name: Mapped[str | None] = mapped_column(String(150))
+    # Pessoa de contato na empresa (PJ); exibido na lista de clientes.
+    contact_person_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     # Inscrição estadual do destinatário; pode ser "ISENTO" quando aplicável.
     state_registration: Mapped[str | None] = mapped_column(String(20))
     # NFe: indicador_inscricao_estadual_destinatario — 1 contribuinte, 2 isento, 9 não contribuinte.
@@ -1697,6 +1719,13 @@ class FinanceEntry(Base):
     fee_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     recipient_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     gateway_payment_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    gateway_preference_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    mercadopago_archived_preference_id: Mapped[str | None] = mapped_column(
+        String(48), nullable=True, index=True
+    )
+    mercadopago_preapproval_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    mp_reversal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mp_reversal_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     installment_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     installment_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     installment_total: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -1826,6 +1855,17 @@ class TenantFinanceGateway(Base):
     last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_validation_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     account_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mercadopago_access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_public_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mercadopago_webhook_path_token: Mapped[str | None] = mapped_column(String(48), nullable=True, unique=True, index=True)
+    mercadopago_webhook_signature_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_products_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_cached_balance: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    mercadopago_mp_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mercadopago_finance_bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

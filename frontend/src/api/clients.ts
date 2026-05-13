@@ -29,6 +29,7 @@ export type ClientOut = {
   whatsapp: string | null;
   email: string | null;
   trade_name: string | null;
+  contact_person_name: string | null;
   state_registration: string | null;
   ie_indicator: string | null;
   municipal_registration: string | null;
@@ -54,6 +55,7 @@ export type ClientCreatePayload = {
   whatsapp?: string;
   email?: string;
   trade_name?: string;
+  contact_person_name?: string;
   state_registration?: string;
   ie_indicator?: ClientIeIndicator;
   municipal_registration?: string;
@@ -229,6 +231,7 @@ export type ClientUpdatePayload = {
   whatsapp?: string | null;
   email?: string | null;
   trade_name?: string | null;
+  contact_person_name?: string | null;
   state_registration?: string | null;
   ie_indicator?: ClientIeIndicator | null;
   municipal_registration?: string | null;
@@ -306,7 +309,12 @@ export async function listClients(params?: {
     if (st === "active") filtered = filtered.filter((c) => c.is_active !== false);
     else if (st === "inactive") filtered = filtered.filter((c) => c.is_active === false);
     if (q) {
-      filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
+      filtered = filtered.filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          (c.email?.toLowerCase().includes(q) ?? false) ||
+          (c.contact_person_name?.toLowerCase().includes(q) ?? false),
+      );
     }
     return Promise.resolve(filtered);
   }
@@ -324,6 +332,25 @@ export async function listClients(params?: {
     throw new Error(errorMessage(body, "Não foi possível listar clientes.", response.status));
   }
   return body as ClientOut[];
+}
+
+/** Lista todos os clientes que casam com o filtro (várias requisições se necessário; a API aceita no máximo 200 por página). */
+export async function listClientsAll(params?: {
+  q?: string;
+  status?: ClientStatusFilter;
+}): Promise<ClientOut[]> {
+  if (isDemoMode()) {
+    return listClients({ ...params, limit: 200 });
+  }
+  const PAGE = 200;
+  const MAX_PAGES = 500;
+  const all: ClientOut[] = [];
+  for (let skip = 0, i = 0; i < MAX_PAGES; skip += PAGE, i += 1) {
+    const page = await listClients({ ...params, skip, limit: PAGE });
+    all.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return all;
 }
 
 export async function getClient(clientId: number): Promise<ClientOut> {

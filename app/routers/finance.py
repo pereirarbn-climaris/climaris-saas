@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
 from calendar import monthrange
 from uuid import uuid4
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -16,7 +17,18 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
 from app.asaas_client import account_label_from_my_account, create_asaas_payment, test_asaas_api_key
-from app.config import API_PUBLIC_BASE_URL
+from app.mercadopago_client import (
+    account_label_from_mp_user,
+    create_mercadopago_boleto_payment,
+    create_mercadopago_checkout_preference,
+    create_mercadopago_pix_payment,
+    mercadopago_payment_boleto_urls,
+    mercadopago_payment_pix_urls,
+    mercadopago_preference_checkout_urls,
+    mp_user_id_str,
+    test_mercadopago_access_token,
+)
+from app.config import mercadopago_webhook_signature_enforced, public_api_base_url
 from app.finance_asaas_service import (
     delete_remote_asaas_webhook_if_any,
     ensure_asaas_webhook_secrets,
@@ -29,6 +41,8 @@ from app.finance_settlement import (
     split_installment_amounts,
 )
 from app.finance_asaas_constants import ASAAS_FINANCE_EXTERNAL_REF_PREFIX
+from app.finance_mercadopago_constants import MERCADOPAGO_FINANCE_EXTERNAL_REF_PREFIX
+from app.finance_mercadopago_service import ensure_mercadopago_webhook_secrets, sync_mercadopago_balance_snapshot
 from app.marketplace_util import tenant_has_marketplace_app
 from app.plan_rules import normalize_plan_key
 from app.saas_plan_effective import effective_finance_max_mode
@@ -49,12 +63,19 @@ from app.schemas import (
     FinanceCreditCardUpdate,
     FinanceEntryCreate,
     FinanceEntryAsaasChargeCreate,
+    FinanceEntryMercadoPagoBoletoChargeCreate,
+    FinanceEntryMercadoPagoChargeCreate,
+    FinanceEntryMercadoPagoPreferenceCreate,
     FinancePaymentFeeCreate,
     FinancePaymentFeeOut,
     FinancePaymentFeeUpdate,
     FinanceEntryOut,
     FinanceGatewayAsaasTest,
     FinanceGatewayAsaasUpsert,
+    FinanceGatewayMercadoPagoProductsUpdate,
+    FinanceGatewayMercadoPagoTest,
+    FinanceGatewayMercadoPagoUpsert,
+    FinanceGatewayMercadoPagoWebhookSignatureUpdate,
     FinanceSettingsOut,
     FinanceSettingsUpdate,
     FinanceEntryUpdate,
@@ -173,8 +194,9 @@ def _asaas_row_to_public(row: TenantFinanceGateway | None) -> dict:
     except Exception:
         pass
     wh_url = None
-    if row.asaas_webhook_path_token and (API_PUBLIC_BASE_URL or "").strip():
-        wh_url = f"{API_PUBLIC_BASE_URL.strip().rstrip('/')}/api/v1/webhooks/asaas/{row.asaas_webhook_path_token}"
+    base_pub = public_api_base_url()
+    if row.asaas_webhook_path_token and base_pub:
+        wh_url = f"{base_pub}/api/v1/webhooks/asaas/{row.asaas_webhook_path_token}"
     return {
         "connected": True,
         "sandbox": bool(row.asaas_sandbox),
@@ -188,12 +210,91 @@ def _asaas_row_to_public(row: TenantFinanceGateway | None) -> dict:
     }
 
 
-def _mercadopago_placeholder(effective_mode: str) -> dict:
-    locked = MODE_ORDER[effective_mode] < MODE_ORDER["intermediate"]
-    return {
+def _mp_products_default() -> dict[str, bool]:
+    return {"checkout_pro": False, "pix": False, "boleto": False, "subscriptions": False, "payment_link": False}
+
+
+def _mp_products_parse(raw: str | None) -> dict[str, bool]:
+    out = _mp_products_default()
+    if not raw or not str(raw).strip():
+        return out
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            for k in out:
+                if k in data and isinstance(data[k], bool):
+                    out[k] = bool(data[k])
+    except Exception:
+        pass
+    return out
+
+
+def _mp_products_dump(d: dict[str, bool]) -> str:
+    base = _mp_products_default()
+    for k in base:
+        if k in d:
+            base[k] = bool(d[k])
+    return json.dumps(base, separators=(",", ":"))
+
+
+def _mercadopago_row_to_public(row: TenantFinanceGateway | None) -> dict:
+    empty: dict = {
         "connected": False,
-        "oauth_available": True,
-        "requires_mode": "intermediate" if locked else None,
+        "sandbox": False,
+        "access_token_hint": None,
+        "public_key_hint": None,
+        "public_key": None,
+        "account_label": None,
+        "mp_user_id": None,
+        "finance_bank_account_id": None,
+        "products": _mp_products_default(),
+        "webhook_url": None,
+        "api_public_base_url": public_api_base_url() or None,
+        "webhook_signature_configured": False,
+        "webhook_signature_enforced": False,
+        "last_validated_at": None,
+        "last_validation_error": None,
+        "cached_balance": None,
+    }
+    if row is None or not row.mercadopago_access_token_encrypted:
+        return empty
+    at_hint = "****"
+    pk_hint = "****"
+    plain_pk: str | None = None
+    try:
+        plain_at = decrypt_platform_secret(row.mercadopago_access_token_encrypted)
+        at_hint = _mask_api_key_hint(plain_at)
+    except Exception:
+        pass
+    try:
+        if row.mercadopago_public_key_encrypted:
+            plain_pk = decrypt_platform_secret(row.mercadopago_public_key_encrypted)
+            pk_hint = _mask_api_key_hint(plain_pk)
+    except Exception:
+        plain_pk = None
+    wh_url = None
+    base_pub = public_api_base_url()
+    if row.mercadopago_webhook_path_token and base_pub:
+        wh_url = f"{base_pub}/api/v1/webhooks/mercadopago/{row.mercadopago_webhook_path_token}"
+    bal = float(row.mercadopago_cached_balance) if row.mercadopago_cached_balance is not None else None
+    sandbox = bool(row.mercadopago_sandbox)
+    return {
+        "connected": True,
+        "sandbox": sandbox,
+        "access_token_hint": at_hint,
+        "public_key_hint": pk_hint,
+        "public_key": plain_pk,
+        "account_label": row.account_label,
+        "mp_user_id": row.mercadopago_mp_user_id,
+        "finance_bank_account_id": row.mercadopago_finance_bank_account_id,
+        "products": _mp_products_parse(row.mercadopago_products_json),
+        "webhook_url": wh_url,
+        "api_public_base_url": base_pub or None,
+        "webhook_signature_configured": bool(row.mercadopago_webhook_signature_secret_encrypted),
+        "webhook_signature_enforced": mercadopago_webhook_signature_enforced(gateway_sandbox=sandbox),
+        "last_validated_at": row.last_validated_at,
+        "last_validation_error": row.last_validation_error,
+        "cached_balance": bal,
     }
 
 
@@ -269,6 +370,11 @@ def _entry_to_out(entry: FinanceEntry) -> dict:
         "fee_amount": fee_amount,
         "recipient_whatsapp": (entry.recipient_whatsapp or "").strip() or None,
         "gateway_payment_id": entry.gateway_payment_id,
+        "gateway_preference_id": entry.gateway_preference_id,
+        "mercadopago_archived_preference_id": entry.mercadopago_archived_preference_id,
+        "mercadopago_preapproval_id": entry.mercadopago_preapproval_id,
+        "mp_reversal_at": entry.mp_reversal_at,
+        "mp_reversal_status": entry.mp_reversal_status,
         "installment_group_id": entry.installment_group_id,
         "installment_number": int(entry.installment_number or 1),
         "installment_total": int(entry.installment_total or 1),
@@ -638,6 +744,8 @@ def patch_finance_entry(
         targets = db.execute(q.order_by(FinanceEntry.installment_number.asc())).scalars().all()
     if scope != "single" and payload.gateway_payment_id is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="gateway_payment_id só pode ser alterado em uma parcela.")
+    if scope != "single" and "gateway_preference_id" in payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="gateway_preference_id só pode ser alterado em uma parcela.")
 
     for row in targets:
         if payload.description is not None:
@@ -662,6 +770,16 @@ def patch_finance_entry(
             row.recipient_whatsapp = payload.recipient_whatsapp
         if payload.gateway_payment_id is not None:
             row.gateway_payment_id = (payload.gateway_payment_id.strip()[:48] or None) if payload.gateway_payment_id else None
+        if "gateway_preference_id" in payload.model_fields_set:
+            raw_pref = payload.gateway_preference_id
+            if raw_pref is None or (isinstance(raw_pref, str) and not raw_pref.strip()):
+                old_pref = (row.gateway_preference_id or "").strip()
+                if old_pref and (row.payment_provider or "").strip().lower() == "mercadopago":
+                    if not (row.mercadopago_archived_preference_id or "").strip():
+                        row.mercadopago_archived_preference_id = old_pref[:48]
+                row.gateway_preference_id = None
+            else:
+                row.gateway_preference_id = str(raw_pref).strip()[:48] or None
         if payload.installment_group_id is not None:
             row.installment_group_id = payload.installment_group_id.strip() or None
         if payload.installment_number is not None:
@@ -731,7 +849,12 @@ def create_asaas_charge_for_entry(
     if entry.status == FinanceEntryStatus.PAID:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lançamento já está pago.")
     if entry.gateway_payment_id:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lançamento já vinculado a cobrança Asaas.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lançamento já vinculado a uma cobrança de gateway.")
+    if entry.gateway_preference_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este lançamento possui checkout/link Mercado Pago pendente. Limpe a preferência no lançamento ou conclua o pagamento antes de emitir cobrança Asaas.",
+        )
 
     gw = db.execute(
         select(TenantFinanceGateway).where(
@@ -768,6 +891,341 @@ def create_asaas_charge_for_entry(
         "invoice_url": invoice_url,
         "external_reference": external_ref,
         "sandbox": bool(gw.asaas_sandbox),
+    }
+
+
+@router.post(
+    "/finance/entries/{entry_id}/mercadopago-charge",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def create_mercadopago_pix_charge_for_entry(
+    request: Request,
+    entry_id: int,
+    payload: FinanceEntryMercadoPagoChargeCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    if entry.entry_type != FinanceEntryType.INCOME:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Somente receitas podem gerar cobrança.")
+    if entry.status == FinanceEntryStatus.PAID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lançamento já está pago.")
+    if entry.gateway_payment_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lançamento já vinculado a uma cobrança de gateway.")
+    if entry.gateway_preference_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este lançamento possui checkout/link Mercado Pago pendente. Limpe a preferência no lançamento ou use outro lançamento para emitir PIX.",
+        )
+
+    gw = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if gw is None or not gw.mercadopago_access_token_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mercado Pago não conectado neste workspace.")
+    products = _mp_products_parse(gw.mercadopago_products_json)
+    if not products.get("pix"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ative “Recebimento via Pix” na configuração da conta Mercado Pago.",
+        )
+
+    api_token = decrypt_platform_secret(gw.mercadopago_access_token_encrypted)
+    external_ref = f"{MERCADOPAGO_FINANCE_EXTERNAL_REF_PREFIX}{entry.id}"
+    notif_url = None
+    base_pub = public_api_base_url()
+    if gw.mercadopago_webhook_path_token and base_pub:
+        notif_url = f"{base_pub}/api/v1/webhooks/mercadopago/{gw.mercadopago_webhook_path_token}"
+
+    ok, err, pay_data = create_mercadopago_pix_payment(
+        access_token=api_token,
+        transaction_amount=float(entry.amount),
+        description=entry.description,
+        external_reference=external_ref,
+        payer_email=str(payload.payer_email),
+        payer_first_name=payload.payer_first_name,
+        payer_last_name=payload.payer_last_name,
+        notification_url=notif_url,
+        metadata_entry_id=entry.id,
+    )
+    if not ok or pay_data is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Falha ao criar cobrança PIX no Mercado Pago.")
+
+    payment_id, ticket_url, qr_code = mercadopago_payment_pix_urls(pay_data)
+    if not payment_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pagamento criado sem id no Mercado Pago.")
+
+    entry.gateway_payment_id = payment_id[:48]
+    entry.payment_method = "pix"
+    entry.payment_provider = "mercadopago"
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {
+        "status": "ok",
+        "entry": _entry_to_out(entry),
+        "payment_id": payment_id,
+        "payment_status": str(pay_data.get("status") or ""),
+        "ticket_url": ticket_url,
+        "pix_copy_paste": qr_code,
+        "external_reference": external_ref,
+        "sandbox": bool(gw.mercadopago_sandbox),
+    }
+
+
+@router.post(
+    "/finance/entries/{entry_id}/mercadopago-boleto-charge",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def create_mercadopago_boleto_charge_for_entry(
+    request: Request,
+    entry_id: int,
+    payload: FinanceEntryMercadoPagoBoletoChargeCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    if entry.entry_type != FinanceEntryType.INCOME:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Somente receitas podem gerar cobrança.")
+    if entry.status == FinanceEntryStatus.PAID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lançamento já está pago.")
+    if entry.gateway_payment_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lançamento já vinculado a uma cobrança de gateway.")
+    if entry.gateway_preference_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este lançamento possui checkout/link Mercado Pago pendente. Limpe a preferência no lançamento ou use outro lançamento para emitir boleto.",
+        )
+
+    gw = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if gw is None or not gw.mercadopago_access_token_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mercado Pago não conectado neste workspace.")
+    products = _mp_products_parse(gw.mercadopago_products_json)
+    if not products.get("boleto"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Ative "Boleto" na configuração da conta Mercado Pago.',
+        )
+
+    cpf_digits = "".join(c for c in str(payload.payer_cpf or "") if c.isdigit())
+    if len(cpf_digits) != 11:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CPF do pagador inválido (use 11 dígitos).")
+
+    today = date.today()
+    due = entry.due_date
+    exp_date = due if due >= today else today + timedelta(days=3)
+    date_of_expiration = f"{exp_date.isoformat()}T23:59:59.000-03:00"
+
+    api_token = decrypt_platform_secret(gw.mercadopago_access_token_encrypted)
+    external_ref = f"{MERCADOPAGO_FINANCE_EXTERNAL_REF_PREFIX}{entry.id}"
+    notif_url = None
+    base_pub = public_api_base_url()
+    if gw.mercadopago_webhook_path_token and base_pub:
+        notif_url = f"{base_pub}/api/v1/webhooks/mercadopago/{gw.mercadopago_webhook_path_token}"
+
+    ok, err, pay_data = create_mercadopago_boleto_payment(
+        access_token=api_token,
+        transaction_amount=float(entry.amount),
+        description=entry.description,
+        external_reference=external_ref,
+        payer_email=str(payload.payer_email),
+        payer_first_name=payload.payer_first_name,
+        payer_last_name=payload.payer_last_name,
+        payer_cpf_digits=cpf_digits,
+        date_of_expiration=date_of_expiration,
+        notification_url=notif_url,
+        metadata_entry_id=entry.id,
+    )
+    if not ok or pay_data is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Falha ao criar boleto no Mercado Pago.")
+
+    payment_id, ticket_url = mercadopago_payment_boleto_urls(pay_data)
+    if not payment_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pagamento criado sem id no Mercado Pago.")
+
+    entry.gateway_payment_id = payment_id[:48]
+    entry.payment_method = "boleto"
+    entry.payment_provider = "mercadopago"
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {
+        "status": "ok",
+        "entry": _entry_to_out(entry),
+        "payment_id": payment_id,
+        "payment_status": str(pay_data.get("status") or ""),
+        "ticket_url": ticket_url,
+        "external_reference": external_ref,
+        "sandbox": bool(gw.mercadopago_sandbox),
+    }
+
+
+@router.post(
+    "/finance/entries/{entry_id}/mercadopago-preference",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def create_mercadopago_checkout_preference_for_entry(
+    request: Request,
+    entry_id: int,
+    payload: FinanceEntryMercadoPagoPreferenceCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry)
+        .options(selectinload(FinanceEntry.category))
+        .where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    if entry.entry_type != FinanceEntryType.INCOME:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Somente receitas podem gerar checkout.")
+    if entry.status == FinanceEntryStatus.PAID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lançamento já está pago.")
+    if entry.gateway_payment_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este lançamento já está vinculado a uma cobrança de gateway. Use outro lançamento ou aguarde a baixa para gerar checkout.",
+        )
+
+    gw = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if gw is None or not gw.mercadopago_access_token_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mercado Pago não conectado neste workspace.")
+    products = _mp_products_parse(gw.mercadopago_products_json)
+    if payload.mode == "checkout_pro" and not products.get("checkout_pro"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Ative "Checkout Pro / Transparente" na configuração da conta Mercado Pago.',
+        )
+    if payload.mode == "payment_link" and not products.get("payment_link"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Ative "Link de Pagamento" na configuração da conta Mercado Pago.',
+        )
+    if payload.mode == "subscription" and not products.get("subscriptions"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Ative "Assinaturas (recorrência)" na configuração da conta Mercado Pago.',
+        )
+    if payload.mode == "subscription":
+        if not payload.payer_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assinatura: informe o e-mail do pagador (obrigatório no checkout).",
+            )
+
+    api_token = decrypt_platform_secret(gw.mercadopago_access_token_encrypted)
+    external_ref = f"{MERCADOPAGO_FINANCE_EXTERNAL_REF_PREFIX}{entry.id}"
+    notif_url = None
+    base_pub = public_api_base_url()
+    if gw.mercadopago_webhook_path_token and base_pub:
+        notif_url = f"{base_pub}/api/v1/webhooks/mercadopago/{gw.mercadopago_webhook_path_token}"
+
+    meta = {
+        "climaris_finance_entry_id": str(entry.id),
+        "climaris_checkout_mode": payload.mode,
+    }
+    auto_rec: dict[str, Any] | None = None
+    if payload.mode == "subscription":
+        start_dt = datetime.now(timezone.utc)
+        start_str = start_dt.strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        auto_rec = {
+            "frequency": int(payload.subscription_frequency),
+            "frequency_type": payload.subscription_frequency_type,
+            "transaction_amount": round(float(entry.amount), 2),
+            "currency_id": "BRL",
+            "start_date": start_str,
+        }
+    ok, err, pref = create_mercadopago_checkout_preference(
+        access_token=api_token,
+        title=entry.description,
+        unit_price=float(entry.amount),
+        external_reference=external_ref,
+        notification_url=notif_url,
+        payer_email=str(payload.payer_email) if payload.payer_email else None,
+        success_url=payload.success_url,
+        failure_url=payload.failure_url,
+        pending_url=payload.pending_url,
+        metadata=meta,
+        auto_recurring=auto_rec,
+    )
+    if not ok or pref is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Falha ao criar preferência no Mercado Pago.")
+
+    urls = mercadopago_preference_checkout_urls(pref)
+    pref_id = urls.get("preference_id")
+    init_point = urls.get("init_point")
+    sandbox_point = urls.get("sandbox_init_point")
+    if not pref_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Preferência criada sem id no Mercado Pago.")
+    checkout_url = sandbox_point if bool(gw.mercadopago_sandbox) and sandbox_point else init_point
+    if not checkout_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mercado Pago não retornou URL de checkout (init_point).",
+        )
+
+    pref_trim = str(pref_id).strip()
+    if len(pref_trim) > 48:
+        pref_trim = pref_trim[:48]
+    entry.gateway_preference_id = pref_trim or None
+    entry.payment_provider = "mercadopago"
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+
+    return {
+        "status": "ok",
+        "mode": payload.mode,
+        "preference_id": pref_id,
+        "init_point": init_point,
+        "sandbox_init_point": sandbox_point,
+        "checkout_url": checkout_url,
+        "external_reference": external_ref,
+        "sandbox": bool(gw.mercadopago_sandbox),
+        "entry": _entry_to_out(entry),
     }
 
 
@@ -1215,6 +1673,15 @@ def delete_finance_account(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta bancária não encontrada.")
     if row.name.strip().lower() == "caixa":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A conta Caixa é obrigatória e não pode ser removida.")
+    mp_gw = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+            TenantFinanceGateway.mercadopago_finance_bank_account_id == account_id,
+        )
+    ).scalar_one_or_none()
+    if mp_gw is not None:
+        db.delete(mp_gw)
     db.delete(row)
     db.commit()
     return None
@@ -1566,10 +2033,16 @@ def list_finance_gateways(
             TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
         )
     ).scalar_one_or_none()
+    mp_row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
     return {
         "effective_mode": effective,
         "asaas": _asaas_row_to_public(row),
-        "mercadopago": _mercadopago_placeholder(effective),
+        "mercadopago": _mercadopago_row_to_public(mp_row),
     }
 
 
@@ -1640,11 +2113,16 @@ def upsert_finance_gateway_asaas(
     register_asaas_webhook_after_save(db, row, payload.api_key.strip(), payload.sandbox)
     db.commit()
     db.refresh(row)
-    _sel, _max, effective = _effective_finance_mode(db, tenant)
+    mp_row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
     return {
         "status": "ok",
         "asaas": _asaas_row_to_public(row),
-        "mercadopago": _mercadopago_placeholder(effective),
+        "mercadopago": _mercadopago_row_to_public(mp_row),
     }
 
 
@@ -1675,6 +2153,235 @@ def delete_finance_gateway_asaas(
                 delete_remote_asaas_webhook_if_any(row, api_plain, bool(row.asaas_sandbox))
             except Exception:
                 pass
+        db.delete(row)
+        db.commit()
+    return None
+
+
+def _get_finance_bank_account_or_404(db: Session, tenant_id: int, account_id: int) -> FinanceBankAccount:
+    acc = db.execute(
+        select(FinanceBankAccount).where(
+            FinanceBankAccount.id == account_id,
+            FinanceBankAccount.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if acc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta bancária não encontrada.")
+    return acc
+
+
+@router.post(
+    "/finance/gateways/mercadopago/test",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("30/minute")
+def test_finance_gateway_mercadopago(
+    request: Request,
+    payload: FinanceGatewayMercadoPagoTest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    ok, err, data = test_mercadopago_access_token(payload.access_token.strip())
+    label = account_label_from_mp_user(data or {}) if ok else None
+    mp_uid = mp_user_id_str(data or {}) if ok else None
+    return {
+        "ok": ok,
+        "error": err,
+        "account_label": label,
+        "mp_user_id": mp_uid,
+    }
+
+
+@router.put(
+    "/finance/gateways/mercadopago",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("30/minute")
+def upsert_finance_gateway_mercadopago(
+    request: Request,
+    payload: FinanceGatewayMercadoPagoUpsert,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    _get_finance_bank_account_or_404(db, current_user.tenant_id, payload.finance_bank_account_id)
+    ok, err, data = test_mercadopago_access_token(payload.access_token.strip())
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Access Token inválido.")
+    label = account_label_from_mp_user(data or {})
+    mp_uid = mp_user_id_str(data or {})
+
+    row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = TenantFinanceGateway(
+            tenant_id=current_user.tenant_id,
+            provider=FinanceGatewayProvider.MERCADOPAGO,
+        )
+        db.add(row)
+    ensure_mercadopago_webhook_secrets(row)
+    row.mercadopago_access_token_encrypted = encrypt_platform_secret(payload.access_token.strip())
+    row.mercadopago_public_key_encrypted = encrypt_platform_secret(payload.public_key.strip())
+    row.mercadopago_sandbox = payload.sandbox
+    row.mercadopago_finance_bank_account_id = payload.finance_bank_account_id
+    row.mercadopago_mp_user_id = mp_uid
+    row.last_validated_at = now
+    row.last_validation_error = None
+    row.account_label = label
+    if payload.products is not None:
+        row.mercadopago_products_json = _mp_products_dump(payload.products.model_dump())
+    elif not row.mercadopago_products_json:
+        row.mercadopago_products_json = _mp_products_dump(_mp_products_default())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    try:
+        sync_mercadopago_balance_snapshot(db, row)
+        db.commit()
+        db.refresh(row)
+    except Exception:
+        db.rollback()
+    asaas_row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
+        )
+    ).scalar_one_or_none()
+    return {
+        "status": "ok",
+        "asaas": _asaas_row_to_public(asaas_row),
+        "mercadopago": _mercadopago_row_to_public(row),
+    }
+
+
+@router.patch(
+    "/finance/gateways/mercadopago/products",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("60/minute")
+def patch_finance_gateway_mercadopago_products(
+    request: Request,
+    payload: FinanceGatewayMercadoPagoProductsUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.mercadopago_access_token_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mercado Pago não está conectado.")
+    row.mercadopago_products_json = _mp_products_dump(payload.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    asaas_row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
+        )
+    ).scalar_one_or_none()
+    return {
+        "status": "ok",
+        "asaas": _asaas_row_to_public(asaas_row),
+        "mercadopago": _mercadopago_row_to_public(row),
+    }
+
+
+@router.patch(
+    "/finance/gateways/mercadopago/webhook-signature",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("30/minute")
+def patch_finance_gateway_mercadopago_webhook_signature(
+    request: Request,
+    payload: FinanceGatewayMercadoPagoWebhookSignatureUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.mercadopago_access_token_encrypted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mercado Pago não está conectado.")
+    if payload.clear_webhook_signature_secret and mercadopago_webhook_signature_enforced(
+        gateway_sandbox=bool(row.mercadopago_sandbox)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é permitido remover o segredo de assinatura: este servidor exige webhook assinado para contas de produção.",
+        )
+    if not payload.clear_webhook_signature_secret and payload.webhook_signature_secret is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe webhook_signature_secret ou clear_webhook_signature_secret.",
+        )
+    if payload.clear_webhook_signature_secret:
+        row.mercadopago_webhook_signature_secret_encrypted = None
+    elif payload.webhook_signature_secret is not None:
+        s = payload.webhook_signature_secret.strip()
+        if not s:
+            row.mercadopago_webhook_signature_secret_encrypted = None
+        else:
+            row.mercadopago_webhook_signature_secret_encrypted = encrypt_platform_secret(s)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    asaas_row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
+        )
+    ).scalar_one_or_none()
+    return {
+        "status": "ok",
+        "asaas": _asaas_row_to_public(asaas_row),
+        "mercadopago": _mercadopago_row_to_public(row),
+    }
+
+
+@router.delete(
+    "/finance/gateways/mercadopago",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("30/minute")
+def delete_finance_gateway_mercadopago(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if row is not None:
         db.delete(row)
         db.commit()
     return None

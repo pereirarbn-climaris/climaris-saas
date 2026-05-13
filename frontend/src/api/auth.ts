@@ -1,5 +1,6 @@
 import { apiUrl } from "../lib/apiUrl";
-import { getAccessToken } from "../lib/authStorage";
+import { clearAccessToken, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "../lib/authStorage";
+import { accessTokenNeedsRefresh } from "../lib/jwtAccess";
 import { isDemoMode, demoUser, demoTenant } from "../lib/demoMode";
 
 export type UserRole = "admin" | "technician" | "receptionist";
@@ -78,6 +79,7 @@ export type TokenResponse = {
   captcha_required?: boolean;
   captcha_token?: string | null;
   captcha_question?: string | null;
+  refresh_token?: string | null;
 };
 
 function isLoginDemoEnabled(): boolean {
@@ -222,6 +224,59 @@ function mapLoginErrorToPt(raw: string): string {
       "No servidor: reinicie a API, execute `alembic upgrade head` no container da API e confira os logs."
     );
   return raw;
+}
+
+/** Renova access JWT usando refresh token (rotação no servidor). */
+export async function tryRefreshAccessToken(): Promise<boolean> {
+  if (isDemoMode()) return true;
+  const rt = getRefreshToken();
+  if (!rt) return !!getAccessToken();
+  const access = getAccessToken();
+  if (access && !accessTokenNeedsRefresh(access, 120_000)) return true;
+  try {
+    const response = await fetch(apiUrl("/api/v1/auth/refresh"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+    const body = await parseBody(response);
+    if (!response.ok) {
+      clearAccessToken();
+      return false;
+    }
+    const data = body as TokenResponse;
+    if (!data.access_token) {
+      clearAccessToken();
+      return false;
+    }
+    setAccessToken(data.access_token);
+    if (data.refresh_token) setRefreshToken(data.refresh_token);
+    return true;
+  } catch {
+    clearAccessToken();
+    return false;
+  }
+}
+
+/** Após carregar o SPA: recupera sessão se o JWT expirou mas o refresh ainda é válido. */
+export async function bootstrapSession(): Promise<void> {
+  if (isDemoMode()) return;
+  await tryRefreshAccessToken();
+}
+
+/** Melhor esforço: invalida o refresh token no servidor (logout). */
+export async function logoutRevokeRefresh(): Promise<void> {
+  const rt = getRefreshToken();
+  if (!rt) return;
+  try {
+    await fetch(apiUrl("/api/v1/auth/logout"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 function bearer(): HeadersInit {

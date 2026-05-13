@@ -30,6 +30,7 @@ import {
 } from "../../api/nfse";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
+import formLayout from "../formLayout.module.css";
 import { AdminApiKeysTab } from "./AdminApiKeysTab";
 import styles from "./AdminPage.module.css";
 
@@ -808,6 +809,8 @@ export function AdminPage() {
           <form className={styles.form} onSubmit={onSaveCompany}>
             <div className={styles.sectionCard}>
               <h3 className={styles.subsectionTitle}>Informações da empresa</h3>
+              <div className={formLayout.stack}>
+              <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="admin-co-name">
                 Nome da empresa
               </label>
@@ -819,6 +822,7 @@ export function AdminPage() {
                 required
                 autoComplete="organization"
               />
+              </div>
               <div className={styles.logoBox}>
                 <div className={styles.logoPreviewWrap}>
                   {coLogoUrl ? (
@@ -850,8 +854,8 @@ export function AdminPage() {
                       <strong className={styles.identityValue}>{coName.trim() || "—"}</strong>
                     </p>
                   </div>
-                  <div className={styles.fiscalInlineRow}>
-                    <div>
+                  <div className={`${styles.fiscalInlineRow} ${formLayout.fieldGroup}`}>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label} htmlFor="admin-co-tax-kind">
                         Tipo fiscal
                       </label>
@@ -869,7 +873,7 @@ export function AdminPage() {
                         <option value="cpf">CPF</option>
                       </select>
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label} htmlFor="admin-co-tax-doc">
                         Documento
                       </label>
@@ -939,7 +943,7 @@ export function AdminPage() {
                 </div>
               </div>
               <div className={styles.row2}>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="admin-co-pdf-color">
                     Cor principal do PDF
                   </label>
@@ -962,7 +966,7 @@ export function AdminPage() {
                 </div>
               </div>
               <div className={styles.row2}>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="admin-co-phone">
                     Telefone da empresa
                   </label>
@@ -974,7 +978,7 @@ export function AdminPage() {
                     placeholder="(00) 00000-0000"
                   />
                 </div>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="admin-co-email">
                     E-mail da empresa
                   </label>
@@ -987,7 +991,7 @@ export function AdminPage() {
                     placeholder="contato@suaempresa.com"
                   />
                 </div>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="admin-co-website">
                     Site da empresa
                   </label>
@@ -1001,7 +1005,7 @@ export function AdminPage() {
                 </div>
               </div>
               <div className={styles.row2}>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="admin-co-plan">
                     Plano ativo
                   </label>
@@ -1013,7 +1017,7 @@ export function AdminPage() {
                     required
                   />
                 </div>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="admin-co-status">
                     Situação
                   </label>
@@ -1031,12 +1035,13 @@ export function AdminPage() {
                   </select>
                 </div>
               </div>
+              </div>
             </div>
 
             <div className={styles.sectionCard}>
             <h3 className={styles.subsectionTitle}>Endereço da empresa</h3>
             <div className={styles.row2}>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-cep">
                   CEP
                 </label>
@@ -1069,19 +1074,19 @@ export function AdminPage() {
                   </p>
                 ) : null}
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-street">
                   Logradouro
                 </label>
                 <input id="admin-co-street" className={loginStyles.input} value={coAddressStreet} onChange={(e) => setCoAddressStreet(e.target.value)} />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-number">
                   Número
                 </label>
                 <input id="admin-co-number" className={loginStyles.input} value={coAddressNumber} onChange={(e) => setCoAddressNumber(e.target.value)} />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-complement">
                   Complemento
                 </label>
@@ -1092,19 +1097,19 @@ export function AdminPage() {
                   onChange={(e) => setCoAddressComplement(e.target.value)}
                 />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-district">
                   Bairro
                 </label>
                 <input id="admin-co-district" className={loginStyles.input} value={coAddressDistrict} onChange={(e) => setCoAddressDistrict(e.target.value)} />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-city">
                   Cidade
                 </label>
                 <input id="admin-co-city" className={loginStyles.input} value={coAddressCity} onChange={(e) => setCoAddressCity(e.target.value)} />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-state">
                   UF
                 </label>
@@ -1116,7 +1121,7 @@ export function AdminPage() {
                   maxLength={2}
                 />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-ibge">
                   Código IBGE (município)
                 </label>
@@ -1132,7 +1137,7 @@ export function AdminPage() {
                 />
                 <p className={styles.cepHint}>Obrigatório para NFS-e nacional; preenchido ao buscar o CEP ou informe manualmente.</p>
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="admin-co-country">
                   País
                 </label>
@@ -1148,6 +1153,8 @@ export function AdminPage() {
 
             <div className={styles.sectionCard}>
             <h3 className={styles.subsectionTitle}>Horário de trabalho</h3>
+            <div className={formLayout.stack}>
+            <div className={formLayout.field}>
             <span className={loginStyles.label}>Horário específico por dia (opcional)</span>
             <div className={styles.weekdayHoursGrid}>
               {WEEKDAYS.map((d) => {
@@ -1195,7 +1202,9 @@ export function AdminPage() {
                 );
               })}
             </div>
+            </div>
 
+            <div className={formLayout.field}>
             <label className={loginStyles.label} htmlFor="admin-co-tz">
               Fuso horário (IANA)
             </label>
@@ -1212,6 +1221,7 @@ export function AdminPage() {
                 <option key={z} value={z} />
               ))}
             </datalist>
+            </div>
 
             <label className={styles.weekday}>
               <input
@@ -1230,6 +1240,7 @@ export function AdminPage() {
               >
                 {syncingHolidays ? "Sincronizando feriados..." : "Sincronizar feriados nacionais agora"}
               </button>
+            </div>
             </div>
             </div>
 
@@ -1279,7 +1290,7 @@ export function AdminPage() {
 
           <form className={styles.toolbar} onSubmit={onCreateUser}>
             <div className={styles.toolbarFields}>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="nu-name">
                   Nome completo
                 </label>
@@ -1291,7 +1302,7 @@ export function AdminPage() {
                   required
                 />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="nu-email">
                   E-mail
                 </label>
@@ -1304,7 +1315,7 @@ export function AdminPage() {
                   required
                 />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="nu-role">
                   Perfil
                 </label>
@@ -1401,6 +1412,7 @@ export function AdminPage() {
                   O prestador é identificado pelo <strong>CNPJ da empresa</strong> e pelo certificado A1. Guarde a senha do
                   certificado com segurança; ela não é exibida após o salvamento.
                 </p>
+                <div className={formLayout.fieldGroup}>
                 <label className={loginStyles.label}>Canal de emissão (prestador)</label>
                 <p className={styles.muted}>
                   Ao cadastrar o <strong>CNPJ</strong>, consultamos a Receita: empresas <strong>MEI</strong> usam o canal{" "}
@@ -1427,6 +1439,7 @@ export function AdminPage() {
                   <option value="national_mei">Forçar NFS-e nacional (MEI)</option>
                   <option value="focus">Forçar Focus NFe</option>
                 </select>
+                </div>
                 <label className={styles.weekday}>
                   <input
                     type="checkbox"
@@ -1445,6 +1458,7 @@ export function AdminPage() {
                   />
                   Marcar novos clientes como MEI por padrão
                 </label>
+                <div className={formLayout.field}>
                 <label className={loginStyles.label}>Ambiente</label>
                 <select
                   className={loginStyles.select}
@@ -1458,6 +1472,7 @@ export function AdminPage() {
                   <option value="homolog">Homologação</option>
                   <option value="producao">Produção</option>
                 </select>
+                </div>
 
                 <div className={styles.fiscalDpsDefaults}>
                   <h4 className={styles.fiscalSubheading}>Padrão do tenant (NFS-e) — uso quando o serviço não tem código</h4>
@@ -1468,6 +1483,8 @@ export function AdminPage() {
                     emissão por OS, o sistema usa primeiro os códigos dos serviços da ordem; só completa com estes padrões o que
                     faltar. Confira sempre as tabelas oficiais — a lista sugerida é apenas auxiliar.
                   </p>
+                  <div className={formLayout.stack}>
+                  <div className={formLayout.field}>
                   <label className={loginStyles.label}>Código de tributação nacional (cTribNac)</label>
                   <input
                     className={loginStyles.input}
@@ -1487,6 +1504,8 @@ export function AdminPage() {
                       <option key={t.codigo} value={t.codigo} label={t.descricao} />
                     ))}
                   </datalist>
+                  </div>
+                  <div className={formLayout.field}>
                   <label className={loginStyles.label}>Código NBS (padrão do tenant)</label>
                   <input
                     className={loginStyles.input}
@@ -1508,6 +1527,8 @@ export function AdminPage() {
                       ),
                     )}
                   </datalist>
+                  </div>
+                  <div className={formLayout.field}>
                   <label className={loginStyles.label}>Série da DPS (nacional)</label>
                   <input
                     className={loginStyles.input}
@@ -1525,6 +1546,8 @@ export function AdminPage() {
                     O mesmo valor exibido no DANFSe como &quot;Série do DPS&quot;. Alternativa no servidor:{" "}
                     <code className={styles.code}>NFSE_DPS_SERIE</code>.
                   </p>
+                  </div>
+                  <div className={formLayout.field}>
                   <label className={loginStyles.label}>Inscrição municipal do prestador — NFS-e nacional (opcional)</label>
                   <input
                     className={loginStyles.input}
@@ -1538,8 +1561,11 @@ export function AdminPage() {
                     maxLength={15}
                     autoComplete="off"
                   />
+                  </div>
+                  </div>
                 </div>
 
+                <div className={formLayout.field}>
                 <label className={loginStyles.label}>Certificado A1 (.pfx / .p12)</label>
                 {nfseSettings.has_mei_certificate ? (
                   <p className={styles.muted}>
@@ -1561,6 +1587,8 @@ export function AdminPage() {
                   onChange={(e) => setMeiCertFile(e.target.files?.[0] ?? null)}
                 />
                 {meiCertFile ? <p className={styles.muted}>Novo arquivo selecionado: {meiCertFile.name}</p> : null}
+                </div>
+                <div className={formLayout.field}>
                 <label className={loginStyles.label}>Senha do certificado</label>
                 {nfseSettings.has_mei_certificate && !changeMeiCertPassword ? (
                   <div className={styles.actions}>
@@ -1578,8 +1606,12 @@ export function AdminPage() {
                     placeholder={nfseSettings.has_mei_certificate ? "Digite nova senha para atualizar" : "Digite a senha do A1"}
                   />
                 )}
+                </div>
+                <div className={formLayout.field}>
                 <label className={loginStyles.label}>Usuário portal nacional (opcional)</label>
                 <input className={loginStyles.input} value={meiPortalUser} onChange={(e) => setMeiPortalUser(e.target.value)} />
+                </div>
+                <div className={formLayout.field}>
                 <label className={loginStyles.label}>Senha portal nacional (opcional)</label>
                 {nfseSettings.has_mei_portal_credentials && !changePortalPassword ? (
                   <div className={styles.actions}>
@@ -1597,6 +1629,7 @@ export function AdminPage() {
                     placeholder={nfseSettings.has_mei_portal_credentials ? "Digite nova senha do portal" : "Digite a senha do portal"}
                   />
                 )}
+                </div>
                 <p className={styles.muted}>
                   Certificado salvo: {nfseSettings.has_mei_certificate ? "sim" : "não"} • Credenciais portal:{" "}
                   {nfseSettings.has_mei_portal_credentials ? "sim" : "não"}
@@ -1648,9 +1681,11 @@ export function AdminPage() {
                   />
                   Habilitar emissão via Focus (NFSe Nacional: POST /v2/nfsen)
                 </label>
+                <div className={formLayout.field}>
                 <label className={loginStyles.label}>API key Focus</label>
                 <input className={loginStyles.input} type="password" value={focusApiKey} onChange={(e) => setFocusApiKey(e.target.value)} />
                 <p className={styles.muted}>API key salva: {nfseSettings.has_focus_api_key ? "sim" : "não"}</p>
+                </div>
               </div>
 
               <div className={styles.sectionCard}>
@@ -1697,6 +1732,8 @@ export function AdminPage() {
               Editar usuário
             </h3>
             <form className={styles.form} onSubmit={onSaveEdit}>
+              <div className={formLayout.stack}>
+              <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="eu-name">
                 Nome completo
               </label>
@@ -1707,6 +1744,8 @@ export function AdminPage() {
                 onChange={(e) => setEditName(e.target.value)}
                 required
               />
+              </div>
+              <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="eu-email">
                 E-mail
               </label>
@@ -1718,6 +1757,8 @@ export function AdminPage() {
                 onChange={(e) => setEditEmail(e.target.value)}
                 required
               />
+              </div>
+              <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="eu-role">
                 Perfil
               </label>
@@ -1732,6 +1773,7 @@ export function AdminPage() {
                 <option value="technician">Técnico</option>
                 <option value="admin">Administrador</option>
               </select>
+              </div>
               {editing.id === adminUser.id ? (
                 <p className={styles.muted}>Você não pode alterar o próprio perfil aqui.</p>
               ) : null}
@@ -1767,6 +1809,7 @@ export function AdminPage() {
                 <button type="button" className={styles.btnGhost} onClick={() => setEditing(null)}>
                   Cancelar
                 </button>
+              </div>
               </div>
             </form>
           </div>

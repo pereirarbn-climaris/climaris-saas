@@ -313,18 +313,18 @@ export function ProductsListPage() {
       </div>
 
       {/* Toolbar */}
-      <div className={styles.toolbar}>
-        <div className={styles.searchCol}>
-          <label className={styles.searchLabel} htmlFor="products-search">
+      <div className={tableStyles.listToolbar}>
+        <div className={tableStyles.listToolbarSearchCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="products-search">
             Buscar
           </label>
-          <div className={styles.searchInputWrap}>
-            <span className={styles.searchIcon}>
+          <div className={tableStyles.listToolbarSearchWrap}>
+            <span className={tableStyles.listToolbarSearchIcon}>
               <SearchIcon />
             </span>
             <input
               id="products-search"
-              className={styles.searchInput}
+              className={tableStyles.listToolbarSearchInput}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Nome ou SKU do produto..."
@@ -333,13 +333,13 @@ export function ProductsListPage() {
           </div>
         </div>
 
-        <div className={styles.filterCol}>
-          <label className={styles.searchLabel} htmlFor="products-sort">
+        <div className={tableStyles.listToolbarFilterCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="products-sort">
             Ordenar por
           </label>
           <select
             id="products-sort"
-            className={styles.selectInput}
+            className={tableStyles.listToolbarSelect}
             value={sort}
             onChange={(e) => setSort(e.target.value as ProductSort)}
           >
@@ -358,7 +358,7 @@ export function ProductsListPage() {
           </select>
         </div>
 
-        <div className={styles.toolbarActions}>
+        <div className={tableStyles.listToolbarActions}>
           {canEdit ? (
             <>
               <input
@@ -370,7 +370,7 @@ export function ProductsListPage() {
               />
               <button
                 type="button"
-                className={styles.iconToolbarBtn}
+                className={tableStyles.listToolbarIconBtn}
                 title="Importar planilha de produtos"
                 aria-label="Importar planilha de produtos"
                 onClick={() => fileInputRef.current?.click()}
@@ -381,8 +381,8 @@ export function ProductsListPage() {
             </>
           ) : null}
           {canEdit ? (
-            <Link className={styles.btnPrimary} to="/app/products/new">
-              <span className={styles.btnIcon}>
+            <Link className={tableStyles.listToolbarBtnPrimary} to="/app/products/new">
+              <span className={tableStyles.listToolbarBtnIcon}>
                 <PlusIcon />
               </span>
               Novo produto

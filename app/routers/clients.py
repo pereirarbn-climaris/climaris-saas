@@ -57,6 +57,7 @@ _CLIENT_SNAPSHOT_KEYS: tuple[str, ...] = (
     "whatsapp",
     "email",
     "trade_name",
+    "contact_person_name",
     "state_registration",
     "ie_indicator",
     "municipal_registration",
@@ -84,6 +85,7 @@ def _client_snapshot(client: Client) -> dict[str, Any]:
         "whatsapp": client.whatsapp,
         "email": client.email,
         "trade_name": client.trade_name,
+        "contact_person_name": client.contact_person_name,
         "state_registration": client.state_registration,
         "ie_indicator": client.ie_indicator,
         "municipal_registration": client.municipal_registration,
@@ -176,6 +178,7 @@ CSV_HEADERS = [
     "whatsapp",
     "email",
     "trade_name",
+    "contact_person_name",
     "state_registration",
     "ie_indicator",
     "municipal_registration",
@@ -223,6 +226,7 @@ def list_clients(
                 Client.email.ilike(term),
                 Client.phone.ilike(term),
                 Client.whatsapp.ilike(term),
+                Client.contact_person_name.ilike(term),
             )
         )
     return db.execute(query.order_by(Client.id.desc()).offset(skip).limit(limit)).scalars().all()
@@ -248,6 +252,7 @@ def count_clients(
                 Client.email.ilike(term),
                 Client.phone.ilike(term),
                 Client.whatsapp.ilike(term),
+                Client.contact_person_name.ilike(term),
             )
         )
     total = db.scalar(query)
@@ -284,6 +289,7 @@ def export_clients_csv(
                 _csv_cell(c.whatsapp),
                 _csv_cell(c.email),
                 _csv_cell(c.trade_name),
+                _csv_cell(c.contact_person_name),
                 _csv_cell(c.state_registration),
                 _csv_cell(c.ie_indicator),
                 _csv_cell(c.municipal_registration),
@@ -383,6 +389,7 @@ def import_clients_csv(
                     whatsapp=whatsapp,
                     email=email_raw,
                     trade_name=(row.get("trade_name") or "").strip() or None,
+                    contact_person_name=(row.get("contact_person_name") or "").strip() or None,
                     state_registration=(row.get("state_registration") or "").strip() or None,
                     ie_indicator=ie_val,
                     municipal_registration=(row.get("municipal_registration") or "").strip() or None,
@@ -565,6 +572,7 @@ def create_client(
         whatsapp=wa,
         email=payload.email.lower() if payload.email else None,
         trade_name=payload.trade_name,
+        contact_person_name=(payload.contact_person_name or "").strip() or None,
         state_registration=payload.state_registration,
         ie_indicator=payload.ie_indicator,
         municipal_registration=payload.municipal_registration,
@@ -707,6 +715,8 @@ def update_client(
 
     if "trade_name" in fields_set:
         client.trade_name = _strip_opt(payload.trade_name)
+    if "contact_person_name" in fields_set:
+        client.contact_person_name = _strip_opt(payload.contact_person_name)
 
     if "state_registration" in fields_set:
         client.state_registration = _strip_opt(payload.state_registration)

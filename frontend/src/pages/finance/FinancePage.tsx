@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   createFinanceCategory,
   createFinanceEntry,
   createFinanceEntryAsaasCharge,
+  createFinanceEntryMercadoPagoPixCharge,
+  createFinanceEntryMercadoPagoBoletoCharge,
+  createFinanceEntryMercadoPagoPreference,
   deleteFinanceEntry,
   getFinanceBalanceSnapshot,
   getFinanceGateways,
@@ -26,6 +29,7 @@ import {
   type FinanceEntryType,
 } from "../../api/finance";
 import { NavIconX } from "../../components/dashboard/NavIcons";
+import { mercadoPagoPreferenceCheckoutUrl } from "../../lib/mercadopagoHostedCheckout";
 import {
   amountToCurrencyBrlInput,
   formatCurrencyBrlInput,
@@ -46,6 +50,18 @@ function shortIsoDate(iso: string): string {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
+  });
+}
+
+function formatIsoDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -86,6 +102,7 @@ function accountChipTooltip(
 }
 
 export function FinancePage() {
+  const navigate = useNavigate();
   const now = new Date();
   const startOfMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth(), 1), [now.getFullYear(), now.getMonth()]);
   const endOfMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth() + 1, 0), [now.getFullYear(), now.getMonth()]);
@@ -125,6 +142,39 @@ export function FinancePage() {
   const [chargeBillingType, setChargeBillingType] = useState<"PIX" | "BOLETO">("PIX");
   const [chargeSubmitting, setChargeSubmitting] = useState(false);
   const [chargeResult, setChargeResult] = useState<{ paymentId: string; invoiceUrl: string | null } | null>(null);
+  const [mpChargeModalEntry, setMpChargeModalEntry] = useState<FinanceEntryOut | null>(null);
+  const [mpPayerEmail, setMpPayerEmail] = useState("");
+  const [mpPayerFirstName, setMpPayerFirstName] = useState("");
+  const [mpPayerLastName, setMpPayerLastName] = useState("");
+  const [mpChargeSubmitting, setMpChargeSubmitting] = useState(false);
+  const [mpChargeResult, setMpChargeResult] = useState<{
+    paymentId: string;
+    paymentStatus: string;
+    ticketUrl: string | null;
+    pixCopyPaste: string | null;
+  } | null>(null);
+  const [mpBoletoModalEntry, setMpBoletoModalEntry] = useState<FinanceEntryOut | null>(null);
+  const [mpBoletoEmail, setMpBoletoEmail] = useState("");
+  const [mpBoletoCpf, setMpBoletoCpf] = useState("");
+  const [mpBoletoFirstName, setMpBoletoFirstName] = useState("");
+  const [mpBoletoLastName, setMpBoletoLastName] = useState("");
+  const [mpBoletoSubmitting, setMpBoletoSubmitting] = useState(false);
+  const [mpBoletoResult, setMpBoletoResult] = useState<{
+    paymentId: string;
+    paymentStatus: string;
+    ticketUrl: string | null;
+  } | null>(null);
+  const [mpPrefModalEntry, setMpPrefModalEntry] = useState<FinanceEntryOut | null>(null);
+  const [mpPrefMode, setMpPrefMode] = useState<"checkout_pro" | "payment_link" | "subscription">("checkout_pro");
+  const [mpPrefEmail, setMpPrefEmail] = useState("");
+  const [mpPrefSuccessUrl, setMpPrefSuccessUrl] = useState("");
+  const [mpPrefSubmitting, setMpPrefSubmitting] = useState(false);
+  const [clearMpPrefSubmittingEntryId, setClearMpPrefSubmittingEntryId] = useState<number | null>(null);
+  const [mpPrefResult, setMpPrefResult] = useState<{
+    checkoutUrl: string;
+    preferenceId: string;
+    sandbox: boolean;
+  } | null>(null);
   const [editingEntry, setEditingEntry] = useState<FinanceEntryOut | null>(null);
   const [editDeletePhase, setEditDeletePhase] = useState<"idle" | "choose-scope">("idle");
   const [editDescription, setEditDescription] = useState("");
@@ -424,8 +474,14 @@ export function FinancePage() {
       setError("Conecte o Asaas antes de emitir cobrança.");
       return;
     }
+    if (entry.gateway_preference_id) {
+      setError(
+        "Este lançamento possui checkout Mercado Pago pendente. Remova a preferência no lançamento ou conclua o pagamento antes de cobrar no Asaas.",
+      );
+      return;
+    }
     if (entry.gateway_payment_id) {
-      setError("Este lançamento já está vinculado a uma cobrança Asaas.");
+      setError("Este lançamento já está vinculado a uma cobrança.");
       return;
     }
     setChargeModalEntry(entry);
@@ -434,12 +490,136 @@ export function FinancePage() {
     setChargeResult(null);
   }
 
+  function openMpChargeModal(entry: FinanceEntryOut) {
+    if (!gateways?.mercadopago.connected) {
+      setError("Conecte o Mercado Pago antes de emitir cobrança.");
+      return;
+    }
+    if (!gateways.mercadopago.products?.pix) {
+      setError('Ative "Recebimento via Pix" em Contas e carteiras → Configurar conta (Mercado Pago).');
+      return;
+    }
+    if (entry.gateway_preference_id) {
+      setError(
+        "Este lançamento possui checkout Mercado Pago pendente. Remova a preferência no lançamento ou use outro lançamento para emitir PIX.",
+      );
+      return;
+    }
+    if (entry.gateway_payment_id) {
+      setError("Este lançamento já está vinculado a uma cobrança.");
+      return;
+    }
+    setMpChargeModalEntry(entry);
+    setMpPayerEmail("");
+    setMpPayerFirstName("");
+    setMpPayerLastName("");
+    setMpChargeResult(null);
+  }
+
+  function openMpBoletoChargeModal(entry: FinanceEntryOut) {
+    if (!gateways?.mercadopago.connected) {
+      setError("Conecte o Mercado Pago antes de emitir boleto.");
+      return;
+    }
+    if (!gateways.mercadopago.products?.boleto) {
+      setError('Ative "Boleto" em Contas e carteiras → Mercado Pago.');
+      return;
+    }
+    if (entry.gateway_preference_id) {
+      setError(
+        "Este lançamento possui checkout Mercado Pago pendente. Remova a preferência no lançamento ou use outro lançamento para emitir boleto.",
+      );
+      return;
+    }
+    if (entry.gateway_payment_id) {
+      setError("Este lançamento já está vinculado a uma cobrança.");
+      return;
+    }
+    setMpBoletoModalEntry(entry);
+    setMpBoletoEmail("");
+    setMpBoletoCpf("");
+    setMpBoletoFirstName("");
+    setMpBoletoLastName("");
+    setMpBoletoResult(null);
+  }
+
+  function openMpPreferenceModal(entry: FinanceEntryOut, mode: "checkout_pro" | "payment_link" | "subscription") {
+    if (!gateways?.mercadopago.connected) {
+      setError("Conecte o Mercado Pago antes de gerar o checkout.");
+      return;
+    }
+    if (mode === "checkout_pro" && !gateways.mercadopago.products?.checkout_pro) {
+      setError('Ative "Checkout Pro / Transparente" na conta Mercado Pago.');
+      return;
+    }
+    if (mode === "payment_link" && !gateways.mercadopago.products?.payment_link) {
+      setError('Ative "Link de Pagamento" na conta Mercado Pago.');
+      return;
+    }
+    if (mode === "subscription" && !gateways.mercadopago.products?.subscriptions) {
+      setError('Ative "Assinaturas (recorrência)" na conta Mercado Pago.');
+      return;
+    }
+    if (entry.gateway_payment_id) {
+      setError(
+        "Este lançamento já está vinculado a uma cobrança de gateway (ex.: PIX). Crie outro lançamento para usar checkout ou link.",
+      );
+      return;
+    }
+    setMpPrefModalEntry(entry);
+    setMpPrefMode(mode);
+    setMpPrefEmail("");
+    setMpPrefSuccessUrl("");
+    setMpPrefResult(null);
+  }
+
   function closeChargeModal() {
     if (chargeSubmitting) return;
     setChargeModalEntry(null);
     setChargeCustomerId("");
     setChargeBillingType("PIX");
     setChargeResult(null);
+  }
+
+  function closeMpChargeModal() {
+    if (mpChargeSubmitting) return;
+    setMpChargeModalEntry(null);
+    setMpPayerEmail("");
+    setMpPayerFirstName("");
+    setMpPayerLastName("");
+    setMpChargeResult(null);
+  }
+
+  function closeMpBoletoChargeModal() {
+    if (mpBoletoSubmitting) return;
+    setMpBoletoModalEntry(null);
+    setMpBoletoEmail("");
+    setMpBoletoCpf("");
+    setMpBoletoFirstName("");
+    setMpBoletoLastName("");
+    setMpBoletoResult(null);
+  }
+
+  function closeMpPreferenceModal() {
+    if (mpPrefSubmitting) return;
+    setMpPrefModalEntry(null);
+    setMpPrefEmail("");
+    setMpPrefSuccessUrl("");
+    setMpPrefResult(null);
+  }
+
+  async function removeMercadoPagoPreference(entry: FinanceEntryOut) {
+    if (!entry.gateway_preference_id || entry.gateway_payment_id) return;
+    setClearMpPrefSubmittingEntryId(entry.id);
+    setError(null);
+    try {
+      await patchFinanceEntry(entry.id, { gateway_preference_id: null });
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível remover a preferência.");
+    } finally {
+      setClearMpPrefSubmittingEntryId(null);
+    }
   }
 
   async function submitAsaasChargeModal(ev: FormEvent) {
@@ -462,6 +642,100 @@ export function FinancePage() {
       setError(e instanceof Error ? e.message : "Não foi possível emitir cobrança.");
     } finally {
       setChargeSubmitting(false);
+    }
+  }
+
+  async function submitMpChargeModal(ev: FormEvent) {
+    ev.preventDefault();
+    if (!mpChargeModalEntry) return;
+    if (!mpPayerEmail.trim()) {
+      setError("Informe o e-mail do pagador (exigido pelo Mercado Pago para PIX).");
+      return;
+    }
+    setMpChargeSubmitting(true);
+    setError(null);
+    try {
+      const r = await createFinanceEntryMercadoPagoPixCharge(mpChargeModalEntry.id, {
+        payer_email: mpPayerEmail.trim(),
+        payer_first_name: mpPayerFirstName.trim() || null,
+        payer_last_name: mpPayerLastName.trim() || null,
+      });
+      setMpChargeResult({
+        paymentId: r.payment_id,
+        paymentStatus: r.payment_status,
+        ticketUrl: r.ticket_url,
+        pixCopyPaste: r.pix_copy_paste,
+      });
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível emitir cobrança no Mercado Pago.");
+    } finally {
+      setMpChargeSubmitting(false);
+    }
+  }
+
+  async function submitMpBoletoChargeModal(ev: FormEvent) {
+    ev.preventDefault();
+    if (!mpBoletoModalEntry) return;
+    const digits = mpBoletoCpf.replace(/\D/g, "");
+    if (digits.length !== 11) {
+      setError("Informe um CPF válido (11 dígitos).");
+      return;
+    }
+    if (!mpBoletoEmail.trim()) {
+      setError("Informe o e-mail do pagador.");
+      return;
+    }
+    setMpBoletoSubmitting(true);
+    setError(null);
+    try {
+      const r = await createFinanceEntryMercadoPagoBoletoCharge(mpBoletoModalEntry.id, {
+        payer_email: mpBoletoEmail.trim(),
+        payer_cpf: digits,
+        payer_first_name: mpBoletoFirstName.trim() || null,
+        payer_last_name: mpBoletoLastName.trim() || null,
+      });
+      setMpBoletoResult({
+        paymentId: r.payment_id,
+        paymentStatus: r.payment_status,
+        ticketUrl: r.ticket_url,
+      });
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível emitir boleto no Mercado Pago.");
+    } finally {
+      setMpBoletoSubmitting(false);
+    }
+  }
+
+  async function submitMpPreferenceModal(ev: FormEvent) {
+    ev.preventDefault();
+    if (!mpPrefModalEntry) return;
+    if (mpPrefMode === "subscription" && !mpPrefEmail.trim()) {
+      setError("Assinatura: informe o e-mail do pagador.");
+      return;
+    }
+    setMpPrefSubmitting(true);
+    setError(null);
+    try {
+      const r = await createFinanceEntryMercadoPagoPreference(mpPrefModalEntry.id, {
+        mode: mpPrefMode,
+        payer_email: mpPrefEmail.trim() || null,
+        success_url: mpPrefSuccessUrl.trim() || null,
+        ...(mpPrefMode === "subscription"
+          ? { subscription_frequency: 1, subscription_frequency_type: "months" as const }
+          : {}),
+      });
+      setMpPrefResult({
+        checkoutUrl: r.checkout_url,
+        preferenceId: r.preference_id,
+        sandbox: r.sandbox,
+      });
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível criar o checkout.");
+    } finally {
+      setMpPrefSubmitting(false);
     }
   }
 
@@ -748,7 +1022,20 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                                 {e.payment_provider ? <span>{e.payment_provider}</span> : null}
                                 {e.finance_account_id ? <span>Conta #{e.finance_account_id}</span> : null}
                                 {e.credit_card_id ? <span>Cartão #{e.credit_card_id}</span> : null}
-                                {e.gateway_payment_id ? <span>Asaas: {e.gateway_payment_id}</span> : null}
+                                {e.gateway_payment_id ? (
+                                  <span>
+                                    {e.payment_provider === "mercadopago" ? "Mercado Pago" : "Gateway"}: {e.gateway_payment_id}
+                                  </span>
+                                ) : null}
+                                {e.gateway_preference_id ? (
+                                  <span>Preferência MP: {e.gateway_preference_id}</span>
+                                ) : null}
+                                {e.mercadopago_archived_preference_id ? (
+                                  <span className={styles.muted}>Preferência MP (arquivada): {e.mercadopago_archived_preference_id}</span>
+                                ) : null}
+                                {e.mercadopago_preapproval_id ? (
+                                  <span className={styles.muted}>Assinatura MP: {e.mercadopago_preapproval_id}</span>
+                                ) : null}
                                 {e.competence_date ? <span>Competência {shortIsoDate(e.competence_date)}</span> : null}
                                 {e.expected_settlement_date ? <span>Caixa prev. {shortIsoDate(e.expected_settlement_date)}</span> : null}
                                 {(e.installment_total ?? 1) > 1 ? (
@@ -757,6 +1044,29 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                                   </span>
                                 ) : null}
                               </div>
+                              {e.mp_reversal_at ? (
+                                <p className={styles.mpReversalNote} role="status">
+                                  {e.mp_reversal_status === "in_mediation" ? (
+                                    <>
+                                      Contestação em análise no Mercado Pago desde {formatIsoDateTime(e.mp_reversal_at)}. O
+                                      lançamento permanece <strong>pago</strong> até o desfecho; acompanhe no painel do MP.
+                                    </>
+                                  ) : e.mp_reversal_status === "partially_refunded" ? (
+                                    <>
+                                      Devolução parcial registrada pelo Mercado Pago em {formatIsoDateTime(e.mp_reversal_at)}.
+                                      Confira o valor no MP e reconcilie com o extrato antes de ajustar manualmente o
+                                      lançamento.
+                                    </>
+                                  ) : (
+                                    <>
+                                      Estorno ou devolução registrada pelo Mercado Pago em {formatIsoDateTime(e.mp_reversal_at)}
+                                      {e.mp_reversal_status ? ` (${e.mp_reversal_status}).` : "."} Confira no MP; se o valor foi
+                                      restituído, use <strong>Baixar</strong> apenas após reconciliar com o extrato, ou marque
+                                      manualmente conforme sua política interna.
+                                    </>
+                                  )}
+                                </p>
+                              ) : null}
                             </div>
                             <div className={styles.entryAmount}>
                               <strong className={e.entry_type === "income" ? styles.amountIncome : styles.amountExpense}>
@@ -765,11 +1075,85 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                               <span>Líquido {money(e.net_amount)}</span>
                             </div>
                           </button>
-                          {e.entry_type === "income" && !e.gateway_payment_id && gateways?.asaas.connected ? (
+                          {e.entry_type === "income" && !e.gateway_payment_id && (gateways?.asaas.connected || gateways?.mercadopago.connected) ? (
                             <div className={styles.entryQuickActions}>
-                              <button type="button" onClick={() => openChargeModal(e)}>
-                                Cobrar Asaas
-                              </button>
+                              {e.gateway_preference_id ? (
+                                <button
+                                  type="button"
+                                  disabled={clearMpPrefSubmittingEntryId === e.id}
+                                  onClick={() => void removeMercadoPagoPreference(e)}
+                                >
+                                  Remover preferência MP
+                                </button>
+                              ) : null}
+                              {e.gateway_preference_id && gateways?.mercadopago.connected ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const u = mercadoPagoPreferenceCheckoutUrl(
+                                        e.gateway_preference_id!,
+                                        Boolean(gateways.mercadopago.sandbox),
+                                      );
+                                      window.open(u, "_blank", "noopener,noreferrer");
+                                    }}
+                                  >
+                                    MP — nova aba
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigate(
+                                        `/app/finance/mercadopago-wallet?preference_id=${encodeURIComponent(e.gateway_preference_id!)}`,
+                                      );
+                                    }}
+                                  >
+                                    MP — pagar no site (Wallet)
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const u = mercadoPagoPreferenceCheckoutUrl(
+                                        e.gateway_preference_id!,
+                                        Boolean(gateways.mercadopago.sandbox),
+                                      );
+                                      navigate(`/app/finance/mercadopago-checkout?checkout_url=${encodeURIComponent(u)}`);
+                                    }}
+                                  >
+                                    MP — página com iframe
+                                  </button>
+                                </>
+                              ) : null}
+                              {gateways?.asaas.connected ? (
+                                <button type="button" onClick={() => openChargeModal(e)}>
+                                  Cobrar Asaas
+                                </button>
+                              ) : null}
+                              {gateways?.mercadopago.connected && gateways.mercadopago.products?.pix ? (
+                                <button type="button" onClick={() => openMpChargeModal(e)}>
+                                  Cobrar MP (Pix)
+                                </button>
+                              ) : null}
+                              {gateways?.mercadopago.connected && gateways.mercadopago.products?.boleto ? (
+                                <button type="button" onClick={() => openMpBoletoChargeModal(e)}>
+                                  Cobrar MP (Boleto)
+                                </button>
+                              ) : null}
+                              {gateways?.mercadopago.connected && gateways.mercadopago.products?.checkout_pro ? (
+                                <button type="button" onClick={() => openMpPreferenceModal(e, "checkout_pro")}>
+                                  Checkout MP
+                                </button>
+                              ) : null}
+                              {gateways?.mercadopago.connected && gateways.mercadopago.products?.payment_link ? (
+                                <button type="button" onClick={() => openMpPreferenceModal(e, "payment_link")}>
+                                  Link MP
+                                </button>
+                              ) : null}
+                              {gateways?.mercadopago.connected && gateways.mercadopago.products?.subscriptions ? (
+                                <button type="button" onClick={() => openMpPreferenceModal(e, "subscription")}>
+                                  Assinatura MP
+                                </button>
+                              ) : null}
                               {e.status !== "paid" ? (
                                 <button type="button" onClick={() => void markAsPaid(e)}>
                                   Baixar
@@ -1022,6 +1406,252 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                 ) : (
                   <p className={styles.muted}>Sem URL publica retornada para este tipo de cobranca.</p>
                 )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {mpChargeModalEntry ? (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Emitir cobrança Mercado Pago PIX">
+          <div className={styles.modalCard}>
+            <header className={styles.modalHeader}>
+              <h3>Cobrança Mercado Pago (PIX)</h3>
+              <button type="button" className={styles.modalClose} onClick={closeMpChargeModal} disabled={mpChargeSubmitting}>
+                Fechar
+              </button>
+            </header>
+            <p className={styles.modalIntro}>
+              Lançamento: <strong>{mpChargeModalEntry.description}</strong> ({money(mpChargeModalEntry.amount)})
+            </p>
+            <form className={styles.modalForm} onSubmit={submitMpChargeModal}>
+              <label className={styles.modalField}>
+                <span>E-mail do pagador</span>
+                <input
+                  type="email"
+                  value={mpPayerEmail}
+                  onChange={(e) => setMpPayerEmail(e.target.value)}
+                  placeholder="cliente@email.com"
+                  autoFocus
+                  disabled={mpChargeSubmitting}
+                  autoComplete="email"
+                />
+              </label>
+              <label className={styles.modalField}>
+                <span>Nome (opcional)</span>
+                <input
+                  value={mpPayerFirstName}
+                  onChange={(e) => setMpPayerFirstName(e.target.value)}
+                  placeholder="Nome"
+                  disabled={mpChargeSubmitting}
+                />
+              </label>
+              <label className={styles.modalField}>
+                <span>Sobrenome (opcional)</span>
+                <input
+                  value={mpPayerLastName}
+                  onChange={(e) => setMpPayerLastName(e.target.value)}
+                  placeholder="Sobrenome"
+                  disabled={mpChargeSubmitting}
+                />
+              </label>
+              <div className={styles.modalActions}>
+                <button type="button" className={styles.modalBtnGhost} onClick={closeMpChargeModal} disabled={mpChargeSubmitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className={styles.modalBtnPrimary} disabled={mpChargeSubmitting}>
+                  {mpChargeSubmitting ? "Emitindo..." : "Emitir PIX"}
+                </button>
+              </div>
+            </form>
+            {mpChargeResult ? (
+              <div className={styles.modalResult}>
+                <p>
+                  Pagamento: <strong>{mpChargeResult.paymentId}</strong> ({mpChargeResult.paymentStatus})
+                </p>
+                {mpChargeResult.ticketUrl ? (
+                  <p>
+                    <a href={mpChargeResult.ticketUrl} target="_blank" rel="noreferrer">
+                      Abrir página do PIX
+                    </a>
+                  </p>
+                ) : null}
+                {mpChargeResult.pixCopyPaste ? (
+                  <div>
+                    <p className={styles.muted}>Copia e cola (PIX)</p>
+                    <pre className={styles.pixPayload}>{mpChargeResult.pixCopyPaste}</pre>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {mpBoletoModalEntry ? (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Emitir boleto Mercado Pago">
+          <div className={styles.modalCard}>
+            <header className={styles.modalHeader}>
+              <h3>Cobrança Mercado Pago (Boleto)</h3>
+              <button type="button" className={styles.modalClose} onClick={closeMpBoletoChargeModal} disabled={mpBoletoSubmitting}>
+                Fechar
+              </button>
+            </header>
+            <p className={styles.modalIntro}>
+              Lançamento: <strong>{mpBoletoModalEntry.description}</strong> ({money(mpBoletoModalEntry.amount)})
+            </p>
+            <p className={styles.muted} style={{ marginTop: 0 }}>
+              Vencimento do boleto: data de vencimento do lançamento (ou +3 dias se já estiver vencida).
+            </p>
+            <form className={styles.modalForm} onSubmit={submitMpBoletoChargeModal}>
+              <label className={styles.modalField}>
+                <span>E-mail do pagador</span>
+                <input
+                  type="email"
+                  value={mpBoletoEmail}
+                  onChange={(e) => setMpBoletoEmail(e.target.value)}
+                  placeholder="cliente@email.com"
+                  autoFocus
+                  disabled={mpBoletoSubmitting}
+                  autoComplete="email"
+                />
+              </label>
+              <label className={styles.modalField}>
+                <span>CPF do pagador</span>
+                <input
+                  value={mpBoletoCpf}
+                  onChange={(e) => setMpBoletoCpf(e.target.value)}
+                  placeholder="000.000.000-00"
+                  disabled={mpBoletoSubmitting}
+                  autoComplete="off"
+                />
+              </label>
+              <label className={styles.modalField}>
+                <span>Nome (opcional)</span>
+                <input
+                  value={mpBoletoFirstName}
+                  onChange={(e) => setMpBoletoFirstName(e.target.value)}
+                  placeholder="Nome"
+                  disabled={mpBoletoSubmitting}
+                />
+              </label>
+              <label className={styles.modalField}>
+                <span>Sobrenome (opcional)</span>
+                <input
+                  value={mpBoletoLastName}
+                  onChange={(e) => setMpBoletoLastName(e.target.value)}
+                  placeholder="Sobrenome"
+                  disabled={mpBoletoSubmitting}
+                />
+              </label>
+              <div className={styles.modalActions}>
+                <button type="button" className={styles.modalBtnGhost} onClick={closeMpBoletoChargeModal} disabled={mpBoletoSubmitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className={styles.modalBtnPrimary} disabled={mpBoletoSubmitting}>
+                  {mpBoletoSubmitting ? "Emitindo..." : "Emitir boleto"}
+                </button>
+              </div>
+            </form>
+            {mpBoletoResult ? (
+              <div className={styles.modalResult}>
+                <p>
+                  Pagamento: <strong>{mpBoletoResult.paymentId}</strong> ({mpBoletoResult.paymentStatus})
+                </p>
+                {mpBoletoResult.ticketUrl ? (
+                  <p>
+                    <a href={mpBoletoResult.ticketUrl} target="_blank" rel="noreferrer">
+                      Abrir PDF do boleto
+                    </a>
+                  </p>
+                ) : (
+                  <p className={styles.muted}>Sem URL de boleto retornada.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {mpPrefModalEntry ? (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Checkout Mercado Pago">
+          <div className={styles.modalCard}>
+            <header className={styles.modalHeader}>
+              <h3>
+                {mpPrefMode === "payment_link"
+                  ? "Link de pagamento Mercado Pago"
+                  : mpPrefMode === "subscription"
+                    ? "Assinatura Mercado Pago (recorrente)"
+                    : "Checkout Pro Mercado Pago"}
+              </h3>
+              <button type="button" className={styles.modalClose} onClick={closeMpPreferenceModal} disabled={mpPrefSubmitting}>
+                Fechar
+              </button>
+            </header>
+            <p className={styles.modalIntro}>
+              Lançamento: <strong>{mpPrefModalEntry.description}</strong> ({money(mpPrefModalEntry.amount)})
+            </p>
+            <p className={styles.muted} style={{ marginTop: 0 }}>
+              Gera uma preferência com o mesmo <code>external_reference</code> do financeiro; ao pagar, o webhook pode baixar o
+              lançamento automaticamente.
+              {mpPrefMode === "subscription" ? " Assinatura: cobrança mensal no valor do lançamento (1× por mês)." : ""}
+            </p>
+            <form className={styles.modalForm} onSubmit={submitMpPreferenceModal}>
+              <label className={styles.modalField}>
+                <span>E-mail do pagador {mpPrefMode === "subscription" ? "(obrigatório)" : "(opcional)"}</span>
+                <input
+                  type="email"
+                  value={mpPrefEmail}
+                  onChange={(e) => setMpPrefEmail(e.target.value)}
+                  placeholder="cliente@email.com"
+                  disabled={mpPrefSubmitting}
+                  autoComplete="email"
+                />
+              </label>
+              <label className={styles.modalField}>
+                <span>URL de retorno após pagamento aprovado (opcional)</span>
+                <input
+                  value={mpPrefSuccessUrl}
+                  onChange={(e) => setMpPrefSuccessUrl(e.target.value)}
+                  placeholder="https://seusite.com.br/obrigado"
+                  disabled={mpPrefSubmitting}
+                />
+              </label>
+              <div className={styles.modalActions}>
+                <button type="button" className={styles.modalBtnGhost} onClick={closeMpPreferenceModal} disabled={mpPrefSubmitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className={styles.modalBtnPrimary} disabled={mpPrefSubmitting}>
+                  {mpPrefSubmitting ? "Gerando..." : "Gerar link"}
+                </button>
+              </div>
+            </form>
+            {mpPrefResult ? (
+              <div className={styles.modalResult}>
+                <p>
+                  Preferência: <strong>{mpPrefResult.preferenceId}</strong>
+                  {mpPrefResult.sandbox ? " (sandbox)" : ""}
+                </p>
+                <p>
+                  <a href={mpPrefResult.checkoutUrl} target="_blank" rel="noreferrer">
+                    Abrir checkout / compartilhar link
+                  </a>
+                </p>
+                <p>
+                  <button
+                    type="button"
+                    className={styles.modalBtnGhost}
+                    onClick={() => {
+                      const enc = encodeURIComponent(mpPrefResult.checkoutUrl);
+                      navigate(`/app/finance/mercadopago-checkout?checkout_url=${enc}`);
+                    }}
+                  >
+                    Abrir checkout nesta página (iframe)
+                  </button>
+                </p>
+                <p className={styles.muted} style={{ fontSize: "0.8rem" }}>
+                  Copie o endereço do link se precisar enviar por WhatsApp ou e-mail.
+                </p>
               </div>
             ) : null}
           </div>

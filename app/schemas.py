@@ -34,6 +34,20 @@ class TokenResponse(BaseModel):
     captcha_required: bool = False
     captcha_token: str | None = None
     captcha_question: str | None = None
+    refresh_token: str | None = Field(
+        default=None,
+        description="Token opaco para POST /auth/refresh quando REFRESH_TOKEN_ENABLED na API.",
+    )
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=20, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    """Revoga um refresh token conhecido (melhor esforço; usado no logout do SPA)."""
+
+    refresh_token: str | None = Field(default=None, max_length=512)
 
 
 class LoginRequest(BaseModel):
@@ -839,6 +853,11 @@ class ClientCreate(BaseModel):
     whatsapp: str | None = None
     email: EmailStr | None = None
     trade_name: str | None = None
+    contact_person_name: str | None = Field(
+        default=None,
+        max_length=150,
+        description="Pessoa com quem se fala na empresa (PJ).",
+    )
     state_registration: str | None = None
     ie_indicator: Literal["1", "2", "9"] | None = Field(
         default=None,
@@ -856,6 +875,13 @@ class ClientCreate(BaseModel):
     address_ibge_code: str | None = Field(default=None, max_length=7)
     preventive_campaign_opt_out: bool = False
     is_active: bool = True
+
+    @field_validator("contact_person_name", mode="before")
+    @classmethod
+    def _strip_contact_create(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip()[:150] if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _normalize_document(self) -> ClientCreate:
@@ -910,6 +936,7 @@ class ClientUpdate(BaseModel):
     whatsapp: str | None = None
     email: EmailStr | None = None
     trade_name: str | None = None
+    contact_person_name: str | None = Field(default=None, max_length=150)
     state_registration: str | None = None
     ie_indicator: Literal["1", "2", "9"] | None = None
     municipal_registration: str | None = None
@@ -924,6 +951,13 @@ class ClientUpdate(BaseModel):
     address_ibge_code: str | None = Field(default=None, max_length=7)
     preventive_campaign_opt_out: bool | None = None
     is_active: bool | None = None
+
+    @field_validator("contact_person_name", mode="before")
+    @classmethod
+    def _strip_contact_person(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip()[:150] if isinstance(v, str) else v
 
     @field_validator("address_state", mode="before")
     @classmethod
@@ -958,6 +992,7 @@ class ClientOut(BaseModel):
     whatsapp: str | None = None
     email: EmailStr | None = None
     trade_name: str | None = None
+    contact_person_name: str | None = None
     state_registration: str | None = None
     ie_indicator: str | None = None
     municipal_registration: str | None = None
@@ -1789,6 +1824,7 @@ class FinanceEntryUpdate(BaseModel):
     fee_amount: float | None = Field(default=None, ge=0)
     recipient_whatsapp: str | None = Field(default=None, max_length=20)
     gateway_payment_id: str | None = Field(default=None, max_length=48)
+    gateway_preference_id: str | None = Field(default=None, max_length=48)
     installment_group_id: str | None = Field(default=None, max_length=64)
     installment_number: int | None = Field(default=None, ge=1, le=24)
     installment_total: int | None = Field(default=None, ge=1, le=24)
@@ -1827,6 +1863,11 @@ class FinanceEntryOut(BaseModel):
     fee_amount: float = 0
     recipient_whatsapp: str | None = None
     gateway_payment_id: str | None = None
+    gateway_preference_id: str | None = None
+    mercadopago_archived_preference_id: str | None = None
+    mercadopago_preapproval_id: str | None = None
+    mp_reversal_at: datetime | None = None
+    mp_reversal_status: str | None = None
     installment_group_id: str | None = None
     installment_number: int = 1
     installment_total: int = 1
@@ -2049,9 +2090,69 @@ class FinanceGatewayAsaasTest(BaseModel):
     sandbox: bool = False
 
 
+class FinanceGatewayMercadoPagoProducts(BaseModel):
+    checkout_pro: bool = False
+    pix: bool = False
+    boleto: bool = False
+    subscriptions: bool = False
+    payment_link: bool = False
+
+
+class FinanceGatewayMercadoPagoTest(BaseModel):
+    access_token: str = Field(..., min_length=10, max_length=600)
+    public_key: str = Field(..., min_length=8, max_length=600)
+    sandbox: bool = False
+
+
+class FinanceGatewayMercadoPagoUpsert(BaseModel):
+    access_token: str = Field(..., min_length=10, max_length=600)
+    public_key: str = Field(..., min_length=8, max_length=600)
+    sandbox: bool = False
+    finance_bank_account_id: int = Field(..., ge=1)
+    products: FinanceGatewayMercadoPagoProducts | None = None
+
+
+class FinanceGatewayMercadoPagoProductsUpdate(BaseModel):
+    checkout_pro: bool = False
+    pix: bool = False
+    boleto: bool = False
+    subscriptions: bool = False
+    payment_link: bool = False
+
+
+class FinanceGatewayMercadoPagoWebhookSignatureUpdate(BaseModel):
+    """Segredo exibido no painel MP (Suas integrações → Webhooks) para validar x-signature."""
+
+    webhook_signature_secret: str | None = Field(default=None, max_length=256)
+    clear_webhook_signature_secret: bool = False
+
+
 class FinanceEntryAsaasChargeCreate(BaseModel):
     customer_id: str = Field(..., min_length=4, max_length=48)
     billing_type: Literal["PIX", "BOLETO"] = "PIX"
+
+
+class FinanceEntryMercadoPagoChargeCreate(BaseModel):
+    payer_email: EmailStr
+    payer_first_name: str | None = Field(default=None, max_length=80)
+    payer_last_name: str | None = Field(default=None, max_length=80)
+
+
+class FinanceEntryMercadoPagoBoletoChargeCreate(BaseModel):
+    payer_email: EmailStr
+    payer_cpf: str = Field(..., min_length=11, max_length=14)
+    payer_first_name: str | None = Field(default=None, max_length=80)
+    payer_last_name: str | None = Field(default=None, max_length=80)
+
+
+class FinanceEntryMercadoPagoPreferenceCreate(BaseModel):
+    mode: Literal["checkout_pro", "payment_link", "subscription"] = "checkout_pro"
+    payer_email: EmailStr | None = None
+    success_url: str | None = Field(default=None, max_length=400)
+    failure_url: str | None = Field(default=None, max_length=400)
+    pending_url: str | None = Field(default=None, max_length=400)
+    subscription_frequency: int = Field(default=1, ge=1, le=365)
+    subscription_frequency_type: Literal["months", "days"] = "months"
 
 
 class FinancePaymentFeeCreate(BaseModel):
@@ -2249,6 +2350,14 @@ class ServiceOrderServiceItemOut(BaseModel):
 
 class ServiceOrderItemEquipmentUpdate(BaseModel):
     equipment_id: int | None = Field(default=None, ge=1)
+
+
+class ServiceOrderServiceItemQuantityPatch(BaseModel):
+    quantity: int = Field(ge=1)
+
+
+class ServiceOrderProductItemQuantityPatch(BaseModel):
+    quantity: int = Field(ge=1)
 
 
 class EquipmentUsageReportRowOut(BaseModel):

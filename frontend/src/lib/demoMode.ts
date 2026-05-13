@@ -13,6 +13,7 @@ import type {
   FinanceBalanceSnapshotOut,
   FinanceCategoryOut,
   FinanceEntryOut,
+  FinanceGatewaysOut,
   FinancePaymentFeeOut,
   FinanceSettingsOut,
   FinanceSummaryOut,
@@ -93,6 +94,7 @@ export const demoClients: ClientOut[] = [
     whatsapp: "11999998888",
     email: "joao.silva@email.com",
     trade_name: null,
+    contact_person_name: null,
     state_registration: null,
     ie_indicator: null,
     municipal_registration: null,
@@ -119,6 +121,7 @@ export const demoClients: ClientOut[] = [
     whatsapp: "11988887777",
     email: "maria.oliveira@email.com",
     trade_name: null,
+    contact_person_name: null,
     state_registration: null,
     ie_indicator: null,
     municipal_registration: null,
@@ -145,6 +148,7 @@ export const demoClients: ClientOut[] = [
     whatsapp: "1133334444",
     email: "contato@empresaabc.com.br",
     trade_name: "ABC Comercio",
+    contact_person_name: "Roberto Almeida",
     state_registration: "123456789",
     ie_indicator: "1",
     municipal_registration: "987654321",
@@ -591,6 +595,17 @@ let demoFinanceAccountsState: FinanceBankAccountOut[] = [
     created_at: DEMO_TS,
     updated_at: DEMO_TS,
   },
+  {
+    id: 2,
+    tenant_id: 1,
+    name: "Mercado Pago",
+    bank_name: "Mercado Pago",
+    account_type: "digital_wallet",
+    initial_balance: 2500,
+    is_active: true,
+    created_at: DEMO_TS,
+    updated_at: DEMO_TS,
+  },
 ];
 let demoFinanceEntriesState: FinanceEntryOut[] = [
   {
@@ -633,6 +648,44 @@ let demoFinanceSettingsState: FinanceSettingsOut = {
   max_available_mode: "management",
   can_use_marketplace_upgrade: true,
   requires_marketplace_slug: null,
+};
+let demoFinanceGatewaysState: FinanceGatewaysOut = {
+  effective_mode: "intermediate",
+  asaas: {
+    connected: false,
+    sandbox: false,
+    api_key_hint: null,
+    account_label: null,
+    last_validated_at: null,
+    last_validation_error: null,
+    webhook_url: null,
+    webhook_registered: false,
+    webhook_last_error: null,
+  },
+  mercadopago: {
+    connected: true,
+    sandbox: true,
+    access_token_hint: "****demo",
+    public_key_hint: "****demo",
+    public_key: "TEST-00000000-0000-4000-8000-000000000001",
+    account_label: "Conta demo MP",
+    mp_user_id: "999888",
+    finance_bank_account_id: 2,
+    products: {
+      checkout_pro: true,
+      pix: true,
+      boleto: true,
+      subscriptions: true,
+      payment_link: true,
+    },
+    webhook_url: "https://demo.climaris.com.br/api/v1/webhooks/mercadopago/demo-webhook-path",
+    api_public_base_url: "https://demo.climaris.com.br",
+    webhook_signature_configured: false,
+    webhook_signature_enforced: false,
+    last_validated_at: DEMO_TS,
+    last_validation_error: null,
+    cached_balance: 2540.5,
+  },
 };
 let demoPmocPlansState: PmocPlanOut[] = [
   {
@@ -680,6 +733,7 @@ let nextServiceOrderId = 502;
 let nextFinanceEntryId = 2;
 let nextFinanceCategoryId = 3;
 let nextFinanceFeeId = 1;
+let nextFinanceAccountId = 3;
 let nextPmocId = 2;
 let nextUnavailabilityId = 1;
 
@@ -698,6 +752,7 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     whatsapp: payload.whatsapp ?? null,
     email: payload.email ?? null,
     trade_name: payload.trade_name ?? null,
+    contact_person_name: payload.contact_person_name ?? null,
     state_registration: payload.state_registration ?? null,
     ie_indicator: payload.ie_indicator ?? null,
     municipal_registration: payload.municipal_registration ?? null,
@@ -822,6 +877,137 @@ export function demoUpdateServiceOrder(orderId: number, payload: Partial<Service
   return { ...demoServiceOrdersState[idx] };
 }
 
+let _demoNextSoLineId = 99000;
+
+export function demoPostServiceOrderServiceItem(
+  orderId: number,
+  body: { service_id: number; quantity: number },
+): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  const svc = demoServicesState.find((s) => s.id === body.service_id);
+  if (!svc) throw new Error("Serviço não encontrado.");
+  _demoNextSoLineId += 1;
+  const newItem = {
+    id: _demoNextSoLineId,
+    service_id: body.service_id,
+    equipment_id: null as number | null,
+    quantity: Math.max(body.quantity, 1),
+    unit_price: svc.price,
+    duration_minutes: svc.duration_minutes,
+  };
+  demoServiceOrdersState[idx] = {
+    ...order,
+    service_items: [...order.service_items, newItem],
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoPatchServiceOrderServiceItemQuantity(
+  orderId: number,
+  serviceItemId: number,
+  quantity: number,
+): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  demoServiceOrdersState[idx] = {
+    ...order,
+    service_items: order.service_items.map((it) =>
+      it.id === serviceItemId ? { ...it, quantity: Math.max(quantity, 1) } : it,
+    ),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoDeleteServiceOrderServiceItem(orderId: number, serviceItemId: number): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  if (order.service_items.length <= 1) throw new Error("A OS deve manter pelo menos um serviço.");
+  demoServiceOrdersState[idx] = {
+    ...order,
+    service_items: order.service_items.filter((it) => it.id !== serviceItemId),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoPostServiceOrderProductItem(orderId: number, body: { product_id: number; quantity: number }): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  const p = demoProductsState.find((x) => x.id === body.product_id);
+  if (!p) throw new Error("Produto não encontrado.");
+  const addQty = Math.max(body.quantity, 1);
+  const existing = order.product_items.find((pi) => pi.product_id === body.product_id);
+  let product_items: typeof order.product_items;
+  if (existing) {
+    product_items = order.product_items.map((pi) =>
+      pi.product_id === body.product_id ? { ...pi, quantity: pi.quantity + addQty } : pi,
+    );
+  } else {
+    _demoNextSoLineId += 1;
+    product_items = [
+      ...order.product_items,
+      {
+        id: _demoNextSoLineId,
+        product_id: body.product_id,
+        quantity: addQty,
+        unit_price: p.sale_price,
+      },
+    ];
+  }
+  demoServiceOrdersState[idx] = { ...order, product_items };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoPatchServiceOrderProductItemQuantity(
+  orderId: number,
+  productItemId: number,
+  quantity: number,
+): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  demoServiceOrdersState[idx] = {
+    ...order,
+    product_items: order.product_items.map((it) =>
+      it.id === productItemId ? { ...it, quantity: Math.max(quantity, 1) } : it,
+    ),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoDeleteServiceOrderProductItem(orderId: number, productItemId: number): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  demoServiceOrdersState[idx] = {
+    ...order,
+    product_items: order.product_items.filter((it) => it.id !== productItemId),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
 export function demoListBudgets() {
   return demoBudgetsState.map((item) => ({ ...item }));
 }
@@ -876,6 +1062,29 @@ export function demoUpdateBudget(budgetId: number, payload: Partial<BudgetOut>):
 
 export function demoListFinanceAccounts() {
   return demoFinanceAccountsState.map((item) => ({ ...item }));
+}
+
+export function demoCreateFinanceAccount(payload: {
+  name: string;
+  bank_name?: string | null;
+  account_type?: FinanceBankAccountOut["account_type"];
+  initial_balance?: number;
+  is_active?: boolean;
+}): FinanceBankAccountOut {
+  const now = new Date().toISOString();
+  const row: FinanceBankAccountOut = {
+    id: nextFinanceAccountId++,
+    tenant_id: 1,
+    name: payload.name.trim() || "Nova conta",
+    bank_name: payload.bank_name ?? null,
+    account_type: (payload.account_type ?? "checking") as FinanceBankAccountOut["account_type"],
+    initial_balance: Number(payload.initial_balance ?? 0),
+    is_active: payload.is_active ?? true,
+    created_at: now,
+    updated_at: now,
+  };
+  demoFinanceAccountsState = [...demoFinanceAccountsState, row];
+  return { ...row };
 }
 
 function demoFinanceEntryBasisDate(e: FinanceEntryOut, basis: string): string {
@@ -998,8 +1207,21 @@ export function demoPatchFinanceEntry(
   const entry = demoFinanceEntriesState[idx]!;
   const { edit_scope: _scopeIgnore, ...fields } = payload;
   const patch = { ...fields } as Partial<FinanceEntryOut>;
+
+  const applyMpPreferenceArchive = (row: FinanceEntryOut, p: Partial<FinanceEntryOut>): Partial<FinanceEntryOut> => {
+    if (!("gateway_preference_id" in p)) return p;
+    const raw = p.gateway_preference_id;
+    const clearing = raw === null || raw === "";
+    if (!clearing) return p;
+    const oldPref = (row.gateway_preference_id ?? "").trim();
+    if (!oldPref || (row.payment_provider ?? "").toLowerCase() !== "mercadopago") return p;
+    if ((row.mercadopago_archived_preference_id ?? "").trim()) return p;
+    return { ...p, mercadopago_archived_preference_id: oldPref };
+  };
+
   if (scope === "single" || !entry.installment_group_id) {
-    demoFinanceEntriesState[idx] = { ...entry, ...patch, updated_at: new Date().toISOString() };
+    const merged = applyMpPreferenceArchive(entry, patch);
+    demoFinanceEntriesState[idx] = { ...entry, ...merged, updated_at: new Date().toISOString() };
     return { ...demoFinanceEntriesState[idx] };
   }
   const gid = entry.installment_group_id!;
@@ -1009,7 +1231,8 @@ export function demoPatchFinanceEntry(
     if (row.installment_group_id !== gid) continue;
     const include = scope === "all" ? true : (row.installment_number ?? 1) >= num;
     if (!include) continue;
-    demoFinanceEntriesState[i] = { ...row, ...patch, updated_at: new Date().toISOString() };
+    const merged = applyMpPreferenceArchive(row, patch);
+    demoFinanceEntriesState[i] = { ...row, ...merged, updated_at: new Date().toISOString() };
   }
   const out = demoFinanceEntriesState.find((item) => item.id === entryId);
   if (!out) throw new Error("Lançamento não encontrado.");
@@ -1110,7 +1333,235 @@ export function demoUpdateFinanceSettings(payload: Pick<FinanceSettingsOut, "fin
     selected_mode: payload.selected_mode,
     effective_mode: payload.selected_mode,
   };
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    effective_mode: payload.selected_mode,
+  };
   return { ...demoFinanceSettingsState };
+}
+
+export function demoGetFinanceGateways(): FinanceGatewaysOut {
+  return {
+    ...demoFinanceGatewaysState,
+    effective_mode: demoFinanceSettingsState.effective_mode,
+  };
+}
+
+export function demoTestFinanceGatewayMercadoPago(): { ok: boolean; error: string | null; account_label: string | null; mp_user_id: string | null } {
+  return { ok: true, error: null, account_label: "Conta demo MP", mp_user_id: "999888" };
+}
+
+export function demoUpsertFinanceGatewayMercadoPago(payload: {
+  access_token: string;
+  public_key: string;
+  sandbox?: boolean;
+  finance_bank_account_id: number;
+  products?: {
+    checkout_pro: boolean;
+    pix: boolean;
+    boleto: boolean;
+    subscriptions: boolean;
+    payment_link: boolean;
+  };
+}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+  const mp = demoFinanceGatewaysState.mercadopago;
+  const at = payload.access_token.trim();
+  const pk = payload.public_key.trim();
+  const hint = (s: string) => (s.length <= 4 ? "****" : `****${s.slice(-4)}`);
+  const mergedProducts = payload.products ?? mp.products;
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: {
+      ...mp,
+      connected: true,
+      sandbox: Boolean(payload.sandbox),
+      access_token_hint: hint(at),
+      public_key_hint: hint(pk),
+      public_key: pk,
+      account_label: "Conta demo MP",
+      mp_user_id: "999888",
+      finance_bank_account_id: payload.finance_bank_account_id,
+      products: { ...mergedProducts },
+      webhook_url: "https://demo.climaris.com.br/api/v1/webhooks/mercadopago/demo-webhook-path",
+      api_public_base_url: "https://demo.climaris.com.br",
+      webhook_signature_enforced: false,
+      last_validated_at: new Date().toISOString(),
+      last_validation_error: null,
+      cached_balance: mp.cached_balance ?? 2540.5,
+    },
+  };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+}
+
+export function demoPatchFinanceGatewayMercadoPagoProducts(payload: {
+  checkout_pro: boolean;
+  pix: boolean;
+  boleto: boolean;
+  subscriptions: boolean;
+  payment_link: boolean;
+}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+  const mp = demoFinanceGatewaysState.mercadopago;
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: { ...mp, products: { ...payload } },
+  };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+}
+
+export function demoPatchFinanceGatewayMercadoPagoWebhookSignature(payload: {
+  webhook_signature_secret?: string;
+  clear_webhook_signature_secret?: boolean;
+}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+  const mp = demoFinanceGatewaysState.mercadopago;
+  let configured = mp.webhook_signature_configured;
+  if (payload.clear_webhook_signature_secret) configured = false;
+  else if (payload.webhook_signature_secret != null && payload.webhook_signature_secret.trim()) configured = true;
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: { ...mp, webhook_signature_configured: configured },
+  };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+}
+
+export function demoDeleteFinanceGatewayMercadoPago(): void {
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: {
+      connected: false,
+      sandbox: false,
+      access_token_hint: null,
+      public_key_hint: null,
+      public_key: null,
+      account_label: null,
+      mp_user_id: null,
+      finance_bank_account_id: null,
+      products: { checkout_pro: false, pix: false, boleto: false, subscriptions: false, payment_link: false },
+      webhook_url: null,
+      api_public_base_url: null,
+      webhook_signature_configured: false,
+      webhook_signature_enforced: false,
+      last_validated_at: null,
+      last_validation_error: null,
+      cached_balance: null,
+    },
+  };
+}
+
+export function demoMercadoPagoPixCharge(
+  entryId: number,
+  _payload: { payer_email: string; payer_first_name?: string | null; payer_last_name?: string | null },
+): {
+  status: string;
+  entry: FinanceEntryOut;
+  payment_id: string;
+  payment_status: string;
+  ticket_url: string | null;
+  pix_copy_paste: string | null;
+  external_reference: string;
+  sandbox: boolean;
+} {
+  const existing = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (existing?.gateway_preference_id) {
+    throw new Error(
+      "Este lançamento possui checkout/link Mercado Pago pendente. Remova a preferência no lançamento ou use outro lançamento para emitir PIX.",
+    );
+  }
+  const pid = `demo-mp-pix-${entryId}`;
+  const updated = demoPatchFinanceEntry(entryId, {
+    payment_provider: "mercadopago",
+    gateway_payment_id: pid,
+    payment_method: "pix",
+  });
+  return {
+    status: "ok",
+    entry: updated,
+    payment_id: pid,
+    payment_status: "pending",
+    ticket_url: "https://www.mercadopago.com.br/payments/example-ticket",
+    pix_copy_paste: "00020126580014br.gov.bcb.pix2566demo-climaris-pix",
+    external_reference: `climaris_mp_fin_${entryId}`,
+    sandbox: true,
+  };
+}
+
+export function demoMercadoPagoBoletoCharge(
+  entryId: number,
+  _payload: { payer_email: string; payer_cpf: string; payer_first_name?: string | null; payer_last_name?: string | null },
+): {
+  status: string;
+  entry: FinanceEntryOut;
+  payment_id: string;
+  payment_status: string;
+  ticket_url: string | null;
+  external_reference: string;
+  sandbox: boolean;
+} {
+  const existing = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (existing?.gateway_preference_id) {
+    throw new Error(
+      "Este lançamento possui checkout/link Mercado Pago pendente. Remova a preferência no lançamento ou use outro lançamento para emitir boleto.",
+    );
+  }
+  const pid = `demo-mp-bol-${entryId}`;
+  const updated = demoPatchFinanceEntry(entryId, {
+    payment_provider: "mercadopago",
+    gateway_payment_id: pid,
+    payment_method: "boleto",
+  });
+  return {
+    status: "ok",
+    entry: updated,
+    payment_id: pid,
+    payment_status: "pending",
+    ticket_url: "https://www.mercadopago.com.br/payments/boleto/demo-ticket.pdf",
+    external_reference: `climaris_mp_fin_${entryId}`,
+    sandbox: true,
+  };
+}
+
+export function demoMercadoPagoPreference(
+  entryId: number,
+  payload: {
+    mode: "checkout_pro" | "payment_link" | "subscription";
+    payer_email?: string | null;
+    success_url?: string | null;
+    failure_url?: string | null;
+    pending_url?: string | null;
+    subscription_frequency?: number;
+    subscription_frequency_type?: "months" | "days";
+  },
+): {
+  status: string;
+  mode: string;
+  preference_id: string;
+  init_point: string | null;
+  sandbox_init_point: string | null;
+  checkout_url: string;
+  external_reference: string;
+  sandbox: boolean;
+  entry: FinanceEntryOut;
+} {
+  const prefId = `pref_demo_${payload.mode}_${entryId}`;
+  const checkoutUrl = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${encodeURIComponent(prefId)}`;
+  const patch: Partial<FinanceEntryOut> = {
+    gateway_preference_id: prefId,
+    payment_provider: "mercadopago",
+  };
+  if (payload.mode === "subscription") {
+    patch.mercadopago_preapproval_id = `preapp_demo_${entryId}`;
+  }
+  const entry = demoPatchFinanceEntry(entryId, patch);
+  return {
+    status: "ok",
+    mode: payload.mode,
+    preference_id: prefId,
+    init_point: checkoutUrl,
+    sandbox_init_point: checkoutUrl,
+    checkout_url: checkoutUrl,
+    external_reference: `climaris_mp_fin_${entryId}`,
+    sandbox: true,
+    entry,
+  };
 }
 
 export function demoListPmocPlans() {

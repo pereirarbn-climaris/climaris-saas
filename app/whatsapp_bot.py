@@ -13,6 +13,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.asaas_client import get_asaas_payment_invoice_url
+from app.mercadopago_client import (
+    fetch_mercadopago_payment,
+    mercadopago_payment_boleto_urls,
+    mercadopago_payment_pix_urls,
+    mercadopago_preference_redirect_url,
+)
 from app.security import decrypt_platform_secret
 from models import (
     Budget,
@@ -1047,6 +1053,47 @@ def _asaas_invoice_url_for_entry(db: Session, *, tenant_id: int, entry: FinanceE
     return url if ok and url else None
 
 
+def _mercadopago_gateway_for_tenant(db: Session, *, tenant_id: int) -> TenantFinanceGateway | None:
+    return db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+
+
+def _mercadopago_client_link_for_entry(db: Session, *, tenant_id: int, entry: FinanceEntry) -> str | None:
+    """Link de pagamento MP: checkout (preferência) ou boleto/PIX (consulta GET /v1/payments/{id})."""
+    if (entry.payment_provider or "").strip().lower() != "mercadopago":
+        return None
+    gw = _mercadopago_gateway_for_tenant(db, tenant_id=tenant_id)
+    if gw is None or not gw.mercadopago_access_token_encrypted:
+        return None
+    sandbox = bool(gw.mercadopago_sandbox)
+    pref = (entry.gateway_preference_id or "").strip()
+    pay_id = (entry.gateway_payment_id or "").strip()
+    if pref and not pay_id:
+        return mercadopago_preference_redirect_url(pref, sandbox=sandbox)
+    if not pay_id:
+        return None
+    try:
+        token = decrypt_platform_secret(gw.mercadopago_access_token_encrypted)
+    except Exception:
+        return None
+    ok, _err, pay = fetch_mercadopago_payment(access_token=token, payment_id=pay_id)
+    if not ok or not isinstance(pay, dict):
+        return None
+    pm = (entry.payment_method or "").strip().lower()
+    if pm == "pix":
+        _pid, ticket_url, _qr = mercadopago_payment_pix_urls(pay)
+        return (ticket_url or "").strip() or None
+    if pm == "boleto":
+        _pid, ticket_url = mercadopago_payment_boleto_urls(pay)
+        return (ticket_url or "").strip() or None
+    _pid, ticket_url, _qr = mercadopago_payment_pix_urls(pay)
+    return (ticket_url or "").strip() or None
+
+
 def _finance_open_entries_reply(
     db: Session,
     *,
@@ -1075,6 +1122,9 @@ def _finance_open_entries_reply(
         )
         if invoice_url:
             lines.append(f"  Link de pagamento: {invoice_url}")
+        mp_url = _mercadopago_client_link_for_entry(db, tenant_id=tenant_id, entry=entry)
+        if mp_url:
+            lines.append(f"  Link Mercado Pago: {mp_url}")
     lines.append("Se precisar ajustar forma de pagamento, responda *atendente* que o financeiro continua por aqui.")
     return "\n".join(lines)
 

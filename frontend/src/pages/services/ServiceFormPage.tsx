@@ -12,6 +12,7 @@ import { listProducts, type ProductOut } from "../../api/products";
 import { getAiSettings } from "../../api/ai";
 import { formatBrlDisplay, formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./ServiceFormPage.module.css";
 
@@ -478,88 +479,93 @@ export function ServiceFormPage() {
         {activeTab === "descricao" ? (
           <div className={styles.section}>
             <h2 className={styles.sectionTitle}>Dados do servico</h2>
-            <label className={loginStyles.label} htmlFor="s-name">
-              Nome
-            </label>
-            <input
-              id="s-name"
-              className={loginStyles.input}
-              value={form.name}
-              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              required
-              disabled={readOnly}
-            />
-
-            <label className={loginStyles.label} htmlFor="s-desc">
-              Descricao (opcional)
-            </label>
-            <textarea
-              id="s-desc"
-              className={loginStyles.input}
-              value={form.description}
-              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-              rows={4}
-              disabled={readOnly}
-            />
-
-            <div className={styles.grid2}>
-              <div>
-                <label className={loginStyles.label} htmlFor="s-duration">
-                  Tempo de execucao (min)
+            <div className={formLayout.stack}>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="s-name">
+                  Nome
                 </label>
                 <input
-                  id="s-duration"
+                  id="s-name"
                   className={loginStyles.input}
-                  value={form.duration_minutes}
-                  onChange={(e) => setForm((prev) => ({ ...prev, duration_minutes: e.target.value }))}
-                  inputMode="numeric"
+                  value={form.name}
+                  onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                   required
                   disabled={readOnly}
                 />
               </div>
-              <div>
-                <label className={loginStyles.label} htmlFor="s-price">
-                  Preco (R$)
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="s-desc">
+                  Descricao (opcional)
                 </label>
-                <input
-                  id="s-price"
+                <textarea
+                  id="s-desc"
                   className={loginStyles.input}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={form.price}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      price: formatBrlInputFromDigits(e.target.value),
-                    }))
-                  }
-                  placeholder="R$ 0,00"
-                  required
+                  value={form.description}
+                  onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                  rows={4}
                   disabled={readOnly}
                 />
+              </div>
+              <div className={styles.grid2}>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="s-duration">
+                    Tempo de execucao (min)
+                  </label>
+                  <input
+                    id="s-duration"
+                    className={loginStyles.input}
+                    value={form.duration_minutes}
+                    onChange={(e) => setForm((prev) => ({ ...prev, duration_minutes: e.target.value }))}
+                    inputMode="numeric"
+                    required
+                    disabled={readOnly}
+                  />
+                </div>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="s-price">
+                    Preco (R$)
+                  </label>
+                  <input
+                    id="s-price"
+                    className={loginStyles.input}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={form.price}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        price: formatBrlInputFromDigits(e.target.value),
+                      }))
+                    }
+                    placeholder="R$ 0,00"
+                    required
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
+              <h2 className={styles.sectionTitle}>Manutenção preventiva</h2>
+              <p className={styles.sectionHint}>
+                Define a cada quantos meses este tipo de serviço deve ser refeito para alertas na Gestão preventiva (com histórico de realização por
+                cliente).
+              </p>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="s-periodicidade">
+                  Periodicidade de revisão
+                </label>
+                <select
+                  id="s-periodicidade"
+                  className={loginStyles.input}
+                  value={form.periodicidade_meses}
+                  onChange={(e) => setForm((prev) => ({ ...prev, periodicidade_meses: e.target.value }))}
+                  disabled={readOnly}
+                >
+                  <option value="">Não rastrear</option>
+                  <option value="6">6 meses</option>
+                  <option value="12">12 meses</option>
+                </select>
               </div>
             </div>
-
-            <h2 className={styles.sectionTitle}>Manutenção preventiva</h2>
-            <p className={styles.sectionHint}>
-              Define a cada quantos meses este tipo de serviço deve ser refeito para alertas na Gestão preventiva (com histórico de realização por
-              cliente).
-            </p>
-            <label className={loginStyles.label} htmlFor="s-periodicidade">
-              Periodicidade de revisão
-            </label>
-            <select
-              id="s-periodicidade"
-              className={loginStyles.input}
-              value={form.periodicidade_meses}
-              onChange={(e) => setForm((prev) => ({ ...prev, periodicidade_meses: e.target.value }))}
-              disabled={readOnly}
-            >
-              <option value="">Não rastrear</option>
-              <option value="6">6 meses</option>
-              <option value="12">12 meses</option>
-            </select>
           </div>
         ) : null}
 
@@ -689,99 +695,106 @@ export function ServiceFormPage() {
         {aiEnabled && activeTab === "ia" ? (
           <div className={styles.section}>
             <h2 className={styles.sectionTitle}>Compatibilidade técnica</h2>
-            <label className={loginStyles.label} htmlFor="s-eq-tags">
-              Tipos de equipamento (tags)
-            </label>
-            <input
-              id="s-eq-tags"
-              className={loginStyles.input}
-              value={form.equipment_type_tags}
-              onChange={(e) => setForm((prev) => ({ ...prev, equipment_type_tags: e.target.value }))}
-              placeholder="split, cassete, piso teto, climatizador..."
-              disabled={readOnly}
-            />
-            <div className={styles.grid2}>
-              <div>
-                <label className={loginStyles.label} htmlFor="s-btu-min">
-                  BTU mínimo (opcional)
+            <div className={formLayout.stack}>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="s-eq-tags">
+                  Tipos de equipamento (tags)
                 </label>
                 <input
-                  id="s-btu-min"
+                  id="s-eq-tags"
                   className={loginStyles.input}
-                  value={form.btu_min}
-                  onChange={(e) => setForm((prev) => ({ ...prev, btu_min: e.target.value }))}
-                  inputMode="numeric"
+                  value={form.equipment_type_tags}
+                  onChange={(e) => setForm((prev) => ({ ...prev, equipment_type_tags: e.target.value }))}
+                  placeholder="split, cassete, piso teto, climatizador..."
                   disabled={readOnly}
                 />
               </div>
-              <div>
-                <label className={loginStyles.label} htmlFor="s-btu-max">
-                  BTU máximo (opcional)
+              <div className={styles.grid2}>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="s-btu-min">
+                    BTU mínimo (opcional)
+                  </label>
+                  <input
+                    id="s-btu-min"
+                    className={loginStyles.input}
+                    value={form.btu_min}
+                    onChange={(e) => setForm((prev) => ({ ...prev, btu_min: e.target.value }))}
+                    inputMode="numeric"
+                    disabled={readOnly}
+                  />
+                </div>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="s-btu-max">
+                    BTU máximo (opcional)
+                  </label>
+                  <input
+                    id="s-btu-max"
+                    className={loginStyles.input}
+                    value={form.btu_max}
+                    onChange={(e) => setForm((prev) => ({ ...prev, btu_max: e.target.value }))}
+                    inputMode="numeric"
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="s-category">
+                  Categoria do serviço
                 </label>
                 <input
-                  id="s-btu-max"
+                  id="s-category"
                   className={loginStyles.input}
-                  value={form.btu_max}
-                  onChange={(e) => setForm((prev) => ({ ...prev, btu_max: e.target.value }))}
-                  inputMode="numeric"
+                  value={form.service_category}
+                  onChange={(e) => setForm((prev) => ({ ...prev, service_category: e.target.value }))}
+                  placeholder="instalacao, limpeza, manutencao, reparo..."
                   disabled={readOnly}
                 />
               </div>
-            </div>
-            <label className={loginStyles.label} htmlFor="s-category">
-              Categoria do serviço
-            </label>
-            <input
-              id="s-category"
-              className={loginStyles.input}
-              value={form.service_category}
-              onChange={(e) => setForm((prev) => ({ ...prev, service_category: e.target.value }))}
-              placeholder="instalacao, limpeza, manutencao, reparo..."
-              disabled={readOnly}
-            />
-            <div className={styles.grid2}>
-              <label className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={form.applies_residential}
-                  onChange={(e) => setForm((prev) => ({ ...prev, applies_residential: e.target.checked }))}
-                  disabled={readOnly}
-                />
-                Atende residencial
-              </label>
-              <label className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={form.applies_commercial}
-                  onChange={(e) => setForm((prev) => ({ ...prev, applies_commercial: e.target.checked }))}
-                  disabled={readOnly}
-                />
-                Atende comercial
-              </label>
-            </div>
+              <div className={styles.grid2}>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={form.applies_residential}
+                    onChange={(e) => setForm((prev) => ({ ...prev, applies_residential: e.target.checked }))}
+                    disabled={readOnly}
+                  />
+                  Atende residencial
+                </label>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    checked={form.applies_commercial}
+                    onChange={(e) => setForm((prev) => ({ ...prev, applies_commercial: e.target.checked }))}
+                    disabled={readOnly}
+                  />
+                  Atende comercial
+                </label>
+              </div>
 
-            <label className={styles.checkboxRow}>
-              <input
-                type="checkbox"
-                checked={form.is_active}
-                onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                disabled={readOnly}
-              />
-              Servico ativo
-            </label>
+              <label className={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={form.is_active}
+                  onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                  disabled={readOnly}
+                />
+                Servico ativo
+              </label>
+            </div>
           </div>
         ) : null}
 
         {activeTab === "fiscal" ? (
           <div className={styles.section}>
             <h2 className={styles.sectionTitle}>Fiscal — NFS-e nacional</h2>
+            <div className={formLayout.stack}>
             <p className={styles.sectionHint}>
               Este é o lugar principal para <strong>cTribNac</strong> e <strong>NBS</strong>: um par por tipo de serviço, conforme tabelas da Receita.
               Ao montar uma OS, estes valores entram nos itens e têm prioridade sobre o padrão em Administração → Fiscal (que só completa se aqui
               estiver vazio). Obrigatórios na NFS-e nacional quando este serviço for usado na emissão.
             </p>
             <div className={styles.grid2}>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="s-nfse-trib">
                   Código tributação nacional (cTribNac)
                 </label>
@@ -795,7 +808,7 @@ export function ServiceFormPage() {
                   disabled={readOnly}
                 />
               </div>
-              <div>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="s-nfse-nbs">
                   Código NBS
                 </label>
@@ -809,6 +822,7 @@ export function ServiceFormPage() {
                   disabled={readOnly}
                 />
               </div>
+            </div>
             </div>
           </div>
         ) : null}

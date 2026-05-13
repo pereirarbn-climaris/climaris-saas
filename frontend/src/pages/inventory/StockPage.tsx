@@ -9,6 +9,7 @@ import {
 } from "../../api/inventory";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
+import formLayout from "../formLayout.module.css";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./StockPage.module.css";
 
@@ -123,7 +124,7 @@ export function StockPage() {
           <h2 className={styles.panelTitle}>Ajuste manual</h2>
           <form onSubmit={(e) => void onAdjust(e)}>
             <div className={styles.formRow}>
-              <div className={`${styles.field} ${styles.fieldGrow}`}>
+              <div className={`${formLayout.field} ${styles.fieldGrow}`}>
                 <label className={loginStyles.label} htmlFor="inv-product">
                   Produto
                 </label>
@@ -142,7 +143,7 @@ export function StockPage() {
                   ))}
                 </select>
               </div>
-              <div className={styles.field}>
+              <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="inv-delta">
                   Quantidade (+ entrada / − saída)
                 </label>
@@ -157,7 +158,7 @@ export function StockPage() {
                   required
                 />
               </div>
-              <div className={`${styles.field} ${styles.fieldGrow}`}>
+              <div className={`${formLayout.field} ${styles.fieldGrow}`}>
                 <label className={loginStyles.label} htmlFor="inv-notes">
                   Observação (opcional)
                 </label>

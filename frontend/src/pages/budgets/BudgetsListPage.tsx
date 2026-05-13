@@ -11,7 +11,7 @@ import {
 } from "../../api/budgets";
 import { listClients } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
-import loginStyles from "../LoginPage.module.css";
+import tableStyles from "../listTableCommon.module.css";
 import modern from "../listPageModern.module.css";
 import styles from "./BudgetsListPage.module.css";
 
@@ -210,14 +210,14 @@ export function BudgetsListPage() {
 
   return (
     <div className={`${styles.wrap} ${modern.page}`}>
-      <div className={modern.toolbarCard}>
-        <div className={modern.filterCol}>
-          <label className={loginStyles.label} htmlFor="budget-status">
+      <div className={tableStyles.listToolbar}>
+        <div className={tableStyles.listToolbarFilterCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="budget-status">
             Status
           </label>
           <select
             id="budget-status"
-            className={loginStyles.input}
+            className={tableStyles.listToolbarSelect}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as "all" | BudgetStatus)}
           >
@@ -230,7 +230,7 @@ export function BudgetsListPage() {
           </select>
         </div>
         {canEdit ? (
-          <Link className={styles.btnPrimary} to="/app/budgets/new">
+          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/budgets/new">
             Novo orcamento
           </Link>
         ) : null}

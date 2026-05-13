@@ -17,15 +17,6 @@
   min-width: 220px;
 }
 
-.btnPrimary {
-  background: #06a8f7;
-  color: #fff;
-  border-radius: 0.5rem;
-  padding: 0.55rem 0.9rem;
-  text-decoration: none;
-  font-weight: 600;
-}
-
 .msgErr {
   color: #a02828;
   font-size: 0.9rem;

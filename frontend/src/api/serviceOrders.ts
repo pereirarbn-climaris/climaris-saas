@@ -1,6 +1,17 @@
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
-import { demoCreateServiceOrder, demoListServiceOrders, demoUpdateServiceOrder, isDemoMode } from "../lib/demoMode";
+import {
+  demoCreateServiceOrder,
+  demoDeleteServiceOrderProductItem,
+  demoDeleteServiceOrderServiceItem,
+  demoListServiceOrders,
+  demoPatchServiceOrderProductItemQuantity,
+  demoPatchServiceOrderServiceItemQuantity,
+  demoPostServiceOrderProductItem,
+  demoPostServiceOrderServiceItem,
+  demoUpdateServiceOrder,
+  isDemoMode,
+} from "../lib/demoMode";
 
 export type OrderStatus = "open" | "approved" | "scheduled" | "in_progress" | "done" | "cancelled";
 
@@ -269,6 +280,118 @@ export async function splitServiceOrderServiceItem(
     throw new Error(errorMessage(body, "Não foi possível fracionar o serviço na OS.", response.status));
   }
   return body as ServiceOrderOut;
+}
+
+export async function postServiceOrderServiceItem(
+  orderId: number,
+  body: { service_id: number; quantity?: number; equipment_id?: number | null },
+): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoPostServiceOrderServiceItem(orderId, { service_id: body.service_id, quantity: body.quantity ?? 1 }));
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      service_id: body.service_id,
+      quantity: body.quantity ?? 1,
+      equipment_id: body.equipment_id,
+    }),
+  });
+  const parsed = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(parsed, "Não foi possível adicionar o serviço à OS.", response.status));
+  }
+  return parsed as ServiceOrderOut;
+}
+
+export async function patchServiceOrderServiceItemQuantity(
+  orderId: number,
+  serviceItemId: number,
+  quantity: number,
+): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoPatchServiceOrderServiceItemQuantity(orderId, serviceItemId, quantity));
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items/${serviceItemId}`), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ quantity }),
+  });
+  const parsed = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(parsed, "Não foi possível atualizar a quantidade do serviço.", response.status));
+  }
+  return parsed as ServiceOrderOut;
+}
+
+export async function deleteServiceOrderServiceItem(orderId: number, serviceItemId: number): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoDeleteServiceOrderServiceItem(orderId, serviceItemId));
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items/${serviceItemId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  const parsed = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(parsed, "Não foi possível remover o serviço da OS.", response.status));
+  }
+  return parsed as ServiceOrderOut;
+}
+
+export async function postServiceOrderProductItem(
+  orderId: number,
+  body: { product_id: number; quantity?: number },
+): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoPostServiceOrderProductItem(orderId, { product_id: body.product_id, quantity: body.quantity ?? 1 }));
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ product_id: body.product_id, quantity: body.quantity ?? 1 }),
+  });
+  const parsed = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(parsed, "Não foi possível adicionar o produto à OS.", response.status));
+  }
+  return parsed as ServiceOrderOut;
+}
+
+export async function patchServiceOrderProductItemQuantity(
+  orderId: number,
+  productItemId: number,
+  quantity: number,
+): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoPatchServiceOrderProductItemQuantity(orderId, productItemId, quantity));
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items/${productItemId}`), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ quantity }),
+  });
+  const parsed = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(parsed, "Não foi possível atualizar a quantidade do produto.", response.status));
+  }
+  return parsed as ServiceOrderOut;
+}
+
+export async function deleteServiceOrderProductItem(orderId: number, productItemId: number): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(demoDeleteServiceOrderProductItem(orderId, productItemId));
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items/${productItemId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  const parsed = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(parsed, "Não foi possível remover o produto da OS.", response.status));
+  }
+  return parsed as ServiceOrderOut;
 }
 
 export async function getEquipmentUsageReport(clientId?: number): Promise<EquipmentUsageReportRowOut[]> {

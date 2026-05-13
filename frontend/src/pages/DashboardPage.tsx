@@ -4,6 +4,7 @@ import {
   changeMyPassword,
   fetchCurrentTenant,
   fetchCurrentUser,
+  logoutRevokeRefresh,
   patchCurrentUser,
   type TenantOut,
   type UserOut,
@@ -166,6 +167,7 @@ export function DashboardPage() {
       const u = await fetchCurrentUser();
       setUser(u);
     } catch {
+      await logoutRevokeRefresh();
       clearAccessToken();
       navigate("/login", { replace: true });
     }
@@ -242,6 +244,7 @@ export function DashboardPage() {
         setUser(u);
       } catch {
         if (!cancelled) {
+          void logoutRevokeRefresh();
           clearAccessToken();
           navigate("/login", { replace: true });
         }
@@ -305,7 +308,8 @@ export function DashboardPage() {
     };
   }, [accountDrawerOpen, workspaceDrawerOpen, globalSearchOpen, notificationsOpen, preferencesOpen]);
 
-  function logout() {
+  async function logout() {
+    await logoutRevokeRefresh();
     clearAccessToken();
     navigate("/login", { replace: true });
   }
@@ -625,23 +629,6 @@ export function DashboardPage() {
                   <NavIconAirCompliance className={styles.navSvg} />
                 </span>
                 <span className={styles.navLabel}>Gestão preventiva</span>
-              </NavLink>
-            </li>
-          </ul>
-
-          <p className={styles.navSection}>PMOC</p>
-          <ul className={styles.navList}>
-            <li>
-              <NavLink
-                to="/app/pmoc"
-                title="PMOC — planos e status"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconAirCompliance className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>PMOC</span>
               </NavLink>
             </li>
           </ul>

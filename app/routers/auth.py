@@ -14,10 +14,14 @@ from sqlalchemy.orm import Session
 from app.config import (
     APP_PUBLIC_URL,
     EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
+    JWT_EXPIRE_MINUTES,
+    JWT_EXPIRE_MINUTES_ADMIN,
     LOGIN_ADMIN_TRUST_DEVICE_ENABLED,
     LOGIN_ADMIN_TWO_FACTOR_ENABLED,
     PLATFORM_OPERATOR_EMAIL,
     PUBLIC_REGISTER_ENABLED,
+    REFRESH_TOKEN_DAYS,
+    REFRESH_TOKEN_ENABLED,
     TRUST_COOKIE_DOMAIN,
     TRUST_COOKIE_NAME,
     TRUST_COOKIE_SECURE,
@@ -33,9 +37,11 @@ from app.schemas import (
     ChangeMyPasswordRequest,
     CompleteTenantFiscalRequest,
     LoginRequest,
+    LogoutRequest,
     TrustedDeviceOut,
     PublicRegisterRequest,
     ForgotPasswordRequest,
+    RefreshTokenRequest,
     ResetPasswordRequest,
     TenantAdminUpdateRequest,
     TenantOut,
@@ -68,6 +74,7 @@ from models import (
     LoginAttemptAudit,
     LoginCaptchaChallenge,
     LoginClientSecurityState,
+    LoginRefreshToken,
     LoginTrustedDevice,
     LoginTwoFactorChallenge,
     MarketplaceEntitlementStatus,
@@ -92,6 +99,60 @@ _CAPTCHA_TTL_MINUTES = 10
 _TWO_FACTOR_TTL_MINUTES = 15
 _TWO_FACTOR_MAX_ATTEMPTS = 5
 _CLIENT_BACKOFF_MAX_SECONDS = 300
+_MAX_REFRESH_SESSIONS_PER_USER = 12
+
+
+def _access_token_ttl_minutes(user: User) -> int:
+    if user.role == UserRole.ADMIN and JWT_EXPIRE_MINUTES_ADMIN is not None:
+        return max(5, int(JWT_EXPIRE_MINUTES_ADMIN))
+    return max(5, int(JWT_EXPIRE_MINUTES))
+
+
+def _revoke_user_refresh_tokens(db: Session, user_id: int) -> None:
+    db.execute(delete(LoginRefreshToken).where(LoginRefreshToken.user_id == user_id))
+
+
+def _prune_refresh_tokens_before_insert(db: Session, user_id: int) -> None:
+    rows = (
+        db.execute(
+            select(LoginRefreshToken.id)
+            .where(LoginRefreshToken.user_id == user_id)
+            .order_by(LoginRefreshToken.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    allow_existing = _MAX_REFRESH_SESSIONS_PER_USER - 1
+    excess = len(rows) - allow_existing
+    if excess <= 0:
+        return
+    drop_ids = rows[:excess]
+    db.execute(delete(LoginRefreshToken).where(LoginRefreshToken.id.in_(drop_ids)))
+
+
+def _issue_refresh_token(db: Session, user: User, now: datetime) -> str | None:
+    if not REFRESH_TOKEN_ENABLED:
+        return None
+    _prune_refresh_tokens_before_insert(db, user.id)
+    raw = secrets.token_urlsafe(48)
+    th = _sha256(raw)
+    exp = now + timedelta(days=REFRESH_TOKEN_DAYS)
+    db.add(
+        LoginRefreshToken(
+            user_id=user.id,
+            token_hash=th,
+            expires_at=exp,
+            last_used_at=now,
+        )
+    )
+    return raw
+
+
+def _revoke_refresh_token_by_raw(db: Session, raw: str | None) -> None:
+    if not raw or len(raw.strip()) < 16:
+        return
+    th = _sha256(raw.strip())
+    db.execute(delete(LoginRefreshToken).where(LoginRefreshToken.token_hash == th))
 
 
 def _reserved_platform_email(email: str) -> bool:
@@ -208,12 +269,22 @@ def _user_agent_fingerprint(user_agent: str | None) -> str:
     return _sha256((user_agent or "")[:512])
 
 
+def _trusted_device_binding_fingerprint(user_agent: str | None) -> str:
+    """Identificador gravado em login_trusted_devices para o cookie de confiar dispositivo.
+
+    Usa só o User-Agent (mesmo hash que user_agent_hash), sem IP: em celular o IP muda
+    (4G/Wi‑Fi, operadora) a cada sessão e quebrava o vínculo se usássemos _device_fingerprint.
+    """
+    return _user_agent_fingerprint(user_agent)
+
+
 def _trusted_device_cookie_accepts(
     *,
     db: Session,
     request: Request,
     user_id: int,
-    device_fingerprint: str,
+    trust_binding_fingerprint: str,
+    legacy_full_device_fingerprint: str,
     user_agent: str | None,
     now: datetime,
 ) -> bool:
@@ -227,11 +298,12 @@ def _trusted_device_cookie_accepts(
         select(LoginTrustedDevice).where(
             LoginTrustedDevice.user_id == user_id,
             LoginTrustedDevice.token_hash == th,
-            LoginTrustedDevice.device_fingerprint == device_fingerprint,
             LoginTrustedDevice.expires_at > now,
         )
     ).scalar_one_or_none()
     if row is None:
+        return False
+    if row.device_fingerprint not in (trust_binding_fingerprint, legacy_full_device_fingerprint):
         return False
     ua_hash = _user_agent_fingerprint(user_agent)
     if row.user_agent_hash and row.user_agent_hash != ua_hash:
@@ -246,16 +318,16 @@ def _issue_trusted_device_cookie(
     db: Session,
     response: Response,
     user: User,
-    device_fingerprint: str,
     user_agent: str | None,
     now: datetime,
 ) -> None:
     if not LOGIN_ADMIN_TRUST_DEVICE_ENABLED:
         return
+    trust_bind = _trusted_device_binding_fingerprint(user_agent)
     db.execute(
         delete(LoginTrustedDevice).where(
             LoginTrustedDevice.user_id == user.id,
-            LoginTrustedDevice.device_fingerprint == device_fingerprint,
+            LoginTrustedDevice.device_fingerprint == trust_bind,
         )
     )
     raw = secrets.token_urlsafe(32)
@@ -265,7 +337,7 @@ def _issue_trusted_device_cookie(
     db.add(
         LoginTrustedDevice(
             user_id=user.id,
-            device_fingerprint=device_fingerprint,
+            device_fingerprint=trust_bind,
             token_hash=th,
             user_agent_hash=ua_h,
             expires_at=exp,
@@ -1167,6 +1239,7 @@ def login(
     user_agent = request.headers.get("user-agent", "").strip()[:512] or None
     ip_address = _client_ip(request)
     device_fingerprint = _device_fingerprint(ip_address, user_agent)
+    trust_binding_fingerprint = _trusted_device_binding_fingerprint(user_agent)
     users_by_email = db.execute(select(User).where(User.email == email_norm)).scalars().all()
     client_state = _upsert_client_state(
         db=db,
@@ -1398,7 +1471,6 @@ def login(
                     db=db,
                     response=response,
                     user=user,
-                    device_fingerprint=device_fingerprint,
                     user_agent=user_agent,
                     now=now,
                 )
@@ -1407,7 +1479,8 @@ def login(
             db=db,
             request=request,
             user_id=user.id,
-            device_fingerprint=device_fingerprint,
+            trust_binding_fingerprint=trust_binding_fingerprint,
+            legacy_full_device_fingerprint=device_fingerprint,
             user_agent=user_agent,
             now=now,
         ):
@@ -1437,13 +1510,18 @@ def login(
                 two_factor_token=two_factor_token,
             )
 
+    refresh_plain: str | None = None
+    if REFRESH_TOKEN_ENABLED:
+        refresh_plain = _issue_refresh_token(db, user, now)
+
     token = create_access_token(
         {
             "sub": str(user.id),
             "tenant_id": user.tenant_id,
             "role": user.role.value,
             "po": user.is_platform_operator,
-        }
+        },
+        expires_minutes=_access_token_ttl_minutes(user),
     )
     _record_login_attempt(
         db=db,
@@ -1462,7 +1540,86 @@ def login(
         must_change_password=user.must_change_password,
         tenant_id=user.tenant_id,
         is_platform_operator=user.is_platform_operator,
+        refresh_token=refresh_plain,
     )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("45/minute")
+def refresh_access_token(
+    request: Request,
+    payload: RefreshTokenRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> TokenResponse:
+    """Emite novo JWT (e novo refresh com rotação) a partir de um refresh token válido."""
+    if not REFRESH_TOKEN_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Renovação de sessão desabilitada neste servidor.",
+        )
+    now = datetime.now(timezone.utc)
+    raw = payload.refresh_token.strip()
+    if len(raw) < 20:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão inválida. Faça login novamente.",
+        )
+    th = _sha256(raw)
+    row = db.execute(select(LoginRefreshToken).where(LoginRefreshToken.token_hash == th)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão inválida. Faça login novamente.",
+        )
+    if row.expires_at <= now:
+        db.delete(row)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão expirada. Faça login novamente.",
+        )
+    user = db.get(User, row.user_id)
+    if user is None or not user.is_active:
+        db.delete(row)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão inválida. Faça login novamente.",
+        )
+    db.delete(row)
+    db.flush()
+    new_refresh = _issue_refresh_token(db, user, now)
+    access = create_access_token(
+        {
+            "sub": str(user.id),
+            "tenant_id": user.tenant_id,
+            "role": user.role.value,
+            "po": user.is_platform_operator,
+        },
+        expires_minutes=_access_token_ttl_minutes(user),
+    )
+    db.commit()
+    return TokenResponse(
+        access_token=access,
+        must_change_password=user.must_change_password,
+        tenant_id=user.tenant_id,
+        is_platform_operator=user.is_platform_operator,
+        refresh_token=new_refresh,
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
+def logout_session(
+    request: Request,
+    payload: LogoutRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Revoga um refresh token (logout no cliente)."""
+    if not REFRESH_TOKEN_ENABLED or not (payload.refresh_token or "").strip():
+        return
+    _revoke_refresh_token_by_raw(db, payload.refresh_token)
+    db.commit()
 
 
 @router.post("/verify-email")
@@ -1585,6 +1742,7 @@ def reset_password(
 
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
+    _revoke_user_refresh_tokens(db, user.id)
     db.add(user)
     db.delete(row)
     db.commit()
@@ -1836,6 +1994,7 @@ def admin_reset_user_password(
     temporary_password = generate_temporary_password(6)
     target.password_hash = hash_password(temporary_password)
     target.must_change_password = True
+    _revoke_user_refresh_tokens(db, target.id)
     db.add(target)
     db.commit()
     db.refresh(target)
@@ -1877,6 +2036,7 @@ def change_temporary_password(
 
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
+    _revoke_user_refresh_tokens(db, user.id)
     db.add(user)
     db.commit()
 
@@ -1893,6 +2053,7 @@ def change_my_password(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Senha atual inválida.")
     current_user.password_hash = hash_password(payload.new_password)
     current_user.must_change_password = False
+    _revoke_user_refresh_tokens(db, current_user.id)
     db.add(current_user)
     db.commit()
 
@@ -1907,7 +2068,8 @@ def list_my_trusted_devices(
     """Lista dispositivos confiáveis (2FA lembrar dispositivo) — só administradores do workspace."""
     ip_address = _client_ip(request)
     user_agent = request.headers.get("user-agent", "").strip()[:512] or None
-    fp = _device_fingerprint(ip_address, user_agent)
+    fp_legacy = _device_fingerprint(ip_address, user_agent)
+    trust_bind = _trusted_device_binding_fingerprint(user_agent)
     rows = (
         db.execute(
             select(LoginTrustedDevice)
@@ -1923,7 +2085,7 @@ def list_my_trusted_devices(
             expires_at=row.expires_at,
             created_at=row.created_at,
             last_used_at=row.last_used_at,
-            is_current_browser=row.device_fingerprint == fp,
+            is_current_browser=row.device_fingerprint in (trust_bind, fp_legacy),
         )
         for row in rows
     ]

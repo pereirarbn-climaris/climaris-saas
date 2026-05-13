@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useOutletContext, useParams } from "react-router-dom";
+import { Link, Navigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import {
   activatePmocPlan,
   archivePmocPlan,
@@ -71,7 +71,15 @@ function toInputDate(iso: string | null | undefined): string {
 export function PmocDetailPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const { pmocId: pmocIdParam } = useParams();
+  const [searchParams] = useSearchParams();
   const pmocId = pmocIdParam ? Number.parseInt(pmocIdParam, 10) : NaN;
+
+  const fromClientNum = useMemo(() => {
+    const raw = searchParams.get("from_client");
+    if (!raw) return NaN;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n : NaN;
+  }, [searchParams]);
 
   const [tab, setTab] = useState<Tab>("overview");
   const [plan, setPlan] = useState<PmocPlanOut | null>(null);
@@ -365,6 +373,12 @@ export function PmocDetailPage() {
     return Object.entries(snap as Record<string, unknown>).filter(([k]) => k !== "captured_at");
   }, [plan]);
 
+  const backToClientPath = useMemo(() => {
+    if (!Number.isFinite(fromClientNum) || !plan) return null;
+    if (fromClientNum !== plan.client_id) return null;
+    return `/app/clients/${plan.client_id}?tab=pmoc`;
+  }, [fromClientNum, plan]);
+
   function toggleEquip(id: number) {
     setSelectedEquipIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
@@ -384,18 +398,32 @@ export function PmocDetailPage() {
     return (
       <div className={styles.wrap}>
         <p className={styles.msgErr}>{err || "PMOC não encontrado."}</p>
-        <Link to="/app/pmoc" className={styles.rowLink}>
-          Voltar
-        </Link>
+        <p style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+          {Number.isFinite(fromClientNum) ? (
+            <Link to={`/app/clients/${fromClientNum}?tab=pmoc`} className={styles.btnBackLink}>
+              ← Voltar ao cliente
+            </Link>
+          ) : null}
+          <Link to="/app/pmoc" className={styles.rowLink}>
+            Lista PMOC
+          </Link>
+        </p>
       </div>
     );
   }
 
   return (
     <div className={styles.wrap}>
-      <Link to="/app/pmoc" className={styles.btnBackLink}>
-        ← Lista PMOC
-      </Link>
+      <p style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center", margin: "0 0 0.75rem" }}>
+        {backToClientPath ? (
+          <Link to={backToClientPath} className={styles.btnBackLink}>
+            ← Voltar ao cliente
+          </Link>
+        ) : null}
+        <Link to="/app/pmoc" className={backToClientPath ? styles.rowLink : styles.btnBackLink}>
+          {backToClientPath ? "Lista PMOC (todos)" : "← Lista PMOC"}
+        </Link>
+      </p>
 
       <header className={styles.hero}>
         <h1 className={styles.title}>{plan.title}</h1>

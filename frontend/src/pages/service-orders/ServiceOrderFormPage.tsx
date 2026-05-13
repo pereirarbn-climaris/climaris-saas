@@ -12,13 +12,19 @@ import { listProducts, type ProductOut } from "../../api/products";
 import {
   approveServiceOrder,
   createServiceOrder,
+  deleteServiceOrderProductItem,
+  deleteServiceOrderServiceItem,
   getServiceOrder,
   getRescheduleOptions,
   getTechnicianNextSlots,
   getTechniciansAvailability,
   listSchedules,
   patchServiceOrderDiscount,
+  patchServiceOrderProductItemQuantity,
+  patchServiceOrderServiceItemQuantity,
   patchServiceOrderStatus,
+  postServiceOrderProductItem,
+  postServiceOrderServiceItem,
   rescheduleSchedule,
   splitServiceOrderServiceItem,
   updateServiceOrderItemEquipment,
@@ -53,6 +59,7 @@ import { sortByNameAsc } from "../../lib/localeSort";
 import { ClientPicker } from "../../components/ClientPicker";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
+import formLayout from "../formLayout.module.css";
 import styles from "./ServiceOrderFormPage.module.css";
 
 type SelectedService = {
@@ -69,6 +76,8 @@ function newLineId(): string {
 }
 
 type SelectedProduct = {
+  /** Presente quando a linha já foi persistida na API. */
+  product_item_id?: number;
   product_id: number;
   quantity: number;
 };
@@ -500,6 +509,14 @@ export function ServiceOrderFormPage() {
     [grandTotal, discountAmount],
   );
   const hasActiveSchedule = Boolean(order?.schedule && order.schedule.status !== "cancelled");
+  /** Admin/recepção: incluir, alterar quantidade ou remover linhas até conclusão ou cancelamento da OS. */
+  const allowEditOrderLines = Boolean(
+    canEdit &&
+      !isNew &&
+      order &&
+      order.status !== "done" &&
+      order.status !== "cancelled",
+  );
   const showConclusaoTab = useMemo(() => {
     if (isNew || !order) return false;
     if (order.status === "cancelled") return false;
@@ -806,7 +823,7 @@ export function ServiceOrderFormPage() {
         equipment_id: item.equipment_id ?? undefined,
       })),
     );
-    setSelectedProducts(order.product_items.map((item) => ({ product_id: item.product_id, quantity: item.quantity })));
+    setSelectedProducts(order.product_items.map((item) => ({ product_item_id: item.id, product_id: item.product_id, quantity: item.quantity })));
     if (order.schedule?.starts_at) {
       const d = new Date(order.schedule.starts_at);
       if (!Number.isNaN(d.getTime())) {
@@ -1070,24 +1087,50 @@ export function ServiceOrderFormPage() {
 
   function addService(service_id: number) {
     if (!service_id) return;
-    setSelectedServices((prev) => {
-      const existing = prev.find((s) => s.service_id === service_id);
-      if (existing) {
-        return prev.map((s) => (s.service_id === service_id ? { ...s, quantity: s.quantity + 1 } : s));
+    if (isNew) {
+      setSelectedServices((prev) => {
+        const existing = prev.find((s) => s.service_id === service_id);
+        if (existing) {
+          return prev.map((s) => (s.service_id === service_id ? { ...s, quantity: s.quantity + 1 } : s));
+        }
+        return [...prev, { lineId: newLineId(), service_id, quantity: 1 }];
+      });
+      return;
+    }
+    if (!order || !allowEditOrderLines) return;
+    void (async () => {
+      try {
+        const refreshed = await postServiceOrderServiceItem(order.id, { service_id, quantity: 1 });
+        setOrder(refreshed);
+        setMsg({ kind: "ok", text: "Serviço adicionado à OS." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao adicionar serviço." });
       }
-      return [...prev, { lineId: newLineId(), service_id, quantity: 1 }];
-    });
+    })();
   }
 
   function addProduct(product_id: number) {
     if (!product_id) return;
-    setSelectedProducts((prev) => {
-      const existing = prev.find((p) => p.product_id === product_id);
-      if (existing) {
-        return prev.map((p) => (p.product_id === product_id ? { ...p, quantity: p.quantity + 1 } : p));
+    if (isNew) {
+      setSelectedProducts((prev) => {
+        const existing = prev.find((p) => p.product_id === product_id);
+        if (existing) {
+          return prev.map((p) => (p.product_id === product_id ? { ...p, quantity: p.quantity + 1 } : p));
+        }
+        return [...prev, { product_id, quantity: 1 }];
+      });
+      return;
+    }
+    if (!order || !allowEditOrderLines) return;
+    void (async () => {
+      try {
+        const refreshed = await postServiceOrderProductItem(order.id, { product_id, quantity: 1 });
+        setOrder(refreshed);
+        setMsg({ kind: "ok", text: "Produto adicionado à OS." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao adicionar produto." });
       }
-      return [...prev, { product_id, quantity: 1 }];
-    });
+    })();
   }
 
   async function onCreateOrder(e: FormEvent) {
@@ -1303,9 +1346,15 @@ export function ServiceOrderFormPage() {
       });
       setSlotSuggestions(rows);
       if (rows.length === 0) {
+        const base =
+          "Não encontramos um encaixe automático para este dia, técnico e duração da OS (turnos manhã/tarde, jornada do técnico e conflitos na agenda).";
+        const longJob =
+          !allowOvertime && estimatedMinutes > 240
+            ? ' Serviços longos costumam precisar de "Permitir hora extra" ou "Sugerir divisão em dias" para caber na agenda.'
+            : "";
         setMsg({
           kind: "err",
-          text: "Não encontramos horários disponíveis para o dia/filtro selecionado. Tente outro dia ou técnico.",
+          text: `${base}${longJob} Você pode tentar outro dia ou técnico, ou informar data e hora manualmente no campo "Iniciar em" se já houver acordo com o cliente.`,
         });
       }
     } catch (e) {
@@ -1692,7 +1741,7 @@ export function ServiceOrderFormPage() {
                 Dados principais
               </h2>
               <div className={styles.clientRowPrimary}>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="os-client">
                     Cliente
                   </label>
@@ -1764,20 +1813,24 @@ export function ServiceOrderFormPage() {
 
             <div className={styles.section}>
               <h2 className={styles.sectionHeading}>Observações</h2>
-              <label className={loginStyles.label} htmlFor="os-general-notes">
-                Texto livre para a equipe
-              </label>
-              <textarea
-                id="os-general-notes"
-                className={loginStyles.input}
-                value={generalNotes}
-                onChange={(e) => setGeneralNotes(e.target.value)}
-                rows={4}
-                disabled={!isNew}
-                placeholder="Informações importantes para a equipe e para o atendimento."
-              />
-              <div className={styles.infoStrip}>
-                <p>Serviços, produtos, desconto e resumo ficam no card abaixo.</p>
+              <div className={formLayout.stack}>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="os-general-notes">
+                    Texto livre para a equipe
+                  </label>
+                  <textarea
+                    id="os-general-notes"
+                    className={loginStyles.input}
+                    value={generalNotes}
+                    onChange={(e) => setGeneralNotes(e.target.value)}
+                    rows={4}
+                    disabled={!isNew}
+                    placeholder="Informações importantes para a equipe e para o atendimento."
+                  />
+                </div>
+                <div className={styles.infoStrip}>
+                  <p>Serviços, produtos, desconto e resumo ficam no card abaixo.</p>
+                </div>
               </div>
             </div>
 
@@ -1790,13 +1843,19 @@ export function ServiceOrderFormPage() {
                     Serviços da OS
                   </h2>
                 </div>
+                {allowEditOrderLines && hasActiveSchedule ? (
+                  <p className={styles.summaryLineMuted} style={{ margin: "0 0 0.75rem" }}>
+                    Esta OS já tem agendamento: ao alterar serviços ou quantidades, confira na aba Planejamento se o tempo total
+                    ainda cabe no horário (ou remarque).
+                  </p>
+                ) : null}
                 {isNew ? (
                   <p className={styles.summaryLineMuted} style={{ margin: "0 0 0.75rem" }}>
                     Use <strong>quantidade</strong> para várias unidades do mesmo serviço. O vínculo de cada aparelho é
                     feito pelo <strong>técnico na execução</strong> (ou separação manual após salvar a OS).
                   </p>
                 ) : null}
-                {isNew ? (
+                {(isNew || allowEditOrderLines) ? (
                   <>
                     <div className={styles.searchFieldWrap}>
                       <span className={styles.searchFieldIcon}>
@@ -1868,7 +1927,7 @@ export function ServiceOrderFormPage() {
                 </>
               ) : null}
 
-              {selectedServices.length === 0 && isNew ? (
+              {selectedServices.length === 0 && (isNew || allowEditOrderLines) ? (
                 <div className={styles.emptyStateDashed}>
                   <IconWrench className={styles.emptyStateIcon} aria-hidden />
                   <p>Nenhum serviço adicionado.</p>
@@ -1921,7 +1980,7 @@ export function ServiceOrderFormPage() {
               {showQuickEquipmentCreate ? (
                 <div className={styles.subPanel}>
                   <div className={styles.gridCompact}>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Identificação</label>
                       <input
                         className={loginStyles.input}
@@ -1931,7 +1990,7 @@ export function ServiceOrderFormPage() {
                         disabled={creatingQuickEquipment}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Local</label>
                       <input
                         className={loginStyles.input}
@@ -1978,7 +2037,27 @@ export function ServiceOrderFormPage() {
                           prev.map((s) => (s.lineId === item.lineId ? { ...s, quantity: raw } : s)),
                         );
                       }}
-                      disabled={!isNew}
+                      onBlur={() => {
+                        if (isNew || !allowEditOrderLines || !order?.id || !item.service_item_id) return;
+                        const row = selectedServices.find((s) => s.lineId === item.lineId);
+                        if (!row) return;
+                        void (async () => {
+                          try {
+                            const refreshed = await patchServiceOrderServiceItemQuantity(
+                              order.id,
+                              item.service_item_id!,
+                              Math.max(row.quantity, 1),
+                            );
+                            setOrder(refreshed);
+                          } catch (err) {
+                            setMsg({
+                              kind: "err",
+                              text: err instanceof Error ? err.message : "Erro ao salvar quantidade do serviço.",
+                            });
+                          }
+                        })();
+                      }}
+                      disabled={!isNew && !allowEditOrderLines}
                     />
                     {isNew ? (
                       <span className={styles.summaryLineMuted} title="Vínculo na execução (técnico)">
@@ -2031,11 +2110,29 @@ export function ServiceOrderFormPage() {
                         ))}
                       </select>
                     )}
-                    {isNew ? (
+                    {(isNew || allowEditOrderLines) ? (
                       <button
                         type="button"
                         className={styles.btnGhost}
-                        onClick={() => setSelectedServices((prev) => prev.filter((s) => s.lineId !== item.lineId))}
+                        onClick={() => {
+                          if (isNew) {
+                            setSelectedServices((prev) => prev.filter((s) => s.lineId !== item.lineId));
+                            return;
+                          }
+                          if (!order?.id || !item.service_item_id || !allowEditOrderLines) return;
+                          void (async () => {
+                            try {
+                              const refreshed = await deleteServiceOrderServiceItem(order.id, item.service_item_id!);
+                              setOrder(refreshed);
+                              setMsg({ kind: "ok", text: "Serviço removido da OS." });
+                            } catch (err) {
+                              setMsg({
+                                kind: "err",
+                                text: err instanceof Error ? err.message : "Erro ao remover serviço.",
+                              });
+                            }
+                          })();
+                        }}
                       >
                         Remover
                       </button>
@@ -2052,7 +2149,7 @@ export function ServiceOrderFormPage() {
                   Produtos da OS
                 </h2>
               </div>
-              {isNew ? (
+              {(isNew || allowEditOrderLines) ? (
                 <>
                   <div className={styles.searchFieldWrap}>
                     <span className={styles.searchFieldIcon}>
@@ -2122,21 +2219,22 @@ export function ServiceOrderFormPage() {
                 </>
               ) : null}
 
-              {selectedProducts.length === 0 && isNew ? (
+              {selectedProducts.length === 0 && (isNew || allowEditOrderLines) ? (
                 <div className={styles.emptyStateDashed}>
                   <IconPackageSection className={styles.emptyStateIcon} aria-hidden />
                   <p>Nenhum produto adicionado.</p>
                   <p>Use a busca acima para incluir materiais na OS.</p>
                 </div>
               ) : null}
-              {selectedProducts.length === 0 && !isNew ? (
+              {selectedProducts.length === 0 && !isNew && !allowEditOrderLines ? (
                 <p className={styles.emptyText}>Nenhum produto adicionado.</p>
               ) : null}
               {selectedProducts.map((item) => {
                 const product = productsMap.get(item.product_id);
                 const unitPrice = Number(product?.unit_price ?? 0);
+                const rowKey = item.product_item_id ?? `pid-${item.product_id}`;
                 return (
-                  <div key={item.product_id} className={`${styles.itemRowCard} ${styles.itemRowCardProduct}`}>
+                  <div key={rowKey} className={`${styles.itemRowCard} ${styles.itemRowCardProduct}`}>
                     <div>
                       <p className={styles.itemRowTitle}>{product?.name ?? `Produto #${item.product_id}`}</p>
                       <p className={styles.itemRowMeta}>{formatCurrency(unitPrice)} / un</p>
@@ -2146,20 +2244,62 @@ export function ServiceOrderFormPage() {
                       type="number"
                       min={1}
                       value={item.quantity}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const q = Math.max(Number(e.target.value), 1);
                         setSelectedProducts((prev) =>
-                          prev.map((p) =>
-                            p.product_id === item.product_id ? { ...p, quantity: Math.max(Number(e.target.value), 1) } : p,
-                          ),
-                        )
-                      }
-                      disabled={!isNew}
+                          prev.map((p) => {
+                            if (item.product_item_id != null) {
+                              return p.product_item_id === item.product_item_id ? { ...p, quantity: q } : p;
+                            }
+                            return p.product_id === item.product_id ? { ...p, quantity: q } : p;
+                          }),
+                        );
+                      }}
+                      onBlur={() => {
+                        if (isNew || !allowEditOrderLines || !order?.id || !item.product_item_id) return;
+                        const row = selectedProducts.find((p) => p.product_item_id === item.product_item_id);
+                        if (!row) return;
+                        void (async () => {
+                          try {
+                            const refreshed = await patchServiceOrderProductItemQuantity(
+                              order.id,
+                              item.product_item_id!,
+                              Math.max(row.quantity, 1),
+                            );
+                            setOrder(refreshed);
+                          } catch (err) {
+                            setMsg({
+                              kind: "err",
+                              text: err instanceof Error ? err.message : "Erro ao salvar quantidade do produto.",
+                            });
+                          }
+                        })();
+                      }}
+                      disabled={!isNew && !allowEditOrderLines}
                     />
-                    {isNew ? (
+                    {(isNew || allowEditOrderLines) ? (
                       <button
                         type="button"
                         className={styles.btnGhost}
-                        onClick={() => setSelectedProducts((prev) => prev.filter((p) => p.product_id !== item.product_id))}
+                        onClick={() => {
+                          if (isNew) {
+                            setSelectedProducts((prev) => prev.filter((p) => p.product_id !== item.product_id));
+                            return;
+                          }
+                          if (!order?.id || !item.product_item_id || !allowEditOrderLines) return;
+                          void (async () => {
+                            try {
+                              const refreshed = await deleteServiceOrderProductItem(order.id, item.product_item_id!);
+                              setOrder(refreshed);
+                              setMsg({ kind: "ok", text: "Produto removido da OS." });
+                            } catch (err) {
+                              setMsg({
+                                kind: "err",
+                                text: err instanceof Error ? err.message : "Erro ao remover produto.",
+                              });
+                            }
+                          })();
+                        }}
                       >
                         Remover
                       </button>
@@ -2171,24 +2311,27 @@ export function ServiceOrderFormPage() {
 
             <div className={styles.section}>
               <h2 className={styles.sectionHeading}>Resumo</h2>
-              <div className={styles.discountRow}>
-                <label className={loginStyles.label} htmlFor="os-discount">
-                  Desconto (R$)
-                </label>
-                <input
-                  id="os-discount"
-                  type="number"
-                  className={loginStyles.input}
-                  min={0}
-                  step={0.01}
-                  value={discountAmount}
-                  onChange={(e) => setDiscountAmount(Math.max(0, Number(e.target.value) || 0))}
-                  onBlur={() => {
-                    if (!isNew && order) void persistDiscount(discountAmount);
-                  }}
-                  disabled={readOnly || (!isNew && !canEdit)}
-                />
-              </div>
+              <div className={formLayout.stack}>
+                <div className={formLayout.field}>
+                  <div className={styles.discountRow}>
+                    <label className={loginStyles.label} htmlFor="os-discount">
+                      Desconto (R$)
+                    </label>
+                    <input
+                      id="os-discount"
+                      type="number"
+                      className={loginStyles.input}
+                      min={0}
+                      step={0.01}
+                      value={discountAmount}
+                      onChange={(e) => setDiscountAmount(Math.max(0, Number(e.target.value) || 0))}
+                      onBlur={() => {
+                        if (!isNew && order) void persistDiscount(discountAmount);
+                      }}
+                      disabled={readOnly || (!isNew && !canEdit)}
+                    />
+                  </div>
+                </div>
               <div className={styles.summaryGrid}>
                 <article className={styles.summaryCard}>
                   <p className={styles.summaryLabel}>Tempo total</p>
@@ -2211,6 +2354,14 @@ export function ServiceOrderFormPage() {
                   <p className={styles.summaryHint}>Valor líquido (após desconto)</p>
                 </article>
               </div>
+              {estimatedMinutes > 300 && !isNew ? (
+                <p className={styles.summaryLineMuted} style={{ marginTop: "0.5rem" }}>
+                  Duração elevada: a sugestão de horários trata manhã e tarde separadamente (até o fim do expediente). Se
+                  nada aparecer, use &quot;Permitir hora extra&quot;, &quot;Sugerir divisão em dias&quot; ou informe o
+                  início manualmente.
+                </p>
+              ) : null}
+              </div>
             </div>
             </div>
             </div>
@@ -2226,8 +2377,9 @@ export function ServiceOrderFormPage() {
                 <p className={styles.summaryLine}>Esta OS está {statusLabel(order?.status).toLowerCase()}.</p>
               ) : (
                 <>
+                  <div className={formLayout.stack}>
                   <div className={styles.planningTopRow}>
-                    <div className={styles.planningTechField}>
+                    <div className={`${styles.planningTechField} ${formLayout.field}`}>
                       <label className={loginStyles.label} htmlFor="planning-tech">
                         Técnico
                       </label>
@@ -2445,30 +2597,36 @@ export function ServiceOrderFormPage() {
                             <p className={styles.placeholderText}>
                               Defina início e observações. O técnico é o selecionado acima (ou o da sugestão escolhida).
                             </p>
-                            <label className={loginStyles.label} htmlFor="plan-start">
-                              Iniciar em
-                            </label>
-                            <input
-                              id="plan-start"
-                              type="datetime-local"
-                              className={loginStyles.input}
-                              value={startsAtLocal}
-                              onChange={(e) => setStartsAtLocal(e.target.value)}
-                              disabled={readOnly || isTerminal}
-                            />
+                            <div className={formLayout.stack}>
+                              <div className={formLayout.field}>
+                                <label className={loginStyles.label} htmlFor="plan-start">
+                                  Iniciar em
+                                </label>
+                                <input
+                                  id="plan-start"
+                                  type="datetime-local"
+                                  className={loginStyles.input}
+                                  value={startsAtLocal}
+                                  onChange={(e) => setStartsAtLocal(e.target.value)}
+                                  disabled={readOnly || isTerminal}
+                                />
+                              </div>
 
-                            <label className={loginStyles.label} htmlFor="plan-notes">
-                              Observações e histórico
-                            </label>
-                            <textarea
-                              id="plan-notes"
-                              className={loginStyles.input}
-                              value={approveNotes}
-                              onChange={(e) => setApproveNotes(e.target.value)}
-                              rows={4}
-                              disabled={readOnly || isTerminal}
-                              placeholder="Notas da equipe e registro de mudanças (app / WhatsApp)."
-                            />
+                              <div className={formLayout.field}>
+                                <label className={loginStyles.label} htmlFor="plan-notes">
+                                  Observações e histórico
+                                </label>
+                                <textarea
+                                  id="plan-notes"
+                                  className={loginStyles.input}
+                                  value={approveNotes}
+                                  onChange={(e) => setApproveNotes(e.target.value)}
+                                  rows={4}
+                                  disabled={readOnly || isTerminal}
+                                  placeholder="Notas da equipe e registro de mudanças (app / WhatsApp)."
+                                />
+                              </div>
+                            </div>
 
                             <p className={styles.summaryLineMuted}>
                               Fim estimado considera duração dos serviços e disponibilidade do técnico.
@@ -2537,17 +2695,19 @@ export function ServiceOrderFormPage() {
                         <p className={styles.summaryLineMuted}>
                           Até 4 sugestões por turno (manhã/tarde), respeitando agenda e feriados.
                         </p>
-                        <label className={loginStyles.label} htmlFor="planning-reschedule-start">
-                          Novo início
-                        </label>
-                        <input
-                          id="planning-reschedule-start"
-                          type="datetime-local"
-                          className={loginStyles.input}
-                          value={startsAtLocal}
-                          onChange={(e) => setStartsAtLocal(e.target.value)}
-                          disabled={readOnly || isTerminal}
-                        />
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="planning-reschedule-start">
+                            Novo início
+                          </label>
+                          <input
+                            id="planning-reschedule-start"
+                            type="datetime-local"
+                            className={loginStyles.input}
+                            value={startsAtLocal}
+                            onChange={(e) => setStartsAtLocal(e.target.value)}
+                            disabled={readOnly || isTerminal}
+                          />
+                        </div>
                         <div className={styles.actions}>
                           <button
                             type="button"
@@ -2561,6 +2721,7 @@ export function ServiceOrderFormPage() {
                       </article>
                     </div>
                   ) : null}
+                  </div>
                 </>
               )
             ) : (
@@ -2654,17 +2815,19 @@ export function ServiceOrderFormPage() {
                       </ul>
                     </div>
                   )}
-                  <label className={loginStyles.label} htmlFor="os-preventive-date">
-                    Data da realização
-                  </label>
-                  <input
-                    id="os-preventive-date"
-                    type="date"
-                    className={loginStyles.input}
-                    value={preventiveOsDate}
-                    onChange={(e) => setPreventiveOsDate(e.target.value)}
-                    disabled={preventiveOsLoading}
-                  />
+                  <div className={formLayout.field}>
+                    <label className={loginStyles.label} htmlFor="os-preventive-date">
+                      Data da realização
+                    </label>
+                    <input
+                      id="os-preventive-date"
+                      type="date"
+                      className={loginStyles.input}
+                      value={preventiveOsDate}
+                      onChange={(e) => setPreventiveOsDate(e.target.value)}
+                      disabled={preventiveOsLoading}
+                    />
+                  </div>
                   <div className={styles.actions} style={{ marginTop: "0.75rem" }}>
                     <button
                       type="button"
@@ -2737,47 +2900,50 @@ export function ServiceOrderFormPage() {
                 </div>
               ) : (
                 <>
-                  <div className={styles.clientRowPrimary}>
-                    <div>
-                      <label className={loginStyles.label} htmlFor="os-fin-amount">
-                        Valor bruto (R$)
-                      </label>
-                      <input
-                        id="os-fin-amount"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        className={loginStyles.input}
-                        value={osFinAmount}
-                        onChange={(e) => setOsFinAmount(e.target.value)}
-                      />
+                  <div className={formLayout.stack}>
+                    <div className={styles.clientRowPrimary}>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-amount">
+                          Valor bruto (R$)
+                        </label>
+                        <input
+                          id="os-fin-amount"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className={loginStyles.input}
+                          value={osFinAmount}
+                          onChange={(e) => setOsFinAmount(e.target.value)}
+                        />
+                      </div>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-due">
+                          Vencimento (1ª parcela)
+                        </label>
+                        <input
+                          id="os-fin-due"
+                          type="date"
+                          className={loginStyles.input}
+                          value={osFinDueDate}
+                          onChange={(e) => setOsFinDueDate(e.target.value)}
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className={loginStyles.label} htmlFor="os-fin-due">
-                        Vencimento (1ª parcela)
+                    <div className={formLayout.field}>
+                      <label className={loginStyles.label} htmlFor="os-fin-competence">
+                        Data de competência
                       </label>
                       <input
-                        id="os-fin-due"
+                        id="os-fin-competence"
                         type="date"
                         className={loginStyles.input}
-                        value={osFinDueDate}
-                        onChange={(e) => setOsFinDueDate(e.target.value)}
+                        value={osFinCompetenceDate}
+                        onChange={(e) => setOsFinCompetenceDate(e.target.value)}
                       />
                     </div>
-                  </div>
-                  <label className={loginStyles.label} htmlFor="os-fin-competence">
-                    Data de competência
-                  </label>
-                  <input
-                    id="os-fin-competence"
-                    type="date"
-                    className={loginStyles.input}
-                    value={osFinCompetenceDate}
-                    onChange={(e) => setOsFinCompetenceDate(e.target.value)}
-                  />
-                  <div className={styles.clientRowPrimary}>
-                    <div>
-                      <label className={loginStyles.label} htmlFor="os-fin-method">
+                    <div className={styles.clientRowPrimary}>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-method">
                         Meio de pagamento
                       </label>
                       <select
@@ -2792,55 +2958,55 @@ export function ServiceOrderFormPage() {
                         <option value="debit_card">Cartão de débito</option>
                         <option value="boleto">Boleto</option>
                       </select>
+                      </div>
+                      {osFinShowMachineField ? (
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="os-fin-provider">
+                            Maquininha / provedor
+                          </label>
+                          <input
+                            id="os-fin-provider"
+                            className={loginStyles.input}
+                            list="os-finance-provider-suggestions"
+                            value={osFinPaymentProvider}
+                            onChange={(e) => setOsFinPaymentProvider(e.target.value)}
+                            placeholder="Ex.: Stone"
+                          />
+                          <datalist id="os-finance-provider-suggestions">
+                            {osFinProviderSuggestions.map((name) => (
+                              <option key={name} value={name} />
+                            ))}
+                          </datalist>
+                        </div>
+                      ) : (
+                        <div />
+                      )}
                     </div>
                     {osFinShowMachineField ? (
-                      <div>
-                        <label className={loginStyles.label} htmlFor="os-fin-provider">
-                          Maquininha / provedor
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-settle">
+                          Previsão de compensação (caixa)
                         </label>
-                        <input
-                          id="os-fin-provider"
-                          className={loginStyles.input}
-                          list="os-finance-provider-suggestions"
-                          value={osFinPaymentProvider}
-                          onChange={(e) => setOsFinPaymentProvider(e.target.value)}
-                          placeholder="Ex.: Stone"
-                        />
-                        <datalist id="os-finance-provider-suggestions">
-                          {osFinProviderSuggestions.map((name) => (
-                            <option key={name} value={name} />
-                          ))}
-                        </datalist>
+                        <select
+                          id="os-fin-settle"
+                          className={loginStyles.select}
+                          value={osFinSettlementPlan}
+                          onChange={(e) =>
+                            setOsFinSettlementPlan(e.target.value as "same_as_due" | "next_business_day")
+                          }
+                        >
+                          <option value="same_as_due">No dia do vencimento da parcela</option>
+                          <option value="next_business_day">D+1 útil após o vencimento da parcela</option>
+                        </select>
+                        <p className={styles.summaryLineMuted}>
+                          Taxa conforme tabela em Configurações → Maquininhas; valor bruto e taxas divididos entre parcelas.
+                        </p>
                       </div>
-                    ) : (
-                      <div />
-                    )}
-                  </div>
-                  {osFinShowMachineField ? (
-                    <>
-                      <label className={loginStyles.label} htmlFor="os-fin-settle">
-                        Previsão de compensação (caixa)
-                      </label>
-                      <select
-                        id="os-fin-settle"
-                        className={loginStyles.select}
-                        value={osFinSettlementPlan}
-                        onChange={(e) =>
-                          setOsFinSettlementPlan(e.target.value as "same_as_due" | "next_business_day")
-                        }
-                      >
-                        <option value="same_as_due">No dia do vencimento da parcela</option>
-                        <option value="next_business_day">D+1 útil após o vencimento da parcela</option>
-                      </select>
-                      <p className={styles.summaryLineMuted}>
-                        Taxa conforme tabela em Configurações → Maquininhas; valor bruto e taxas divididos entre parcelas.
-                      </p>
-                    </>
-                  ) : null}
-                  {osFinShowInstallmentsField ? (
-                    <div className={styles.clientRowPrimary}>
-                      <div>
-                        <label className={loginStyles.label} htmlFor="os-fin-inst">
+                    ) : null}
+                    {osFinShowInstallmentsField ? (
+                      <div className={styles.clientRowPrimary}>
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="os-fin-inst">
                           Parcelas
                         </label>
                         <input
@@ -2853,47 +3019,47 @@ export function ServiceOrderFormPage() {
                           value={osFinInstallments}
                           onChange={(e) => setOsFinInstallments(e.target.value)}
                         />
+                        </div>
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="os-fin-interval">
+                            Intervalo (meses)
+                          </label>
+                          <input
+                            id="os-fin-interval"
+                            type="number"
+                            min="1"
+                            max="12"
+                            step="1"
+                            className={loginStyles.input}
+                            value={osFinInstallmentInterval}
+                            onChange={(e) => setOsFinInstallmentInterval(e.target.value)}
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className={loginStyles.label} htmlFor="os-fin-interval">
-                          Intervalo (meses)
+                    ) : null}
+                    {osFinShowBankAccountField ? (
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-account">
+                          Conta de recebimento
                         </label>
-                        <input
-                          id="os-fin-interval"
-                          type="number"
-                          min="1"
-                          max="12"
-                          step="1"
-                          className={loginStyles.input}
-                          value={osFinInstallmentInterval}
-                          onChange={(e) => setOsFinInstallmentInterval(e.target.value)}
-                        />
+                        <select
+                          id="os-fin-account"
+                          className={loginStyles.select}
+                          value={osFinAccountId}
+                          onChange={(e) => setOsFinAccountId(e.target.value)}
+                        >
+                          <option value="">Selecionar conta</option>
+                          {osFinAccounts.map((a) => (
+                            <option key={a.id} value={String(a.id)}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    </div>
-                  ) : null}
-                  {osFinShowBankAccountField ? (
-                    <label className={loginStyles.label} htmlFor="os-fin-account">
-                      Conta de recebimento
-                    </label>
-                  ) : null}
-                  {osFinShowBankAccountField ? (
-                    <select
-                      id="os-fin-account"
-                      className={loginStyles.select}
-                      value={osFinAccountId}
-                      onChange={(e) => setOsFinAccountId(e.target.value)}
-                    >
-                      <option value="">Selecionar conta</option>
-                      {osFinAccounts.map((a) => (
-                        <option key={a.id} value={String(a.id)}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  <div className={styles.clientRowPrimary}>
-                    <div>
-                      <label className={loginStyles.label} htmlFor="os-fin-cat">
+                    ) : null}
+                    <div className={styles.clientRowPrimary}>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-cat">
                         Categoria
                       </label>
                       <select
@@ -2909,48 +3075,51 @@ export function ServiceOrderFormPage() {
                           </option>
                         ))}
                       </select>
+                      </div>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-status">
+                          Status inicial
+                        </label>
+                        <select
+                          id="os-fin-status"
+                          className={loginStyles.select}
+                          value={osFinEntryStatus}
+                          onChange={(e) => setOsFinEntryStatus(e.target.value as FinanceEntryStatus)}
+                        >
+                          <option value="paid">Pago</option>
+                          <option value="pending">Pendente</option>
+                          <option value="overdue">Vencido</option>
+                        </select>
+                      </div>
                     </div>
-                    <div>
-                      <label className={loginStyles.label} htmlFor="os-fin-status">
-                        Status inicial
+                    <div className={formLayout.field}>
+                      <label className={loginStyles.label} htmlFor="os-fin-wa">
+                        WhatsApp do cliente (opcional, lembretes)
                       </label>
-                      <select
-                        id="os-fin-status"
-                        className={loginStyles.select}
-                        value={osFinEntryStatus}
-                        onChange={(e) => setOsFinEntryStatus(e.target.value as FinanceEntryStatus)}
-                      >
-                        <option value="paid">Pago</option>
-                        <option value="pending">Pendente</option>
-                        <option value="overdue">Vencido</option>
-                      </select>
+                      <input
+                        id="os-fin-wa"
+                        type="tel"
+                        inputMode="tel"
+                        className={loginStyles.input}
+                        value={osFinRecipientWhatsapp}
+                        onChange={(e) => setOsFinRecipientWhatsapp(formatPhoneBrInput(e.target.value))}
+                        autoComplete="tel"
+                        placeholder="(16) 99999-9999"
+                      />
                     </div>
-                  </div>
-                  <label className={loginStyles.label} htmlFor="os-fin-wa">
-                    WhatsApp do cliente (opcional, lembretes)
-                  </label>
-                  <input
-                    id="os-fin-wa"
-                    type="tel"
-                    inputMode="tel"
-                    className={loginStyles.input}
-                    value={osFinRecipientWhatsapp}
-                    onChange={(e) => setOsFinRecipientWhatsapp(formatPhoneBrInput(e.target.value))}
-                    autoComplete="tel"
-                    placeholder="(16) 99999-9999"
-                  />
-                  <div className={styles.actions}>
-                    <button
-                      type="button"
-                      className={styles.btnPrimary}
-                      onClick={() => void onSubmitOsFinance()}
-                      disabled={osFinSubmitting}
-                    >
-                      {osFinSubmitting ? "Salvando..." : "Registrar no financeiro"}
-                    </button>
-                    <Link className={styles.btnGhost} to="/app/finance">
-                      Ver lançamentos
-                    </Link>
+                    <div className={styles.actions}>
+                      <button
+                        type="button"
+                        className={styles.btnPrimary}
+                        onClick={() => void onSubmitOsFinance()}
+                        disabled={osFinSubmitting}
+                      >
+                        {osFinSubmitting ? "Salvando..." : "Registrar no financeiro"}
+                      </button>
+                      <Link className={styles.btnGhost} to="/app/finance">
+                        Ver lançamentos
+                      </Link>
+                    </div>
                   </div>
                 </>
               )}

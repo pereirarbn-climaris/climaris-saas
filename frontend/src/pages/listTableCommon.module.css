@@ -128,3 +128,292 @@
   color: #0369a1;
   text-decoration: underline;
 }
+
+/* ========== Barra de listagem: busca + filtro + ações (design tokens em index.css) ========== */
+
+.listToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  border-radius: var(--card-radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  padding: var(--card-padding) var(--card-padding-lg);
+  box-shadow: var(--card-shadow);
+}
+
+.listToolbarSearchCol {
+  flex: 1;
+  min-width: min(100%, 320px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listToolbarFilterCol {
+  min-width: min(100%, 220px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listToolbarLabel {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+}
+
+.listToolbarSearchWrap {
+  position: relative;
+}
+
+.listToolbarSearchIcon {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--color-text-subtle);
+  pointer-events: none;
+  transition: color var(--motion-duration) var(--motion-easing);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.listToolbarSearchWrap:focus-within .listToolbarSearchIcon {
+  color: var(--color-primary);
+}
+
+.listToolbarSearchIcon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.listToolbarSearchInput {
+  width: 100%;
+  height: var(--toolbar-control-height, var(--input-height));
+  border: var(--input-border);
+  border-radius: var(--input-radius);
+  background: var(--input-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  padding: 0 var(--input-padding-x) 0 2.5rem;
+  box-sizing: border-box;
+  transition: all var(--motion-duration) var(--motion-easing);
+}
+
+.listToolbarSearchInput:hover {
+  border-color: #cbd5e1;
+}
+
+.listToolbarSearchInput:focus {
+  outline: none;
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.listToolbarSearchInput::placeholder {
+  color: var(--color-text-subtle);
+}
+
+.listToolbarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.listToolbarFilterBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listToolbarSelect {
+  width: 100%;
+  height: var(--toolbar-control-height, var(--input-height));
+  min-height: var(--toolbar-control-height, var(--input-height));
+  box-sizing: border-box;
+  border: var(--input-border);
+  border-radius: var(--input-radius);
+  background-color: var(--input-bg);
+  color: var(--color-text);
+  padding: 0 2.25rem 0 var(--input-padding-x);
+  font: inherit;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%2364748b'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1.25rem;
+  transition: border-color var(--motion-duration) var(--motion-easing), box-shadow var(--motion-duration) var(--motion-easing);
+}
+
+.listToolbarSelectShrink {
+  width: auto;
+  min-width: 11rem;
+}
+
+.listToolbarSelectHasLeading {
+  padding-left: 2.5rem;
+}
+
+.listToolbarSelectWrap {
+  position: relative;
+  width: 100%;
+}
+
+.listToolbarSelectLeadingIcon {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  color: var(--color-text-subtle);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.listToolbarSelectLeadingIcon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.listToolbarSelect:hover {
+  border-color: #cbd5e1;
+}
+
+.listToolbarSelect:focus {
+  outline: none;
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+.listToolbarBtnPrimary {
+  height: var(--toolbar-control-height, var(--btn-height-md));
+  min-height: var(--toolbar-control-height, var(--btn-height-md));
+  padding: 0 var(--btn-padding-md);
+  border: none;
+  border-radius: var(--btn-radius);
+  background: linear-gradient(135deg, var(--color-primary-light) 0%, var(--color-primary) 100%);
+  color: #fff;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+  transition: all var(--motion-duration) var(--motion-easing);
+}
+
+.listToolbarBtnPrimary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(14, 165, 233, 0.35);
+}
+
+.listToolbarBtnPrimary:active {
+  transform: translateY(0);
+}
+
+.listToolbarBtnPrimary svg {
+  width: var(--icon-size-base);
+  height: var(--icon-size-base);
+  flex-shrink: 0;
+}
+
+.listToolbarBtnGhost {
+  height: var(--toolbar-control-height, var(--btn-height-md));
+  min-height: var(--toolbar-control-height, var(--btn-height-md));
+  padding: 0 var(--btn-padding-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--btn-radius);
+  background: var(--color-surface-elevated);
+  color: #334155;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: all var(--motion-duration) var(--motion-easing);
+}
+
+.listToolbarBtnGhost:hover {
+  background: var(--color-surface);
+  border-color: #cbd5e1;
+  color: var(--color-text);
+}
+
+.listToolbarBtnIcon {
+  width: var(--icon-size-base);
+  height: var(--icon-size-base);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.listToolbarBtnIcon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.listToolbarIconBtn {
+  height: var(--toolbar-control-height, var(--btn-height-md));
+  width: var(--toolbar-control-height, var(--btn-height-md));
+  min-height: var(--toolbar-control-height, var(--btn-height-md));
+  min-width: var(--toolbar-control-height, var(--btn-height-md));
+  border: 1px solid var(--color-border);
+  border-radius: var(--btn-radius);
+  background: var(--color-surface-elevated);
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--motion-duration) var(--motion-easing);
+  box-sizing: border-box;
+}
+
+.listToolbarIconBtn:hover:not(:disabled) {
+  background: #f0f9ff;
+  border-color: var(--color-primary-light);
+  transform: translateY(-1px);
+}
+
+.listToolbarIconBtn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.listToolbarIconBtn svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+}

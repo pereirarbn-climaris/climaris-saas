@@ -7,6 +7,7 @@ import { listServices, type ServiceOut } from "../../api/services";
 import { sortByNameAsc } from "../../lib/localeSort";
 import { ClientPicker } from "../../components/ClientPicker";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./BudgetFormPage.module.css";
 
@@ -257,96 +258,111 @@ export function BudgetFormPage() {
       <form className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Dados gerais</h2>
-          <label className={loginStyles.label} htmlFor="budget-client">
-            Cliente
-          </label>
-          {readOnly ? (
-            <p className={styles.clientReadonly}>
-              <strong>{selectedClient?.name ?? (clientId ? `Cliente #${clientId}` : "—")}</strong>
-              {selectedClient?.document ? <span> — {selectedClient.document}</span> : null}
-            </p>
-          ) : clientId && selectedClient ? (
-            <div className={styles.clientChosen}>
-              <div>
-                <strong>{selectedClient.name}</strong>
-                {selectedClient.document ? <span className={styles.clientChosenDoc}> — {selectedClient.document}</span> : null}
-              </div>
-              <button type="button" className={styles.btnGhost} onClick={() => setClientId("")}>
-                Trocar cliente
-              </button>
+          <div className={formLayout.stack}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="budget-client">
+                Cliente
+              </label>
+              {readOnly ? (
+                <p className={styles.clientReadonly}>
+                  <strong>{selectedClient?.name ?? (clientId ? `Cliente #${clientId}` : "—")}</strong>
+                  {selectedClient?.document ? <span> — {selectedClient.document}</span> : null}
+                </p>
+              ) : clientId && selectedClient ? (
+                <div className={styles.clientChosen}>
+                  <div>
+                    <strong>{selectedClient.name}</strong>
+                    {selectedClient.document ? <span className={styles.clientChosenDoc}> — {selectedClient.document}</span> : null}
+                  </div>
+                  <button type="button" className={styles.btnGhost} onClick={() => setClientId("")}>
+                    Trocar cliente
+                  </button>
+                </div>
+              ) : clientId ? (
+                <p className={styles.loading}>Carregando cliente…</p>
+              ) : (
+                <ClientPicker
+                  inputId="budget-client"
+                  value={clientId}
+                  onChange={(id) => setClientId(id)}
+                  pinned={selectedClient ?? undefined}
+                />
+              )}
             </div>
-          ) : clientId ? (
-            <p className={styles.loading}>Carregando cliente…</p>
-          ) : (
-            <ClientPicker
-              inputId="budget-client"
-              value={clientId}
-              onChange={(id) => setClientId(id)}
-              pinned={selectedClient ?? undefined}
-            />
-          )}
-
-          <label className={loginStyles.label} htmlFor="budget-observation">
-            Observação
-          </label>
-          <textarea
-            id="budget-observation"
-            className={loginStyles.input}
-            value={observation}
-            onChange={(e) => setObservation(e.target.value)}
-            rows={3}
-            disabled={readOnly}
-            placeholder="Informações importantes para aprovação do cliente."
-          />
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="budget-observation">
+                Observação
+              </label>
+              <textarea
+                id="budget-observation"
+                className={loginStyles.input}
+                value={observation}
+                onChange={(e) => setObservation(e.target.value)}
+                rows={3}
+                disabled={readOnly}
+                placeholder="Informações importantes para aprovação do cliente."
+              />
+            </div>
+          </div>
         </div>
 
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Financeiro e garantia</h2>
-          <label className={loginStyles.label} htmlFor="budget-payment-method">
-            Forma de pagamento
-          </label>
-          <input
-            id="budget-payment-method"
-            className={loginStyles.input}
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
-            disabled={readOnly}
-            placeholder="PIX, boleto, cartao..."
-          />
-          <label className={loginStyles.label} htmlFor="budget-payment-terms">
-            Condicoes de pagamento
-          </label>
-          <textarea
-            id="budget-payment-terms"
-            className={loginStyles.input}
-            value={paymentTerms}
-            onChange={(e) => setPaymentTerms(e.target.value)}
-            rows={3}
-            disabled={readOnly}
-          />
-          <label className={loginStyles.label} htmlFor="budget-warranty">
-            Garantia
-          </label>
-          <textarea
-            id="budget-warranty"
-            className={loginStyles.input}
-            value={warrantyTerms}
-            onChange={(e) => setWarrantyTerms(e.target.value)}
-            rows={3}
-            disabled={readOnly}
-          />
-          <label className={loginStyles.label} htmlFor="budget-validity">
-            Validade (dias)
-          </label>
-          <input
-            id="budget-validity"
-            type="number"
-            min={1}
-            className={loginStyles.input}
-            value={validityDays}
-            onChange={(e) => setValidityDays(Math.max(1, Number(e.target.value) || 1))}
-            disabled={readOnly}
-          />
+          <div className={formLayout.stack}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="budget-payment-method">
+                Forma de pagamento
+              </label>
+              <input
+                id="budget-payment-method"
+                className={loginStyles.input}
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                disabled={readOnly}
+                placeholder="PIX, boleto, cartao..."
+              />
+            </div>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="budget-payment-terms">
+                Condicoes de pagamento
+              </label>
+              <textarea
+                id="budget-payment-terms"
+                className={loginStyles.input}
+                value={paymentTerms}
+                onChange={(e) => setPaymentTerms(e.target.value)}
+                rows={3}
+                disabled={readOnly}
+              />
+            </div>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="budget-warranty">
+                Garantia
+              </label>
+              <textarea
+                id="budget-warranty"
+                className={loginStyles.input}
+                value={warrantyTerms}
+                onChange={(e) => setWarrantyTerms(e.target.value)}
+                rows={3}
+                disabled={readOnly}
+              />
+            </div>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="budget-validity">
+                Validade (dias)
+              </label>
+              <input
+                id="budget-validity"
+                type="number"
+                min={1}
+                className={loginStyles.input}
+                value={validityDays}
+                onChange={(e) => setValidityDays(Math.max(1, Number(e.target.value) || 1))}
+                disabled={readOnly}
+              />
+            </div>
+          </div>
         </div>
 
         <div className={styles.section}>

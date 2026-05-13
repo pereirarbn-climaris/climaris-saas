@@ -927,6 +927,17 @@
   font-size: 0.875rem;
 }
 
+.mpReversalNote {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #b45309) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning, #b45309) 10%, var(--color-surface));
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
 .error {
   margin: 0;
   padding: 0.65rem 0.85rem;
@@ -1585,6 +1596,20 @@
 
 .modalResult a:hover {
   text-decoration: underline;
+}
+
+.pixPayload {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  max-height: 12rem;
+  overflow: auto;
 }
 
 .dayGroups {

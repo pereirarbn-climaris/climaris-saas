@@ -2,21 +2,31 @@ import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 import {
   demoCreateFinanceCategory,
+  demoCreateFinanceAccount,
   demoDeleteFinanceCategory,
   demoPatchFinanceCategory,
   demoCreateFinanceEntry,
   demoCreateFinanceFee,
   demoDeleteFinanceEntry,
   demoDeleteFinanceFee,
+  demoDeleteFinanceGatewayMercadoPago,
   demoGetFinanceSettings,
   demoGetFinanceSummary,
   demoGetFinanceBalanceSnapshot,
+  demoGetFinanceGateways,
   demoListFinanceAccounts,
   demoListFinanceCategories,
   demoListFinanceEntries,
   demoListFinanceFees,
+  demoMercadoPagoPixCharge,
+  demoMercadoPagoBoletoCharge,
+  demoMercadoPagoPreference,
   demoPatchFinanceEntry,
+  demoPatchFinanceGatewayMercadoPagoProducts,
+  demoPatchFinanceGatewayMercadoPagoWebhookSignature,
+  demoTestFinanceGatewayMercadoPago,
   demoUpdateFinanceSettings,
+  demoUpsertFinanceGatewayMercadoPago,
   isDemoMode,
 } from "../lib/demoMode";
 
@@ -49,6 +59,11 @@ export type FinanceEntryOut = {
   fee_amount: number;
   recipient_whatsapp?: string | null;
   gateway_payment_id?: string | null;
+  gateway_preference_id?: string | null;
+  mercadopago_archived_preference_id?: string | null;
+  mercadopago_preapproval_id?: string | null;
+  mp_reversal_at?: string | null;
+  mp_reversal_status?: string | null;
   installment_group_id?: string | null;
   installment_number?: number;
   installment_total?: number;
@@ -205,6 +220,7 @@ export async function patchFinanceEntry(
     fee_amount?: number;
     recipient_whatsapp?: string | null;
     gateway_payment_id?: string | null;
+    gateway_preference_id?: string | null;
     competence_date?: string;
     settlement_plan?: "same_as_due" | "next_business_day";
   },
@@ -307,6 +323,7 @@ export async function createFinanceAccount(payload: {
   initial_balance?: number;
   is_active?: boolean;
 }): Promise<FinanceBankAccountOut> {
+  if (isDemoMode()) return Promise.resolve(demoCreateFinanceAccount(payload));
   const response = await fetch(apiUrl("/api/v1/finance/accounts"), {
     method: "POST",
     headers: bearer(true),
@@ -420,6 +437,118 @@ export async function createFinanceEntryAsaasCharge(
     invoice_url: string | null;
     external_reference: string;
     sandbox: boolean;
+  };
+}
+
+export async function createFinanceEntryMercadoPagoPixCharge(
+  entryId: number,
+  payload: { payer_email: string; payer_first_name?: string | null; payer_last_name?: string | null },
+): Promise<{
+  status: string;
+  entry: FinanceEntryOut;
+  payment_id: string;
+  payment_status: string;
+  ticket_url: string | null;
+  pix_copy_paste: string | null;
+  external_reference: string;
+  sandbox: boolean;
+}> {
+  if (isDemoMode()) return Promise.resolve(demoMercadoPagoPixCharge(entryId, payload));
+  const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}/mercadopago-charge`), {
+    method: "POST",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível emitir cobrança Mercado Pago."));
+  return body as {
+    status: string;
+    entry: FinanceEntryOut;
+    payment_id: string;
+    payment_status: string;
+    ticket_url: string | null;
+    pix_copy_paste: string | null;
+    external_reference: string;
+    sandbox: boolean;
+  };
+}
+
+export async function createFinanceEntryMercadoPagoBoletoCharge(
+  entryId: number,
+  payload: {
+    payer_email: string;
+    payer_cpf: string;
+    payer_first_name?: string | null;
+    payer_last_name?: string | null;
+  },
+): Promise<{
+  status: string;
+  entry: FinanceEntryOut;
+  payment_id: string;
+  payment_status: string;
+  ticket_url: string | null;
+  external_reference: string;
+  sandbox: boolean;
+}> {
+  if (isDemoMode()) return Promise.resolve(demoMercadoPagoBoletoCharge(entryId, payload));
+  const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}/mercadopago-boleto-charge`), {
+    method: "POST",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível emitir boleto Mercado Pago."));
+  return body as {
+    status: string;
+    entry: FinanceEntryOut;
+    payment_id: string;
+    payment_status: string;
+    ticket_url: string | null;
+    external_reference: string;
+    sandbox: boolean;
+  };
+}
+
+export async function createFinanceEntryMercadoPagoPreference(
+  entryId: number,
+  payload: {
+    mode: "checkout_pro" | "payment_link" | "subscription";
+    payer_email?: string | null;
+    success_url?: string | null;
+    failure_url?: string | null;
+    pending_url?: string | null;
+    subscription_frequency?: number;
+    subscription_frequency_type?: "months" | "days";
+  },
+): Promise<{
+  status: string;
+  mode: string;
+  preference_id: string;
+  init_point: string | null;
+  sandbox_init_point: string | null;
+  checkout_url: string;
+  external_reference: string;
+  sandbox: boolean;
+  entry?: FinanceEntryOut;
+}> {
+  if (isDemoMode()) return Promise.resolve(demoMercadoPagoPreference(entryId, payload));
+  const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}/mercadopago-preference`), {
+    method: "POST",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível criar o checkout Mercado Pago."));
+  return body as {
+    status: string;
+    mode: string;
+    preference_id: string;
+    init_point: string | null;
+    sandbox_init_point: string | null;
+    checkout_url: string;
+    external_reference: string;
+    sandbox: boolean;
+    entry?: FinanceEntryOut;
   };
 }
 
@@ -624,10 +753,34 @@ export type FinanceGatewayAsaasPublic = {
   webhook_last_error: string | null;
 };
 
+export type FinanceGatewayMercadoPagoProducts = {
+  checkout_pro: boolean;
+  pix: boolean;
+  boleto: boolean;
+  subscriptions: boolean;
+  payment_link: boolean;
+};
+
 export type FinanceGatewayMercadoPagoPublic = {
   connected: boolean;
-  oauth_available: boolean;
-  requires_mode: "intermediate" | null;
+  sandbox: boolean;
+  access_token_hint: string | null;
+  public_key_hint: string | null;
+  /** Chave pública (checkout no app). Só quando o gateway está configurado. */
+  public_key: string | null;
+  account_label: string | null;
+  mp_user_id: string | null;
+  finance_bank_account_id: number | null;
+  products: FinanceGatewayMercadoPagoProducts;
+  webhook_url: string | null;
+  /** Base usada para montar webhook_url e notification_url (API_PUBLIC_BASE_URL ou fallback). */
+  api_public_base_url: string | null;
+  webhook_signature_configured: boolean;
+  /** Servidor com MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE e conta não sandbox: webhook exige segredo. */
+  webhook_signature_enforced: boolean;
+  last_validated_at: string | null;
+  last_validation_error: string | null;
+  cached_balance: number | null;
 };
 
 export type FinanceGatewaysOut = {
@@ -637,6 +790,7 @@ export type FinanceGatewaysOut = {
 };
 
 export async function getFinanceGateways(): Promise<FinanceGatewaysOut> {
+  if (isDemoMode()) return Promise.resolve(demoGetFinanceGateways());
   const response = await fetch(apiUrl("/api/v1/finance/gateways"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar gateways."));
@@ -679,6 +833,94 @@ export async function deleteFinanceGatewayAsaas(): Promise<void> {
   if (!response.ok) {
     const body = await parseBody(response);
     throw new Error(errMessage(body, "Não foi possível remover o gateway."));
+  }
+}
+
+export async function testFinanceGatewayMercadoPago(payload: {
+  access_token: string;
+  public_key: string;
+  sandbox?: boolean;
+}): Promise<{ ok: boolean; error: string | null; account_label: string | null; mp_user_id: string | null }> {
+  if (isDemoMode()) return Promise.resolve(demoTestFinanceGatewayMercadoPago());
+  const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago/test"), {
+    method: "POST",
+    headers: bearer(true),
+    body: JSON.stringify({
+      access_token: payload.access_token,
+      public_key: payload.public_key,
+      sandbox: payload.sandbox ?? false,
+    }),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível testar o Mercado Pago."));
+  return body as { ok: boolean; error: string | null; account_label: string | null; mp_user_id: string | null };
+}
+
+export async function upsertFinanceGatewayMercadoPago(payload: {
+  access_token: string;
+  public_key: string;
+  sandbox?: boolean;
+  finance_bank_account_id: number;
+  products?: FinanceGatewayMercadoPagoProducts;
+}): Promise<{ status: string; asaas: FinanceGatewayAsaasPublic; mercadopago: FinanceGatewayMercadoPagoPublic }> {
+  if (isDemoMode()) return Promise.resolve(demoUpsertFinanceGatewayMercadoPago(payload));
+  const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago"), {
+    method: "PUT",
+    headers: bearer(true),
+    body: JSON.stringify({
+      access_token: payload.access_token,
+      public_key: payload.public_key,
+      sandbox: payload.sandbox ?? false,
+      finance_bank_account_id: payload.finance_bank_account_id,
+      products: payload.products,
+    }),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível salvar o Mercado Pago."));
+  return body as { status: string; asaas: FinanceGatewayAsaasPublic; mercadopago: FinanceGatewayMercadoPagoPublic };
+}
+
+export async function patchFinanceGatewayMercadoPagoProducts(
+  payload: FinanceGatewayMercadoPagoProducts,
+): Promise<{ status: string; asaas: FinanceGatewayAsaasPublic; mercadopago: FinanceGatewayMercadoPagoPublic }> {
+  if (isDemoMode()) return Promise.resolve(demoPatchFinanceGatewayMercadoPagoProducts(payload));
+  const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago/products"), {
+    method: "PATCH",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível salvar os produtos."));
+  return body as { status: string; asaas: FinanceGatewayAsaasPublic; mercadopago: FinanceGatewayMercadoPagoPublic };
+}
+
+export async function patchFinanceGatewayMercadoPagoWebhookSignature(payload: {
+  webhook_signature_secret?: string;
+  clear_webhook_signature_secret?: boolean;
+}): Promise<{ status: string; asaas: FinanceGatewayAsaasPublic; mercadopago: FinanceGatewayMercadoPagoPublic }> {
+  if (isDemoMode()) return Promise.resolve(demoPatchFinanceGatewayMercadoPagoWebhookSignature(payload));
+  const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago/webhook-signature"), {
+    method: "PATCH",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível salvar o segredo do webhook."));
+  return body as { status: string; asaas: FinanceGatewayAsaasPublic; mercadopago: FinanceGatewayMercadoPagoPublic };
+}
+
+export async function deleteFinanceGatewayMercadoPago(): Promise<void> {
+  if (isDemoMode()) {
+    demoDeleteFinanceGatewayMercadoPago();
+    return Promise.resolve();
+  }
+  const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago"), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errMessage(body, "Não foi possível remover o Mercado Pago."));
   }
 }
 
