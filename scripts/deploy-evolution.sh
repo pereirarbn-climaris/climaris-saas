@@ -10,13 +10,32 @@ if [[ ! -f "$EVOLUTION_DIR/.env" ]]; then
   exit 1
 fi
 
+echo "==> Rede externa evolution_evolution_net (API Climaris ↔ Evolution)"
+docker network create evolution_evolution_net 2>/dev/null || true
+
 echo "==> Subindo stack Evolution"
-docker compose -f "$EVOLUTION_DIR/docker-compose.yml" --env-file "$EVOLUTION_DIR/.env" up -d
+UP_ARGS=(up -d)
+if [[ "${EVOLUTION_FORCE_RECREATE:-0}" == "1" ]]; then
+  UP_ARGS+=(--force-recreate)
+fi
+docker compose -f "$EVOLUTION_DIR/docker-compose.yml" --env-file "$EVOLUTION_DIR/.env" "${UP_ARGS[@]}"
 
 echo "==> Status dos containers"
 docker compose -f "$EVOLUTION_DIR/docker-compose.yml" --env-file "$EVOLUTION_DIR/.env" ps
 
 echo "==> Healthcheck local da API"
-curl -fsS http://127.0.0.1:8080/ || true
+EVO_HEALTH_OK=0
+for attempt in 1 2 3 4 5 6; do
+  if curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:8080/ >/dev/null 2>&1; then
+    EVO_HEALTH_OK=1
+    echo "==> Evolution API respondeu (tentativa ${attempt})"
+    break
+  fi
+  echo "==> Aguardando Evolution API (tentativa ${attempt}/6)…"
+  sleep 2
+done
+if [[ "${EVO_HEALTH_OK}" != "1" ]]; then
+  echo "==> Aviso: Evolution em 127.0.0.1:8080 nao respondeu apos retries (containers podem ainda estar subindo)."
+fi
 
 echo "==> Deploy Evolution concluido"

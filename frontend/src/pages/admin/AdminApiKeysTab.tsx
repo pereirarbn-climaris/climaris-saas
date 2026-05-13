@@ -7,6 +7,7 @@ import {
   type TenantApiKeyOut,
 } from "../../api/apiKeys";
 import loginStyles from "../LoginPage.module.css";
+import formLayout from "../formLayout.module.css";
 import styles from "./AdminPage.module.css";
 
 function formatDt(iso: string): string {
@@ -96,7 +97,7 @@ export function AdminApiKeysTab() {
 
       <form className={styles.toolbar} onSubmit={onCreate}>
         <div className={styles.toolbarFields}>
-          <div>
+          <div className={formLayout.field}>
             <label className={loginStyles.label} htmlFor="api-key-name">
               Nome da chave
             </label>

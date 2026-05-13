@@ -3,26 +3,57 @@ import { Link, useOutletContext } from "react-router-dom";
 import {
   createWhatsappBotFlow,
   createWhatsappBotStep,
+  clearWhatsappBotSession,
   deleteWhatsappBotFlow,
   deleteWhatsappBotStep,
+  getWhatsappBotStatus,
   getWhatsappBotSettings,
+  listWhatsappBotEvents,
+  listWhatsappBotSessions,
   listWhatsappBotFlows,
   patchWhatsappBotFlow,
   patchWhatsappBotSettings,
   patchWhatsappBotStep,
+  seedWhatsappBotDefaultFlows,
   testWhatsappBotMessage,
+  type WhatsappBotEvent,
   type WhatsappBotFlow,
+  type WhatsappBotSession,
   type WhatsappBotSettings,
+  type WhatsappBotStatus,
   type WhatsappBotStep,
   type WhatsappBotTestResponse,
 } from "../../api/whatsappBot";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./WhatsappIntegrationPage.module.css";
 
-const DEFAULT_STEP_OPTIONS = `[
-  { "key": "1", "label": "Receber informações", "message": "Perfeito! Nossa equipe vai continuar por aqui." },
-  { "key": "2", "label": "Falar com atendente", "handoff": true }
-]`;
+type StepOptionDraft = {
+  key: string;
+  label: string;
+  message: string;
+  next_step_key: string;
+  handoff: boolean;
+  aliasesText: string;
+};
+
+const DEFAULT_OPTION_ROWS: StepOptionDraft[] = [
+  {
+    key: "1",
+    label: "Receber informações",
+    message: "Perfeito! Nossa equipe vai continuar por aqui.",
+    next_step_key: "",
+    handoff: false,
+    aliasesText: "",
+  },
+  {
+    key: "2",
+    label: "Falar com atendente",
+    message: "",
+    next_step_key: "",
+    handoff: true,
+    aliasesText: "atendente, humano",
+  },
+];
 
 function keywordsToText(items: string[]): string {
   return items.join(", ");
@@ -35,10 +66,6 @@ function textToKeywords(value: string): string[] {
     .filter(Boolean);
 }
 
-function jsonString(value: unknown): string {
-  return JSON.stringify(value ?? {}, null, 2);
-}
-
 function parseJsonObject(value: string, label: string): Record<string, unknown> {
   if (!value.trim()) return {};
   const parsed = JSON.parse(value) as unknown;
@@ -48,18 +75,76 @@ function parseJsonObject(value: string, label: string): Record<string, unknown> 
   return parsed as Record<string, unknown>;
 }
 
-function parseJsonArray(value: string, label: string): Array<Record<string, unknown>> {
-  if (!value.trim()) return [];
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${label} deve ser uma lista JSON.`);
+function stringFromUnknown(value: unknown): string {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function optionRowsFromOptions(options: Array<Record<string, unknown>>): StepOptionDraft[] {
+  if (!options.length) return [];
+  return options.map((option, index) => {
+    const aliases = Array.isArray(option.aliases) ? option.aliases.map(stringFromUnknown).filter(Boolean) : [];
+    return {
+      key: stringFromUnknown(option.key || option.value) || String(index + 1),
+      label: stringFromUnknown(option.label || option.text),
+      message: stringFromUnknown(option.message),
+      next_step_key: stringFromUnknown(option.next_step_key || option.next),
+      handoff: Boolean(option.handoff),
+      aliasesText: aliases.join(", "),
+    };
+  });
+}
+
+function optionsFromRows(rows: StepOptionDraft[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const row of rows) {
+    const key = row.key.trim();
+    const label = row.label.trim();
+    const message = row.message.trim();
+    const next = row.next_step_key.trim();
+    const aliases = textToKeywords(row.aliasesText);
+    if (!key && !label && !message && !next && !row.handoff && !aliases.length) continue;
+    out.push({
+      key: key || label,
+      label: label || key,
+      ...(message ? { message } : {}),
+      ...(next ? { next_step_key: next } : {}),
+      ...(row.handoff ? { handoff: true } : {}),
+      ...(aliases.length ? { aliases } : {}),
+    });
   }
-  return parsed.map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : { value: item }));
+  return out;
 }
 
 function firstStep(flow: WhatsappBotFlow | null): WhatsappBotStep | null {
   if (!flow?.steps.length) return null;
   return [...flow.steps].sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)[0] ?? null;
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}
+
+function isPaused(session: WhatsappBotSession): boolean {
+  return Boolean(session.paused_until && new Date(session.paused_until).getTime() > Date.now());
+}
+
+function contextPreview(context: Record<string, unknown>): string {
+  const entries = Object.entries(context)
+    .filter(([, value]) => value != null && String(value).trim())
+    .slice(0, 4);
+  if (!entries.length) return "—";
+  return entries.map(([key, value]) => `${key}: ${String(value).slice(0, 60)}`).join(" | ");
 }
 
 export function WhatsappBotPage() {
@@ -69,7 +154,10 @@ export function WhatsappBotPage() {
   const canView = role === "admin" || role === "receptionist";
 
   const [settings, setSettings] = useState<WhatsappBotSettings | null>(null);
+  const [moduleStatus, setModuleStatus] = useState<WhatsappBotStatus | null>(null);
   const [flows, setFlows] = useState<WhatsappBotFlow[]>([]);
+  const [sessions, setSessions] = useState<WhatsappBotSession[]>([]);
+  const [events, setEvents] = useState<WhatsappBotEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
@@ -106,8 +194,8 @@ export function WhatsappBotPage() {
   const [stepKey, setStepKey] = useState("inicio");
   const [stepKind, setStepKind] = useState("message");
   const [stepMessage, setStepMessage] = useState("");
-  const [stepOptions, setStepOptions] = useState("[]");
-  const [stepActions, setStepActions] = useState("{}");
+  const [stepOptionRows, setStepOptionRows] = useState<StepOptionDraft[]>([]);
+  const [stepSaveAs, setStepSaveAs] = useState("");
   const [stepNext, setStepNext] = useState("");
   const [stepOrder, setStepOrder] = useState<number>(100);
 
@@ -121,9 +209,25 @@ export function WhatsappBotPage() {
     setLoading(true);
     setErr("");
     try {
-      const [st, fl] = await Promise.all([getWhatsappBotSettings(), listWhatsappBotFlows()]);
+      const status = await getWhatsappBotStatus();
+      setModuleStatus(status);
+      if (!status.entitlement_active) {
+        setSettings(null);
+        setFlows([]);
+        setSessions([]);
+        setEvents([]);
+        return;
+      }
+      const [st, fl, ss, ev] = await Promise.all([
+        getWhatsappBotSettings(),
+        listWhatsappBotFlows(),
+        listWhatsappBotSessions(),
+        listWhatsappBotEvents(),
+      ]);
       setSettings(st);
       setFlows(fl);
+      setSessions(ss);
+      setEvents(ev);
       setEnabled(st.enabled);
       setWelcome(st.welcome_message);
       setFallback(st.fallback_message);
@@ -170,8 +274,8 @@ export function WhatsappBotPage() {
       setStepKey("inicio");
       setStepKind("message");
       setStepMessage("");
-      setStepOptions("[]");
-      setStepActions("{}");
+      setStepOptionRows([]);
+      setStepSaveAs("");
       setStepNext("");
       setStepOrder(100);
       return;
@@ -179,8 +283,8 @@ export function WhatsappBotPage() {
     setStepKey(selectedStep.step_key);
     setStepKind(selectedStep.kind);
     setStepMessage(selectedStep.message_template);
-    setStepOptions(jsonString(selectedStep.options));
-    setStepActions(jsonString(selectedStep.actions));
+    setStepOptionRows(optionRowsFromOptions(selectedStep.options));
+    setStepSaveAs(stringFromUnknown(selectedStep.actions.save_as));
     setStepNext(selectedStep.next_step_key ?? "");
     setStepOrder(selectedStep.sort_order);
   }, [selectedStep, editingStepId]);
@@ -208,14 +312,36 @@ export function WhatsappBotPage() {
     }
   }
 
+  async function onSeedDefaults() {
+    if (!canConfigure) return;
+    setBusy(true);
+    setErr("");
+    setOk("");
+    try {
+      const result = await seedWhatsappBotDefaultFlows();
+      setFlows(result.flows);
+      if (result.flows.length) setSelectedFlowId(result.flows[0].id);
+      setEditingStepId(null);
+      setOk(
+        result.created_flows > 0
+          ? `${result.created_flows} fluxo(s) pronto(s) criados. ${result.skipped_existing} já existiam.`
+          : "Os fluxos prontos já existiam para este workspace.",
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Falha ao criar fluxos prontos.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onCreateFlow() {
     if (!canConfigure) return;
     setBusy(true);
     setErr("");
     setOk("");
     try {
-      const options = stepKind === "menu" ? parseJsonArray(stepOptions, "Opções") : [];
-      const actions = parseJsonObject(stepActions, "Ações");
+      const options = optionsFromRows(stepOptionRows);
+      const actions = stepSaveAs.trim() ? { save_as: stepSaveAs.trim() } : {};
       const flow = await createWhatsappBotFlow({
         slug: flowSlug || flowName,
         name: flowName,
@@ -297,8 +423,8 @@ export function WhatsappBotPage() {
     setErr("");
     setOk("");
     try {
-      const options = parseJsonArray(stepOptions, "Opções");
-      const actions = parseJsonObject(stepActions, "Ações");
+      const options = optionsFromRows(stepOptionRows);
+      const actions = stepSaveAs.trim() ? { save_as: stepSaveAs.trim() } : {};
       if (selectedStep && !creatingStep) {
         await patchWhatsappBotStep(selectedFlow.id, selectedStep.id, {
           step_key: stepKey,
@@ -335,10 +461,25 @@ export function WhatsappBotPage() {
     setStepKey(`passo-${(selectedFlow?.steps.length ?? 0) + 1}`);
     setStepKind("message");
     setStepMessage("Digite a mensagem deste passo.");
-    setStepOptions("[]");
-    setStepActions("{}");
+    setStepOptionRows([]);
+    setStepSaveAs("");
     setStepNext("");
     setStepOrder(((selectedFlow?.steps.length ?? 0) + 1) * 100);
+  }
+
+  function updateOptionRow(index: number, patch: Partial<StepOptionDraft>) {
+    setStepOptionRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function removeOptionRow(index: number) {
+    setStepOptionRows((rows) => rows.filter((_, i) => i !== index));
+  }
+
+  function addOptionRow() {
+    setStepOptionRows((rows) => [
+      ...rows,
+      { key: String(rows.length + 1), label: "", message: "", next_step_key: "", handoff: false, aliasesText: "" },
+    ]);
   }
 
   async function onDeleteStep(step: WhatsappBotStep) {
@@ -379,6 +520,22 @@ export function WhatsappBotPage() {
     }
   }
 
+  async function onClearSession(session: WhatsappBotSession) {
+    if (!window.confirm(`Limpar conversa do bot com ${session.client_whatsapp}?`)) return;
+    setBusy(true);
+    setErr("");
+    setOk("");
+    try {
+      await clearWhatsappBotSession(session.id);
+      setSessions((rows) => rows.filter((row) => row.id !== session.id));
+      setOk("Conversa limpa. O próximo contato começará um novo fluxo.");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Falha ao limpar conversa.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!canView) {
     return (
       <div className={styles.page}>
@@ -386,6 +543,32 @@ export function WhatsappBotPage() {
         <Link to="/app" className={styles.btnGhost}>
           Voltar ao painel
         </Link>
+      </div>
+    );
+  }
+
+  if (!loading && moduleStatus && !moduleStatus.entitlement_active) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.hero}>
+          <div className={styles.heroInner}>
+            <p className={styles.eyebrow}>Integrações</p>
+            <h1 className={styles.heroTitle}>Bot WhatsApp</h1>
+            <p className={styles.heroLead}>As configurações do bot ficam disponíveis após liberação do módulo WhatsApp.</p>
+            <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
+              <Link to="/app/marketplace" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
+                Abrir Loja de integrações
+              </Link>
+            </p>
+          </div>
+        </header>
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>Acesso bloqueado</h2>
+          <p className={styles.hint}>
+            {moduleStatus.blocked_reason ?? "Módulo WhatsApp não contratado ou pendente de aprovação."}
+            {moduleStatus.entitlement_status ? ` Status atual: ${moduleStatus.entitlement_status}.` : ""}
+          </p>
+        </section>
       </div>
     );
   }
@@ -490,8 +673,24 @@ export function WhatsappBotPage() {
                   ))}
                 </div>
               ) : (
-                <p className={styles.hint}>Nenhum fluxo criado ainda. Use o formulário ao lado para criar o primeiro.</p>
+                <>
+                  <p className={styles.hint}>Nenhum fluxo criado ainda. Comece pelos modelos prontos ou use o formulário ao lado.</p>
+                  {canConfigure ? (
+                    <div className={styles.actions}>
+                      <button type="button" className={styles.btnPrimary} disabled={busy} onClick={() => void onSeedDefaults()}>
+                        Criar fluxos prontos
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
+              {flows.length && canConfigure ? (
+                <div className={styles.actions}>
+                  <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => void onSeedDefaults()}>
+                    Completar com modelos faltantes
+                  </button>
+                </div>
+              ) : null}
             </section>
 
             <section className={styles.card}>
@@ -606,6 +805,22 @@ export function WhatsappBotPage() {
                 <input id="step-next" className={styles.textInput} value={stepNext} disabled={!canConfigure} onChange={(e) => setStepNext(e.target.value)} />
                 <label className={styles.fieldLabel} htmlFor="step-order" style={{ marginTop: "0.85rem" }}>Ordem</label>
                 <input id="step-order" type="number" className={styles.textInput} value={stepOrder} disabled={!canConfigure} onChange={(e) => setStepOrder(Number(e.target.value || 100))} />
+                {stepKind === "question" ? (
+                  <>
+                    <label className={styles.fieldLabel} htmlFor="step-save-as" style={{ marginTop: "0.85rem" }}>
+                      Salvar resposta como
+                    </label>
+                    <input
+                      id="step-save-as"
+                      className={styles.textInput}
+                      value={stepSaveAs}
+                      disabled={!canConfigure}
+                      onChange={(e) => setStepSaveAs(e.target.value)}
+                      placeholder="Ex.: cidade, dados_orcamento"
+                    />
+                    <p className={styles.hint}>Use uma chave simples para guardar a resposta no contexto do atendimento.</p>
+                  </>
+                ) : null}
               </div>
               <div>
                 <label className={styles.fieldLabel} htmlFor="step-message">Mensagem do passo</label>
@@ -614,20 +829,112 @@ export function WhatsappBotPage() {
               </div>
             </div>
 
-            <div className={styles.grid}>
-              <div>
-                <label className={styles.fieldLabel} htmlFor="step-options">Opções JSON</label>
-                <textarea id="step-options" className={styles.textarea} value={stepOptions} disabled={!canConfigure} onChange={(e) => setStepOptions(e.target.value)} />
-                <button type="button" className={styles.btnGhost} style={{ marginTop: "0.5rem" }} disabled={!canConfigure} onClick={() => setStepOptions(DEFAULT_STEP_OPTIONS)}>
-                  Usar exemplo
-                </button>
+            <section className={styles.card} style={{ marginTop: "1rem", background: "var(--color-surface, #f8f9fb)" }}>
+              <div className={styles.row} style={{ justifyContent: "space-between" }}>
+                <div>
+                  <h3 className={styles.cardTitle} style={{ marginBottom: "0.25rem" }}>Opções e respostas</h3>
+                  <p className={styles.hint} style={{ marginTop: 0 }}>
+                    Use para passos do tipo menu. Cada opção pode responder direto, ir para outro passo ou chamar atendente.
+                  </p>
+                </div>
+                {canConfigure ? (
+                  <div className={styles.actions} style={{ marginTop: 0 }}>
+                    <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => setStepOptionRows(DEFAULT_OPTION_ROWS)}>
+                      Usar exemplo
+                    </button>
+                    <button type="button" className={styles.btnPrimary} disabled={busy} onClick={addOptionRow}>
+                      Adicionar opção
+                    </button>
+                  </div>
+                ) : null}
               </div>
-              <div>
-                <label className={styles.fieldLabel} htmlFor="step-actions">Ações JSON</label>
-                <textarea id="step-actions" className={styles.textarea} value={stepActions} disabled={!canConfigure} onChange={(e) => setStepActions(e.target.value)} />
-                <p className={styles.hint}>Para pergunta, use por exemplo: {"{\"save_as\":\"cidade\"}"}.</p>
-              </div>
-            </div>
+
+              {stepOptionRows.length ? (
+                <div className={styles.checkGrid} style={{ marginTop: "1rem" }}>
+                  {stepOptionRows.map((row, index) => (
+                    <div key={index} className={styles.card}>
+                      <div className={styles.grid} style={{ marginBottom: 0 }}>
+                        <div>
+                          <label className={styles.fieldLabel} htmlFor={`option-key-${index}`}>Opção digitada</label>
+                          <input
+                            id={`option-key-${index}`}
+                            className={styles.textInput}
+                            value={row.key}
+                            disabled={!canConfigure}
+                            onChange={(e) => updateOptionRow(index, { key: e.target.value })}
+                            placeholder="Ex.: 1"
+                          />
+                          <label className={styles.fieldLabel} htmlFor={`option-label-${index}`} style={{ marginTop: "0.75rem" }}>Texto no menu</label>
+                          <input
+                            id={`option-label-${index}`}
+                            className={styles.textInput}
+                            value={row.label}
+                            disabled={!canConfigure}
+                            onChange={(e) => updateOptionRow(index, { label: e.target.value })}
+                            placeholder="Ex.: Orçamento"
+                          />
+                          <label className={styles.fieldLabel} htmlFor={`option-alias-${index}`} style={{ marginTop: "0.75rem" }}>Atalhos opcionais</label>
+                          <input
+                            id={`option-alias-${index}`}
+                            className={styles.textInput}
+                            value={row.aliasesText}
+                            disabled={!canConfigure}
+                            onChange={(e) => updateOptionRow(index, { aliasesText: e.target.value })}
+                            placeholder="Ex.: orçamento, valor"
+                          />
+                        </div>
+                        <div>
+                          <label className={styles.fieldLabel} htmlFor={`option-message-${index}`}>Resposta imediata</label>
+                          <textarea
+                            id={`option-message-${index}`}
+                            className={styles.textarea}
+                            value={row.message}
+                            disabled={!canConfigure || row.handoff}
+                            onChange={(e) => updateOptionRow(index, { message: e.target.value })}
+                            placeholder="Mensagem enviada quando esta opção não aponta para outro passo."
+                          />
+                          <label className={styles.fieldLabel} htmlFor={`option-next-${index}`} style={{ marginTop: "0.75rem" }}>Ir para passo</label>
+                          <input
+                            id={`option-next-${index}`}
+                            className={styles.textInput}
+                            value={row.next_step_key}
+                            disabled={!canConfigure || row.handoff}
+                            onChange={(e) => updateOptionRow(index, { next_step_key: e.target.value })}
+                            placeholder="Ex.: coletar-cidade"
+                          />
+                          <label className={styles.checkRow} style={{ marginTop: "0.75rem" }}>
+                            <input
+                              type="checkbox"
+                              checked={row.handoff}
+                              disabled={!canConfigure}
+                              onChange={(e) =>
+                                updateOptionRow(index, {
+                                  handoff: e.target.checked,
+                                  message: e.target.checked ? "" : row.message,
+                                  next_step_key: e.target.checked ? "" : row.next_step_key,
+                                })
+                              }
+                            />
+                            Falar com atendente e pausar bot
+                          </label>
+                          {canConfigure ? (
+                            <div className={styles.actions}>
+                              <button type="button" className={styles.btnDanger} disabled={busy} onClick={() => removeOptionRow(index)}>
+                                Remover opção
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className={styles.hint} style={{ marginTop: "0.75rem" }}>
+                  Nenhuma opção configurada para este passo. Para mensagens simples ou perguntas abertas, isso é normal.
+                </p>
+              )}
+            </section>
 
             {canConfigure ? (
               <div className={styles.actions}>
@@ -660,6 +967,100 @@ export function WhatsappBotPage() {
                 <pre className={styles.mono} style={{ whiteSpace: "pre-wrap" }}>{testResult.reply_text ?? "(sem resposta)"}</pre>
               </div>
             ) : null}
+          </section>
+
+          <section className={styles.card} style={{ marginTop: "1.25rem" }}>
+            <div className={styles.row} style={{ justifyContent: "space-between" }}>
+              <div>
+                <h2 className={styles.cardTitle}>Conversas recentes</h2>
+                <p className={styles.hint} style={{ marginTop: 0 }}>
+                  Acompanhe sessões abertas, pausas para atendimento humano e contexto coletado pelo bot.
+                </p>
+              </div>
+              <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => void refresh()}>
+                Atualizar conversas
+              </button>
+            </div>
+
+            {sessions.length ? (
+              <div className={styles.tableWrap} style={{ marginTop: "1rem" }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Cliente</th>
+                      <th>Status</th>
+                      <th>Fluxo / passo</th>
+                      <th>Contexto</th>
+                      <th>Atualizado</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessions.map((session) => {
+                      const paused = isPaused(session);
+                      return (
+                        <tr key={session.id}>
+                          <td className={styles.mono}>{session.client_whatsapp}</td>
+                          <td>
+                            <span className={`${styles.badge} ${paused ? styles.badgeWarn : styles.badgeOk}`}>
+                              {paused ? `Pausado até ${formatDateTime(session.paused_until)}` : "Em fluxo"}
+                            </span>
+                          </td>
+                          <td>
+                            {session.current_flow_name ?? "—"}
+                            {session.current_step_key ? <span className={styles.mono}> / {session.current_step_key}</span> : null}
+                          </td>
+                          <td>{contextPreview(session.context)}</td>
+                          <td>{formatDateTime(session.updated_at)}</td>
+                          <td>
+                            <button type="button" className={styles.btnDanger} disabled={busy} onClick={() => void onClearSession(session)}>
+                              Limpar / reativar
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className={styles.hint} style={{ marginTop: "0.75rem" }}>
+                Nenhuma conversa ativa ou pausada no bot ainda.
+              </p>
+            )}
+          </section>
+
+          <section className={styles.card} style={{ marginTop: "1.25rem" }}>
+            <h2 className={styles.cardTitle}>Histórico do bot</h2>
+            <p className={styles.hint}>
+              Últimos eventos de entrada, resposta e falha do bot. Use para auditar o que aconteceu no WhatsApp real.
+            </p>
+            {events.length ? (
+              <div className={styles.tableWrap} style={{ marginTop: "1rem" }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Quando</th>
+                      <th>Evento</th>
+                      <th>Job</th>
+                      <th>Payload</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {events.map((event) => (
+                      <tr key={event.id}>
+                        <td>{formatDateTime(event.created_at)}</td>
+                        <td>{event.event_type}</td>
+                        <td>{event.job_id ?? "—"}</td>
+                        <td className={styles.mono}>{JSON.stringify(event.payload).slice(0, 220)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className={styles.hint} style={{ marginTop: "0.75rem" }}>Nenhum evento do bot registrado ainda.</p>
+            )}
           </section>
         </>
       )}

@@ -4,6 +4,7 @@ import {
   changeMyPassword,
   fetchCurrentTenant,
   fetchCurrentUser,
+  logoutRevokeRefresh,
   patchCurrentUser,
   type TenantOut,
   type UserOut,
@@ -110,10 +111,13 @@ export function DashboardPage() {
   const isBudgetsRoute = location.pathname.startsWith("/app/budgets");
   const isFinanceRoute = location.pathname.startsWith("/app/finance");
   const isAgendaRoute = location.pathname.startsWith("/app/agenda");
+  const isPreventiveRoute = location.pathname.startsWith("/app/preventive-maintenance");
+  const isFiscalRoute = location.pathname.startsWith("/app/fiscal");
   const isPmocRoute = location.pathname.startsWith("/app/pmoc");
   const isMarketplaceRoute = location.pathname.startsWith("/app/marketplace");
   const isWhatsappBotRoute = location.pathname.startsWith("/app/integrations/whatsapp-bot");
   const isWhatsappRoute = location.pathname.startsWith("/app/integrations/whatsapp");
+  const isChatIaRoute = location.pathname.startsWith("/app/integrations/chat-ia");
   const isMercadoLivreRoute = location.pathname.startsWith("/app/integrations/mercado-livre");
   const pageTitle = isAdminRoute
     ? "Administração"
@@ -133,10 +137,16 @@ export function DashboardPage() {
               ? "Financeiro"
             : isAgendaRoute
               ? "Agenda"
+            : isPreventiveRoute
+              ? "Gestão preventiva"
+            : isFiscalRoute
+              ? "Fiscal"
             : isPmocRoute
               ? "PMOC"
             : isMarketplaceRoute
               ? "Loja de integrações"
+            : isChatIaRoute
+              ? "Chat IA"
             : isWhatsappBotRoute
               ? "Bot WhatsApp"
             : isWhatsappRoute
@@ -157,6 +167,7 @@ export function DashboardPage() {
       const u = await fetchCurrentUser();
       setUser(u);
     } catch {
+      await logoutRevokeRefresh();
       clearAccessToken();
       navigate("/login", { replace: true });
     }
@@ -233,6 +244,7 @@ export function DashboardPage() {
         setUser(u);
       } catch {
         if (!cancelled) {
+          void logoutRevokeRefresh();
           clearAccessToken();
           navigate("/login", { replace: true });
         }
@@ -296,7 +308,8 @@ export function DashboardPage() {
     };
   }, [accountDrawerOpen, workspaceDrawerOpen, globalSearchOpen, notificationsOpen, preferencesOpen]);
 
-  function logout() {
+  async function logout() {
+    await logoutRevokeRefresh();
     clearAccessToken();
     navigate("/login", { replace: true });
   }
@@ -383,10 +396,16 @@ export function DashboardPage() {
       ["config financeiro", "/app/finance/settings"],
       ["configuração financeiro", "/app/finance/settings"],
       ["financeiro", "/app/finance"],
+      ["nfs", "/app/fiscal/nfse"],
+      ["nfse", "/app/fiscal/nfse"],
+      ["nota fiscal", "/app/fiscal/nfse"],
       ["mercado livre", "/app/marketplace"],
       ["bot whatsapp", "/app/integrations/whatsapp-bot"],
       ["chatbot", "/app/integrations/whatsapp-bot"],
       ["whatsapp", "/app/integrations/whatsapp"],
+      ["chat ia", "/app/integrations/chat-ia"],
+      ["assistente", "/app/integrations/chat-ia"],
+      ["claude", "/app/integrations/chat-ia"],
       ["integra", "/app/marketplace"],
       ["admin", "/app/admin"],
       ["inicio", "/app"],
@@ -599,21 +618,17 @@ export function DashboardPage() {
                 <span className={styles.navLabel}>Agenda</span>
               </NavLink>
             </li>
-          </ul>
-
-          <p className={styles.navSection}>PMOC</p>
-          <ul className={styles.navList}>
             <li>
               <NavLink
-                to="/app/pmoc"
-                title="PMOC — planos e status"
+                to="/app/preventive-maintenance"
+                title="Gestão preventiva — manutenções a vencer"
                 className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
                 onClick={closeSidebar}
               >
                 <span className={styles.navIcon} aria-hidden>
                   <NavIconAirCompliance className={styles.navSvg} />
                 </span>
-                <span className={styles.navLabel}>PMOC</span>
+                <span className={styles.navLabel}>Gestão preventiva</span>
               </NavLink>
             </li>
           </ul>
@@ -646,6 +661,19 @@ export function DashboardPage() {
                 <span className={styles.navLabel}>Financeiro</span>
               </NavLink>
             </li>
+            <li>
+              <NavLink
+                to="/app/fiscal/nfse"
+                title="NFS-e"
+                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
+                onClick={closeSidebar}
+              >
+                <span className={styles.navIcon} aria-hidden>
+                  <NavIconFileQuote className={styles.navSvg} />
+                </span>
+                <span className={styles.navLabel}>NFS-e</span>
+              </NavLink>
+            </li>
           </ul>
 
           <p className={styles.navSection}>Integrações</p>
@@ -674,6 +702,19 @@ export function DashboardPage() {
                   <NavIconPackage className={styles.navSvg} />
                 </span>
                 <span className={styles.navLabel}>WhatsApp</span>
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/app/integrations/chat-ia"
+                title="Chat IA (Claude)"
+                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
+                onClick={closeSidebar}
+              >
+                <span className={styles.navIcon} aria-hidden>
+                  <NavIconClipboard className={styles.navSvg} />
+                </span>
+                <span className={styles.navLabel}>Chat IA</span>
               </NavLink>
             </li>
             <li>
@@ -1124,6 +1165,19 @@ export function DashboardPage() {
                   </Link>
                   <Link
                     className={styles.accountDrawerLinkRow}
+                    to="/app/security/trusted-devices"
+                    onClick={() => {
+                      setWorkspaceDrawerOpen(false);
+                      closeSidebar();
+                    }}
+                  >
+                    <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
+                      <NavIconLock />
+                    </span>
+                    Dispositivos confiáveis (2FA)
+                  </Link>
+                  <Link
+                    className={styles.accountDrawerLinkRow}
                     to="/app/finance/settings"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
@@ -1202,6 +1256,9 @@ export function DashboardPage() {
               </button>
               <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp")}>
                 WhatsApp
+              </button>
+              <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/chat-ia")}>
+                Chat IA
               </button>
               <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp-bot")}>
                 Bot WhatsApp

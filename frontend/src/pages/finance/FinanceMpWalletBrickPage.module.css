@@ -1,0 +1,40 @@
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.lead {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--color-text, #111);
+}
+
+.muted {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #666);
+}
+
+.error {
+  color: #b00020;
+  font-size: 0.9rem;
+  margin: 0 0 1rem;
+}
+
+.walletMount {
+  min-height: 120px;
+  padding: 0.5rem 0;
+}

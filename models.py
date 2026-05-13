@@ -82,11 +82,24 @@ class FinanceGatewayProvider(str, enum.Enum):
     MERCADOPAGO = "mercadopago"
 
 
+class NfseProvider(str, enum.Enum):
+    NATIONAL_MEI = "national_mei"
+    FOCUS = "focus"
+
+
+class NfseInvoiceStatus(str, enum.Enum):
+    PENDING_SUBMISSION = "pending_submission"
+    ISSUED = "issued"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class FinanceAccountType(str, enum.Enum):
     CHECKING = "checking"
     SAVINGS = "savings"
     INVESTMENT = "investment"
     DIGITAL_WALLET = "digital_wallet"
+    CASH = "cash"
     OTHER = "other"
 
 
@@ -179,6 +192,14 @@ class Tenant(Base):
     logo_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
     logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     pdf_primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#0B7FAF")
+    preventive_promo_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    preventive_promo_image_mimetype: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    preventive_technical_problem_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preventive_button_more_text: Mapped[str] = mapped_column(String(80), nullable=False, default="Sim, quero saber mais")
+    preventive_button_schedule_text: Mapped[str] = mapped_column(String(80), nullable=False, default="Agendar agora")
+    preventive_message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 0 = só lembrete no dia do vencimento; N>0 = também envia quando faltam N dias (calendário do tenant.timezone).
+    preventive_auto_remind_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[TenantStatus] = mapped_column(
         Enum(TenantStatus, name="tenant_status", values_callable=lambda items: [item.value for item in items]),
         nullable=False,
@@ -221,6 +242,12 @@ class Tenant(Base):
     finance_gateways: Mapped[list["TenantFinanceGateway"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    nfse_settings: Mapped["TenantNfseSettings | None"] = relationship(
+        back_populates="tenant", uselist=False, cascade="all, delete-orphan"
+    )
+    nfse_invoices: Mapped[list["NfseInvoice"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     whatsapp_jobs: Mapped[list["WhatsappMessageJob"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
@@ -255,6 +282,96 @@ class Tenant(Base):
     mercado_livre_product_links: Mapped[list["MercadoLivreProductLink"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    ai_settings: Mapped["TenantAISettings | None"] = relationship(
+        back_populates="tenant", uselist=False, cascade="all, delete-orphan"
+    )
+    ai_chat_history: Mapped[list["AIChatHistory"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    ai_pending_tool_confirmations: Mapped[list["AIPendingToolConfirmation"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    historico_servicos: Mapped[list["HistoricoServico"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    lembretes_preventivos: Mapped[list["LembretePreventivo"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    preventive_interest_leads: Mapped[list["PreventiveInterestLead"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+
+
+class TenantAISettings(Base):
+    __tablename__ = "tenant_ai_settings"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_tenant_ai_settings_tenant"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_name: Mapped[str] = mapped_column(String(80), nullable=False, default="Assistente")
+    tone_of_voice: Mapped[str] = mapped_column(String(20), nullable=False, default="amigavel")
+    instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_slug: Mapped[str] = mapped_column(String(80), nullable=False, default="claude-haiku-4-5-20251201")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Visibilidade no contexto enviado ao modelo (LGPD / escopo comercial).
+    ai_context_products: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ai_context_service_prices: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ai_context_services_catalog: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Ferramentas: cobrança desligada por padrão.
+    ai_tool_billing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ai_tool_cancel: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ai_tool_reschedule: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ai_tool_agenda_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ai_allow_direct_schedule: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ai_allow_auto_client_create: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ai_clarification_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="ai_settings")
+
+
+class AIChatHistory(Base):
+    __tablename__ = "ai_chat_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    assistant_response: Mapped[str] = mapped_column(Text, nullable=False)
+    used_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    used_tools_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    system_prompt_xml: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_mock: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="ai_chat_history")
+
+
+class AIPendingToolConfirmation(Base):
+    __tablename__ = "ai_pending_tool_confirmations"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "client_whatsapp", name="uq_ai_pending_tool_tenant_client"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_whatsapp: Mapped[str] = mapped_column(String(20), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    arguments_json: Mapped[str] = mapped_column(Text, nullable=False)
+    confirmation_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="ai_pending_tool_confirmations")
 
 
 class MarketplaceEntitlementStatus(str, enum.Enum):
@@ -389,6 +506,12 @@ class User(Base):
     platform_plan_changes: Mapped[list["TenantPlanChangeLog"]] = relationship(back_populates="changed_by_user")
     whatsapp_jobs_created: Mapped[list["WhatsappMessageJob"]] = relationship(back_populates="created_by_user")
     equipment_link_audits: Mapped[list["ServiceOrderServiceItemEquipmentAudit"]] = relationship()
+    trusted_login_devices: Mapped[list["LoginTrustedDevice"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    refresh_tokens: Mapped[list["LoginRefreshToken"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class TenantPlanChangeLog(Base):
@@ -558,6 +681,40 @@ class LoginTwoFactorChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class LoginTrustedDevice(Base):
+    """Dispositivo confiável após 2FA (cookie HTTP-only + hash do token)."""
+
+    __tablename__ = "login_trusted_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="trusted_login_devices")
+
+
+class LoginRefreshToken(Base):
+    """Refresh token opaco (hash no banco) para emitir novos JWT de acesso sem novo login."""
+
+    __tablename__ = "login_refresh_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship(back_populates="refresh_tokens")
+
+
 class Client(Base):
     __tablename__ = "clients"
     __table_args__ = (
@@ -571,11 +728,14 @@ class Client(Base):
     # CPF (11) ou CNPJ (14), somente dígitos — alinhado a cpf_destinatario / cnpj_destinatario (Focus NFe NFe).
     document: Mapped[str | None] = mapped_column(String(20), nullable=True)
     tax_id_kind: Mapped[str] = mapped_column(String(8), nullable=False, default="cnpj")
+    optante_mei: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     phone: Mapped[str | None] = mapped_column(String(20))
     whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255))
     # Nome fantasia (PJ); opcional.
     trade_name: Mapped[str | None] = mapped_column(String(150))
+    # Pessoa de contato na empresa (PJ); exibido na lista de clientes.
+    contact_person_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     # Inscrição estadual do destinatário; pode ser "ISENTO" quando aplicável.
     state_registration: Mapped[str | None] = mapped_column(String(20))
     # NFe: indicador_inscricao_estadual_destinatario — 1 contribuinte, 2 isento, 9 não contribuinte.
@@ -592,6 +752,8 @@ class Client(Base):
     address_postal_code: Mapped[str | None] = mapped_column(String(12))
     address_country: Mapped[str] = mapped_column(String(60), nullable=False, default="Brasil")
     address_ibge_code: Mapped[str | None] = mapped_column(String(7))
+    preventive_campaign_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -606,6 +768,28 @@ class Client(Base):
     pmoc_plans: Mapped[list["PmocPlan"]] = relationship(
         back_populates="client", cascade="all, delete-orphan", order_by="PmocPlan.id.desc()"
     )
+    nfse_invoices: Mapped[list["NfseInvoice"]] = relationship(back_populates="client")
+    historico_servicos: Mapped[list["HistoricoServico"]] = relationship(back_populates="client")
+    audit_logs: Mapped[list["ClientAuditLog"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan", order_by="ClientAuditLog.id.desc()"
+    )
+
+
+class ClientAuditLog(Base):
+    __tablename__ = "client_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    changes_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    client: Mapped["Client"] = relationship(back_populates="audit_logs")
+    user: Mapped["User | None"] = relationship()
 
 
 class Equipment(Base):
@@ -930,6 +1114,10 @@ class Product(Base):
     sale_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     unit_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     stock_quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False, default=0)
+    compatible_equipment_tags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    btu_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    btu_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    application_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -1046,13 +1234,23 @@ class Service(Base):
     description: Mapped[str | None] = mapped_column(Text)
     price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    equipment_type_tags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    btu_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    btu_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    service_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    applies_residential: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    applies_commercial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    nfse_codigo_tributacao_nacional: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    nfse_codigo_nbs: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    periodicidade_meses: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     tenant: Mapped["Tenant"] = relationship(back_populates="services")
     order_items: Mapped[list["ServiceOrderServiceItem"]] = relationship(back_populates="service")
+    historico_servicos: Mapped[list["HistoricoServico"]] = relationship(back_populates="service")
     product_inputs: Mapped[list["ServiceProductInput"]] = relationship(
         back_populates="service", cascade="all, delete-orphan"
     )
@@ -1064,6 +1262,93 @@ class Service(Base):
     @property
     def estimated_profit(self) -> float:
         return float(self.price) - self.estimated_material_cost
+
+
+class PreventiveInterestKind(str, enum.Enum):
+    MORE = "more"
+    SCHEDULE = "schedule"
+
+
+class HistoricoServico(Base):
+    """Última realização de um tipo de serviço para o cliente (base para vencimento preventivo)."""
+
+    __tablename__ = "historico_servicos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id", ondelete="RESTRICT"), nullable=False, index=True)
+    data_realizacao: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    service_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="historico_servicos")
+    client: Mapped["Client"] = relationship(back_populates="historico_servicos")
+    service: Mapped["Service"] = relationship(back_populates="historico_servicos")
+    service_order: Mapped["ServiceOrder | None"] = relationship()
+    lembretes: Mapped[list["LembretePreventivo"]] = relationship(back_populates="historico_servico")
+
+
+class LembretePreventivo(Base):
+    """Registro de lembretes preventivos enviados (evita spam / auditoria)."""
+
+    __tablename__ = "lembretes_preventivos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    historico_servico_id: Mapped[int] = mapped_column(
+        ForeignKey("historico_servicos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reminder_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    recipient_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    whatsapp_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("whatsapp_message_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="lembretes_preventivos")
+    historico_servico: Mapped["HistoricoServico"] = relationship(back_populates="lembretes")
+    whatsapp_job: Mapped["WhatsappMessageJob | None"] = relationship()
+
+
+class PreventiveInterestLead(Base):
+    """Resposta a botão ou texto de interesse na campanha preventiva (entrada futura para IA)."""
+
+    __tablename__ = "preventive_interest_leads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    historico_servico_id: Mapped[int | None] = mapped_column(
+        ForeignKey("historico_servicos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    whatsapp_digits: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    interest_kind: Mapped[PreventiveInterestKind] = mapped_column(
+        Enum(
+            PreventiveInterestKind,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="preventive_interest_leads")
+    client: Mapped["Client"] = relationship()
+    historico_servico: Mapped["HistoricoServico | None"] = relationship()
 
 
 class ServiceOrder(Base):
@@ -1105,6 +1390,8 @@ class ServiceOrder(Base):
     )
     source_budget: Mapped["Budget | None"] = relationship(back_populates="generated_service_order", uselist=False)
     stock_movements: Mapped[list["StockMovement"]] = relationship(back_populates="service_order")
+    finance_entries: Mapped[list["FinanceEntry"]] = relationship(back_populates="service_order")
+    nfse_invoices: Mapped[list["NfseInvoice"]] = relationship(back_populates="service_order")
 
     @property
     def schedule(self) -> "Schedule | None":
@@ -1432,6 +1719,13 @@ class FinanceEntry(Base):
     fee_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     recipient_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     gateway_payment_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    gateway_preference_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    mercadopago_archived_preference_id: Mapped[str | None] = mapped_column(
+        String(48), nullable=True, index=True
+    )
+    mercadopago_preapproval_id: Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    mp_reversal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mp_reversal_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     installment_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     installment_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     installment_total: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -1441,6 +1735,9 @@ class FinanceEntry(Base):
     settlement_plan: Mapped[str | None] = mapped_column(String(32), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    service_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -1452,6 +1749,7 @@ class FinanceEntry(Base):
     category: Mapped["FinanceCategory | None"] = relationship(back_populates="entries")
     finance_account: Mapped["FinanceBankAccount | None"] = relationship(back_populates="entries")
     credit_card: Mapped["FinanceCreditCard | None"] = relationship(back_populates="entries")
+    service_order: Mapped["ServiceOrder | None"] = relationship(back_populates="finance_entries")
 
 
 class FinanceBankAccount(Base):
@@ -1557,6 +1855,17 @@ class TenantFinanceGateway(Base):
     last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_validation_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     account_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mercadopago_access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_public_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mercadopago_webhook_path_token: Mapped[str | None] = mapped_column(String(48), nullable=True, unique=True, index=True)
+    mercadopago_webhook_signature_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_products_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercadopago_cached_balance: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    mercadopago_mp_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mercadopago_finance_bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -1565,6 +1874,92 @@ class TenantFinanceGateway(Base):
     )
 
     tenant: Mapped["Tenant"] = relationship(back_populates="finance_gateways")
+
+
+class TenantNfseSettings(Base):
+    __tablename__ = "tenant_nfse_settings"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_tenant_nfse_settings_tenant"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    mei_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    default_optante_mei: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mei_environment: Mapped[str] = mapped_column(String(20), nullable=False, default="homolog")
+    mei_certificate_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mei_certificate_base64_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mei_certificate_file_name: Mapped[str | None] = mapped_column(String(260), nullable=True)
+    mei_portal_username_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mei_portal_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mei_last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mei_last_test_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    focus_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    focus_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    focus_environment: Mapped[str] = mapped_column(String(20), nullable=False, default="homolog")
+    auto_issue_on_payment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    default_codigo_tributacao_nacional: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    default_codigo_nbs: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # NFS-e nacional: inscrição municipal do prestador (tag IM), até 15 caracteres — alguns municípios exigem.
+    prestador_inscricao_municipal: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    # Série da DPS no XML / Id (ex.: 70000 como no emissor nacional — alinhamento ao portal).
+    dps_serie: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # national_mei | focus — consulta CNPJ (MEI vs demais); administrador pode alterar.
+    auto_nfse_provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="nfse_settings")
+
+
+class NfseInvoice(Base):
+    __tablename__ = "nfse_invoices"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "service_order_id", name="uq_nfse_invoice_tenant_service_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    service_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    finance_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_entries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    provider: Mapped[NfseProvider] = mapped_column(
+        Enum(NfseProvider, values_callable=lambda items: [item.value for item in items], native_enum=False, length=20),
+        nullable=False,
+    )
+    status: Mapped[NfseInvoiceStatus] = mapped_column(
+        Enum(NfseInvoiceStatus, values_callable=lambda items: [item.value for item in items], native_enum=False, length=24),
+        nullable=False,
+        default=NfseInvoiceStatus.PENDING_SUBMISSION,
+    )
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    rps_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    nfse_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Chave de acesso (44–50 dígitos) quando a API retorna só a chave sem nNFSe.
+    nfse_access_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    verification_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    municipal_code: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    request_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="nfse_invoices")
+    client: Mapped["Client"] = relationship(back_populates="nfse_invoices")
+    service_order: Mapped["ServiceOrder | None"] = relationship(back_populates="nfse_invoices")
+    finance_entry: Mapped["FinanceEntry | None"] = relationship()
 
 
 class WhatsappMessageJob(Base):

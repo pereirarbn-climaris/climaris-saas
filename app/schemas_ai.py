@@ -12,8 +12,24 @@ class TenantAISettingsUpsert(BaseModel):
     instructions: str | None = Field(default=None, max_length=4000)
     model_slug: str | None = Field(default=None, max_length=80)
     is_enabled: bool = True
+    ai_context_products: bool = True
+    ai_context_service_prices: bool = True
+    ai_context_services_catalog: bool = True
+    ai_tool_billing: bool = False
+    ai_tool_cancel: bool = True
+    ai_tool_reschedule: bool = True
+    ai_tool_agenda_read: bool = True
+    ai_allow_direct_schedule: bool = False
+    ai_allow_auto_client_create: bool = False
+    ai_clarification_instructions: str | None = Field(default=None, max_length=4000)
 
-    @field_validator("agent_name", "tone_of_voice", "instructions", "model_slug")
+    @field_validator(
+        "agent_name",
+        "tone_of_voice",
+        "instructions",
+        "model_slug",
+        "ai_clarification_instructions",
+    )
     @classmethod
     def _strip_fields(cls, value: str | None) -> str | None:
         if value is None:
@@ -28,8 +44,24 @@ class TenantAISettingsPatch(BaseModel):
     instructions: str | None = Field(default=None, max_length=4000)
     model_slug: str | None = Field(default=None, max_length=80)
     is_enabled: bool | None = None
+    ai_context_products: bool | None = None
+    ai_context_service_prices: bool | None = None
+    ai_context_services_catalog: bool | None = None
+    ai_tool_billing: bool | None = None
+    ai_tool_cancel: bool | None = None
+    ai_tool_reschedule: bool | None = None
+    ai_tool_agenda_read: bool | None = None
+    ai_allow_direct_schedule: bool | None = None
+    ai_allow_auto_client_create: bool | None = None
+    ai_clarification_instructions: str | None = Field(default=None, max_length=4000)
 
-    @field_validator("agent_name", "tone_of_voice", "instructions", "model_slug")
+    @field_validator(
+        "agent_name",
+        "tone_of_voice",
+        "instructions",
+        "model_slug",
+        "ai_clarification_instructions",
+    )
     @classmethod
     def _strip_fields(cls, value: str | None) -> str | None:
         if value is None:
@@ -48,6 +80,16 @@ class TenantAISettingsOut(BaseModel):
     instructions: str | None
     model_slug: str
     is_enabled: bool
+    ai_context_products: bool = True
+    ai_context_service_prices: bool = True
+    ai_context_services_catalog: bool = True
+    ai_tool_billing: bool = False
+    ai_tool_cancel: bool = True
+    ai_tool_reschedule: bool = True
+    ai_tool_agenda_read: bool = True
+    ai_allow_direct_schedule: bool = False
+    ai_allow_auto_client_create: bool = False
+    ai_clarification_instructions: str | None = None
     created_at: datetime
     updated_at: datetime
 

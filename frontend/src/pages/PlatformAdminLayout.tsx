@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { changeMyPassword, fetchCurrentTenant, fetchCurrentUser, type TenantOut, type UserOut } from "../api/auth";
+import { changeMyPassword, fetchCurrentTenant, fetchCurrentUser, logoutRevokeRefresh, type TenantOut, type UserOut } from "../api/auth";
 import { NavIconChevronDown, NavIconKey, NavIconLayoutDashboard, NavIconPuzzle } from "../components/dashboard/NavIcons";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
 import { PLATFORM_ADMIN_EMAIL, isPlatformOperatorUser } from "../lib/platformAdmin";
@@ -86,6 +86,7 @@ export function PlatformAdminLayout() {
         }
       } catch {
         if (!cancelled) {
+          void logoutRevokeRefresh();
           clearAccessToken();
           navigate("/login", { replace: true });
         }
@@ -126,7 +127,8 @@ export function PlatformAdminLayout() {
     return () => window.removeEventListener("keydown", onKey);
   }, [sidebarOpen]);
 
-  function logout() {
+  async function logout() {
+    await logoutRevokeRefresh();
     clearAccessToken();
     navigate("/login", { replace: true });
   }

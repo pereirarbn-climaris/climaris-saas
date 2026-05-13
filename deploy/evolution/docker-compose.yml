@@ -12,8 +12,10 @@ services:
       - evolution_instances:/evolution/instances
     ports:
       - "127.0.0.1:8080:8080"
+    # Segunda rede: mesmo nome que o ERP usa (`docker-compose.evolution.yml`) para resolver `evolution_api:8080`.
     networks:
-      - evolution_net
+      evolution_net:
+      evolution_bridge:
 
   evolution-manager:
     image: evoapicloud/evolution-manager:latest
@@ -68,3 +70,6 @@ volumes:
 networks:
   evolution_net:
     driver: bridge
+  evolution_bridge:
+    external: true
+    name: evolution_evolution_net

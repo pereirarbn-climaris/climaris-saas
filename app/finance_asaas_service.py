@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from app.asaas_client import create_asaas_payment_webhook, delete_asaas_webhook
-from app.config import API_PUBLIC_BASE_URL
+from app.config import public_api_base_url
 from app.security import decrypt_platform_secret, encrypt_platform_secret
 
 if TYPE_CHECKING:
@@ -38,12 +38,13 @@ def register_asaas_webhook_after_save(
 ) -> None:
     """
     Cria (ou recria) o webhook no painel Asaas apontando para este servidor.
-    Exige API_PUBLIC_BASE_URL (ex.: https://app.exemplo.com.br) sem path /api.
+    Exige URL pública (API_PUBLIC_BASE_URL ou APP_PUBLIC_URL HTTPS não-local).
     """
-    base = (API_PUBLIC_BASE_URL or "").strip().rstrip("/")
+    base = public_api_base_url()
     if not base:
         row.asaas_webhook_last_error = (
-            "Defina API_PUBLIC_BASE_URL no servidor (URL pública da API, mesmo host do app em produção)."
+            "Defina API_PUBLIC_BASE_URL ou APP_PUBLIC_URL (HTTPS, ex.: https://app.exemplo.com.br) "
+            "no servidor para registrar o webhook no mesmo host que expõe /api/v1."
         )
         return
 

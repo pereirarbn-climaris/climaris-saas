@@ -259,6 +259,18 @@ class WhatsappBotTestResponse(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class WhatsappBotSeedDefaultsResponse(BaseModel):
+    created_flows: int
+    skipped_existing: int
+    flows: list[WhatsappBotFlowOut]
+
+
+class WhatsappBotStatusOut(BaseModel):
+    entitlement_active: bool
+    entitlement_status: str | None = None
+    blocked_reason: str | None = None
+
+
 class WhatsappBotSessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -266,9 +278,19 @@ class WhatsappBotSessionOut(BaseModel):
     tenant_id: int
     client_whatsapp: str
     current_flow_id: int | None
+    current_flow_name: str | None = None
     current_step_key: str | None
+    context: dict[str, Any] = Field(default_factory=dict)
     paused_until: datetime | None
     last_incoming_at: datetime | None
     last_outgoing_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class WhatsappBotEventOut(BaseModel):
+    id: int
+    event_type: str
+    payload: dict[str, Any]
+    job_id: int | None = None
+    created_at: datetime

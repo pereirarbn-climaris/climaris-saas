@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import ssl
 import urllib.error
 import urllib.request
 import unicodedata
+import uuid
 from datetime import datetime, timedelta, timezone
 import re
 from string import Formatter
@@ -12,7 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select, desc
+from sqlalchemy import delete, desc, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import SessionLocal
@@ -23,11 +25,14 @@ from app.routers.service_orders import (
     _tenant_tz,
     _with_buffer,
 )
+from app.ai_assistant import generate_ai_response
 from app.config import (
+    AI_ASSISTANT_V2_ENABLED,
     EVOLUTION_API_BASE_URL,
     EVOLUTION_API_KEY,
     EVOLUTION_CORS_REQUEST_ORIGIN,
     EVOLUTION_INSTANCE,
+    WHATSAPP_AI_INCOMING_ENABLED,
     WHATSAPP_INTERACTIVE_BUTTONS_ENABLED,
 )
 from models import (
@@ -38,12 +43,21 @@ from models import (
     Tenant,
     TenantHoliday,
     User,
+    UserRole,
     WhatsappMessageEvent,
     WhatsappMessageJob,
     WhatsappMessageStatus,
     WhatsappRescheduleOption,
 )
 
+logger = logging.getLogger("erp.whatsapp")
+
+# --- Evolution API v2.3.x (ex.: 2.3.7) — mensagens com botões ---
+# 1) Preferir POST /message/sendButtons/{instance} (SendButtonsDto): a Evolution monta o envelope
+#    Baileys no servidor — melhor compatibilidade (WhatsApp Web + mobile).
+# 2) Fallback: POST /message/sendInteractive/{instance} com native_flow (_build_evolution_237_native_flow_payload).
+# Não enviar viewOnceMessage na raiz do JSON HTTP.
+# Implementação: _evolution_send_buttons.
 
 TEMPLATES: dict[str, dict[str, Any]] = {
     "reminder_due": {
@@ -94,6 +108,21 @@ DEFAULT_REMINDER_RULES = {
     "custom_minutes": None,
 }
 RESCHEDULE_OPTIONS_TTL_MINUTES = 30
+HUMAN_HANDOFF_ON_KEYWORDS: tuple[str, ...] = (
+    "atendente",
+    "humano",
+    "falar com atendente",
+    "quero falar com atendente",
+    "falar com humano",
+)
+HUMAN_HANDOFF_OFF_KEYWORDS: tuple[str, ...] = (
+    "bot",
+    "ia",
+    "voltar bot",
+    "voltar ia",
+    "retomar bot",
+    "retomar ia",
+)
 
 
 class ProviderSendResult(dict):
@@ -385,12 +414,12 @@ def _evolution_request(method: str, path: str, payload: dict[str, Any] | None = 
         except Exception:
             pass
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Falha na Evolution API (HTTP {exc.code}): {body[:200]}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Evolution API retornou HTTP {exc.code}: {body[:200]}",
         ) from exc
     except urllib.error.URLError as exc:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Sem conexão com Evolution API: {exc.reason}",
         ) from exc
 
@@ -422,6 +451,133 @@ def _evolution_send_text(instance_name: str, number: str, message: str) -> Provi
     return ProviderSendResult(message_id=message_id, raw_response=data)
 
 
+def evolution_send_media_message(
+    instance_name: str,
+    number: str,
+    *,
+    caption: str,
+    media_url: str | None = None,
+    media_base64: str | None = None,
+    mimetype: str = "image/jpeg",
+    filename: str | None = None,
+) -> ProviderSendResult:
+    """POST /message/sendMedia/{instance} — imagem por URL ou Base64 (Evolution API)."""
+    media = (media_url or "").strip() or (media_base64 or "").strip()
+    if not media:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Envie media_url ou media_base64 para o envio com imagem.",
+        )
+    mediatype = "image"
+    payload: dict[str, Any] = {
+        "number": number,
+        "mediatype": mediatype,
+        "mimetype": mimetype,
+        "caption": caption,
+        "media": media,
+    }
+    if filename:
+        payload["fileName"] = filename
+    data = _evolution_request("POST", f"/message/sendMedia/{instance_name}", payload)
+    key_data = data.get("key") if isinstance(data, dict) else {}
+    message_id = None
+    if isinstance(key_data, dict):
+        message_id = key_data.get("id")
+    if not message_id and isinstance(data, dict):
+        message_id = data.get("id") or data.get("messageId")
+    return ProviderSendResult(message_id=message_id, raw_response=data)
+
+
+def _build_evolution_237_native_flow_payload(
+    number: str,
+    title: str,
+    body: str,
+    footer: str,
+    buttons: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Monta o JSON esperado pela Evolution API v2.3.7 para botões (quick_reply).
+
+    Usado como **fallback** em `_evolution_send_buttons` quando `POST /message/sendButtons`
+    não resolve — não é o primeiro caminho (o primeiro é SendButtonsDto para a Evolution
+    montar o proto no servidor, melhor para WhatsApp Web).
+
+    Endpoint HTTP: POST /message/sendInteractive/{instance}
+
+    Regras v2.3.7:
+    - Raiz: apenas "number" e "interactiveMessage" (não enviar viewOnceMessage nem "message"
+      no JSON HTTP — isso quebra / Unknown message type; a Evolution encapsula no servidor).
+    - interactiveMessage deve ter "type": "native_flow".
+    - Botões em nativeFlowMessage.buttons: name "quick_reply", buttonParamsJson com JSON
+      string {"display_text", "id"}.
+
+    Opcional: nativeFlowMessage.messageParamsJson com from/templateId, alinhado ao código da
+    Evolution (whatsapp.baileys.service.ts).
+    """
+    t = (title or "").strip()
+    b = (body or "").strip()
+    if t:
+        text = f"*{t}*\n\n{b}"
+    else:
+        text = b
+    flow_buttons: list[dict[str, str]] = []
+    for btn in buttons:
+        bid = str((btn or {}).get("buttonId", "") or "").strip()
+        bt = (btn or {}).get("buttonText")
+        display = ""
+        if isinstance(bt, dict):
+            display = str(bt.get("displayText", "") or "").strip()
+        if len(display) > 20:
+            display = display[:20]
+        if not bid or not display:
+            continue
+        params = json.dumps(
+            {"display_text": display, "id": bid},
+            ensure_ascii=False,
+        )
+        flow_buttons.append(
+            {
+                "name": "quick_reply",
+                "buttonParamsJson": params,
+            }
+        )
+    if len(flow_buttons) > 3:
+        flow_buttons = flow_buttons[:3]
+    if not flow_buttons:
+        raise ValueError("Nenhum botão válido para native_flow (id e displayText).")
+    return {
+        "number": number,
+        "interactiveMessage": {
+            "body": {"text": text},
+            "footer": {"text": (footer or "")[:60]},
+            "type": "native_flow",
+            "nativeFlowMessage": {
+                "buttons": flow_buttons,
+                # Mesmo que whatsapp.baileys.service.ts (Evolution): envelope interno do fluxo.
+                "messageParamsJson": json.dumps(
+                    {"from": "api", "templateId": str(uuid.uuid4())},
+                    ensure_ascii=False,
+                ),
+            },
+        },
+    }
+
+
+def _internal_buttons_to_evolution_reply(buttons: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Converte o formato interno (buttonId + buttonText.displayText) para SendButtonsDto da Evolution."""
+    out: list[dict[str, Any]] = []
+    for btn in buttons:
+        bid = str((btn or {}).get("buttonId", "") or "").strip()
+        bt = (btn or {}).get("buttonText")
+        display = ""
+        if isinstance(bt, dict):
+            display = str(bt.get("displayText", "") or "").strip()
+        if len(display) > 20:
+            display = display[:20]
+        if bid and display:
+            out.append({"type": "reply", "id": bid, "displayText": display})
+    return out
+
+
 def _evolution_send_buttons(
     instance_name: str,
     number: str,
@@ -430,57 +586,95 @@ def _evolution_send_buttons(
     footer: str,
     buttons: list[dict[str, str]],
 ) -> ProviderSendResult:
-    payload_variants = [
-        # Evolution API v2 (recomendado): interactive text com action.buttons
-        {
-            "number": number,
-            "options": {"delay": 1200, "presence": "composing"},
-            "interactiveMessage": {
-                "header": {"title": title},
-                "body": {"text": body},
-                "footer": {"text": footer},
-                "action": {
-                    "buttons": [
-                        {
-                            "buttonId": str(btn.get("buttonId", "")),
-                            "buttonText": {"displayText": str(btn.get("buttonText", {}).get("displayText", ""))},
-                        }
-                        for btn in buttons
-                    ]
-                },
+    reply_buttons = _internal_buttons_to_evolution_reply(buttons)
+    if len(reply_buttons) < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Envie ao menos um botão válido (id e texto).",
+        )
+
+    try:
+        payload_native_flow = _build_evolution_237_native_flow_payload(
+            number, title, body, footer, list(buttons)
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # 1) Evolution 2.3.7+ — sendInteractive + native_flow (recomendado Baileys)
+    payload_v2_send_buttons = {
+        "number": number,
+        "title": title[:128],
+        "description": body,
+        "footer": footer[:60],
+        "buttons": reply_buttons,
+    }
+    # 2) Mesmo formato com delay/presence (algumas versões)
+    payload_v2_send_buttons_delayed = {
+        **payload_v2_send_buttons,
+        "delay": 1200,
+    }
+    # 3) Legado: buttonId + buttonText aninhado (instâncias antigas)
+    payload_legacy_nested = {
+        "number": number,
+        "title": title[:128],
+        "description": body,
+        "footer": footer[:60],
+        "buttons": [
+            {
+                "type": "reply",
+                "buttonId": str(btn.get("buttonId", "")),
+                "buttonText": {"displayText": str(btn.get("buttonText", {}).get("displayText", ""))},
+            }
+            for btn in buttons
+        ],
+    }
+    # 4) Interactive text (último recurso — alguns clients não renderizam bem)
+    payload_interactive = {
+        "number": number,
+        "options": {"delay": 1200, "presence": "composing"},
+        "interactiveMessage": {
+            "header": {"title": title[:128]},
+            "body": {"text": body},
+            "footer": {"text": footer[:60]},
+            "action": {
+                "buttons": [
+                    {
+                        "buttonId": str(btn.get("buttonId", "")),
+                        "buttonText": {"displayText": str(btn.get("buttonText", {}).get("displayText", ""))},
+                    }
+                    for btn in buttons
+                ]
             },
         },
-        # Fallback legado
-        {
-            "number": number,
-            "title": title,
-            "description": body,
-            "footer": footer,
-            "buttons": [
-                {
-                    "type": "reply",
-                    "buttonId": str(btn.get("buttonId", "")),
-                    "buttonText": {"displayText": str(btn.get("buttonText", {}).get("displayText", ""))},
-                }
-                for btn in buttons
-            ],
-        },
+    }
+
+    send_interactive_endpoint = f"/message/sendInteractive/{instance_name}"
+    send_buttons_endpoint = f"/message/sendButtons/{instance_name}"
+    interactive_endpoint = f"/message/sendInteractiveText/{instance_name}"
+
+    # Ordem: primeiro POST /message/sendButtons — a Evolution monta o proto no servidor
+    # (buttonMessage em whatsapp.baileys.service.ts: viewOnce + nativeFlow + messageParamsJson).
+    # Isso costuma renderizar em WhatsApp Web e celular. Depois tentamos sendInteractive
+    # com JSON native_flow (útil quando sendButtons falha ou instância antiga).
+    attempts: list[tuple[str, dict[str, Any]]] = [
+        (send_buttons_endpoint, payload_v2_send_buttons),
+        (send_buttons_endpoint, payload_v2_send_buttons_delayed),
+        (send_buttons_endpoint, payload_legacy_nested),
+        (send_interactive_endpoint, payload_native_flow),
+        (interactive_endpoint, payload_interactive),
     ]
+
     last_exc: HTTPException | None = None
     data: dict[str, Any] | None = None
-    endpoints = [
-        f"/message/sendInteractiveText/{instance_name}",
-        f"/message/sendButtons/{instance_name}",
-    ]
-    for endpoint in endpoints:
-        for payload in payload_variants:
-            try:
-                data = _evolution_request("POST", endpoint, payload)
-                break
-            except HTTPException as exc:
-                last_exc = exc
-        if data is not None:
+    for endpoint, payload in attempts:
+        try:
+            data = _evolution_request("POST", endpoint, payload)
             break
+        except HTTPException as exc:
+            last_exc = exc
     if data is None:
         if last_exc is not None:
             raise last_exc
@@ -978,6 +1172,20 @@ def _create_reschedule_options_for_schedule(
     holidays = set(db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == tenant_id)).scalars().all())
     duration_minutes = max(1, int((schedule.ends_at - schedule.starts_at).total_seconds() // 60))
     technician_ids = [item.technician_id for item in schedule.technicians]
+    multi_tech = len(technician_ids) > 0
+    if not technician_ids:
+        technician_ids = [
+            row.id
+            for row in db.execute(
+                select(User)
+                .where(
+                    User.tenant_id == tenant_id,
+                    User.role == UserRole.TECHNICIAN,
+                    User.is_active.is_(True),
+                )
+                .order_by(User.id.asc())
+            ).scalars().all()
+        ]
     probe = _with_buffer(schedule.ends_at)
     suggestions: list[dict[str, Any]] = []
     used_periods: set[tuple[str, str]] = set()
@@ -988,23 +1196,51 @@ def _create_reschedule_options_for_schedule(
         candidate_end = probe + timedelta(minutes=duration_minutes)
         try:
             _ensure_inside_workday(probe, candidate_end, tenant=tenant, holidays=holidays)
-            for technician_id in technician_ids:
-                _check_technician_conflict(
-                    db=db,
-                    tenant_id=tenant_id,
-                    technician_id=technician_id,
-                    starts_at=probe,
-                    ends_at=candidate_end,
-                    ignore_schedule_id=schedule.id,
-                )
-                _check_technician_work_rules(
-                    db=db,
-                    tenant_id=tenant_id,
-                    technician_id=technician_id,
-                    starts_at=probe,
-                    ends_at=candidate_end,
-                    tenant_tz=tenant_tz,
-                )
+            chosen_tid: int | None = None
+            if multi_tech:
+                for technician_id in technician_ids:
+                    _check_technician_conflict(
+                        db=db,
+                        tenant_id=tenant_id,
+                        technician_id=technician_id,
+                        starts_at=probe,
+                        ends_at=candidate_end,
+                        ignore_schedule_id=schedule.id,
+                    )
+                    _check_technician_work_rules(
+                        db=db,
+                        tenant_id=tenant_id,
+                        technician_id=technician_id,
+                        starts_at=probe,
+                        ends_at=candidate_end,
+                        tenant_tz=tenant_tz,
+                    )
+                chosen_tid = technician_ids[0]
+            else:
+                for technician_id in technician_ids:
+                    try:
+                        _check_technician_conflict(
+                            db=db,
+                            tenant_id=tenant_id,
+                            technician_id=technician_id,
+                            starts_at=probe,
+                            ends_at=candidate_end,
+                            ignore_schedule_id=schedule.id,
+                        )
+                        _check_technician_work_rules(
+                            db=db,
+                            tenant_id=tenant_id,
+                            technician_id=technician_id,
+                            starts_at=probe,
+                            ends_at=candidate_end,
+                            tenant_tz=tenant_tz,
+                        )
+                        chosen_tid = technician_id
+                        break
+                    except HTTPException:
+                        continue
+            if chosen_tid is None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no slot")
             period_key = _period_bucket(probe, tenant_tz)
             if period_key in used_periods:
                 probe = probe + timedelta(minutes=15)
@@ -1014,7 +1250,7 @@ def _create_reschedule_options_for_schedule(
                 {
                     "starts_at": probe,
                     "ends_at": candidate_end,
-                    "technician_id": technician_ids[0] if technician_ids else None,
+                    "technician_id": chosen_tid,
                 }
             )
             # Pega o primeiro horario de cada periodo (manha/tarde), evitando blocos muito proximos.
@@ -1044,6 +1280,15 @@ def _create_reschedule_options_for_schedule(
             payload={"schedule_id": schedule.id},
             job_id=None,
         )
+        try:
+            _evolution_send_text(
+                _resolve_tenant_instance(db, tenant_id),
+                normalize_whatsapp_number(recipient_whatsapp),
+                "Não encontramos horários livres automáticos para remarcar agora. "
+                "Um atendente pode ajudar ou tente novamente em alguns minutos.",
+            )
+        except HTTPException:
+            pass
         return
     db.execute(
         delete(WhatsappRescheduleOption).where(
@@ -1062,7 +1307,8 @@ def _create_reschedule_options_for_schedule(
             starts_at=slot["starts_at"],
             ends_at=slot["ends_at"],
             technician_id=slot["technician_id"],
-            expires_at=now + timedelta(days=3650),
+            # Opções de remarcação devem expirar rápido para evitar escolha de horário antigo.
+            expires_at=now + timedelta(minutes=RESCHEDULE_OPTIONS_TTL_MINUTES),
         )
         db.add(option)
         created.append(option)
@@ -1207,6 +1453,114 @@ def _create_reschedule_options_for_specific_date(
     )
 
 
+def _digits_from_whatsapp_jid(remote_jid: str | None) -> str | None:
+    if not remote_jid:
+        return None
+    digits = "".join(ch for ch in remote_jid if ch.isdigit())
+    return digits or None
+
+
+def _lookup_client_name_for_whatsapp_digits(db: Session, *, tenant_id: int, digits: str) -> str | None:
+    if len(digits) < 10:
+        return None
+    suffix11 = digits[-11:] if len(digits) >= 11 else digits
+    suffix10 = digits[-10:]
+    row = db.execute(
+        select(Client.name).where(
+            Client.tenant_id == tenant_id,
+            or_(
+                Client.whatsapp.like(f"%{suffix11}%"),
+                Client.phone.like(f"%{suffix11}%"),
+                Client.whatsapp.like(f"%{suffix10}%"),
+                Client.phone.like(f"%{suffix10}%"),
+            ),
+        ).limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    name = str(row).strip()
+    return name or None
+
+
+def _incoming_from_me_remote_and_plain_text(payload: dict[str, Any]) -> tuple[bool, str | None, str]:
+    """fromMe, remoteJid (minúsculo), texto sem alterar caixa (para IA)."""
+    data_inner = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    key_data = data_inner.get("key") if isinstance(data_inner.get("key"), dict) else {}
+    from_me = bool(key_data.get("fromMe"))
+    remote_jid = str(key_data.get("remoteJid") or "").strip().lower() or None
+    message = data_inner.get("message") if isinstance(data_inner.get("message"), dict) else {}
+    raw = ""
+    if isinstance(message, dict):
+        raw = str(message.get("conversation") or "").strip()
+        if not raw and isinstance(message.get("extendedTextMessage"), dict):
+            raw = str(message["extendedTextMessage"].get("text") or "").strip()
+    return from_me, remote_jid, raw
+
+
+def _normalize_text_for_intent(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    return "".join(ch for ch in unicodedata.normalize("NFD", raw) if unicodedata.category(ch) != "Mn")
+
+
+def _is_human_handoff_on_intent(value: str) -> bool:
+    text = _normalize_text_for_intent(value)
+    return any(k in text for k in HUMAN_HANDOFF_ON_KEYWORDS)
+
+
+def _is_human_handoff_off_intent(value: str) -> bool:
+    text = _normalize_text_for_intent(value)
+    return any(k in text for k in HUMAN_HANDOFF_OFF_KEYWORDS)
+
+
+def _set_human_handoff_state(
+    db: Session,
+    *,
+    tenant_id: int,
+    whatsapp_digits: str,
+    enabled: bool,
+    source: str,
+) -> None:
+    append_event(
+        db,
+        tenant_id=tenant_id,
+        event_type=("whatsapp_ai_handoff_on" if enabled else "whatsapp_ai_handoff_off"),
+        payload={
+            "whatsapp_digits": whatsapp_digits,
+            "enabled": enabled,
+            "source": source,
+        },
+        job_id=None,
+    )
+
+
+def _is_human_handoff_active(db: Session, *, tenant_id: int, whatsapp_digits: str) -> bool:
+    rows = db.execute(
+        select(WhatsappMessageEvent)
+        .where(
+            WhatsappMessageEvent.tenant_id == tenant_id,
+            WhatsappMessageEvent.event_type.in_(("whatsapp_ai_handoff_on", "whatsapp_ai_handoff_off")),
+        )
+        .order_by(WhatsappMessageEvent.id.desc())
+        .limit(200)
+    ).scalars().all()
+    for row in rows:
+        raw = (row.payload_json or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("whatsapp_digits") or "").strip() != whatsapp_digits:
+            continue
+        return bool(payload.get("enabled"))
+    return False
+
+
 def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> None:
     # Webhooks atrasados podem chegar depois que o tenant foi removido.
     # Ignoramos silenciosamente para evitar erro de FK em whatsapp_message_events.
@@ -1284,6 +1638,16 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             option_code=action_option_code,
             payload=data,
         )
+    preventive_handled = False
+    if (
+        event_name.lower() == "messages.upsert"
+        and incoming_message_id
+        and not already_processed
+        and not action_type
+    ):
+        from app.preventive_maintenance import try_consume_preventive_reply
+
+        preventive_handled = try_consume_preventive_reply(db, tenant_id=tenant_id, payload=data)
     if event_name.lower() == "messages.upsert" and incoming_message_id and not already_processed:
         append_event(
             db,
@@ -1292,6 +1656,7 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             payload={"message_id": incoming_message_id},
             job_id=None,
         )
+    bot_handled = False
     if event_name.lower() == "messages.upsert" and incoming_sender and incoming_text:
         data_block = data.get("data") if isinstance(data, dict) else {}
         key_block = data_block.get("key") if isinstance(data_block, dict) else {}
@@ -1302,6 +1667,7 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
                 from app.whatsapp_bot import handle_incoming_text_and_send
 
                 if handle_incoming_text_and_send(db, tenant_id=tenant_id, sender=incoming_sender, text=incoming_text):
+                    bot_handled = True
                     append_event(
                         db,
                         tenant_id=tenant_id,
@@ -1324,6 +1690,118 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             payload={"sender": incoming_sender, "text": incoming_text},
             job_id=None,
         )
+    if (
+        AI_ASSISTANT_V2_ENABLED
+        and WHATSAPP_AI_INCOMING_ENABLED
+        and event_name.lower() == "messages.upsert"
+        and incoming_message_id
+        and not already_processed
+        and not action_type
+        and not preventive_handled
+        and not bot_handled
+    ):
+        from_me_ai, remote_ai, plain_text = _incoming_from_me_remote_and_plain_text(data)
+        if (
+            not from_me_ai
+            and plain_text.strip()
+            and remote_ai
+            and not remote_ai.endswith("@g.us")
+        ):
+            digits = _digits_from_whatsapp_jid(remote_ai)
+            if digits:
+                try:
+                    if _is_human_handoff_off_intent(plain_text):
+                        _set_human_handoff_state(
+                            db,
+                            tenant_id=tenant_id,
+                            whatsapp_digits=digits,
+                            enabled=False,
+                            source="incoming_message",
+                        )
+                        inst = _resolve_tenant_instance(db, tenant_id)
+                        _evolution_send_text(
+                            inst,
+                            normalize_whatsapp_number(digits),
+                            "Perfeito! Reativei o assistente virtual aqui. Pode continuar 🙂",
+                        )
+                        append_event(
+                            db,
+                            tenant_id=tenant_id,
+                            event_type="whatsapp_ai_handoff_resumed",
+                            payload={"message_id": incoming_message_id, "sender": digits},
+                            job_id=None,
+                        )
+                        db.commit()
+                        return
+
+                    if _is_human_handoff_on_intent(plain_text):
+                        _set_human_handoff_state(
+                            db,
+                            tenant_id=tenant_id,
+                            whatsapp_digits=digits,
+                            enabled=True,
+                            source="incoming_message",
+                        )
+                        inst = _resolve_tenant_instance(db, tenant_id)
+                        _evolution_send_text(
+                            inst,
+                            normalize_whatsapp_number(digits),
+                            "Perfeito! Vou pausar o assistente virtual por aqui e encaminhar para um atendente humano.",
+                        )
+                        append_event(
+                            db,
+                            tenant_id=tenant_id,
+                            event_type="whatsapp_ai_handoff_paused",
+                            payload={"message_id": incoming_message_id, "sender": digits},
+                            job_id=None,
+                        )
+                        db.commit()
+                        return
+
+                    if _is_human_handoff_active(db, tenant_id=tenant_id, whatsapp_digits=digits):
+                        append_event(
+                            db,
+                            tenant_id=tenant_id,
+                            event_type="whatsapp_ai_skipped_handoff_active",
+                            payload={"message_id": incoming_message_id, "sender": digits},
+                            job_id=None,
+                        )
+                        db.commit()
+                        return
+
+                    client_nm = _lookup_client_name_for_whatsapp_digits(db, tenant_id=tenant_id, digits=digits)
+                    ai_out = generate_ai_response(
+                        db,
+                        message_text=plain_text,
+                        tenant_id=tenant_id,
+                        client_name=client_nm,
+                        client_whatsapp=digits,
+                    )
+                    reply = (ai_out.get("reply_text") or "").strip()
+                    if reply:
+                        inst = _resolve_tenant_instance(db, tenant_id)
+                        _evolution_send_text(inst, normalize_whatsapp_number(digits), reply)
+                        append_event(
+                            db,
+                            tenant_id=tenant_id,
+                            event_type="whatsapp_ai_reply_sent",
+                            payload={
+                                "intent": ai_out.get("intent"),
+                                "message_id": incoming_message_id,
+                            },
+                            job_id=None,
+                        )
+                except HTTPException as exc:
+                    logger.warning(
+                        "IA WhatsApp rejeitada (tenant_id=%s): %s",
+                        tenant_id,
+                        getattr(exc, "detail", exc),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Falha ao gerar/enviar resposta IA WhatsApp (tenant_id=%s)",
+                        tenant_id,
+                    )
     db.commit()
 
 
@@ -1477,12 +1955,27 @@ def _extract_incoming_schedule_action(
         return "reschedule_pick", inferred_schedule_id, f"R{inferred_schedule_id}-{simple_pick_match.group(1)}"
     confirm_kw = _normalize_user_text(str(settings["confirm_keyword"]))
     reschedule_kw = _normalize_user_text(str(settings["reschedule_keyword"]))
+
+    def _with_next_visit_fallback(sid: int | None) -> int | None:
+        if sid is not None or not sender_number:
+            return sid
+        return _infer_schedule_id_from_client_next_visit(db, tenant_id=tenant_id, sender_number=sender_number)
+
     if normalized_simple == confirm_kw or normalized_simple.startswith(confirm_kw):
-        return "confirm", inferred_schedule_id, None
+        sid = _with_next_visit_fallback(inferred_schedule_id)
+        if sid is None:
+            return None, None, None
+        return "confirm", sid, None
     if normalized_simple == reschedule_kw or normalized_simple.startswith(reschedule_kw):
-        return "reschedule", inferred_schedule_id, None
+        sid = _with_next_visit_fallback(inferred_schedule_id)
+        if sid is None:
+            return None, None, None
+        return "reschedule", sid, None
     if normalized_simple.startswith("CANCEL"):
-        return "cancel", inferred_schedule_id, None
+        sid = _with_next_visit_fallback(inferred_schedule_id)
+        if sid is None:
+            return None, None, None
+        return "cancel", sid, None
     return None, None, None
 
 
@@ -1517,6 +2010,40 @@ def _infer_schedule_id_from_active_reschedule_options(
         .limit(1)
     ).scalar_one_or_none()
     return int(schedule_id) if schedule_id is not None else None
+
+
+def _infer_schedule_id_from_client_next_visit(
+    db: Session,
+    *,
+    tenant_id: int,
+    sender_number: str,
+) -> int | None:
+    """Próxima visita ativa do cliente (fallback quando não há lembrete/opções recentes no WhatsApp)."""
+    suffix11 = sender_number[-11:] if sender_number else ""
+    suffix10 = sender_number[-10:] if sender_number else ""
+    if not suffix10:
+        return None
+    now = datetime.now(timezone.utc)
+    row = db.execute(
+        select(Schedule.id)
+        .join(Client, Client.id == Schedule.client_id)
+        .where(
+            Schedule.tenant_id == tenant_id,
+            Schedule.status.in_(
+                [ScheduleStatus.PENDING, ScheduleStatus.CONFIRMED, ScheduleStatus.IN_PROGRESS]
+            ),
+            Schedule.starts_at >= now - timedelta(days=1),
+            (
+                Client.whatsapp.like(f"%{suffix11}%")
+                | Client.phone.like(f"%{suffix11}%")
+                | Client.whatsapp.like(f"%{suffix10}%")
+                | Client.phone.like(f"%{suffix10}%")
+            ),
+        )
+        .order_by(Schedule.starts_at.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return int(row) if row is not None else None
 
 
 def _normalize_user_text(value: str) -> str:
@@ -1671,12 +2198,14 @@ def _apply_schedule_action_from_whatsapp(
                 recipient_whatsapp=recipient,
             )
     elif action_type == "reschedule_pick" and option_code:
+        now_utc = datetime.now(timezone.utc)
         selected = db.execute(
             select(WhatsappRescheduleOption).where(
                 WhatsappRescheduleOption.tenant_id == tenant_id,
                 WhatsappRescheduleOption.schedule_id == schedule.id,
                 WhatsappRescheduleOption.option_code == option_code,
                 WhatsappRescheduleOption.selected_at.is_(None),
+                WhatsappRescheduleOption.expires_at >= now_utc,
             )
         ).scalar_one_or_none()
         if selected:
@@ -1684,15 +2213,37 @@ def _apply_schedule_action_from_whatsapp(
             if tenant is None:
                 return
             try:
+                # Hard-stop para impedir remarcação para horário no passado.
+                if selected.starts_at < now_utc:
+                    raise HTTPException(status_code=400, detail="Opção de remarcação já expirou.")
                 holidays = set(
                     db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == tenant_id)).scalars().all()
                 )
                 _ensure_inside_workday(selected.starts_at, selected.ends_at, tenant=tenant, holidays=holidays)
-                for item in schedule.technicians:
+                if schedule.technicians:
+                    for item in schedule.technicians:
+                        _check_technician_conflict(
+                            db=db,
+                            tenant_id=tenant_id,
+                            technician_id=item.technician_id,
+                            starts_at=selected.starts_at,
+                            ends_at=selected.ends_at,
+                            ignore_schedule_id=schedule.id,
+                        )
+                        _check_technician_work_rules(
+                            db=db,
+                            tenant_id=tenant_id,
+                            technician_id=item.technician_id,
+                            starts_at=selected.starts_at,
+                            ends_at=selected.ends_at,
+                            tenant_tz=_tenant_tz(tenant),
+                        )
+                elif selected.technician_id is not None:
+                    tid_pick = int(selected.technician_id)
                     _check_technician_conflict(
                         db=db,
                         tenant_id=tenant_id,
-                        technician_id=item.technician_id,
+                        technician_id=tid_pick,
                         starts_at=selected.starts_at,
                         ends_at=selected.ends_at,
                         ignore_schedule_id=schedule.id,
@@ -1700,7 +2251,7 @@ def _apply_schedule_action_from_whatsapp(
                     _check_technician_work_rules(
                         db=db,
                         tenant_id=tenant_id,
-                        technician_id=item.technician_id,
+                        technician_id=tid_pick,
                         starts_at=selected.starts_at,
                         ends_at=selected.ends_at,
                         tenant_tz=_tenant_tz(tenant),
@@ -1708,6 +2259,8 @@ def _apply_schedule_action_from_whatsapp(
                 schedule.starts_at = selected.starts_at
                 schedule.ends_at = selected.ends_at
                 schedule.status = ScheduleStatus.CONFIRMED
+                if not schedule.technicians and selected.technician_id is not None:
+                    db.add(ScheduleTechnician(schedule_id=schedule.id, technician_id=int(selected.technician_id)))
                 pick_note = (
                     f"[WhatsApp] Horário atualizado para {_format_local_datetime(selected.starts_at, _tenant_tz(tenant))}."
                 )
@@ -1761,9 +2314,9 @@ def _apply_schedule_action_from_whatsapp(
 
     if action_type != "reschedule":
         append_event(
-        db,
-        tenant_id=tenant_id,
-        event_type=f"schedule_action_{action_type}_applied",
-        payload={"schedule_id": schedule.id},
-        job_id=None,
+            db,
+            tenant_id=tenant_id,
+            event_type=f"schedule_action_{action_type}_applied",
+            payload={"schedule_id": schedule.id},
+            job_id=None,
         )

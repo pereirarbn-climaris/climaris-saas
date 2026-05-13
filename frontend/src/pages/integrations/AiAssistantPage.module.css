@@ -95,6 +95,13 @@
   color: var(--color-text, #1a1d24);
 }
 
+.subsectionTitle {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-muted, #4b5563);
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;
@@ -183,7 +190,7 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-text-muted, #5c6470);
-  margin-bottom: 0.35rem;
+  margin-bottom: var(--form-label-to-control);
 }
 
 .textInput {

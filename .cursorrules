@@ -1,0 +1,53 @@
+# Evolution API v2.3.7 — mensagens interativas (Climaris)
+
+**Gestão preventiva:** envio **somente texto** + “responda MAIS / AGENDAR” (`_deliver_preventive_evolution_message`). Não reintroduzir botões interativos na preventiva sem decisão explícita.
+
+Sempre que for manipular o envio de mensagens **com botões** em outros fluxos (`app/whatsapp.py`, lembretes de agenda se `WHATSAPP_INTERACTIVE_BUTTONS_ENABLED=true`), siga estas regras:
+
+## Ordem de envio no Climaris (`_evolution_send_buttons`)
+
+1. **Preferência**: `POST /message/sendButtons/{instance}` com `SendButtonsDto` (`number`, `title`, `description`, `footer`, `buttons` com `type`/`id`/`displayText`). A Evolution monta o envelope internamente — **melhor para WhatsApp Web** e celular.
+2. **Fallback**: `POST /message/sendInteractive/{instance}` com `native_flow` (função `_build_evolution_237_native_flow_payload`).
+
+## Formato do fallback `native_flow` (sendInteractive)
+
+1. **Endpoint**: `POST /message/sendInteractive/{instance}` com payload no formato abaixo.
+2. **Estrutura do payload**
+   - A **raiz** do JSON deve conter **apenas** `number` e `interactiveMessage`.
+   - **Proibido** na raiz: `viewOnceMessage`, `message`, `content` ou envelopes parecidos. A Evolution monta isso **internamente** (Baileys); enviar manualmente pode gerar "Unknown message type" ou entrega quebrada no cliente.
+3. **`interactiveMessage`**
+   - Deve incluir: `body`, `footer` e **`"type": "native_flow"`**.
+   - Os botões ficam em **`nativeFlowMessage.buttons`**.
+   - Opcional (compatível com o código da Evolution): `nativeFlowMessage.messageParamsJson` com `from` / `templateId` — já tratado em `_build_evolution_237_native_flow_payload`.
+4. **Cada botão**
+   - `name`: sempre **`"quick_reply"`**.
+   - `buttonParamsJson`: **string** JSON com **`display_text`** e **`id`** (IDs estáveis para webhook/processamento).
+
+## Exemplo de referência
+
+```json
+{
+  "number": "5511999999999",
+  "interactiveMessage": {
+    "body": { "text": "..." },
+    "footer": { "text": "..." },
+    "type": "native_flow",
+    "nativeFlowMessage": {
+      "buttons": [
+        {
+          "name": "quick_reply",
+          "buttonParamsJson": "{\"display_text\":\"Texto\",\"id\":\"meu-id-estável\"}"
+        }
+      ]
+    }
+  }
+}
+```
+
+## Implementação no repositório
+
+- **`_evolution_send_buttons`**: tenta **primeiro** `sendButtons` (Evolution monta o proto); depois `sendInteractive` + `_build_evolution_237_native_flow_payload`; por último `sendInteractiveText` legado. Não remover fallbacks sem testar.
+
+## Por que importa
+
+Manutenção preventiva e PMOC dependem de mensagens confiáveis; formato legado do Baileys no HTTP quebra entrega em clients modernos.

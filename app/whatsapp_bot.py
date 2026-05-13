@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from string import Formatter
 from typing import Any
 
@@ -12,10 +12,26 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.asaas_client import get_asaas_payment_invoice_url
+from app.mercadopago_client import (
+    fetch_mercadopago_payment,
+    mercadopago_payment_boleto_urls,
+    mercadopago_payment_pix_urls,
+    mercadopago_preference_redirect_url,
+)
+from app.security import decrypt_platform_secret
 from models import (
+    Budget,
+    BudgetStatus,
     Client,
+    FinanceEntry,
+    FinanceEntryStatus,
+    FinanceEntryType,
+    FinanceGatewayProvider,
+    OrderStatus,
     ServiceOrder,
     Tenant,
+    TenantFinanceGateway,
     WhatsappBotFlow,
     WhatsappBotSession,
     WhatsappBotSettings,
@@ -33,6 +49,277 @@ DEFAULT_FALLBACK_MESSAGE = (
 DEFAULT_HANDOFF_MESSAGE = "Certo! Vou encaminhar seu atendimento para uma pessoa da equipe."
 DEFAULT_HANDOFF_KEYWORDS = ["atendente", "humano", "pessoa", "suporte", "financeiro"]
 MENU_KEYWORDS = {"menu", "inicio", "início", "oi", "ola", "olá", "bom dia", "boa tarde", "boa noite"}
+
+DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "slug": "orcamento-valores",
+        "name": "Orçamento e valores",
+        "description": "Coleta dados para orçamento de limpeza, instalação ou manutenção e abre rascunho no SaaS.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["1", "orçamento", "orcamento", "valor", "preço", "preco", "limpeza"],
+        "priority": 10,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": (
+                    "Perfeito! Para agilizar seu orçamento, me envie em uma única mensagem:\n"
+                    "1) serviço desejado (limpeza, manutenção, instalação etc.)\n"
+                    "2) cidade/bairro\n"
+                    "3) quantidade e tipo dos equipamentos\n"
+                    "4) urgência e uma breve descrição do problema"
+                ),
+                "actions": {"save_as": "dados_orcamento"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "action",
+                "message_template": (
+                    "Recebido, {nome_cliente}! Já registrei sua solicitação para nossa equipe montar o orçamento. "
+                    "Se preferir atendimento imediato, digite *atendente*."
+                ),
+                "actions": {"builtin": "create_budget_draft"},
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "agendamento-visita",
+        "name": "Agendar visita",
+        "description": "Coleta preferência de agenda e abre OS de solicitação para confirmação da equipe.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["2", "agendar", "agenda", "visita", "horário", "horario"],
+        "priority": 20,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": (
+                    "Perfeito. Para solicitar a visita, envie:\n"
+                    "1) melhor dia/horário\n2) endereço completo\n3) referência do local\n4) breve descrição do serviço"
+                ),
+                "actions": {"save_as": "preferencia_agendamento"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "action",
+                "message_template": (
+                    "Obrigado! Sua solicitação foi registrada para conferência da agenda. "
+                    "Caso seja urgente, digite *atendente*."
+                ),
+                "actions": {"builtin": "create_schedule_request"},
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "financeiro-pagamentos",
+        "name": "Financeiro e pagamentos",
+        "description": "Consulta cobranças abertas por WhatsApp/OS e direciona dúvidas financeiras.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["3", "financeiro", "pagamento", "boleto", "pix", "segunda via"],
+        "priority": 30,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "menu",
+                "message_template": "Como podemos ajudar no financeiro hoje?",
+                "options": [
+                    {
+                        "key": "1",
+                        "label": "Ver pendências / segunda via",
+                        "next_step_key": "consultar-pendencias",
+                    },
+                    {
+                        "key": "2",
+                        "label": "Confirmar pagamento",
+                        "message": "Pode enviar o comprovante por aqui. Nossa equipe vai validar e retornar.",
+                    },
+                    {"key": "3", "label": "Falar com financeiro", "handoff": True},
+                ],
+                "sort_order": 100,
+            },
+            {
+                "step_key": "consultar-pendencias",
+                "kind": "action",
+                "message_template": "Vou consultar suas pendências financeiras.",
+                "actions": {"builtin": "finance_open_entries"},
+                "sort_order": 200,
+            }
+        ],
+    },
+    {
+        "slug": "fechamento-os",
+        "name": "Fechamento de OS",
+        "description": "Mensagem automática quando uma ordem de serviço é concluída.",
+        "enabled": True,
+        "trigger_type": "system_event",
+        "trigger_keywords": [],
+        "system_event": "service_order_done",
+        "priority": 5,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "menu",
+                "message_template": (
+                    "Olá {nome_cliente}! Sua OS #{numero_os} foi finalizada.\n"
+                    "Serviço: {titulo_os}\nValor: R$ {valor_total}\n\nEscolha uma opção:"
+                ),
+                "options": [
+                    {
+                        "key": "1",
+                        "label": "Ver pagamento desta OS",
+                        "next_step_key": "consultar-pagamento-os",
+                    },
+                    {
+                        "key": "2",
+                        "label": "Solicitar nota fiscal",
+                        "next_step_key": "coletar-dados-nf",
+                    },
+                    {
+                        "key": "3",
+                        "label": "Avaliar atendimento",
+                        "next_step_key": "coletar-avaliacao",
+                    },
+                    {"key": "4", "label": "Falar com atendente", "handoff": True},
+                ],
+                "sort_order": 100,
+            },
+            {
+                "step_key": "consultar-pagamento-os",
+                "kind": "action",
+                "message_template": "Vou consultar as cobranças abertas desta OS.",
+                "actions": {"builtin": "finance_open_entries"},
+                "sort_order": 150,
+            },
+            {
+                "step_key": "coletar-dados-nf",
+                "kind": "question",
+                "message_template": "Certo. Envie CPF/CNPJ, razão social/nome completo e e-mail para emissão da nota.",
+                "actions": {"save_as": "dados_nf"},
+                "next_step_key": "registrar-nf",
+                "sort_order": 200,
+            },
+            {
+                "step_key": "registrar-nf",
+                "kind": "action",
+                "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
+                "actions": {"builtin": "register_nf_request"},
+                "sort_order": 300,
+            },
+            {
+                "step_key": "coletar-avaliacao",
+                "kind": "question",
+                "message_template": "De 0 a 10, qual nota você dá para o atendimento? Se quiser, inclua um comentário.",
+                "actions": {"save_as": "feedback_satisfacao"},
+                "next_step_key": "registrar-avaliacao",
+                "sort_order": 400,
+            },
+            {
+                "step_key": "registrar-avaliacao",
+                "kind": "action",
+                "message_template": "Obrigado pela avaliação! Sua opinião ajuda nossa equipe a melhorar continuamente.",
+                "actions": {"builtin": "register_satisfaction_feedback"},
+                "sort_order": 500,
+            }
+        ],
+    },
+    {
+        "slug": "consulta-status",
+        "name": "Consultar status",
+        "description": "Consulta últimos orçamentos e ordens de serviço pelo WhatsApp do cliente.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["6", "status", "andamento", "acompanhar", "consulta", "pedido", "os"],
+        "priority": 35,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "action",
+                "message_template": "Vou consultar os registros vinculados ao seu WhatsApp.",
+                "actions": {"builtin": "lookup_status"},
+                "sort_order": 100,
+            }
+        ],
+    },
+    {
+        "slug": "nota-fiscal",
+        "name": "Nota fiscal",
+        "description": "Coleta dados para solicitação de nota fiscal.",
+        "enabled": True,
+        "trigger_type": "keyword",
+        "trigger_keywords": ["nota", "nf", "nfs", "nfse", "nota fiscal"],
+        "priority": 40,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": "Para solicitar nota fiscal, envie CPF/CNPJ, razão social/nome completo e e-mail.",
+                "actions": {"save_as": "dados_nf"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "action",
+                "message_template": "Dados recebidos. Vamos encaminhar para o financeiro/fiscal e retornar por aqui.",
+                "actions": {"builtin": "register_nf_request"},
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "pesquisa-satisfacao",
+        "name": "Pesquisa de satisfação",
+        "description": "Coleta nota e comentário do cliente após atendimento.",
+        "enabled": True,
+        "trigger_type": "keyword",
+        "trigger_keywords": ["avaliar", "avaliação", "avaliacao", "satisfação", "satisfacao", "nota atendimento"],
+        "priority": 45,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "question",
+                "message_template": "De 0 a 10, qual nota você dá para o atendimento? Se quiser, inclua um comentário.",
+                "actions": {"save_as": "feedback_satisfacao"},
+                "next_step_key": "final",
+                "sort_order": 100,
+            },
+            {
+                "step_key": "final",
+                "kind": "action",
+                "message_template": "Obrigado pela avaliação! Sua opinião ajuda nossa equipe a melhorar continuamente.",
+                "actions": {"builtin": "register_satisfaction_feedback"},
+                "sort_order": 200,
+            },
+        ],
+    },
+    {
+        "slug": "falar-atendente",
+        "name": "Falar com atendente",
+        "description": "Pausa o bot e transfere para atendimento humano.",
+        "enabled": True,
+        "trigger_type": "menu_option",
+        "trigger_keywords": ["4", "atendente", "humano", "pessoa"],
+        "priority": 50,
+        "steps": [
+            {
+                "step_key": "inicio",
+                "kind": "menu",
+                "message_template": "Vou chamar um atendente para continuar seu atendimento.",
+                "options": [{"key": "1", "label": "Continuar com atendente", "handoff": True}],
+                "sort_order": 100,
+            }
+        ],
+    },
+]
 
 
 class SafeFormatDict(dict):
@@ -377,6 +664,133 @@ def delete_step(db: Session, *, tenant_id: int, flow_id: int, step_id: int) -> N
     db.commit()
 
 
+def seed_default_flows(db: Session, *, tenant_id: int) -> dict[str, Any]:
+    get_or_create_settings(db, tenant_id=tenant_id)
+    existing_flows = {
+        row.slug: row
+        for row in db.execute(
+            select(WhatsappBotFlow)
+            .where(WhatsappBotFlow.tenant_id == tenant_id)
+            .options(selectinload(WhatsappBotFlow.steps))
+        ).scalars().all()
+    }
+    created = 0
+    skipped = 0
+    for template in DEFAULT_FLOW_TEMPLATES:
+        existing = existing_flows.get(template["slug"])
+        if existing is not None:
+            _patch_existing_default_flow(db, existing, template)
+            skipped += 1
+            continue
+        payload = dict(template)
+        steps = payload.pop("steps", [])
+        flow = WhatsappBotFlow(
+            tenant_id=tenant_id,
+            slug=payload["slug"],
+            name=payload["name"],
+            description=payload.get("description"),
+            enabled=bool(payload.get("enabled", True)),
+            trigger_type=payload.get("trigger_type") or "keyword",
+            trigger_keywords_json=_json_dumps(payload.get("trigger_keywords") or []),
+            system_event=payload.get("system_event"),
+            priority=int(payload.get("priority") or 100),
+        )
+        db.add(flow)
+        db.flush()
+        for step_payload in steps:
+            db.add(_build_step(flow.id, step_payload))
+        existing_flows[flow.slug] = flow
+        created += 1
+    db.commit()
+    return {
+        "created_flows": created,
+        "skipped_existing": skipped,
+        "flows": list_flows(db, tenant_id=tenant_id),
+    }
+
+
+def _patch_existing_default_flow(db: Session, flow: WhatsappBotFlow, template: dict[str, Any]) -> None:
+    existing_step_keys = {step.step_key for step in flow.steps}
+    for step_payload in template.get("steps") or []:
+        if step_payload.get("step_key") not in existing_step_keys:
+            db.add(_build_step(flow.id, step_payload))
+
+    if template.get("slug") == "orcamento-valores":
+        final = next((step for step in flow.steps if step.step_key == "final"), None)
+        if final is not None:
+            actions = _json_loads(final.actions_json, {})
+            if final.kind == "end" and not actions and "Recebido" in (final.message_template or ""):
+                final.kind = "action"
+                final.actions_json = _json_dumps({"builtin": "create_budget_draft"})
+                db.add(final)
+        return
+
+    if template.get("slug") == "agendamento-visita":
+        final = next((step for step in flow.steps if step.step_key == "final"), None)
+        if final is not None:
+            actions = _json_loads(final.actions_json, {})
+            if final.kind == "end" and not actions and "Vamos conferir a agenda" in (final.message_template or ""):
+                final.kind = "action"
+                final.actions_json = _json_dumps({"builtin": "create_schedule_request"})
+                db.add(final)
+        return
+
+    if template.get("slug") == "fechamento-os":
+        first = next((step for step in flow.steps if step.step_key == "inicio"), None)
+        if first is not None:
+            options = _json_loads(first.options_json, [])
+            changed = False
+            has_satisfaction = any(str(option.get("next_step_key") or "") == "coletar-avaliacao" for option in options)
+            for option in options:
+                if str(option.get("key") or "").strip() != "2":
+                    continue
+                old_message = str(option.get("message") or "").strip()
+                if old_message == "Certo. Envie CPF/CNPJ, razão social/nome completo e e-mail para emissão da nota.":
+                    option.pop("message", None)
+                    option["next_step_key"] = "coletar-dados-nf"
+                    changed = True
+            if not has_satisfaction:
+                for option in options:
+                    if str(option.get("key") or "").strip() == "3" and option.get("handoff"):
+                        option["key"] = "4"
+                        changed = True
+                options.append({"key": "3", "label": "Avaliar atendimento", "next_step_key": "coletar-avaliacao"})
+                changed = True
+            if changed:
+                first.options_json = _json_dumps(options)
+                db.add(first)
+        return
+
+    if template.get("slug") == "nota-fiscal":
+        final = next((step for step in flow.steps if step.step_key == "final"), None)
+        if final is not None:
+            actions = _json_loads(final.actions_json, {})
+            if final.kind == "end" and not actions and "encaminhar para o financeiro/fiscal" in (final.message_template or ""):
+                final.kind = "action"
+                final.actions_json = _json_dumps({"builtin": "register_nf_request"})
+                db.add(final)
+        return
+
+    if template.get("slug") != "financeiro-pagamentos":
+        return
+    first = next((step for step in flow.steps if step.step_key == "inicio"), None)
+    if first is None:
+        return
+    options = _json_loads(first.options_json, [])
+    changed = False
+    for option in options:
+        if str(option.get("key") or "").strip() != "1":
+            continue
+        old_message = str(option.get("message") or "").strip()
+        if old_message == "Informe CPF/CNPJ ou número da OS para localizarmos seu pagamento.":
+            option.pop("message", None)
+            option["next_step_key"] = "consultar-pendencias"
+            changed = True
+    if changed:
+        first.options_json = _json_dumps(options)
+        db.add(first)
+
+
 def _get_session(db: Session, *, tenant_id: int, client_whatsapp: str) -> WhatsappBotSession | None:
     return db.execute(
         select(WhatsappBotSession).where(
@@ -410,6 +824,7 @@ def _upsert_session(
     row.context_json = _json_dumps(context)
     row.paused_until = paused_until
     row.last_incoming_at = now
+    row.last_outgoing_at = now
     db.add(row)
     return row
 
@@ -438,6 +853,597 @@ def _format_options(options: list[dict[str, Any]]) -> str:
         elif label:
             lines.append(label)
     return "\n".join(lines)
+
+
+def _money_brl(value: Any) -> str:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f"R$ {amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _date_br(value: date | datetime | None) -> str:
+    if value is None:
+        return "sem vencimento"
+    return value.strftime("%d/%m/%Y")
+
+
+def _status_finance_pt(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else str(value or "")
+    return {
+        "pending": "pendente",
+        "overdue": "vencido",
+        "paid": "pago",
+        "cancelled": "cancelado",
+    }.get(raw, raw)
+
+
+def _status_budget_pt(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else str(value or "")
+    return {
+        "draft": "rascunho",
+        "sent": "enviado",
+        "approved": "aprovado",
+        "rejected": "recusado",
+        "expired": "expirado",
+    }.get(raw, raw)
+
+
+def _status_order_pt(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else str(value or "")
+    return {
+        "open": "aberta",
+        "approved": "aprovada",
+        "scheduled": "agendada",
+        "in_progress": "em andamento",
+        "done": "concluída",
+        "cancelled": "cancelada",
+    }.get(raw, raw)
+
+
+def _context_client_id(context: dict[str, Any]) -> int | None:
+    raw = context.get("cliente_id")
+    try:
+        return int(str(raw)) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _ids_from_text(value: str | None) -> list[int]:
+    ids: list[int] = []
+    for raw in re.findall(r"\d+", value or ""):
+        try:
+            n = int(raw)
+        except ValueError:
+            continue
+        if n > 0 and n not in ids:
+            ids.append(n)
+    return ids[:5]
+
+
+def _lookup_status_reply(db: Session, *, tenant_id: int, client_whatsapp: str, context: dict[str, Any]) -> str:
+    client_id = _context_client_id(context)
+    explicit_ids = _ids_from_text(str(context.get("mensagem_cliente") or ""))
+
+    budget_conditions = []
+    order_conditions = []
+    if client_id is not None:
+        budget_conditions.append(Budget.client_id == client_id)
+        order_conditions.append(ServiceOrder.client_id == client_id)
+    if explicit_ids:
+        budget_conditions.append(Budget.id.in_(explicit_ids))
+        order_conditions.append(ServiceOrder.id.in_(explicit_ids))
+
+    if not budget_conditions and not order_conditions:
+        return (
+            "Não encontrei seu cadastro pelo WhatsApp. Envie o número do orçamento/OS ou digite *atendente* "
+            "para a equipe consultar manualmente."
+        )
+
+    budgets = db.execute(
+        select(Budget)
+        .where(Budget.tenant_id == tenant_id, or_(*budget_conditions))
+        .order_by(Budget.created_at.desc(), Budget.id.desc())
+        .limit(3)
+    ).scalars().all() if budget_conditions else []
+    orders = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.tenant_id == tenant_id, or_(*order_conditions))
+        .order_by(ServiceOrder.opened_at.desc(), ServiceOrder.id.desc())
+        .limit(3)
+    ).scalars().all() if order_conditions else []
+
+    if not budgets and not orders:
+        return (
+            "Não encontrei orçamento ou OS em aberto para este WhatsApp/número informado. "
+            "Digite *atendente* para a equipe conferir."
+        )
+
+    lines = ["Encontrei estes registros:"]
+    if budgets:
+        lines.append("\nOrçamentos:")
+        for budget in budgets:
+            lines.append(
+                f"- Orçamento #{budget.id}: {budget.title} | status {_status_budget_pt(budget.status)} | "
+                f"criado em {_date_br(budget.created_at)}"
+            )
+    if orders:
+        lines.append("\nOrdens de serviço:")
+        for order in orders:
+            lines.append(
+                f"- OS #{order.id}: {order.title} | status {_status_order_pt(order.status)} | "
+                f"aberta em {_date_br(order.opened_at)}"
+            )
+    lines.append("\nPara detalhes ou alteração, digite *atendente*.")
+    return "\n".join(lines)
+
+
+def _finance_entry_matches(db: Session, *, tenant_id: int, client_whatsapp: str, context: dict[str, Any]) -> list[FinanceEntry]:
+    digits = _digits(client_whatsapp)
+    variants = {digits}
+    if digits.startswith("55"):
+        variants.add(digits[2:])
+    if len(digits) > 11:
+        variants.add(digits[-11:])
+        variants.add(digits[-10:])
+    variant_list = [v for v in variants if v]
+
+    service_order_id: int | None = None
+    for key in ("service_order_id", "numero_os"):
+        raw = context.get(key)
+        try:
+            if raw not in (None, ""):
+                service_order_id = int(str(raw))
+                break
+        except (TypeError, ValueError):
+            continue
+
+    conditions = []
+    if variant_list:
+        conditions.append(FinanceEntry.recipient_whatsapp.in_(variant_list))
+    if service_order_id is not None:
+        conditions.append(FinanceEntry.service_order_id == service_order_id)
+
+    client_id = context.get("cliente_id")
+    try:
+        client_id_int = int(str(client_id)) if client_id not in (None, "") else None
+    except (TypeError, ValueError):
+        client_id_int = None
+    if client_id_int is not None:
+        conditions.append(FinanceEntry.service_order.has(ServiceOrder.client_id == client_id_int))
+
+    if not conditions:
+        return []
+
+    return db.execute(
+        select(FinanceEntry)
+        .where(
+            FinanceEntry.tenant_id == tenant_id,
+            FinanceEntry.entry_type == FinanceEntryType.INCOME,
+            FinanceEntry.status.in_([FinanceEntryStatus.PENDING, FinanceEntryStatus.OVERDUE]),
+            or_(*conditions),
+        )
+        .order_by(FinanceEntry.due_date.asc(), FinanceEntry.id.asc())
+        .limit(5)
+    ).scalars().all()
+
+
+def _asaas_invoice_url_for_entry(db: Session, *, tenant_id: int, entry: FinanceEntry) -> str | None:
+    payment_id = (entry.gateway_payment_id or "").strip()
+    if not payment_id:
+        return None
+    gateway = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
+        )
+    ).scalar_one_or_none()
+    if gateway is None or not gateway.asaas_api_key_encrypted:
+        return None
+    try:
+        api_key = decrypt_platform_secret(gateway.asaas_api_key_encrypted)
+        ok, _, url = get_asaas_payment_invoice_url(
+            api_key=api_key,
+            sandbox=bool(gateway.asaas_sandbox),
+            payment_id=payment_id,
+        )
+    except Exception:
+        return None
+    return url if ok and url else None
+
+
+def _mercadopago_gateway_for_tenant(db: Session, *, tenant_id: int) -> TenantFinanceGateway | None:
+    return db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+
+
+def _mercadopago_client_link_for_entry(db: Session, *, tenant_id: int, entry: FinanceEntry) -> str | None:
+    """Link de pagamento MP: checkout (preferência) ou boleto/PIX (consulta GET /v1/payments/{id})."""
+    if (entry.payment_provider or "").strip().lower() != "mercadopago":
+        return None
+    gw = _mercadopago_gateway_for_tenant(db, tenant_id=tenant_id)
+    if gw is None or not gw.mercadopago_access_token_encrypted:
+        return None
+    sandbox = bool(gw.mercadopago_sandbox)
+    pref = (entry.gateway_preference_id or "").strip()
+    pay_id = (entry.gateway_payment_id or "").strip()
+    if pref and not pay_id:
+        return mercadopago_preference_redirect_url(pref, sandbox=sandbox)
+    if not pay_id:
+        return None
+    try:
+        token = decrypt_platform_secret(gw.mercadopago_access_token_encrypted)
+    except Exception:
+        return None
+    ok, _err, pay = fetch_mercadopago_payment(access_token=token, payment_id=pay_id)
+    if not ok or not isinstance(pay, dict):
+        return None
+    pm = (entry.payment_method or "").strip().lower()
+    if pm == "pix":
+        _pid, ticket_url, _qr = mercadopago_payment_pix_urls(pay)
+        return (ticket_url or "").strip() or None
+    if pm == "boleto":
+        _pid, ticket_url = mercadopago_payment_boleto_urls(pay)
+        return (ticket_url or "").strip() or None
+    _pid, ticket_url, _qr = mercadopago_payment_pix_urls(pay)
+    return (ticket_url or "").strip() or None
+
+
+def _finance_open_entries_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+) -> str:
+    entries = _finance_entry_matches(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    if not entries:
+        return (
+            "Não encontrei cobranças em aberto vinculadas a este WhatsApp. "
+            "Envie CPF/CNPJ ou número da OS para um atendente localizar, ou digite *atendente*."
+        )
+
+    lines = ["Encontrei estas cobranças em aberto:"]
+    for entry in entries:
+        provider = (entry.payment_provider or "").strip()
+        gateway = (entry.gateway_payment_id or "").strip()
+        gateway_hint = ""
+        if provider or gateway:
+            gateway_hint = f" | cobrança {provider or 'gateway'} {gateway}".strip()
+        invoice_url = _asaas_invoice_url_for_entry(db, tenant_id=tenant_id, entry=entry)
+        lines.append(
+            f"- #{entry.id}: {entry.description} | {_money_brl(entry.amount)} | "
+            f"venc. {_date_br(entry.due_date)} | {_status_finance_pt(entry.status)}{gateway_hint}"
+        )
+        if invoice_url:
+            lines.append(f"  Link de pagamento: {invoice_url}")
+        mp_url = _mercadopago_client_link_for_entry(db, tenant_id=tenant_id, entry=entry)
+        if mp_url:
+            lines.append(f"  Link Mercado Pago: {mp_url}")
+    lines.append("Se precisar ajustar forma de pagamento, responda *atendente* que o financeiro continua por aqui.")
+    return "\n".join(lines)
+
+
+def _get_or_create_bot_client(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+) -> Client:
+    client_id = context.get("cliente_id")
+    try:
+        client_id_int = int(str(client_id)) if client_id not in (None, "") else None
+    except (TypeError, ValueError):
+        client_id_int = None
+    if client_id_int is not None:
+        found = db.execute(
+            select(Client).where(Client.id == client_id_int, Client.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+        if found is not None:
+            return found
+
+    digits = _digits(client_whatsapp)
+    variants = {digits}
+    if digits.startswith("55"):
+        variants.add(digits[2:])
+    if len(digits) > 11:
+        variants.add(digits[-11:])
+        variants.add(digits[-10:])
+    variant_list = [v for v in variants if v]
+    if variant_list:
+        found = db.execute(
+            select(Client)
+            .where(
+                Client.tenant_id == tenant_id,
+                or_(Client.whatsapp.in_(variant_list), Client.phone.in_(variant_list)),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if found is not None:
+            context["cliente_id"] = found.id
+            context["nome_cliente"] = found.name
+            return found
+
+    display_phone = digits[-11:] if len(digits) >= 11 else digits
+    name = str(context.get("nome_cliente") or "").strip()
+    if not name or name == "cliente":
+        name = f"Cliente WhatsApp {display_phone[-4:] or 'novo'}"
+    client = Client(
+        tenant_id=tenant_id,
+        name=name[:150],
+        document=None,
+        tax_id_kind="cpf",
+        phone=None,
+        whatsapp=display_phone or digits,
+        email=None,
+        address_country="Brasil",
+    )
+    db.add(client)
+    db.flush()
+    context["cliente_id"] = client.id
+    context["nome_cliente"] = client.name
+    return client
+
+
+def _create_budget_draft_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    raw_request = str(context.get("dados_orcamento") or context.get("mensagem_cliente") or "").strip()
+    if not raw_request:
+        raw_request = "Solicitação recebida via Bot WhatsApp."
+
+    if context.get("__dry_run"):
+        return (
+            f"[Simulação] Eu criaria um orçamento rascunho com estes dados:\n{raw_request}\n\n"
+            f"{fallback_message}"
+        )
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    budget = Budget(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        title=f"Orçamento WhatsApp - {client.name}"[:200],
+        description=(
+            "[Bot WhatsApp] Solicitação de orçamento coletada automaticamente.\n\n"
+            f"WhatsApp: {client_whatsapp}\n"
+            f"Dados informados: {raw_request}"
+        ),
+        status=BudgetStatus.DRAFT,
+        payment_method=None,
+        payment_terms=None,
+        warranty_terms=None,
+        validity_days=7,
+    )
+    db.add(budget)
+    db.flush()
+    context["budget_id"] = budget.id
+    return (
+        f"{fallback_message}\n\n"
+        f"Protocolo interno: orçamento #{budget.id}. "
+        "Nossa equipe vai completar valores/itens e retornar por aqui."
+    )
+
+
+def _create_schedule_request_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    preference = str(context.get("preferencia_agendamento") or context.get("mensagem_cliente") or "").strip()
+    if not preference:
+        preference = "Solicitação de agendamento recebida via Bot WhatsApp."
+
+    if context.get("__dry_run"):
+        return (
+            f"[Simulação] Eu criaria uma solicitação de OS/agendamento com estes dados:\n{preference}\n\n"
+            f"{fallback_message}"
+        )
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    order = ServiceOrder(
+        tenant_id=tenant_id,
+        client_id=client.id,
+        title=f"Solicitação WhatsApp - {client.name}"[:200],
+        description=(
+            "[Bot WhatsApp] Solicitação de agendamento coletada automaticamente.\n\n"
+            f"WhatsApp: {client_whatsapp}\n"
+            f"Preferência informada: {preference}"
+        ),
+        discount_amount=0,
+        status=OrderStatus.OPEN,
+    )
+    db.add(order)
+    db.flush()
+    context["service_order_id"] = order.id
+    return (
+        f"{fallback_message}\n\n"
+        f"Protocolo interno: OS #{order.id}. "
+        "Nossa equipe vai confirmar disponibilidade e retornar por aqui."
+    )
+
+
+def _service_order_id_from_context(context: dict[str, Any]) -> int | None:
+    for key in ("service_order_id", "numero_os"):
+        raw = context.get(key)
+        try:
+            if raw not in (None, ""):
+                return int(str(raw))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _register_nf_request_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    nf_data = str(context.get("dados_nf") or context.get("mensagem_cliente") or "").strip()
+    if not nf_data:
+        nf_data = "Dados fiscais recebidos via Bot WhatsApp."
+
+    service_order_id = _service_order_id_from_context(context)
+    if context.get("__dry_run"):
+        target = f"OS #{service_order_id}" if service_order_id else "uma nova solicitação interna"
+        return (
+            f"[Simulação] Eu registraria a solicitação de NF em {target} com estes dados:\n{nf_data}\n\n"
+            f"{fallback_message}"
+        )
+
+    order: ServiceOrder | None = None
+    if service_order_id is not None:
+        order = db.execute(
+            select(ServiceOrder).where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    note = (
+        "\n\n[Bot WhatsApp] Solicitação de Nota Fiscal\n"
+        f"WhatsApp: {client_whatsapp}\n"
+        f"Dados fiscais informados: {nf_data}"
+    )
+    if order is None:
+        order = ServiceOrder(
+            tenant_id=tenant_id,
+            client_id=client.id,
+            title=f"Solicitação NF WhatsApp - {client.name}"[:200],
+            description=note.strip(),
+            discount_amount=0,
+            status=OrderStatus.OPEN,
+        )
+        db.add(order)
+        db.flush()
+    else:
+        existing = (order.description or "").rstrip()
+        order.description = f"{existing}{note}" if existing else note.strip()
+        db.add(order)
+        db.flush()
+
+    context["service_order_id"] = order.id
+    return (
+        f"{fallback_message}\n\n"
+        f"Protocolo interno: OS #{order.id}. "
+        "A equipe fiscal/financeira vai validar os dados e retornar por aqui."
+    )
+
+
+def _register_satisfaction_feedback_reply(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    context: dict[str, Any],
+    fallback_message: str,
+) -> str:
+    feedback = str(context.get("feedback_satisfacao") or context.get("mensagem_cliente") or "").strip()
+    if not feedback:
+        feedback = "Avaliação recebida via Bot WhatsApp."
+
+    service_order_id = _service_order_id_from_context(context)
+    if context.get("__dry_run"):
+        target = f"OS #{service_order_id}" if service_order_id else "uma nova solicitação interna"
+        return (
+            f"[Simulação] Eu registraria a avaliação em {target} com este conteúdo:\n{feedback}\n\n"
+            f"{fallback_message}"
+        )
+
+    order: ServiceOrder | None = None
+    if service_order_id is not None:
+        order = db.execute(
+            select(ServiceOrder).where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+
+    client = _get_or_create_bot_client(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    note = (
+        "\n\n[Bot WhatsApp] Pesquisa de satisfação\n"
+        f"WhatsApp: {client_whatsapp}\n"
+        f"Avaliação: {feedback}"
+    )
+    if order is None:
+        order = ServiceOrder(
+            tenant_id=tenant_id,
+            client_id=client.id,
+            title=f"Feedback WhatsApp - {client.name}"[:200],
+            description=note.strip(),
+            discount_amount=0,
+            status=OrderStatus.OPEN,
+        )
+        db.add(order)
+        db.flush()
+    else:
+        existing = (order.description or "").rstrip()
+        order.description = f"{existing}{note}" if existing else note.strip()
+        db.add(order)
+        db.flush()
+
+    context["service_order_id"] = order.id
+    return f"{fallback_message}\n\nProtocolo interno: OS #{order.id}."
+
+
+def _reply_for_action_step(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_whatsapp: str,
+    step: WhatsappBotStep,
+    context: dict[str, Any],
+) -> str:
+    actions = _json_loads(step.actions_json, {})
+    builtin = str(actions.get("builtin") or "").strip()
+    if builtin == "lookup_status":
+        return _lookup_status_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    if builtin == "finance_open_entries":
+        return _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+    if builtin == "create_budget_draft":
+        return _create_budget_draft_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    if builtin == "create_schedule_request":
+        return _create_schedule_request_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    if builtin == "register_nf_request":
+        return _register_nf_request_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    if builtin == "register_satisfaction_feedback":
+        return _register_satisfaction_feedback_reply(
+            db,
+            tenant_id=tenant_id,
+            client_whatsapp=client_whatsapp,
+            context=context,
+            fallback_message=_render_template(step.message_template, context),
+        )
+    return _reply_for_step(step, context)
 
 
 def _reply_for_step(step: WhatsappBotStep, context: dict[str, Any]) -> str:
@@ -532,7 +1538,11 @@ def _start_flow(
             "paused_until": None,
             "context": context,
         }
-    reply = _reply_for_step(step, context)
+    reply = (
+        _reply_for_action_step(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, step=step, context=context)
+        if step.kind == "action"
+        else _reply_for_step(step, context)
+    )
     ended = step.kind == "end" or not _step_expects_reply(step)
     if persist_session:
         if ended:
@@ -606,6 +1616,8 @@ def route_message(
     settings = get_or_create_settings(db, tenant_id=tenant_id)
     normalized_client = _normalize_client_whatsapp(client_whatsapp)
     context = _base_context(db, tenant_id=tenant_id, client_whatsapp=normalized_client, extra=context_extra)
+    if message_text.strip():
+        context["mensagem_cliente"] = message_text.strip()
     if not settings.enabled and not ignore_enabled:
         return {"matched": False, "reply_text": None, "context": context, "ended": True, "handoff": False}
 
@@ -715,7 +1727,17 @@ def route_message(
                     "paused_until": None,
                     "context": context,
                 }
-            reply = _reply_for_step(next_step, context)
+            reply = (
+                _reply_for_action_step(
+                    db,
+                    tenant_id=tenant_id,
+                    client_whatsapp=normalized_client,
+                    step=next_step,
+                    context=context,
+                )
+                if next_step.kind == "action"
+                else _reply_for_step(next_step, context)
+            )
             ended = next_step.kind == "end" or not _step_expects_reply(next_step)
             if persist_session:
                 if ended:
@@ -792,12 +1814,14 @@ def test_message(
     if reset_session:
         _clear_session(db, _get_session(db, tenant_id=tenant_id, client_whatsapp=phone))
         db.commit()
+    dry_context = dict(context)
+    dry_context["__dry_run"] = True
     result = route_message(
         db,
         tenant_id=tenant_id,
         client_whatsapp=phone,
         message_text=message_text,
-        context_extra=context,
+        context_extra=dry_context,
         persist_session=True,
         ignore_enabled=True,
     )

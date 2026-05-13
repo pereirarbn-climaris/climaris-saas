@@ -17,7 +17,13 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
 
-from app.config import AI_ASSISTANT_V2_ENABLED, CORS_ORIGINS, PUBLIC_REGISTER_ENABLED
+from app.config import (
+    AI_ASSISTANT_V2_ENABLED,
+    CORS_ORIGINS,
+    MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE,
+    PUBLIC_REGISTER_ENABLED,
+    public_api_base_url,
+)
 from app.limiter import limiter
 from app.middleware import RequestContextMiddleware
 from app.routers.auth import router as auth_router
@@ -36,10 +42,14 @@ from app.routers.public_portal import equipment_token_router, router as public_p
 from app.routers.service_orders import router as service_orders_router
 from app.routers.finance import router as finance_router
 from app.routers.webhooks_asaas import router as webhooks_asaas_router
+from app.routers.webhooks_mercadopago import router as webhooks_mercadopago_router
 from app.routers.inventory import router as inventory_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
 from app.routers.whatsapp import router as whatsapp_router
+from app.routers.ai_settings import router as ai_settings_router
+from app.routers.nfse import router as nfse_router
+from app.routers.preventive_maintenance import router as preventive_maintenance_router
 from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
@@ -81,7 +91,7 @@ def healthcheck(
     extended: Annotated[
         bool,
         Query(
-            description="Se true, inclui campos extras (ex.: public_register_enabled). "
+            description="Se true, inclui campos extras (ex.: public_register_enabled, política MP). "
             "O formato padrão permanece só status + public_register_minimal (compatível com clientes antigos)."
         ),
     ] = False,
@@ -91,6 +101,8 @@ def healthcheck(
     if extended:
         body["public_register_enabled"] = PUBLIC_REGISTER_ENABLED
         body["ai_assistant_v2_enabled"] = AI_ASSISTANT_V2_ENABLED
+        body["api_public_base_url_configured"] = bool(public_api_base_url())
+        body["mercadopago_webhook_signature_required"] = bool(MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE)
     return body
 
 
@@ -275,7 +287,7 @@ async def db_programming_error_handler(request: Request, exc: ProgrammingError) 
                 "status_code": 500,
                 "message": (
                     "Erro de esquema no banco (tabela/coluna ausente ou incompatível). "
-                    "Na API, execute: alembic upgrade head"
+                    "Na API, execute: alembic upgrade heads"
                 ),
                 "path": str(request.url.path),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -344,7 +356,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
                 "message": (
                     "Erro interno inesperado no servidor. Tente de novo em instantes. "
                     "Se repetir, avise o suporte com o request_id desta resposta. "
-                    "Em ambiente próprio, confira `docker compose logs api` e rode `alembic upgrade head`."
+                    "Em ambiente próprio, confira `docker compose logs api` e rode `alembic upgrade heads`."
                 ),
                 "path": str(request.url.path),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -370,14 +382,15 @@ app.include_router(equipment_token_router, prefix=API_V1_PREFIX)
 app.include_router(budgets_router, prefix=API_V1_PREFIX)
 app.include_router(finance_router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_asaas_router, prefix=API_V1_PREFIX)
+app.include_router(webhooks_mercadopago_router, prefix=API_V1_PREFIX)
 app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
+app.include_router(ai_settings_router, prefix=API_V1_PREFIX)
+app.include_router(nfse_router, prefix=API_V1_PREFIX)
+app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
-
-# IA/LLM fica fora da V1 do bot WhatsApp. Não importe app.routers.ai_settings aqui até a V2
-# completar a modelagem/configuração própria, evitando expor endpoints ou quebrar o startup.
 
 
 @app.on_event("startup")

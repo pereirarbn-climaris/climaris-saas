@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "reac
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { createService, listServices, type ServiceOut } from "../../api/services";
 import type { DashboardOutletContext } from "../dashboardContext";
+import tableStyles from "../listTableCommon.module.css";
 import styles from "./ServicesListPage.module.css";
 
 function formatCurrency(value: number): string {
@@ -289,18 +290,18 @@ export function ServicesListPage() {
       </div>
 
       {/* Toolbar */}
-      <div className={styles.toolbar}>
-        <div className={styles.searchCol}>
-          <label className={styles.searchLabel} htmlFor="services-search">
+      <div className={tableStyles.listToolbar}>
+        <div className={tableStyles.listToolbarSearchCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="services-search">
             Buscar
           </label>
-          <div className={styles.searchInputWrap}>
-            <span className={styles.searchIcon}>
+          <div className={tableStyles.listToolbarSearchWrap}>
+            <span className={tableStyles.listToolbarSearchIcon}>
               <SearchIcon />
             </span>
             <input
               id="services-search"
-              className={styles.searchInput}
+              className={tableStyles.listToolbarSearchInput}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Nome ou descricao"
@@ -308,13 +309,13 @@ export function ServicesListPage() {
             />
           </div>
         </div>
-        <div className={styles.filterCol}>
-          <label className={styles.filterLabel} htmlFor="services-sort">
+        <div className={tableStyles.listToolbarFilterCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="services-sort">
             Ordenar
           </label>
           <select
             id="services-sort"
-            className={styles.filterSelect}
+            className={tableStyles.listToolbarSelect}
             value={sort}
             onChange={(e) => setSort(e.target.value as ServiceSort)}
           >
@@ -333,7 +334,7 @@ export function ServicesListPage() {
           </select>
         </div>
         {canEdit ? (
-          <Link className={styles.btnPrimary} to="/app/services/new">
+          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/services/new">
             <PlusIcon />
             Novo servico
           </Link>

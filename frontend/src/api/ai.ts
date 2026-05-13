@@ -9,6 +9,16 @@ export type TenantAISettings = {
   instructions: string | null;
   model_slug: string;
   is_enabled: boolean;
+  ai_context_products: boolean;
+  ai_context_service_prices: boolean;
+  ai_context_services_catalog: boolean;
+  ai_tool_billing: boolean;
+  ai_tool_cancel: boolean;
+  ai_tool_reschedule: boolean;
+  ai_tool_agenda_read: boolean;
+  ai_allow_direct_schedule: boolean;
+  ai_allow_auto_client_create: boolean;
+  ai_clarification_instructions: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -90,6 +100,16 @@ export async function patchAiSettings(patch: {
   instructions?: string | null;
   model_slug?: string | null;
   is_enabled?: boolean;
+  ai_context_products?: boolean;
+  ai_context_service_prices?: boolean;
+  ai_context_services_catalog?: boolean;
+  ai_tool_billing?: boolean;
+  ai_tool_cancel?: boolean;
+  ai_tool_reschedule?: boolean;
+  ai_tool_agenda_read?: boolean;
+  ai_allow_direct_schedule?: boolean;
+  ai_allow_auto_client_create?: boolean;
+  ai_clarification_instructions?: string | null;
 }): Promise<TenantAISettings> {
   const response = await fetch(apiUrl("/api/v1/ai/settings"), {
     method: "PATCH",

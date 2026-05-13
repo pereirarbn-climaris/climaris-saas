@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams } from "react-router-dom";
+import {
+  Link,
+  Navigate,
+  useMatch,
+  useNavigate,
+  useOutletContext,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import {
   createClientEquipment,
-  createEquipmentDocument,
   createClient,
   deactivateClientEquipment,
   deleteClient,
   getClient,
+  listClientAudit,
   listClientServiceItemsLinks,
-  listClientEquipmentDocuments,
   listClientEquipments,
   listEquipmentHistory,
   updateClientEquipment,
+  type ClientAuditEntryOut,
   type ClientServiceItemLinkRowOut,
-  type EquipmentDocumentCreatePayload,
-  type EquipmentDocumentWithEquipmentOut,
   updateClient,
   type ClientCreatePayload,
   type EquipmentHistoryRowOut,
@@ -41,8 +47,12 @@ import {
   formatTaxDocumentInput,
   taxDocumentOnKindChange,
 } from "../../lib/brMask";
+import { listPmocPlans, type PmocPlanOut, type PmocPlanStatus } from "../../api/pmoc";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
+import pmocStyles from "../pmoc/PmocPages.module.css";
+import styles from "./ClientFormPage.module.css";
 
 function formatEquipmentHistorySource(source: string): string {
   if (source === "ordem_concluida") return "OS concluída";
@@ -50,16 +60,28 @@ function formatEquipmentHistorySource(source: string): string {
   if (source === "app") return "App";
   return source;
 }
-import styles from "./ClientFormPage.module.css";
+
+function WhatsappBrandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={styles.waBrandSvg}>
+      <path
+        fill="#fff"
+        d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.881 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"
+      />
+    </svg>
+  );
+}
 
 type FormState = {
   name: string;
   document: string;
   tax_id_kind: ClientTaxIdKind;
+  optante_mei: boolean;
   phone: string;
   whatsapp: string;
   email: string;
   trade_name: string;
+  contact_person_name: string;
   state_registration: string;
   ie_indicator: "" | ClientIeIndicator;
   municipal_registration: string;
@@ -70,6 +92,10 @@ type FormState = {
   address_city: string;
   address_state: string;
   address_postal_code: string;
+  /** Município IBGE (7 dígitos), exigido na NFS-e Nacional para o tomador. */
+  address_ibge_code: string;
+  preventive_campaign_opt_out: boolean;
+  is_active: boolean;
 };
 
 type EquipmentFormState = {
@@ -102,33 +128,17 @@ type EquipmentFormState = {
   ativo: boolean;
 };
 
-type EquipmentDocumentFormState = {
-  target_equipment_id: number | "";
-  document_type: "pmoc" | "technical_report" | "hygiene_report";
-  title: string;
-  status: "draft" | "issued" | "signed" | "expired" | "cancelled";
-  issued_at: string;
-  valid_until: string;
-  next_due_at: string;
-  notes: string;
-};
-
-type EquipmentDocumentFilters = {
-  q: string;
-  document_type: "" | "pmoc" | "technical_report" | "hygiene_report";
-  status: "" | "draft" | "issued" | "signed" | "expired" | "cancelled";
-  only_overdue: boolean;
-};
-
 function emptyForm(): FormState {
   return {
     name: "",
     document: "",
     tax_id_kind: "cnpj",
+    optante_mei: false,
     phone: "",
     whatsapp: "",
     email: "",
     trade_name: "",
+    contact_person_name: "",
     state_registration: "",
     ie_indicator: "",
     municipal_registration: "",
@@ -139,6 +149,9 @@ function emptyForm(): FormState {
     address_city: "",
     address_state: "",
     address_postal_code: "",
+    address_ibge_code: "",
+    preventive_campaign_opt_out: false,
+    is_active: true,
   };
 }
 
@@ -174,28 +187,6 @@ function emptyEquipmentForm(): EquipmentFormState {
   };
 }
 
-function emptyEquipmentDocumentForm(): EquipmentDocumentFormState {
-  return {
-    target_equipment_id: "",
-    document_type: "pmoc",
-    title: "",
-    status: "draft",
-    issued_at: "",
-    valid_until: "",
-    next_due_at: "",
-    notes: "",
-  };
-}
-
-function emptyEquipmentDocumentFilters(): EquipmentDocumentFilters {
-  return {
-    q: "",
-    document_type: "",
-    status: "",
-    only_overdue: false,
-  };
-}
-
 /** True se o cliente já tem endereço salvo (não dispara CEP/CNPJ preenchendo endereço de novo). */
 function clientHasPersistedAddress(c: ClientOut): boolean {
   const cepOk = digitsOnly(c.address_postal_code ?? "").length >= 8;
@@ -210,10 +201,12 @@ function fromClient(c: ClientOut): FormState {
     name: c.name,
     document: formatTaxDocumentInput(c.document ?? "", kind),
     tax_id_kind: kind,
+    optante_mei: Boolean(c.optante_mei),
     phone: formatPhoneBrInput(c.phone ?? ""),
     whatsapp: formatPhoneBrInput(c.whatsapp ?? ""),
     email: c.email ?? "",
     trade_name: c.trade_name ?? "",
+    contact_person_name: c.contact_person_name ?? "",
     state_registration: c.state_registration ?? "",
     ie_indicator: (c.ie_indicator === "1" || c.ie_indicator === "2" || c.ie_indicator === "9" ? c.ie_indicator : "") as
       | ""
@@ -226,16 +219,21 @@ function fromClient(c: ClientOut): FormState {
     address_city: c.address_city ?? "",
     address_state: c.address_state ?? "",
     address_postal_code: formatCepInput(c.address_postal_code ?? ""),
+    address_ibge_code: digitsOnly(c.address_ibge_code ?? "").slice(0, 7),
+    preventive_campaign_opt_out: Boolean(c.preventive_campaign_opt_out),
+    is_active: c.is_active !== false,
   };
 }
 
 function mergeCnpjLookup(prev: FormState, lu: CnpjLookupResult, mergeAddress = true): FormState {
+  const nextRegime = typeof lu.optante_mei === "boolean" ? lu.optante_mei : prev.optante_mei;
   if (!mergeAddress) {
     return {
       ...prev,
       name: lu.company_name.trim() || prev.name,
       trade_name:
         (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.trade_name,
+      optante_mei: nextRegime,
     };
   }
   const a = lu.address;
@@ -245,6 +243,7 @@ function mergeCnpjLookup(prev: FormState, lu: CnpjLookupResult, mergeAddress = t
     name: lu.company_name.trim() || prev.name,
     trade_name:
       (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.trade_name,
+    optante_mei: nextRegime,
     address_street: a?.street ?? prev.address_street,
     address_number: a?.number ?? prev.address_number,
     address_complement: a?.details ?? prev.address_complement,
@@ -257,17 +256,13 @@ function mergeCnpjLookup(prev: FormState, lu: CnpjLookupResult, mergeAddress = t
 
 function buildUpdatePayload(f: FormState): ClientUpdatePayload {
   const documentDigits = digitsOnly(f.document);
-  const p: ClientUpdatePayload = {
+  const common: ClientUpdatePayload = {
     name: f.name.trim(),
     tax_id_kind: f.tax_id_kind,
-    // `null` é serializado no JSON; `undefined` seria omitido e o backend não limpava o banco.
     phone: digitsOnlyPhoneForApi(f.phone) || null,
     whatsapp: digitsOnlyPhoneForApi(f.whatsapp) || null,
     email: f.email.trim() || null,
     trade_name: f.trade_name.trim() || null,
-    state_registration: f.state_registration.trim() || null,
-    ie_indicator: f.ie_indicator ? f.ie_indicator : null,
-    municipal_registration: f.municipal_registration.trim() || null,
     address_street: f.address_street.trim() || null,
     address_number: f.address_number.trim() || null,
     address_complement: f.address_complement.trim() || null,
@@ -276,7 +271,31 @@ function buildUpdatePayload(f: FormState): ClientUpdatePayload {
     address_state: f.address_state.trim() ? f.address_state.trim().toUpperCase().slice(0, 2) : null,
     address_postal_code: digitsOnly(f.address_postal_code).slice(0, 8) || null,
     address_country: "Brasil",
+    address_ibge_code: (() => {
+      const d = digitsOnly(f.address_ibge_code).slice(0, 7);
+      return d.length === 7 ? d : null;
+    })(),
+    preventive_campaign_opt_out: Boolean(f.preventive_campaign_opt_out),
+    is_active: Boolean(f.is_active),
   };
+  const p: ClientUpdatePayload =
+    f.tax_id_kind === "cnpj"
+      ? {
+          ...common,
+          optante_mei: Boolean(f.optante_mei),
+          contact_person_name: f.contact_person_name.trim() || null,
+          state_registration: f.state_registration.trim() || null,
+          ie_indicator: f.ie_indicator ? f.ie_indicator : null,
+          municipal_registration: f.municipal_registration.trim() || null,
+        }
+      : {
+          ...common,
+          optante_mei: false,
+          contact_person_name: null,
+          state_registration: null,
+          ie_indicator: null,
+          municipal_registration: null,
+        };
   if (documentDigits) {
     p.document = documentDigits;
   }
@@ -342,9 +361,45 @@ function formatDateTime(value: string | null | undefined): string {
   }).format(date);
 }
 
+type ClientPmocListPreset = "all" | PmocPlanStatus;
+
+const CLIENT_PMOC_PRESET_ORDER: ClientPmocListPreset[] = ["all", "active", "inactive", "draft", "archived"];
+
+const CLIENT_PMOC_PRESET_LABEL: Record<ClientPmocListPreset, string> = {
+  all: "Todos",
+  active: "Ativas",
+  inactive: "Inativas",
+  draft: "Rascunhos",
+  archived: "Arquivadas",
+};
+
+function clientPmocStatusLabel(s: PmocPlanStatus): string {
+  const m: Record<PmocPlanStatus, string> = {
+    draft: "Rascunho",
+    active: "Ativa",
+    inactive: "Inativa",
+    archived: "Arquivada",
+  };
+  return m[s] ?? s;
+}
+
+function clientPmocStatusClass(s: PmocPlanStatus): string {
+  if (s === "active") return pmocStyles.badgeActive;
+  if (s === "draft") return pmocStyles.badgeDraft;
+  if (s === "archived") return pmocStyles.badgeArchived;
+  return pmocStyles.badgeInactive;
+}
+
+function formatPmocBtu(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(".", ",")}M BTU`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(".", ",")}k BTU`;
+  return `${n} BTU`;
+}
+
 export function ClientFormPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isNew = useMatch({ path: "/app/clients/new", end: true }) != null;
   const { clientId } = useParams<{ clientId: string }>();
   const idNum = clientId ? Number(clientId) : NaN;
@@ -352,6 +407,8 @@ export function ClientFormPage() {
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const canDelete = ctx?.user.role === "admin";
   const readOnly = !canEdit;
+  const canCreatePmoc =
+    ctx?.user.role === "admin" || ctx?.user.role === "receptionist" || ctx?.user.role === "technician";
 
   const [form, setForm] = useState<FormState>(emptyForm);
   const [loading, setLoading] = useState(!isNew);
@@ -363,9 +420,11 @@ export function ClientFormPage() {
   const [cepErr, setCepErr] = useState("");
   const [cnpjLookupLoading, setCnpjLookupLoading] = useState(false);
   const [cnpjLookupErr, setCnpjLookupErr] = useState("");
+  const [cnpjLockedAfterLookup, setCnpjLockedAfterLookup] = useState(false);
+  const [regimeDetectedByLookup, setRegimeDetectedByLookup] = useState<boolean | null>(null);
   /** Só usado quando já há endereço salvo: se true, o botão “Consultar CNPJ” também aplica endereço da Receita. */
   const [cnpjIncludeAddress, setCnpjIncludeAddress] = useState(true);
-  const [activeTab, setActiveTab] = useState<"form" | "equipments" | "budgets" | "orders">("form");
+  const [activeTab, setActiveTab] = useState<"form" | "equipments" | "budgets" | "orders" | "audit" | "pmoc">("form");
   const [clientBudgets, setClientBudgets] = useState<BudgetOut[]>([]);
   const [clientOrders, setClientOrders] = useState<ServiceOrderOut[]>([]);
   const [clientEquipments, setClientEquipments] = useState<EquipmentOut[]>([]);
@@ -374,25 +433,83 @@ export function ClientFormPage() {
   const [showEquipmentEditor, setShowEquipmentEditor] = useState(false);
   const [editingEquipmentId, setEditingEquipmentId] = useState<number | null>(null);
   const [equipmentHistory, setEquipmentHistory] = useState<EquipmentHistoryRowOut[]>([]);
-  const [clientPmocDocuments, setClientPmocDocuments] = useState<EquipmentDocumentWithEquipmentOut[]>([]);
-  const [showClientPmocEditor, setShowClientPmocEditor] = useState(false);
-  const [documentSaving, setDocumentSaving] = useState(false);
-  const [equipmentDocumentForm, setEquipmentDocumentForm] = useState<EquipmentDocumentFormState>(
-    emptyEquipmentDocumentForm,
-  );
-  const [pmocDocumentFilters, setPmocDocumentFilters] = useState<EquipmentDocumentFilters>(
-    emptyEquipmentDocumentFilters,
-  );
   const [clientServiceLinks, setClientServiceLinks] = useState<ClientServiceItemLinkRowOut[]>([]);
   const [linkSavingServiceItemId, setLinkSavingServiceItemId] = useState<number | null>(null);
   const [equipmentSaving, setEquipmentSaving] = useState(false);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedErr, setRelatedErr] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [auditRows, setAuditRows] = useState<ClientAuditEntryOut[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [clientPmocPlans, setClientPmocPlans] = useState<PmocPlanOut[]>([]);
+  const [pmocPlansLoading, setPmocPlansLoading] = useState(false);
+  const [pmocPlansErr, setPmocPlansErr] = useState("");
+  const [pmocListPreset, setPmocListPreset] = useState<ClientPmocListPreset>("all");
   /** Endereço já existe no banco (afeta padrão do CNPJ: só nomes, salvo se marcar “incluir endereço”). */
   const [addressPersisted, setAddressPersisted] = useState(false);
 
   const docDigits = useMemo(() => digitsOnly(form.document).slice(0, 14), [form.document]);
+
+  const showPmocTab = !isNew && form.tax_id_kind === "cnpj";
+
+  useEffect(() => {
+    if (form.tax_id_kind !== "cnpj" && activeTab === "pmoc") {
+      setActiveTab("form");
+    }
+  }, [form.tax_id_kind, activeTab]);
+
+  /** Abre a aba PMOC ao voltar de `/app/pmoc/...?from_client=` (remove `tab` da URL após aplicar). */
+  useEffect(() => {
+    if (isNew || !Number.isFinite(idNum) || idNum < 1 || loading) return;
+    const tab = searchParams.get("tab");
+    if (tab !== "pmoc") return;
+    if (!showPmocTab) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("tab");
+          return next;
+        },
+        { replace: true },
+      );
+      return;
+    }
+    setActiveTab("pmoc");
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("tab");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [isNew, idNum, loading, searchParams, showPmocTab, setSearchParams]);
+
+  useEffect(() => {
+    if (activeTab !== "pmoc" || isNew || !Number.isFinite(idNum) || idNum < 1 || form.tax_id_kind !== "cnpj") {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      setPmocPlansLoading(true);
+      setPmocPlansErr("");
+      try {
+        const status = pmocListPreset === "all" ? undefined : pmocListPreset;
+        const list = await listPmocPlans({ client_id: idNum, status, limit: 100 });
+        if (!cancelled) setClientPmocPlans(list);
+      } catch (e) {
+        if (!cancelled) {
+          setPmocPlansErr(e instanceof Error ? e.message : "Erro ao carregar PMOC.");
+          setClientPmocPlans([]);
+        }
+      } finally {
+        if (!cancelled) setPmocPlansLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, idNum, isNew, pmocListPreset, form.tax_id_kind]);
 
   const cepDigits = useMemo(
     () => form.address_postal_code.replace(/\D/g, "").slice(0, 8),
@@ -442,6 +559,13 @@ export function ClientFormPage() {
     if (docDigits.length < 14) setCnpjLookupErr("");
   }, [docDigits.length]);
 
+  useEffect(() => {
+    if (form.tax_id_kind !== "cnpj") {
+      setCnpjLockedAfterLookup(false);
+      setRegimeDetectedByLookup(null);
+    }
+  }, [form.tax_id_kind]);
+
   async function onBuscarCep() {
     if (readOnly) return;
     if (cepDigits.length !== 8) {
@@ -458,6 +582,7 @@ export function ClientFormPage() {
         if (cur !== cepDigits) return prev;
         // Substitui pelo retorno da API: se o novo CEP não tem complemento no ViaCEP, o campo zera (não mantém o do endereço antigo).
         const uf = (data.address_state ?? "").trim();
+        const ibgeFromCep = digitsOnly(data.address_ibge_code ?? "").slice(0, 7);
         return {
           ...prev,
           address_street: (data.address_street ?? "").trim(),
@@ -468,6 +593,7 @@ export function ClientFormPage() {
           address_postal_code: data.address_postal_code
             ? formatCepInput(data.address_postal_code)
             : formatCepInput(cepDigits),
+          address_ibge_code: ibgeFromCep.length === 7 ? ibgeFromCep : "",
         };
       });
       setMsg({
@@ -497,6 +623,8 @@ export function ClientFormPage() {
         if (cur !== docDigits) return prev;
         return mergeCnpjLookup(prev, lu, cnpjIncludeAddress);
       });
+      setCnpjLockedAfterLookup(true);
+      setRegimeDetectedByLookup(typeof lu.optante_mei === "boolean" ? lu.optante_mei : null);
       setMsg({
         kind: "ok",
         text: cnpjIncludeAddress
@@ -557,8 +685,6 @@ export function ClientFormPage() {
   useEffect(() => {
     if (activeTab === "equipments") return;
     closeEquipmentPanel();
-    setShowClientPmocEditor(false);
-    setEquipmentDocumentForm(emptyEquipmentDocumentForm());
   }, [activeTab, closeEquipmentPanel]);
 
   function startEditEquipment(row: EquipmentOut) {
@@ -708,52 +834,6 @@ export function ClientFormPage() {
     }
   }
 
-  async function onSubmitClientPmocDocument(e: FormEvent) {
-    e.preventDefault();
-    if (isNew || !canEdit || !Number.isFinite(idNum) || idNum < 1) return;
-    const targetEq = equipmentDocumentForm.target_equipment_id;
-    if (targetEq === "" || typeof targetEq !== "number") {
-      setMsg({ kind: "err", text: "Selecione o equipamento ao qual o documento se refere." });
-      return;
-    }
-    if (!equipmentDocumentForm.title.trim()) {
-      setMsg({ kind: "err", text: "Informe o título do documento." });
-      return;
-    }
-    setDocumentSaving(true);
-    setMsg(null);
-    try {
-      const payload: EquipmentDocumentCreatePayload = {
-        document_type: equipmentDocumentForm.document_type,
-        title: equipmentDocumentForm.title.trim(),
-        status: equipmentDocumentForm.status,
-        issued_at: equipmentDocumentForm.issued_at || undefined,
-        valid_until: equipmentDocumentForm.valid_until || undefined,
-        next_due_at: equipmentDocumentForm.next_due_at || undefined,
-        notes: equipmentDocumentForm.notes.trim() || undefined,
-        schema_version: "v1",
-        payload: {},
-      };
-      await createEquipmentDocument(targetEq, payload);
-      setClientPmocDocuments(
-        await listClientEquipmentDocuments(idNum, {
-          limit: 100,
-          q: pmocDocumentFilters.q.trim() || undefined,
-          document_type: pmocDocumentFilters.document_type || undefined,
-          status: pmocDocumentFilters.status || undefined,
-          only_overdue: pmocDocumentFilters.only_overdue || undefined,
-        }),
-      );
-      setEquipmentDocumentForm(emptyEquipmentDocumentForm());
-      setShowClientPmocEditor(false);
-      setMsg({ kind: "ok", text: "Documento registrado." });
-    } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao criar documento." });
-    } finally {
-      setDocumentSaving(false);
-    }
-  }
-
   useEffect(() => {
     if (activeTab !== "equipments" || isNew || !selectedEquipmentId || !Number.isFinite(idNum) || idNum < 1) {
       setEquipmentHistory([]);
@@ -774,29 +854,26 @@ export function ClientFormPage() {
   }, [activeTab, idNum, isNew, selectedEquipmentId]);
 
   useEffect(() => {
-    if (activeTab !== "form" || isNew || !Number.isFinite(idNum) || idNum < 1) {
-      setClientPmocDocuments([]);
+    if (isNew || activeTab !== "audit" || !Number.isFinite(idNum) || idNum < 1) {
+      setAuditRows([]);
       return;
     }
     let cancelled = false;
     void (async () => {
+      setAuditLoading(true);
       try {
-        const documentsRows = await listClientEquipmentDocuments(idNum, {
-          limit: 100,
-          q: pmocDocumentFilters.q.trim() || undefined,
-          document_type: pmocDocumentFilters.document_type || undefined,
-          status: pmocDocumentFilters.status || undefined,
-          only_overdue: pmocDocumentFilters.only_overdue || undefined,
-        });
-        if (!cancelled) setClientPmocDocuments(documentsRows);
+        const rows = await listClientAudit(idNum);
+        if (!cancelled) setAuditRows(rows);
       } catch {
-        if (!cancelled) setClientPmocDocuments([]);
+        if (!cancelled) setAuditRows([]);
+      } finally {
+        if (!cancelled) setAuditLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [activeTab, pmocDocumentFilters, idNum, isNew]);
+  }, [activeTab, idNum, isNew]);
 
   if (!ctx) {
     return <Navigate to="/login" replace />;
@@ -823,17 +900,15 @@ export function ClientFormPage() {
 
     setSaving(true);
     try {
+      const ibgeCreate = digitsOnly(form.address_ibge_code).slice(0, 7);
       if (isNew) {
-        const payload: ClientCreatePayload = {
+        const basePayload: ClientCreatePayload = {
           name: form.name.trim(),
           tax_id_kind: form.tax_id_kind,
           phone: digitsOnlyPhoneForApi(form.phone) || undefined,
           whatsapp: digitsOnlyPhoneForApi(form.whatsapp) || undefined,
           email: form.email.trim() || undefined,
           trade_name: form.trade_name.trim() || undefined,
-          state_registration: form.state_registration.trim() || undefined,
-          ie_indicator: form.ie_indicator || undefined,
-          municipal_registration: form.municipal_registration.trim() || undefined,
           address_street: form.address_street.trim() || undefined,
           address_number: form.address_number.trim() || undefined,
           address_complement: form.address_complement.trim() || undefined,
@@ -842,7 +917,24 @@ export function ClientFormPage() {
           address_state: form.address_state.trim() ? form.address_state.trim().toUpperCase().slice(0, 2) : undefined,
           address_postal_code: digitsOnly(form.address_postal_code).slice(0, 8) || undefined,
           address_country: "Brasil",
+          ...(ibgeCreate.length === 7 ? { address_ibge_code: ibgeCreate } : {}),
+          preventive_campaign_opt_out: Boolean(form.preventive_campaign_opt_out),
+          is_active: Boolean(form.is_active),
         };
+        const payload: ClientCreatePayload =
+          form.tax_id_kind === "cnpj"
+            ? {
+                ...basePayload,
+                optante_mei: Boolean(form.optante_mei),
+                contact_person_name: form.contact_person_name.trim() || undefined,
+                state_registration: form.state_registration.trim() || undefined,
+                ie_indicator: form.ie_indicator || undefined,
+                municipal_registration: form.municipal_registration.trim() || undefined,
+              }
+            : {
+                ...basePayload,
+                optante_mei: false,
+              };
         if (digits) {
           payload.document = digits;
         }
@@ -928,12 +1020,32 @@ export function ClientFormPage() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === "audit"}
+            className={`${styles.tabBtn} ${activeTab === "audit" ? styles.tabBtnActive : ""}`}
+            onClick={() => setActiveTab("audit")}
+          >
+            Histórico
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === "equipments"}
             className={`${styles.tabBtn} ${activeTab === "equipments" ? styles.tabBtnActive : ""}`}
             onClick={() => setActiveTab("equipments")}
           >
             Equipamentos ({clientEquipments.length})
           </button>
+          {showPmocTab ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "pmoc"}
+              className={`${styles.tabBtn} ${activeTab === "pmoc" ? styles.tabBtnActive : ""}`}
+              onClick={() => setActiveTab("pmoc")}
+            >
+              PMOC
+            </button>
+          ) : null}
           <button
             type="button"
             role="tab"
@@ -955,202 +1067,331 @@ export function ClientFormPage() {
         </div>
       ) : null}
 
-      {activeTab === "form" ? (
+      {activeTab === "audit" && !isNew ? (
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Histórico do cadastro</h2>
+          <p className={styles.cepHint}>Alterações registradas automaticamente ao criar ou atualizar o cliente.</p>
+          {auditLoading ? <p className={styles.loading}>Carregando histórico…</p> : null}
+          {!auditLoading && auditRows.length === 0 ? (
+            <p className={styles.loading}>Nenhum evento registrado.</p>
+          ) : null}
+          {!auditLoading && auditRows.length > 0 ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Quando</th>
+                    <th>Usuário</th>
+                    <th>Ação</th>
+                    <th>Alterações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditRows.map((r) => (
+                    <tr key={r.id}>
+                      <td>{formatDateTime(r.created_at)}</td>
+                      <td>{r.user_name ?? "—"}</td>
+                      <td>{r.action}</td>
+                      <td>
+                        <pre className={styles.auditPre}>{JSON.stringify(r.changes, null, 2)}</pre>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
+      ) : activeTab === "form" ? (
       <form className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Identificação</h2>
-          <label className={loginStyles.label} htmlFor="c-name">
-            Razão social / nome
-          </label>
-          <input
-            id="c-name"
-            className={loginStyles.input}
-            value={form.name}
-            onChange={(e) => setField("name", e.target.value)}
-            required
-            disabled={readOnly}
-          />
-          <div className={styles.grid2}>
-            <div>
-              <label className={loginStyles.label} htmlFor="c-kind">
-                Tipo
-              </label>
-              <select
-                id="c-kind"
-                className={loginStyles.select}
-                value={form.tax_id_kind}
-                onChange={(e) => {
-                  setCnpjLookupErr("");
-                  const k = e.target.value as ClientTaxIdKind;
-                  setForm((prev) => ({
-                    ...prev,
-                    tax_id_kind: k,
-                    document: taxDocumentOnKindChange(prev.document, k),
-                  }));
-                }}
-                disabled={readOnly}
-              >
-                <option value="cnpj">CNPJ</option>
-                <option value="cpf">CPF</option>
-              </select>
-            </div>
-            <div>
-              <label className={loginStyles.label} htmlFor="c-doc">
-                CPF / CNPJ
+          <div className={formLayout.stack}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="c-name">
+                Razão social / nome
               </label>
               <input
-                id="c-doc"
+                id="c-name"
                 className={loginStyles.input}
-                value={form.document}
-                onChange={(e) =>
-                  setField("document", formatTaxDocumentInput(e.target.value, form.tax_id_kind))
-                }
-                inputMode="numeric"
-                maxLength={form.tax_id_kind === "cpf" ? 14 : 18}
+                value={form.name}
+                onChange={(e) => setField("name", e.target.value)}
+                required
                 disabled={readOnly}
-                aria-busy={form.tax_id_kind === "cnpj" && cnpjLookupLoading}
               />
             </div>
-          </div>
-          {form.tax_id_kind === "cnpj" && !readOnly ? (
-            <div className={styles.externalLookupBlock}>
-              <div className={styles.externalLookupActions}>
-                <button
-                  type="button"
-                  className={styles.btnSecondary}
-                  disabled={cnpjLookupLoading || docDigits.length !== 14}
-                  onClick={() => void onConsultarCnpj()}
-                >
-                  {cnpjLookupLoading ? "Consultando…" : "Consultar CNPJ na Receita"}
-                </button>
-                {addressPersisted ? (
-                  <label className={styles.checkboxRow}>
-                    <input
-                      type="checkbox"
-                      checked={cnpjIncludeAddress}
-                      onChange={(e) => setCnpjIncludeAddress(e.target.checked)}
-                      disabled={cnpjLookupLoading}
-                    />
-                    Incluir endereço retornado pela Receita (substitui logradouro, complemento, CEP etc.)
+            <div className={formLayout.fieldGroup}>
+              <div className={styles.grid2}>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="c-kind">
+                    Tipo
                   </label>
+                  <select
+                    id="c-kind"
+                    className={loginStyles.select}
+                    value={form.tax_id_kind}
+                    onChange={(e) => {
+                      setCnpjLookupErr("");
+                      const k = e.target.value as ClientTaxIdKind;
+                      setForm((prev) => ({
+                        ...prev,
+                        tax_id_kind: k,
+                        document: taxDocumentOnKindChange(prev.document, k),
+                      }));
+                    }}
+                    disabled={readOnly || cnpjLockedAfterLookup}
+                  >
+                    <option value="cnpj">CNPJ</option>
+                    <option value="cpf">CPF</option>
+                  </select>
+                </div>
+                {form.tax_id_kind === "cnpj" ? (
+                  <div className={formLayout.field}>
+                    <label className={loginStyles.label} htmlFor="c-mei">
+                      Regime
+                    </label>
+                    <select
+                      id="c-mei"
+                      className={loginStyles.select}
+                      value={form.optante_mei ? "mei" : "regular"}
+                      onChange={(e) => setForm((prev) => ({ ...prev, optante_mei: e.target.value === "mei" }))}
+                      disabled={readOnly}
+                    >
+                      <option value="regular">Empresa regular</option>
+                      <option value="mei">MEI (NFS-e Nacional)</option>
+                    </select>
+                  </div>
                 ) : null}
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="c-doc">
+                    CPF / CNPJ
+                  </label>
+                  <input
+                    id="c-doc"
+                    className={loginStyles.input}
+                    value={form.document}
+                    onChange={(e) =>
+                      setField("document", formatTaxDocumentInput(e.target.value, form.tax_id_kind))
+                    }
+                    inputMode="numeric"
+                    maxLength={form.tax_id_kind === "cpf" ? 14 : 18}
+                    disabled={readOnly || (form.tax_id_kind === "cnpj" && cnpjLockedAfterLookup)}
+                    aria-busy={form.tax_id_kind === "cnpj" && cnpjLookupLoading}
+                  />
+                  {form.tax_id_kind === "cnpj" && cnpjLockedAfterLookup && !readOnly ? (
+                    <p className={styles.cepHint}>
+                      CNPJ bloqueado após a consulta para evitar alterações acidentais.{" "}
+                      <button
+                        type="button"
+                        className={styles.linkButtonInline}
+                        onClick={() => {
+                          setCnpjLockedAfterLookup(false);
+                          setRegimeDetectedByLookup(null);
+                        }}
+                      >
+                        Alterar CNPJ
+                      </button>
+                    </p>
+                  ) : null}
+                </div>
               </div>
-              <p className={styles.cepHint}>
-                {cnpjLookupLoading
-                  ? "Consultando CNPJ…"
-                  : "A consulta não roda sozinha: use o botão acima. O que vier da API só entra no formulário; para gravar no banco, clique em Salvar alterações."}
-              </p>
+              {form.tax_id_kind === "cnpj" && !readOnly ? (
+                <div className={styles.externalLookupBlock}>
+                  <div className={styles.externalLookupActions}>
+                    <button
+                      type="button"
+                      className={styles.btnSecondary}
+                      disabled={cnpjLookupLoading || docDigits.length !== 14}
+                      onClick={() => void onConsultarCnpj()}
+                    >
+                      {cnpjLookupLoading ? "Consultando…" : "Consultar CNPJ na Receita"}
+                    </button>
+                    {addressPersisted ? (
+                      <label className={styles.checkboxRow}>
+                        <input
+                          type="checkbox"
+                          checked={cnpjIncludeAddress}
+                          onChange={(e) => setCnpjIncludeAddress(e.target.checked)}
+                          disabled={cnpjLookupLoading}
+                        />
+                        Incluir endereço retornado pela Receita (substitui logradouro, complemento, CEP etc.)
+                      </label>
+                    ) : null}
+                  </div>
+                  <p className={styles.cepHint}>
+                    {cnpjLookupLoading
+                      ? "Consultando CNPJ…"
+                      : "A consulta não roda sozinha: use o botão acima. O que vier da API só entra no formulário; para gravar no banco, clique em Salvar alterações."}
+                  </p>
+                  {regimeDetectedByLookup !== null && !cnpjLookupLoading ? (
+                    <p className={styles.cepHint}>
+                      Regime detectado automaticamente:{" "}
+                      <strong>{regimeDetectedByLookup ? "MEI (NFS-e Nacional)" : "Empresa regular"}</strong>.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {cnpjLookupErr && !cnpjLookupLoading ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
             </div>
-          ) : null}
-          {cnpjLookupErr && !cnpjLookupLoading ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
-          <label className={loginStyles.label} htmlFor="c-trade">
-            Nome fantasia
-          </label>
-          <input
-            id="c-trade"
-            className={loginStyles.input}
-            value={form.trade_name}
-            onChange={(e) => setField("trade_name", e.target.value)}
-            disabled={readOnly}
-          />
-          <div className={styles.grid2}>
-            <div>
-              <label className={loginStyles.label} htmlFor="c-phone">
-                Telefone
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="c-trade">
+                Nome fantasia
               </label>
               <input
-                id="c-phone"
+                id="c-trade"
                 className={loginStyles.input}
-                type="tel"
-                value={form.phone}
-                onChange={(e) => setField("phone", formatPhoneBrInput(e.target.value))}
-                placeholder="(11) 3456-7890 — fixo ou ramal"
-                autoComplete="tel-national"
-                maxLength={15}
+                value={form.trade_name}
+                onChange={(e) => setField("trade_name", e.target.value)}
                 disabled={readOnly}
               />
             </div>
-            <div>
-              <label className={loginStyles.label} htmlFor="c-wa">
-                WhatsApp
+            <div className={styles.grid2}>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="c-wa">
+                  WhatsApp
+                </label>
+                <div className={styles.waInputWrap}>
+                  <span className={styles.waInputIcon} aria-hidden>
+                    <WhatsappBrandIcon />
+                  </span>
+                  <input
+                    id="c-wa"
+                    className={`${loginStyles.input} ${styles.waInputField}`}
+                    type="tel"
+                    value={form.whatsapp}
+                    onChange={(e) => setField("whatsapp", formatPhoneBrInput(e.target.value))}
+                    placeholder="(11) 98765-4321 — celular com DDD"
+                    autoComplete="tel-national"
+                    maxLength={15}
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="c-phone">
+                  Telefone
+                </label>
+                <input
+                  id="c-phone"
+                  className={loginStyles.input}
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setField("phone", formatPhoneBrInput(e.target.value))}
+                  placeholder="(11) 3456-7890 — fixo ou ramal"
+                  autoComplete="tel-national"
+                  maxLength={15}
+                  disabled={readOnly}
+                />
+              </div>
+            </div>
+            {form.tax_id_kind === "cnpj" ? (
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="c-contact-person">
+                  Contato na empresa
+                </label>
+                <input
+                  id="c-contact-person"
+                  className={loginStyles.input}
+                  value={form.contact_person_name}
+                  onChange={(e) => setField("contact_person_name", e.target.value)}
+                  placeholder="Nome de quem atende por telefone ou WhatsApp"
+                  maxLength={150}
+                  disabled={readOnly}
+                />
+              </div>
+            ) : null}
+            <label className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={form.preventive_campaign_opt_out}
+                onChange={(e) => setForm((prev) => ({ ...prev, preventive_campaign_opt_out: e.target.checked }))}
+                disabled={readOnly}
+              />
+              Não enviar campanhas de manutenção preventiva por WhatsApp
+            </label>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="c-email">
+                E-mail
               </label>
               <input
-                id="c-wa"
+                id="c-email"
                 className={loginStyles.input}
-                type="tel"
-                value={form.whatsapp}
-                onChange={(e) => setField("whatsapp", formatPhoneBrInput(e.target.value))}
-                placeholder="(11) 98765-4321 — celular com DDD"
-                autoComplete="tel-national"
-                maxLength={15}
+                type="email"
+                value={form.email}
+                onChange={(e) => setField("email", e.target.value)}
                 disabled={readOnly}
               />
             </div>
+            <label className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                disabled={readOnly}
+              />
+              Cliente ativo no cadastro
+            </label>
           </div>
-          <label className={loginStyles.label} htmlFor="c-email">
-            E-mail
-          </label>
-          <input
-            id="c-email"
-            className={loginStyles.input}
-            type="email"
-            value={form.email}
-            onChange={(e) => setField("email", e.target.value)}
-            disabled={readOnly}
-          />
         </div>
 
+        {form.tax_id_kind === "cnpj" ? (
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Fiscal</h2>
-          <p className={styles.cepHint}>IE e IM quando a prefeitura ou a NF-e exigirem.</p>
-          <div className={styles.grid2}>
-            <div>
-              <label className={loginStyles.label} htmlFor="c-ie-ind">
-                Indicador IE (NF-e)
-              </label>
-              <select
-                id="c-ie-ind"
-                className={loginStyles.select}
-                value={form.ie_indicator}
-                onChange={(e) => setField("ie_indicator", e.target.value as FormState["ie_indicator"])}
-                disabled={readOnly}
-              >
-                <option value="">—</option>
-                <option value="1">1 — Contribuinte ICMS</option>
-                <option value="2">2 — Isento</option>
-                <option value="9">9 — Não contribuinte</option>
-              </select>
+          <div className={formLayout.stack}>
+            <p className={`${styles.cepHint} ${styles.hintFlush}`}>IE e IM quando a prefeitura ou a NF-e exigirem.</p>
+            <div className={styles.grid2}>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="c-ie-ind">
+                  Indicador IE (NF-e)
+                </label>
+                <select
+                  id="c-ie-ind"
+                  className={loginStyles.select}
+                  value={form.ie_indicator}
+                  onChange={(e) => setField("ie_indicator", e.target.value as FormState["ie_indicator"])}
+                  disabled={readOnly}
+                >
+                  <option value="">—</option>
+                  <option value="1">1 — Contribuinte ICMS</option>
+                  <option value="2">2 — Isento</option>
+                  <option value="9">9 — Não contribuinte</option>
+                </select>
+              </div>
+              <div className={formLayout.field}>
+                <label className={loginStyles.label} htmlFor="c-ie">
+                  Inscrição estadual
+                </label>
+                <input
+                  id="c-ie"
+                  className={loginStyles.input}
+                  value={form.state_registration}
+                  onChange={(e) => setField("state_registration", e.target.value)}
+                  placeholder="ou ISENTO"
+                  disabled={readOnly}
+                />
+              </div>
             </div>
-            <div>
-              <label className={loginStyles.label} htmlFor="c-ie">
-                Inscrição estadual
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="c-im">
+                Inscrição municipal
               </label>
               <input
-                id="c-ie"
+                id="c-im"
                 className={loginStyles.input}
-                value={form.state_registration}
-                onChange={(e) => setField("state_registration", e.target.value)}
-                placeholder="ou ISENTO"
+                value={form.municipal_registration}
+                onChange={(e) => setField("municipal_registration", e.target.value)}
                 disabled={readOnly}
               />
             </div>
           </div>
-          <label className={loginStyles.label} htmlFor="c-im">
-            Inscrição municipal
-          </label>
-          <input
-            id="c-im"
-            className={loginStyles.input}
-            value={form.municipal_registration}
-            onChange={(e) => setField("municipal_registration", e.target.value)}
-            disabled={readOnly}
-          />
         </div>
+        ) : null}
 
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Endereço</h2>
+          <div className={formLayout.stack}>
           <div className={styles.grid2}>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-cep">
                 CEP
               </label>
@@ -1181,11 +1422,28 @@ export function ClientFormPage() {
               {cepErr && !cepLoading ? <p className={styles.msgErr}>{cepErr}</p> : null}
               {!readOnly && !cepLoading && !cepErr ? (
                 <p className={styles.cepHint}>
-                  Ao buscar outro CEP, logradouro, bairro, cidade, UF e complemento são substituídos pelo retorno da API (se não houver complemento no Correios, o campo fica vazio). O número não vem do CEP e não é alterado. Salve para gravar no banco.
+                  Ao buscar outro CEP, logradouro, bairro, cidade, UF, complemento e código IBGE do município são substituídos quando o serviço os informa. O número não vem do CEP e não é alterado. Salve para gravar no banco.
                 </p>
               ) : null}
             </div>
-            <div style={{ gridColumn: "1 / -1" }}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="c-ibge">
+                Código IBGE (município)
+              </label>
+              <input
+                id="c-ibge"
+                className={loginStyles.input}
+                value={form.address_ibge_code}
+                onChange={(e) => setField("address_ibge_code", digitsOnly(e.target.value).slice(0, 7))}
+                placeholder="7 dígitos — obrigatório p/ NFS-e Nacional"
+                maxLength={7}
+                inputMode="numeric"
+                autoComplete="off"
+                disabled={readOnly}
+              />
+              <p className={styles.cepHint}>Preenchido pela busca de CEP quando disponível. Obrigatório para emitir NFS-e nacional ao cliente.</p>
+            </div>
+            <div className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
               <label className={loginStyles.label} htmlFor="c-street">
                 Logradouro
               </label>
@@ -1197,7 +1455,7 @@ export function ClientFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-num">
                 Número
               </label>
@@ -1209,7 +1467,7 @@ export function ClientFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-comp">
                 Complemento
               </label>
@@ -1221,7 +1479,7 @@ export function ClientFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-dist">
                 Bairro
               </label>
@@ -1233,7 +1491,7 @@ export function ClientFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-city">
                 Cidade
               </label>
@@ -1245,7 +1503,7 @@ export function ClientFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-uf">
                 UF
               </label>
@@ -1259,256 +1517,8 @@ export function ClientFormPage() {
               />
             </div>
           </div>
-        </div>
-
-        {!isNew && Number.isFinite(idNum) && idNum >= 1 ? (
-          <div className={styles.section}>
-            <div className={styles.sectionHeaderRow}>
-              <h2 className={styles.sectionTitle}>PMOC e laudos do cliente</h2>
-              {canEdit ? (
-                <button
-                  type="button"
-                  className={styles.btnPrimary}
-                  disabled={documentSaving}
-                  onClick={() => {
-                    setShowClientPmocEditor(true);
-                    setEquipmentDocumentForm(emptyEquipmentDocumentForm());
-                  }}
-                >
-                  Novo documento
-                </button>
-              ) : null}
-            </div>
-            <p className={styles.lead} style={{ marginTop: 0 }}>
-              Lista unificada dos documentos dos equipamentos deste cliente. Ao criar um novo registro, indique qual aparelho
-              ele refere.
-            </p>
-            {showClientPmocEditor ? (
-              <form className={styles.form} onSubmit={onSubmitClientPmocDocument}>
-                <div className={styles.grid2}>
-                  <div>
-                    <label className={loginStyles.label}>Equipamento</label>
-                    <select
-                      className={loginStyles.select}
-                      value={equipmentDocumentForm.target_equipment_id === "" ? "" : String(equipmentDocumentForm.target_equipment_id)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setEquipmentDocumentForm((prev) => ({
-                          ...prev,
-                          target_equipment_id: v === "" ? "" : Number(v),
-                        }));
-                      }}
-                      required
-                      disabled={documentSaving}
-                    >
-                      <option value="">Selecione…</option>
-                      {clientEquipments.map((eq) => (
-                        <option key={eq.id} value={eq.id}>
-                          {eq.identificacao}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={loginStyles.label}>Tipo</label>
-                    <select
-                      className={loginStyles.select}
-                      value={equipmentDocumentForm.document_type}
-                      onChange={(e) =>
-                        setEquipmentDocumentForm((prev) => ({
-                          ...prev,
-                          document_type: e.target.value as EquipmentDocumentFormState["document_type"],
-                        }))
-                      }
-                      disabled={documentSaving}
-                    >
-                      <option value="pmoc">PMOC</option>
-                      <option value="technical_report">Laudo técnico</option>
-                      <option value="hygiene_report">Laudo de higienização</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={loginStyles.label}>Status</label>
-                    <select
-                      className={loginStyles.select}
-                      value={equipmentDocumentForm.status}
-                      onChange={(e) =>
-                        setEquipmentDocumentForm((prev) => ({
-                          ...prev,
-                          status: e.target.value as EquipmentDocumentFormState["status"],
-                        }))
-                      }
-                      disabled={documentSaving}
-                    >
-                      <option value="draft">Rascunho</option>
-                      <option value="issued">Emitido</option>
-                      <option value="signed">Assinado</option>
-                      <option value="expired">Vencido</option>
-                      <option value="cancelled">Cancelado</option>
-                    </select>
-                  </div>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <label className={loginStyles.label}>Título</label>
-                    <input
-                      className={loginStyles.input}
-                      value={equipmentDocumentForm.title}
-                      onChange={(e) => setEquipmentDocumentForm((prev) => ({ ...prev, title: e.target.value }))}
-                      placeholder="Ex.: PMOC semestral"
-                      required
-                      disabled={documentSaving}
-                    />
-                  </div>
-                  <div>
-                    <label className={loginStyles.label}>Emitido em</label>
-                    <input
-                      className={loginStyles.input}
-                      type="datetime-local"
-                      value={equipmentDocumentForm.issued_at}
-                      onChange={(e) => setEquipmentDocumentForm((prev) => ({ ...prev, issued_at: e.target.value }))}
-                      disabled={documentSaving}
-                    />
-                  </div>
-                  <div>
-                    <label className={loginStyles.label}>Válido até</label>
-                    <input
-                      className={loginStyles.input}
-                      type="date"
-                      value={equipmentDocumentForm.valid_until}
-                      onChange={(e) => setEquipmentDocumentForm((prev) => ({ ...prev, valid_until: e.target.value }))}
-                      disabled={documentSaving}
-                    />
-                  </div>
-                  <div>
-                    <label className={loginStyles.label}>Próxima manutenção</label>
-                    <input
-                      className={loginStyles.input}
-                      type="date"
-                      value={equipmentDocumentForm.next_due_at}
-                      onChange={(e) => setEquipmentDocumentForm((prev) => ({ ...prev, next_due_at: e.target.value }))}
-                      disabled={documentSaving}
-                    />
-                  </div>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <label className={loginStyles.label}>Observações</label>
-                    <textarea
-                      className={loginStyles.input}
-                      rows={3}
-                      value={equipmentDocumentForm.notes}
-                      onChange={(e) => setEquipmentDocumentForm((prev) => ({ ...prev, notes: e.target.value }))}
-                      disabled={documentSaving}
-                    />
-                  </div>
-                </div>
-                <div className={styles.actions}>
-                  <button type="submit" className={styles.btnPrimary} disabled={documentSaving}>
-                    {documentSaving ? "Salvando..." : "Criar documento"}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.btnSecondary}
-                    onClick={() => setShowClientPmocEditor(false)}
-                    disabled={documentSaving}
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </form>
-            ) : null}
-            <div className={styles.grid2} style={{ padding: "0.5rem 0" }}>
-              <input
-                className={loginStyles.input}
-                placeholder="Buscar por título, observação ou número"
-                value={pmocDocumentFilters.q}
-                onChange={(e) => setPmocDocumentFilters((prev) => ({ ...prev, q: e.target.value }))}
-              />
-              <select
-                className={loginStyles.select}
-                value={pmocDocumentFilters.document_type}
-                onChange={(e) =>
-                  setPmocDocumentFilters((prev) => ({
-                    ...prev,
-                    document_type: e.target.value as EquipmentDocumentFilters["document_type"],
-                  }))
-                }
-              >
-                <option value="">Todos os tipos</option>
-                <option value="pmoc">PMOC</option>
-                <option value="technical_report">Laudo técnico</option>
-                <option value="hygiene_report">Laudo de higienização</option>
-              </select>
-              <select
-                className={loginStyles.select}
-                value={pmocDocumentFilters.status}
-                onChange={(e) =>
-                  setPmocDocumentFilters((prev) => ({
-                    ...prev,
-                    status: e.target.value as EquipmentDocumentFilters["status"],
-                  }))
-                }
-              >
-                <option value="">Todos os status</option>
-                <option value="draft">Rascunho</option>
-                <option value="issued">Emitido</option>
-                <option value="signed">Assinado</option>
-                <option value="expired">Vencido</option>
-                <option value="cancelled">Cancelado</option>
-              </select>
-              <label className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={pmocDocumentFilters.only_overdue}
-                  onChange={(e) => setPmocDocumentFilters((prev) => ({ ...prev, only_overdue: e.target.checked }))}
-                />
-                Apenas vencidos
-              </label>
-            </div>
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Número</th>
-                    <th>Equipamento</th>
-                    <th>Tipo</th>
-                    <th>Título</th>
-                    <th>Status</th>
-                    <th>Emitido em</th>
-                    <th>Válido até</th>
-                    <th>Próxima manutenção</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {clientPmocDocuments.map((doc) => (
-                    <tr key={doc.id}>
-                      <td>#{doc.document_number}</td>
-                      <td>{doc.equipment_identificacao || "—"}</td>
-                      <td>{doc.document_type}</td>
-                      <td>{doc.title}</td>
-                      <td>{doc.status}</td>
-                      <td>{formatDateTime(doc.issued_at)}</td>
-                      <td>
-                        {doc.valid_until ? new Date(`${doc.valid_until}T00:00:00`).toLocaleDateString("pt-BR") : "-"}
-                      </td>
-                      <td>
-                        {doc.next_due_at ? new Date(`${doc.next_due_at}T00:00:00`).toLocaleDateString("pt-BR") : "-"}
-                      </td>
-                      <td>
-                        <Link className={styles.rowLink} to={`/app/equipments/${doc.equipment_id}/documents/${doc.id}`}>
-                          Abrir
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                  {clientPmocDocuments.length === 0 ? (
-                    <tr>
-                      <td colSpan={9}>Nenhum PMOC/laudo cadastrado para os equipamentos deste cliente.</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
           </div>
-        ) : null}
+        </div>
 
         {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
         {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
@@ -1543,6 +1553,102 @@ export function ClientFormPage() {
           </div>
         )}
       </form>
+      ) : activeTab === "pmoc" && !isNew ? (
+        <section className={styles.section}>
+          <div className={styles.sectionHeaderRow}>
+            <div>
+              <h2 className={styles.sectionHeaderTitle}>PMOC (Lei 13.589/2018)</h2>
+              <p className={styles.cepHint} style={{ marginTop: "0.35rem" }}>
+                Planos de manutenção, operações e controle do ar deste estabelecimento. Um plano por endereço; detalhes e fichas
+                na página do plano.
+              </p>
+              <p className={styles.cepHint} style={{ marginTop: "0.5rem" }}>
+                PMOC e laudos <strong>técnicos por equipamento</strong> ficam na aba{" "}
+                <button type="button" className={styles.linkButtonInline} onClick={() => setActiveTab("equipments")}>
+                  Equipamentos
+                </button>
+                {" "}(abra a ficha do aparelho).
+              </p>
+            </div>
+            {canCreatePmoc ? (
+              <Link
+                className={styles.btnPrimary}
+                to={`/app/pmoc/new?client_id=${idNum}&from_client=${idNum}`}
+              >
+                Nova PMOC
+              </Link>
+            ) : null}
+          </div>
+
+          <div className={pmocStyles.subTabs} role="tablist" aria-label="Filtrar PMOC por status">
+            {CLIENT_PMOC_PRESET_ORDER.map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={pmocListPreset === key}
+                className={`${pmocStyles.subTab} ${pmocListPreset === key ? pmocStyles.subTabActive : ""}`}
+                onClick={() => setPmocListPreset(key)}
+              >
+                {CLIENT_PMOC_PRESET_LABEL[key]}
+              </button>
+            ))}
+          </div>
+
+          {pmocPlansErr ? <p className={styles.msgErr}>{pmocPlansErr}</p> : null}
+          {pmocPlansLoading ? <p className={styles.loading}>Carregando PMOC…</p> : null}
+          {!pmocPlansLoading ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Título</th>
+                    <th>Status</th>
+                    <th>Soma BTU</th>
+                    <th>Ar (obr.)</th>
+                    <th>Atualizado</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientPmocPlans.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.title}</td>
+                      <td>
+                        <span className={`${pmocStyles.badge} ${clientPmocStatusClass(r.status)}`}>
+                          {clientPmocStatusLabel(r.status)}
+                        </span>
+                      </td>
+                      <td>{formatPmocBtu(r.total_btu_sum)}</td>
+                      <td>{r.air_analysis_required ? "Sim" : "Não"}</td>
+                      <td>{new Date(r.updated_at).toLocaleString("pt-BR")}</td>
+                      <td>
+                        <Link className={styles.rowLink} to={`/app/pmoc/${r.id}?from_client=${idNum}`}>
+                          Abrir
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                  {clientPmocPlans.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>
+                        Nenhum PMOC nesta visão.{" "}
+                        {canCreatePmoc ? (
+                          <Link
+                            className={styles.rowLink}
+                            to={`/app/pmoc/new?client_id=${idNum}&from_client=${idNum}`}
+                          >
+                            Criar PMOC para este cliente
+                          </Link>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
       ) : activeTab === "equipments" ? (
         <section className={styles.section}>
           <div className={styles.sectionHeaderRow}>
@@ -1644,9 +1750,10 @@ export function ClientFormPage() {
                   <h3 className={styles.sectionTitle} style={{ marginTop: 0 }}>
                     {editingEquipmentId ? "Cadastro do equipamento" : "Novo equipamento"}
                   </h3>
+                  <div className={formLayout.stack}>
                   <h4 className={styles.subSectionTitle}>1. Identificação geral</h4>
                   <div className={styles.grid2}>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Tipo de equipamento</label>
                       <select
                         className={loginStyles.select}
@@ -1662,7 +1769,7 @@ export function ClientFormPage() {
                         ))}
                       </select>
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Família</label>
                       <select
                         className={loginStyles.select}
@@ -1673,7 +1780,7 @@ export function ClientFormPage() {
                         <option value="AR_CONDICIONADO">Ar-condicionado</option>
                       </select>
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Identificação / TAG</label>
                       <input
                         className={loginStyles.input}
@@ -1684,7 +1791,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Fabricante</label>
                       <input
                         className={loginStyles.input}
@@ -1694,7 +1801,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Modelo (resumo / legado)</label>
                       <input
                         className={loginStyles.input}
@@ -1703,7 +1810,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Modelo evaporadora</label>
                       <input
                         className={loginStyles.input}
@@ -1712,7 +1819,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Modelo condensadora</label>
                       <input
                         className={loginStyles.input}
@@ -1721,7 +1828,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Capacidade (BTU)</label>
                       <input
                         className={loginStyles.input}
@@ -1732,7 +1839,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Capacidade (TR)</label>
                       <input
                         className={loginStyles.input}
@@ -1743,7 +1850,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Número de série</label>
                       <input
                         className={loginStyles.input}
@@ -1755,7 +1862,7 @@ export function ClientFormPage() {
                   </div>
                   <h4 className={styles.subSectionTitle}>2. Localização e abrangência</h4>
                   <div className={styles.grid2}>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Nome do ambiente</label>
                       <input
                         className={loginStyles.input}
@@ -1765,7 +1872,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Tipo de ambiente</label>
                       <input
                         className={loginStyles.input}
@@ -1775,7 +1882,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Local de instalação (livre)</label>
                       <input
                         className={loginStyles.input}
@@ -1784,7 +1891,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>
                         Área climatizada (m<sup>2</sup>)
                       </label>
@@ -1796,7 +1903,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Ocupação fixa (pessoas)</label>
                       <input
                         className={loginStyles.input}
@@ -1807,7 +1914,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Ocupação flutuante (média)</label>
                       <input
                         className={loginStyles.input}
@@ -1818,7 +1925,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div style={{ gridColumn: "1 / -1" }}>
+                    <div className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
                       <label className={loginStyles.label}>Carga térmica total</label>
                       <input
                         className={loginStyles.input}
@@ -1831,7 +1938,7 @@ export function ClientFormPage() {
                   </div>
                   <h4 className={styles.subSectionTitle}>3. Especificações técnicas</h4>
                   <div className={styles.grid2}>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Fluido refrigerante</label>
                       <input
                         className={loginStyles.input}
@@ -1841,7 +1948,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Massa de gás (kg)</label>
                       <input
                         className={loginStyles.input}
@@ -1851,7 +1958,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Tensão / voltagem</label>
                       <input
                         className={loginStyles.input}
@@ -1861,7 +1968,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Corrente nominal (A)</label>
                       <input
                         className={loginStyles.input}
@@ -1871,7 +1978,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Tecnologia</label>
                       <select
                         className={loginStyles.select}
@@ -1892,7 +1999,7 @@ export function ClientFormPage() {
                   </div>
                   <h4 className={styles.subSectionTitle}>4. Filtros e qualidade do ar</h4>
                   <div className={styles.grid2}>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Tipo de filtro</label>
                       <input
                         className={loginStyles.input}
@@ -1902,7 +2009,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Quantidade de filtros</label>
                       <input
                         className={loginStyles.input}
@@ -1913,7 +2020,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Dimensões (L × A × E)</label>
                       <input
                         className={loginStyles.input}
@@ -1923,7 +2030,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Periodicidade de limpeza</label>
                       <input
                         className={loginStyles.input}
@@ -1933,6 +2040,7 @@ export function ClientFormPage() {
                         disabled={readOnly || equipmentSaving}
                       />
                     </div>
+                  </div>
                   </div>
                   {canEdit ? (
                     <div className={styles.actions}>
@@ -1972,7 +2080,7 @@ export function ClientFormPage() {
                             height={160}
                             src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(publicUrl)}`}
                           />
-                          <div style={{ flex: 1, minWidth: "12rem" }}>
+                          <div className={formLayout.field} style={{ flex: 1, minWidth: "12rem" }}>
                             <label className={loginStyles.label}>URL pública</label>
                             <input
                               className={loginStyles.input}
@@ -2218,7 +2326,8 @@ export function ClientFormPage() {
               Excluir cliente
             </h3>
             <p className={styles.modalText}>
-              Esta ação exclui o cliente permanentemente. Deseja continuar?
+              Prefira desmarcar &quot;Cliente ativo no cadastro&quot; para inativar. A exclusão permanente só deve ser usada
+              quando não houver ordens, orçamentos, agendamentos ou NFS-e vinculados — caso contrário o sistema bloqueia.
             </p>
             <div className={styles.modalActions}>
               <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={deleting}>

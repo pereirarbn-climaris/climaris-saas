@@ -5,3 +5,5 @@ dist
 .DS_Store
 android
 .env.production
+playwright-report
+test-results

@@ -3,8 +3,8 @@
 Cobre o caso: banco em produção sem `tenant_ai_settings` apesar de revisões anteriores,
 ou migração aplicada parcialmente.
 
-Revision ID: 20260430_0057
-Revises: 20260430_0056
+Revision ID: 20260430_0058
+Revises: 20260430_0057
 Create Date: 2026-04-30
 """
 
@@ -12,8 +12,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "20260430_0057"
-down_revision: Union[str, None] = "20260430_0056"
+revision: str = "20260430_0058"
+down_revision: Union[str, None] = "20260430_0057"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

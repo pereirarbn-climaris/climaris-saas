@@ -1,5 +1,6 @@
 import { apiUrl } from "../lib/apiUrl";
-import { getAccessToken } from "../lib/authStorage";
+import { clearAccessToken, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "../lib/authStorage";
+import { accessTokenNeedsRefresh } from "../lib/jwtAccess";
 import { isDemoMode, demoUser, demoTenant } from "../lib/demoMode";
 
 export type UserRole = "admin" | "technician" | "receptionist";
@@ -78,6 +79,7 @@ export type TokenResponse = {
   captcha_required?: boolean;
   captcha_token?: string | null;
   captcha_question?: string | null;
+  refresh_token?: string | null;
 };
 
 function isLoginDemoEnabled(): boolean {
@@ -224,6 +226,59 @@ function mapLoginErrorToPt(raw: string): string {
   return raw;
 }
 
+/** Renova access JWT usando refresh token (rotação no servidor). */
+export async function tryRefreshAccessToken(): Promise<boolean> {
+  if (isDemoMode()) return true;
+  const rt = getRefreshToken();
+  if (!rt) return !!getAccessToken();
+  const access = getAccessToken();
+  if (access && !accessTokenNeedsRefresh(access, 120_000)) return true;
+  try {
+    const response = await fetch(apiUrl("/api/v1/auth/refresh"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+    const body = await parseBody(response);
+    if (!response.ok) {
+      clearAccessToken();
+      return false;
+    }
+    const data = body as TokenResponse;
+    if (!data.access_token) {
+      clearAccessToken();
+      return false;
+    }
+    setAccessToken(data.access_token);
+    if (data.refresh_token) setRefreshToken(data.refresh_token);
+    return true;
+  } catch {
+    clearAccessToken();
+    return false;
+  }
+}
+
+/** Após carregar o SPA: recupera sessão se o JWT expirou mas o refresh ainda é válido. */
+export async function bootstrapSession(): Promise<void> {
+  if (isDemoMode()) return;
+  await tryRefreshAccessToken();
+}
+
+/** Melhor esforço: invalida o refresh token no servidor (logout). */
+export async function logoutRevokeRefresh(): Promise<void> {
+  const rt = getRefreshToken();
+  if (!rt) return;
+  try {
+    await fetch(apiUrl("/api/v1/auth/logout"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 function bearer(): HeadersInit {
   const token = getAccessToken();
   if (!token) throw new Error("Sessão expirada.");
@@ -234,6 +289,14 @@ function jsonHeaders(): HeadersInit {
   return { ...bearer(), "Content-Type": "application/json" };
 }
 
+export type TrustedDeviceOut = {
+  id: number;
+  expires_at: string;
+  created_at: string;
+  last_used_at: string | null;
+  is_current_browser: boolean;
+};
+
 export async function loginRequest(payload: {
   email: string;
   password: string;
@@ -242,10 +305,12 @@ export async function loginRequest(payload: {
   captcha_answer?: string;
   two_factor_token?: string;
   two_factor_code?: string;
+  trust_this_device?: boolean;
 }): Promise<TokenResponse> {
   try {
     const response = await fetch(apiUrl("/api/v1/auth/login"), {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -534,4 +599,38 @@ export async function resetTenantUserPassword(userId: number): Promise<UserProvi
     throw new Error(errorMessage(body, "Não foi possível redefinir a senha."));
   }
   return body as UserProvisionOut;
+}
+
+export async function listTrustedDevices(): Promise<TrustedDeviceOut[]> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/trusted-devices"), {
+    headers: bearer(),
+    credentials: "include",
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar dispositivos confiáveis."));
+  return body as TrustedDeviceOut[];
+}
+
+export async function deleteTrustedDevice(deviceId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/auth/me/trusted-devices/${deviceId}`), {
+    method: "DELETE",
+    headers: bearer(),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível revogar o dispositivo."));
+  }
+}
+
+export async function deleteAllTrustedDevices(): Promise<void> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/trusted-devices"), {
+    method: "DELETE",
+    headers: bearer(),
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível revogar os dispositivos."));
+  }
 }

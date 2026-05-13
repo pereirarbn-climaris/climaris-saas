@@ -1,0 +1,11 @@
+# Dependências da API (além do ambiente Docker existente).
+# Instale com: pip install -r requirements.txt
+# NFS-e nacional (assinatura XML): em Linux, se o pip não trouxer wheel do lxml,
+# instale antes: sudo apt-get install libxml2-dev libxslt1-dev python3-dev
+signxml>=3.2.0
+lxml>=5.0.0
+# Certificado A1 (.pfx) e TLS mTLS — usado em app/nfse_pfx_ssl.py e routers/nfse.py
+cryptography>=41.0.0
+# Testes automatizados
+pytest>=8.0.0
+httpx>=0.27.0

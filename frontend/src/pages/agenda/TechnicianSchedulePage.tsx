@@ -798,7 +798,11 @@ export function TechnicianSchedulePage() {
           <div className={styles.legendRow} aria-label="Legenda da agenda">
             <span className={styles.legendItem}>
               <span className={`${styles.legendSwatch} ${styles.legendSwatchOs}`} />
-              OS / agendamento
+              Agendamento pendente
+            </span>
+            <span className={styles.legendItem}>
+              <span className={`${styles.legendSwatch} ${styles.legendSwatchConfirmed}`} />
+              Agendamento confirmado
             </span>
             <span className={styles.legendItem}>
               <span className={`${styles.legendSwatch} ${styles.legendSwatchBlocked}`} />
@@ -1005,10 +1009,11 @@ export function TechnicianSchedulePage() {
                     const endMinutes = end.getHours() * 60 + end.getMinutes();
                     const top = ((startMinutes - dayStartHour * 60) / minutesPerDay) * 100;
                     const height = (Math.max(endMinutes - startMinutes, 15) / minutesPerDay) * 100;
+                    const isConfirmed = String(s.status || "").toLowerCase() === "confirmed";
                     return (
                       <div
                         key={s.id}
-                        className={styles.calendarEvent}
+                        className={`${styles.calendarEvent} ${isConfirmed ? styles.calendarEventConfirmed : ""}`}
                         style={{ top: `${Math.max(top, 0)}%`, height: `${Math.max(height, 8)}%` }}
                         onClick={() => {
                           if (s.service_order_id) navigate(`/app/service-orders/${s.service_order_id}`);
@@ -1023,7 +1028,9 @@ export function TechnicianSchedulePage() {
                           }
                         }}
                       >
-                        <p className={styles.scheduleTime}>{formatHourRange(s.starts_at, s.ends_at)}</p>
+                        <p className={styles.scheduleTime}>
+                          {formatHourRange(s.starts_at, s.ends_at)} {isConfirmed ? "· Confirmado" : ""}
+                        </p>
                         <p className={styles.scheduleMeta}>OS #{s.service_order_id ?? "-"}</p>
                         <p
                           className={styles.scheduleMeta}

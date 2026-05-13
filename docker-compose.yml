@@ -6,7 +6,7 @@ services:
     volumes:
       - ./:/app
     command: >
-      bash -c "pip install --no-cache-dir fastapi uvicorn[standard] sqlalchemy psycopg[binary] alembic pyjwt passlib email-validator slowapi pytest reportlab cryptography boto3 pillow python-multipart &&
+      bash -c "pip install --no-cache-dir fastapi uvicorn[standard] sqlalchemy psycopg[binary] alembic pyjwt passlib email-validator slowapi pytest httpx reportlab cryptography boto3 pillow python-multipart lxml signxml &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000"
     env_file:
       - .env

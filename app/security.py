@@ -10,10 +10,11 @@ import jwt
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
 
+from app.config import JWT_EXPIRE_MINUTES
+
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 JWT_BOOTSTRAP_TOKEN = os.getenv("JWT_BOOTSTRAP_TOKEN", "bootstrap-change-me")
 PLATFORM_API_CREDENTIALS_KEY = os.getenv("PLATFORM_API_CREDENTIALS_KEY", "").strip()
 _ENC_PREFIX = "enc:v1:"

@@ -18,6 +18,7 @@ import {
 } from "../../api/products";
 import { formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./ProductFormPage.module.css";
 
@@ -27,6 +28,10 @@ type FormState = {
   purchase_price: string;
   sale_price: string;
   stock_quantity: string;
+  compatible_equipment_tags: string;
+  btu_min: string;
+  btu_max: string;
+  application_scope: string;
   is_active: boolean;
 };
 
@@ -37,6 +42,10 @@ function emptyForm(): FormState {
     purchase_price: numberToBrlInput(0),
     sale_price: numberToBrlInput(0),
     stock_quantity: "0",
+    compatible_equipment_tags: "",
+    btu_min: "",
+    btu_max: "",
+    application_scope: "",
     is_active: true,
   };
 }
@@ -108,6 +117,10 @@ export function ProductFormPage() {
             purchase_price: numberToBrlInput(Number(p.purchase_price || 0)),
             sale_price: numberToBrlInput(Number(p.sale_price || p.unit_price || 0)),
             stock_quantity: String(p.stock_quantity ?? 0),
+            compatible_equipment_tags: p.compatible_equipment_tags ?? "",
+            btu_min: p.btu_min != null ? String(p.btu_min) : "",
+            btu_max: p.btu_max != null ? String(p.btu_max) : "",
+            application_scope: p.application_scope ?? "",
             is_active: p.is_active,
           });
           setProductImages(p.images ?? []);
@@ -182,6 +195,20 @@ export function ProductFormPage() {
       setMsg({ kind: "err", text: "Informe uma quantidade em estoque válida (maior ou igual a zero)." });
       return;
     }
+    const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
+    const parsedBtuMax = form.btu_max.trim() ? Number(form.btu_max) : null;
+    if (parsedBtuMin != null && (!Number.isFinite(parsedBtuMin) || parsedBtuMin < 0)) {
+      setMsg({ kind: "err", text: "BTU mínimo inválido." });
+      return;
+    }
+    if (parsedBtuMax != null && (!Number.isFinite(parsedBtuMax) || parsedBtuMax < 0)) {
+      setMsg({ kind: "err", text: "BTU máximo inválido." });
+      return;
+    }
+    if (parsedBtuMin != null && parsedBtuMax != null && parsedBtuMin > parsedBtuMax) {
+      setMsg({ kind: "err", text: "BTU mínimo não pode ser maior que BTU máximo." });
+      return;
+    }
 
     setSaving(true);
     try {
@@ -192,6 +219,10 @@ export function ProductFormPage() {
           purchase_price: parsedPurchasePrice,
           sale_price: parsedSalePrice,
           stock_quantity: parsedStockQty,
+          compatible_equipment_tags: form.compatible_equipment_tags.trim() || null,
+          btu_min: parsedBtuMin,
+          btu_max: parsedBtuMax,
+          application_scope: form.application_scope.trim() || null,
           is_active: form.is_active,
         };
         const created = await createProduct(payload);
@@ -203,6 +234,10 @@ export function ProductFormPage() {
           purchase_price: parsedPurchasePrice,
           sale_price: parsedSalePrice,
           stock_quantity: parsedStockQty,
+          compatible_equipment_tags: form.compatible_equipment_tags.trim() || null,
+          btu_min: parsedBtuMin,
+          btu_max: parsedBtuMax,
+          application_scope: form.application_scope.trim() || null,
           is_active: form.is_active,
         };
         await updateProduct(idNum, payload);
@@ -231,6 +266,8 @@ export function ProductFormPage() {
       setMsg({ kind: "err", text: "Informe um valor de venda válido (maior ou igual a zero)." });
       return;
     }
+    const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
+    const parsedBtuMax = form.btu_max.trim() ? Number(form.btu_max) : null;
 
     setDuplicating(true);
     try {
@@ -240,6 +277,10 @@ export function ProductFormPage() {
         purchase_price: parsedPurchasePrice,
         sale_price: parsedSalePrice,
         stock_quantity: 0,
+        compatible_equipment_tags: form.compatible_equipment_tags.trim() || null,
+        btu_min: parsedBtuMin,
+        btu_max: parsedBtuMax,
+        application_scope: form.application_scope.trim() || null,
         is_active: form.is_active,
       });
       navigate(`/app/products/${created.id}`);
@@ -397,20 +438,23 @@ export function ProductFormPage() {
       <form className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Dados do produto</h2>
-          <label className={loginStyles.label} htmlFor="p-name">
-            Nome
-          </label>
-          <input
-            id="p-name"
-            className={loginStyles.input}
-            value={form.name}
-            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-            required
-            disabled={readOnly}
-          />
+          <div className={formLayout.stack}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="p-name">
+                Nome
+              </label>
+              <input
+                id="p-name"
+                className={loginStyles.input}
+                value={form.name}
+                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                required
+                disabled={readOnly}
+              />
+            </div>
 
           <div className={styles.grid2}>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="p-sku">
                 SKU
               </label>
@@ -430,7 +474,7 @@ export function ProductFormPage() {
                 ) : null}
               </div>
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="p-purchase-price">
                 Valor de compra (R$)
               </label>
@@ -452,7 +496,7 @@ export function ProductFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="p-sale-price">
                 Valor de venda (R$)
               </label>
@@ -474,7 +518,7 @@ export function ProductFormPage() {
                 disabled={readOnly}
               />
             </div>
-            <div>
+            <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="p-stock">
                 Quantidade em estoque
               </label>
@@ -492,6 +536,65 @@ export function ProductFormPage() {
               <p className={styles.fieldHint}>Para ajustes pontuais no dia a dia, use também a tela de Estoque.</p>
             </div>
           </div>
+          </div>
+
+          <h2 className={styles.sectionTitle}>Compatibilidade técnica</h2>
+          <div className={formLayout.stack}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="p-eq-tags">
+                Tipos de equipamento (tags)
+              </label>
+              <input
+                id="p-eq-tags"
+                className={loginStyles.input}
+                value={form.compatible_equipment_tags}
+                onChange={(e) => setForm((prev) => ({ ...prev, compatible_equipment_tags: e.target.value }))}
+                placeholder="split, cassete, climatizador..."
+                disabled={readOnly}
+              />
+            </div>
+          <div className={styles.grid2}>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="p-btu-min">
+                BTU mínimo (opcional)
+              </label>
+              <input
+                id="p-btu-min"
+                className={loginStyles.input}
+                value={form.btu_min}
+                onChange={(e) => setForm((prev) => ({ ...prev, btu_min: e.target.value }))}
+                inputMode="numeric"
+                disabled={readOnly}
+              />
+            </div>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="p-btu-max">
+                BTU máximo (opcional)
+              </label>
+              <input
+                id="p-btu-max"
+                className={loginStyles.input}
+                value={form.btu_max}
+                onChange={(e) => setForm((prev) => ({ ...prev, btu_max: e.target.value }))}
+                inputMode="numeric"
+                disabled={readOnly}
+              />
+            </div>
+          </div>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="p-app-scope">
+                Escopo (opcional)
+              </label>
+              <input
+                id="p-app-scope"
+                className={loginStyles.input}
+                value={form.application_scope}
+                onChange={(e) => setForm((prev) => ({ ...prev, application_scope: e.target.value }))}
+                placeholder="residential, commercial ou vazio para ambos"
+                disabled={readOnly}
+              />
+              <p className={styles.fieldHint}>Esses dados ajudam a IA a sugerir o item certo (ex.: split vs climatizador).</p>
+            </div>
 
           <label className={styles.checkboxRow}>
             <input
@@ -502,6 +605,7 @@ export function ProductFormPage() {
             />
             Produto ativo
           </label>
+          </div>
         </div>
 
         {!isNew ? (
@@ -563,8 +667,9 @@ export function ProductFormPage() {
               <p className={styles.fieldHint}>Add-on Mercado Livre não ativo para este workspace — contrate na Loja de integrações.</p>
             ) : (
               <>
+                <div className={formLayout.stack}>
                 <div className={styles.grid2}>
-                  <div>
+                  <div className={formLayout.field}>
                     <label className={loginStyles.label} htmlFor="ml-cat">
                       Category ID (MLB…)
                     </label>
@@ -577,7 +682,7 @@ export function ProductFormPage() {
                       disabled={readOnly || mlBusy}
                     />
                   </div>
-                  <div>
+                  <div className={formLayout.field}>
                     <label className={loginStyles.label} htmlFor="ml-listing">
                       Tipo de listagem
                     </label>
@@ -604,6 +709,7 @@ export function ProductFormPage() {
                     </button>
                   </div>
                 ) : null}
+                </div>
               </>
             )}
           </div>

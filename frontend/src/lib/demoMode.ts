@@ -9,8 +9,11 @@ import type {
 } from "../api/clients";
 import type { ProductOut } from "../api/products";
 import type {
+  FinanceBankAccountOut,
+  FinanceBalanceSnapshotOut,
   FinanceCategoryOut,
   FinanceEntryOut,
+  FinanceGatewaysOut,
   FinancePaymentFeeOut,
   FinanceSettingsOut,
   FinanceSummaryOut,
@@ -86,10 +89,12 @@ export const demoClients: ClientOut[] = [
     name: "Joao Silva",
     document: "12345678901",
     tax_id_kind: "cpf",
+    optante_mei: true,
     phone: "11999998888",
     whatsapp: "11999998888",
     email: "joao.silva@email.com",
     trade_name: null,
+    contact_person_name: null,
     state_registration: null,
     ie_indicator: null,
     municipal_registration: null,
@@ -101,7 +106,9 @@ export const demoClients: ClientOut[] = [
     address_state: "SP",
     address_postal_code: "01234000",
     address_country: "BR",
-    address_ibge_code: null,
+    address_ibge_code: "3550308",
+    preventive_campaign_opt_out: false,
+    is_active: true,
   },
   {
     id: 2,
@@ -109,10 +116,12 @@ export const demoClients: ClientOut[] = [
     name: "Maria Oliveira",
     document: "98765432100",
     tax_id_kind: "cpf",
+    optante_mei: false,
     phone: "11988887777",
     whatsapp: "11988887777",
     email: "maria.oliveira@email.com",
     trade_name: null,
+    contact_person_name: null,
     state_registration: null,
     ie_indicator: null,
     municipal_registration: null,
@@ -124,7 +133,9 @@ export const demoClients: ClientOut[] = [
     address_state: "SP",
     address_postal_code: "01310100",
     address_country: "BR",
-    address_ibge_code: null,
+    address_ibge_code: "3550308",
+    preventive_campaign_opt_out: false,
+    is_active: true,
   },
   {
     id: 3,
@@ -132,10 +143,12 @@ export const demoClients: ClientOut[] = [
     name: "Empresa ABC Ltda",
     document: "12345678000199",
     tax_id_kind: "cnpj",
+    optante_mei: false,
     phone: "1133334444",
     whatsapp: "1133334444",
     email: "contato@empresaabc.com.br",
     trade_name: "ABC Comercio",
+    contact_person_name: "Roberto Almeida",
     state_registration: "123456789",
     ie_indicator: "1",
     municipal_registration: "987654321",
@@ -147,7 +160,9 @@ export const demoClients: ClientOut[] = [
     address_state: "SP",
     address_postal_code: "01000000",
     address_country: "BR",
-    address_ibge_code: null,
+    address_ibge_code: "3550308",
+    preventive_campaign_opt_out: false,
+    is_active: true,
   },
 ];
 
@@ -440,6 +455,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 45.0,
     unit_price: 45.0,
     stock_quantity: 50,
+    compatible_equipment_tags: null,
+    btu_min: null,
+    btu_max: null,
+    application_scope: null,
     is_active: true,
   },
   {
@@ -451,6 +470,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 280.0,
     unit_price: 280.0,
     stock_quantity: 20,
+    compatible_equipment_tags: null,
+    btu_min: null,
+    btu_max: null,
+    application_scope: null,
     is_active: true,
   },
   {
@@ -462,6 +485,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 750.0,
     unit_price: 750.0,
     stock_quantity: 8,
+    compatible_equipment_tags: "split",
+    btu_min: 9000,
+    btu_max: 18000,
+    application_scope: null,
     is_active: true,
   },
   {
@@ -473,6 +500,10 @@ export const demoProducts: ProductOut[] = [
     sale_price: 55.0,
     unit_price: 55.0,
     stock_quantity: 100,
+    compatible_equipment_tags: null,
+    btu_min: null,
+    btu_max: null,
+    application_scope: null,
     is_active: true,
   },
 ];
@@ -485,7 +516,16 @@ export const demoServices: ServiceOut[] = [
     description: "Servico completo de instalacao de ar condicionado split residencial ou comercial",
     price: 350.0,
     duration_minutes: 180,
+    equipment_type_tags: "split",
+    btu_min: null,
+    btu_max: null,
+    service_category: "instalacao",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: null,
+    nfse_codigo_nbs: null,
+    periodicidade_meses: null,
     product_inputs: [],
     estimated_material_cost: 0,
     estimated_profit: 350.0,
@@ -497,7 +537,16 @@ export const demoServices: ServiceOut[] = [
     description: "Limpeza e verificacao do sistema de ar condicionado",
     price: 150.0,
     duration_minutes: 60,
+    equipment_type_tags: null,
+    btu_min: null,
+    btu_max: null,
+    service_category: "manutencao",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: null,
+    nfse_codigo_nbs: null,
+    periodicidade_meses: 6,
     product_inputs: [],
     estimated_material_cost: 0,
     estimated_profit: 150.0,
@@ -509,7 +558,16 @@ export const demoServices: ServiceOut[] = [
     description: "Recarga de gas refrigerante com verificacao de vazamentos",
     price: 280.0,
     duration_minutes: 90,
+    equipment_type_tags: null,
+    btu_min: null,
+    btu_max: null,
+    service_category: "reparo",
+    applies_residential: true,
+    applies_commercial: true,
     is_active: true,
+    nfse_codigo_tributacao_nacional: null,
+    nfse_codigo_nbs: null,
+    periodicidade_meses: null,
     product_inputs: [],
     estimated_material_cost: 0,
     estimated_profit: 280.0,
@@ -525,6 +583,30 @@ let demoFinanceCategoriesState: FinanceCategoryOut[] = [
   { id: 1, tenant_id: 1, name: "Servicos", color: "#0ea5e9", created_at: DEMO_TS },
   { id: 2, tenant_id: 1, name: "Despesas Operacionais", color: "#ef4444", created_at: DEMO_TS },
 ];
+let demoFinanceAccountsState: FinanceBankAccountOut[] = [
+  {
+    id: 1,
+    tenant_id: 1,
+    name: "Caixa",
+    bank_name: "Caixa interno",
+    account_type: "cash",
+    initial_balance: 500,
+    is_active: true,
+    created_at: DEMO_TS,
+    updated_at: DEMO_TS,
+  },
+  {
+    id: 2,
+    tenant_id: 1,
+    name: "Mercado Pago",
+    bank_name: "Mercado Pago",
+    account_type: "digital_wallet",
+    initial_balance: 2500,
+    is_active: true,
+    created_at: DEMO_TS,
+    updated_at: DEMO_TS,
+  },
+];
 let demoFinanceEntriesState: FinanceEntryOut[] = [
   {
     id: 1,
@@ -537,6 +619,7 @@ let demoFinanceEntriesState: FinanceEntryOut[] = [
     amount: 500,
     payment_method: "pix",
     payment_provider: null,
+    finance_account_id: 1,
     fee_fixed_amount: 0,
     fee_percent: 0,
     fee_amount: 0,
@@ -552,6 +635,7 @@ let demoFinanceEntriesState: FinanceEntryOut[] = [
     settlement_plan: "same_as_due",
     paid_at: "2026-01-20T13:00:00.000Z",
     notes: null,
+    service_order_id: 501,
     created_at: DEMO_TS,
     updated_at: DEMO_TS,
   },
@@ -564,6 +648,44 @@ let demoFinanceSettingsState: FinanceSettingsOut = {
   max_available_mode: "management",
   can_use_marketplace_upgrade: true,
   requires_marketplace_slug: null,
+};
+let demoFinanceGatewaysState: FinanceGatewaysOut = {
+  effective_mode: "intermediate",
+  asaas: {
+    connected: false,
+    sandbox: false,
+    api_key_hint: null,
+    account_label: null,
+    last_validated_at: null,
+    last_validation_error: null,
+    webhook_url: null,
+    webhook_registered: false,
+    webhook_last_error: null,
+  },
+  mercadopago: {
+    connected: true,
+    sandbox: true,
+    access_token_hint: "****demo",
+    public_key_hint: "****demo",
+    public_key: "TEST-00000000-0000-4000-8000-000000000001",
+    account_label: "Conta demo MP",
+    mp_user_id: "999888",
+    finance_bank_account_id: 2,
+    products: {
+      checkout_pro: true,
+      pix: true,
+      boleto: true,
+      subscriptions: true,
+      payment_link: true,
+    },
+    webhook_url: "https://demo.climaris.com.br/api/v1/webhooks/mercadopago/demo-webhook-path",
+    api_public_base_url: "https://demo.climaris.com.br",
+    webhook_signature_configured: false,
+    webhook_signature_enforced: false,
+    last_validated_at: DEMO_TS,
+    last_validation_error: null,
+    cached_balance: 2540.5,
+  },
 };
 let demoPmocPlansState: PmocPlanOut[] = [
   {
@@ -611,6 +733,7 @@ let nextServiceOrderId = 502;
 let nextFinanceEntryId = 2;
 let nextFinanceCategoryId = 3;
 let nextFinanceFeeId = 1;
+let nextFinanceAccountId = 3;
 let nextPmocId = 2;
 let nextUnavailabilityId = 1;
 
@@ -624,10 +747,12 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     name: payload.name,
     document: payload.document ?? null,
     tax_id_kind: payload.tax_id_kind ?? "cpf",
+    optante_mei: payload.optante_mei ?? false,
     phone: payload.phone ?? null,
     whatsapp: payload.whatsapp ?? null,
     email: payload.email ?? null,
     trade_name: payload.trade_name ?? null,
+    contact_person_name: payload.contact_person_name ?? null,
     state_registration: payload.state_registration ?? null,
     ie_indicator: payload.ie_indicator ?? null,
     municipal_registration: payload.municipal_registration ?? null,
@@ -640,6 +765,8 @@ export function demoCreateClient(payload: Partial<ClientOut> & { name: string })
     address_postal_code: payload.address_postal_code ?? null,
     address_country: payload.address_country ?? "BR",
     address_ibge_code: payload.address_ibge_code ?? null,
+    preventive_campaign_opt_out: payload.preventive_campaign_opt_out ?? false,
+    is_active: payload.is_active ?? true,
   };
   demoClientsState = [row, ...demoClientsState];
   return { ...row };
@@ -750,6 +877,137 @@ export function demoUpdateServiceOrder(orderId: number, payload: Partial<Service
   return { ...demoServiceOrdersState[idx] };
 }
 
+let _demoNextSoLineId = 99000;
+
+export function demoPostServiceOrderServiceItem(
+  orderId: number,
+  body: { service_id: number; quantity: number },
+): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  const svc = demoServicesState.find((s) => s.id === body.service_id);
+  if (!svc) throw new Error("Serviço não encontrado.");
+  _demoNextSoLineId += 1;
+  const newItem = {
+    id: _demoNextSoLineId,
+    service_id: body.service_id,
+    equipment_id: null as number | null,
+    quantity: Math.max(body.quantity, 1),
+    unit_price: svc.price,
+    duration_minutes: svc.duration_minutes,
+  };
+  demoServiceOrdersState[idx] = {
+    ...order,
+    service_items: [...order.service_items, newItem],
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoPatchServiceOrderServiceItemQuantity(
+  orderId: number,
+  serviceItemId: number,
+  quantity: number,
+): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  demoServiceOrdersState[idx] = {
+    ...order,
+    service_items: order.service_items.map((it) =>
+      it.id === serviceItemId ? { ...it, quantity: Math.max(quantity, 1) } : it,
+    ),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoDeleteServiceOrderServiceItem(orderId: number, serviceItemId: number): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  if (order.service_items.length <= 1) throw new Error("A OS deve manter pelo menos um serviço.");
+  demoServiceOrdersState[idx] = {
+    ...order,
+    service_items: order.service_items.filter((it) => it.id !== serviceItemId),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoPostServiceOrderProductItem(orderId: number, body: { product_id: number; quantity: number }): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  const p = demoProductsState.find((x) => x.id === body.product_id);
+  if (!p) throw new Error("Produto não encontrado.");
+  const addQty = Math.max(body.quantity, 1);
+  const existing = order.product_items.find((pi) => pi.product_id === body.product_id);
+  let product_items: typeof order.product_items;
+  if (existing) {
+    product_items = order.product_items.map((pi) =>
+      pi.product_id === body.product_id ? { ...pi, quantity: pi.quantity + addQty } : pi,
+    );
+  } else {
+    _demoNextSoLineId += 1;
+    product_items = [
+      ...order.product_items,
+      {
+        id: _demoNextSoLineId,
+        product_id: body.product_id,
+        quantity: addQty,
+        unit_price: p.sale_price,
+      },
+    ];
+  }
+  demoServiceOrdersState[idx] = { ...order, product_items };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoPatchServiceOrderProductItemQuantity(
+  orderId: number,
+  productItemId: number,
+  quantity: number,
+): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  demoServiceOrdersState[idx] = {
+    ...order,
+    product_items: order.product_items.map((it) =>
+      it.id === productItemId ? { ...it, quantity: Math.max(quantity, 1) } : it,
+    ),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
+export function demoDeleteServiceOrderProductItem(orderId: number, productItemId: number): ServiceOrderOut {
+  const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
+  if (idx < 0) throw new Error("OS não encontrada.");
+  const order = demoServiceOrdersState[idx];
+  if (order.status === "done" || order.status === "cancelled") {
+    throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
+  }
+  demoServiceOrdersState[idx] = {
+    ...order,
+    product_items: order.product_items.filter((it) => it.id !== productItemId),
+  };
+  return { ...demoServiceOrdersState[idx] };
+}
+
 export function demoListBudgets() {
   return demoBudgetsState.map((item) => ({ ...item }));
 }
@@ -802,6 +1060,103 @@ export function demoUpdateBudget(budgetId: number, payload: Partial<BudgetOut>):
   return { ...demoBudgetsState[idx] };
 }
 
+export function demoListFinanceAccounts() {
+  return demoFinanceAccountsState.map((item) => ({ ...item }));
+}
+
+export function demoCreateFinanceAccount(payload: {
+  name: string;
+  bank_name?: string | null;
+  account_type?: FinanceBankAccountOut["account_type"];
+  initial_balance?: number;
+  is_active?: boolean;
+}): FinanceBankAccountOut {
+  const now = new Date().toISOString();
+  const row: FinanceBankAccountOut = {
+    id: nextFinanceAccountId++,
+    tenant_id: 1,
+    name: payload.name.trim() || "Nova conta",
+    bank_name: payload.bank_name ?? null,
+    account_type: (payload.account_type ?? "checking") as FinanceBankAccountOut["account_type"],
+    initial_balance: Number(payload.initial_balance ?? 0),
+    is_active: payload.is_active ?? true,
+    created_at: now,
+    updated_at: now,
+  };
+  demoFinanceAccountsState = [...demoFinanceAccountsState, row];
+  return { ...row };
+}
+
+function demoFinanceEntryBasisDate(e: FinanceEntryOut, basis: string): string {
+  if (basis === "competence_date") return e.competence_date ?? e.due_date;
+  if (basis === "expected_settlement_date") return e.expected_settlement_date ?? e.due_date;
+  return e.due_date;
+}
+
+function demoFinanceSignedFlow(e: FinanceEntryOut): number {
+  const amt = Number(e.amount || 0);
+  const fee = Number(e.fee_amount || 0);
+  if (e.entry_type === "income") return amt - fee;
+  return -(amt + fee);
+}
+
+function demoFinanceEntryMatchesAccount(e: FinanceEntryOut, acc: FinanceBankAccountOut): boolean {
+  if (e.finance_account_id != null && e.finance_account_id === acc.id) return true;
+  if (acc.name.trim().toLowerCase() !== "caixa") return false;
+  const pm = (e.payment_method || "").toLowerCase();
+  return pm === "cash" && e.finance_account_id == null;
+}
+
+export function demoGetFinanceBalanceSnapshot(params: { end_date: string; date_basis: string }): FinanceBalanceSnapshotOut {
+  const basis = (params.date_basis || "due_date").toLowerCase();
+  const endDate = params.end_date;
+  const today = new Date().toISOString().slice(0, 10);
+  const entries = demoFinanceEntriesState.filter((e) => e.status !== "cancelled");
+  let initialTotal = 0;
+  for (const a of demoFinanceAccountsState) {
+    if (a.is_active) initialTotal += Number(a.initial_balance || 0);
+  }
+  let currentFlowTotal = 0;
+  let projectedFlowTotal = 0;
+  for (const e of entries) {
+    const bdv = demoFinanceEntryBasisDate(e, basis);
+    const signed = demoFinanceSignedFlow(e);
+    if (e.status === "paid" && bdv <= today) currentFlowTotal += signed;
+    if (bdv <= endDate) projectedFlowTotal += signed;
+  }
+  const accounts = demoFinanceAccountsState
+    .filter((a) => a.is_active)
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+    .map((acc) => {
+      const initial = Number(acc.initial_balance || 0);
+      let curFlow = 0;
+      let projFlow = 0;
+      for (const e of entries) {
+        if (!demoFinanceEntryMatchesAccount(e, acc)) continue;
+        const bdv = demoFinanceEntryBasisDate(e, basis);
+        const signed = demoFinanceSignedFlow(e);
+        if (e.status === "paid" && bdv <= today) curFlow += signed;
+        if (bdv <= endDate) projFlow += signed;
+      }
+      return {
+        id: acc.id,
+        name: acc.name,
+        initial_balance: initial,
+        current_balance: initial + curFlow,
+        projected_balance: initial + projFlow,
+      };
+    });
+  return {
+    date_basis: basis,
+    period_end: endDate,
+    as_of: today,
+    initial_balance_total: initialTotal,
+    current_balance_total: initialTotal + currentFlowTotal,
+    projected_balance_total: initialTotal + projectedFlowTotal,
+    accounts,
+  };
+}
+
 export function demoListFinanceEntries() {
   return demoFinanceEntriesState.map((item) => ({ ...item }));
 }
@@ -825,27 +1180,78 @@ export function demoCreateFinanceEntry(payload: Partial<FinanceEntryOut> & { des
     installment_group_id: null,
     installment_number: undefined,
     installment_total: undefined,
-    net_amount: payload.amount - (payload.fee_amount ?? 0),
+    net_amount:
+      payload.entry_type === "income"
+        ? payload.amount - (payload.fee_amount ?? 0)
+        : payload.amount + (payload.fee_amount ?? 0),
     due_date: payload.due_date,
     competence_date: payload.competence_date ?? payload.due_date,
     expected_settlement_date: payload.expected_settlement_date ?? payload.due_date,
     settlement_plan: payload.settlement_plan ?? "same_as_due",
     paid_at: null,
     notes: payload.notes ?? null,
+    service_order_id: payload.service_order_id ?? null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
   demoFinanceEntriesState = [row, ...demoFinanceEntriesState];
   return { ...row };
 }
-export function demoPatchFinanceEntry(entryId: number, payload: Partial<FinanceEntryOut>): FinanceEntryOut {
+export function demoPatchFinanceEntry(
+  entryId: number,
+  payload: Partial<FinanceEntryOut> & { edit_scope?: "single" | "future" | "all" },
+): FinanceEntryOut {
+  const scope = payload.edit_scope ?? "single";
   const idx = demoFinanceEntriesState.findIndex((item) => item.id === entryId);
   if (idx < 0) throw new Error("Lançamento não encontrado.");
-  demoFinanceEntriesState[idx] = { ...demoFinanceEntriesState[idx], ...payload, updated_at: new Date().toISOString() };
-  return { ...demoFinanceEntriesState[idx] };
+  const entry = demoFinanceEntriesState[idx]!;
+  const { edit_scope: _scopeIgnore, ...fields } = payload;
+  const patch = { ...fields } as Partial<FinanceEntryOut>;
+
+  const applyMpPreferenceArchive = (row: FinanceEntryOut, p: Partial<FinanceEntryOut>): Partial<FinanceEntryOut> => {
+    if (!("gateway_preference_id" in p)) return p;
+    const raw = p.gateway_preference_id;
+    const clearing = raw === null || raw === "";
+    if (!clearing) return p;
+    const oldPref = (row.gateway_preference_id ?? "").trim();
+    if (!oldPref || (row.payment_provider ?? "").toLowerCase() !== "mercadopago") return p;
+    if ((row.mercadopago_archived_preference_id ?? "").trim()) return p;
+    return { ...p, mercadopago_archived_preference_id: oldPref };
+  };
+
+  if (scope === "single" || !entry.installment_group_id) {
+    const merged = applyMpPreferenceArchive(entry, patch);
+    demoFinanceEntriesState[idx] = { ...entry, ...merged, updated_at: new Date().toISOString() };
+    return { ...demoFinanceEntriesState[idx] };
+  }
+  const gid = entry.installment_group_id!;
+  const num = entry.installment_number ?? 1;
+  for (let i = 0; i < demoFinanceEntriesState.length; i++) {
+    const row = demoFinanceEntriesState[i]!;
+    if (row.installment_group_id !== gid) continue;
+    const include = scope === "all" ? true : (row.installment_number ?? 1) >= num;
+    if (!include) continue;
+    const merged = applyMpPreferenceArchive(row, patch);
+    demoFinanceEntriesState[i] = { ...row, ...merged, updated_at: new Date().toISOString() };
+  }
+  const out = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (!out) throw new Error("Lançamento não encontrado.");
+  return { ...out };
 }
-export function demoDeleteFinanceEntry(entryId: number): void {
-  demoFinanceEntriesState = demoFinanceEntriesState.filter((item) => item.id !== entryId);
+export function demoDeleteFinanceEntry(entryId: number, edit_scope: "single" | "future" | "all" = "single"): void {
+  const entry = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (!entry) return;
+  if (edit_scope === "single" || !(entry.installment_group_id ?? "").trim()) {
+    demoFinanceEntriesState = demoFinanceEntriesState.filter((item) => item.id !== entryId);
+    return;
+  }
+  const gid = entry.installment_group_id!;
+  const num = entry.installment_number ?? 1;
+  demoFinanceEntriesState = demoFinanceEntriesState.filter((item) => {
+    if (item.installment_group_id !== gid) return true;
+    if (edit_scope === "all") return false;
+    return (item.installment_number ?? 1) < num;
+  });
 }
 export function demoListFinanceCategories() {
   return demoFinanceCategoriesState.map((item) => ({ ...item }));
@@ -860,6 +1266,34 @@ export function demoCreateFinanceCategory(payload: { name: string; color?: strin
   };
   demoFinanceCategoriesState = [row, ...demoFinanceCategoriesState];
   return { ...row };
+}
+
+export function demoPatchFinanceCategory(
+  id: number,
+  payload: { name?: string; color?: string | null },
+): FinanceCategoryOut {
+  const idx = demoFinanceCategoriesState.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error("Categoria não encontrada.");
+  const prev = demoFinanceCategoriesState[idx];
+  const row = { ...prev };
+  if (payload.name !== undefined) {
+    const n = payload.name.trim();
+    if (demoFinanceCategoriesState.some((c) => c.id !== id && c.name === n)) {
+      throw new Error("Já existe uma categoria com esse nome.");
+    }
+    row.name = n;
+  }
+  if (payload.color !== undefined) {
+    row.color = payload.color && payload.color.trim() ? payload.color.trim().toUpperCase() : null;
+  }
+  demoFinanceCategoriesState[idx] = row;
+  return { ...row };
+}
+
+export function demoDeleteFinanceCategory(id: number): void {
+  const next = demoFinanceCategoriesState.filter((c) => c.id !== id);
+  if (next.length === demoFinanceCategoriesState.length) throw new Error("Categoria não encontrada.");
+  demoFinanceCategoriesState = next;
 }
 export function demoListFinanceFees() {
   return demoFinancePaymentFeesState.map((item) => ({ ...item }));
@@ -899,7 +1333,235 @@ export function demoUpdateFinanceSettings(payload: Pick<FinanceSettingsOut, "fin
     selected_mode: payload.selected_mode,
     effective_mode: payload.selected_mode,
   };
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    effective_mode: payload.selected_mode,
+  };
   return { ...demoFinanceSettingsState };
+}
+
+export function demoGetFinanceGateways(): FinanceGatewaysOut {
+  return {
+    ...demoFinanceGatewaysState,
+    effective_mode: demoFinanceSettingsState.effective_mode,
+  };
+}
+
+export function demoTestFinanceGatewayMercadoPago(): { ok: boolean; error: string | null; account_label: string | null; mp_user_id: string | null } {
+  return { ok: true, error: null, account_label: "Conta demo MP", mp_user_id: "999888" };
+}
+
+export function demoUpsertFinanceGatewayMercadoPago(payload: {
+  access_token: string;
+  public_key: string;
+  sandbox?: boolean;
+  finance_bank_account_id: number;
+  products?: {
+    checkout_pro: boolean;
+    pix: boolean;
+    boleto: boolean;
+    subscriptions: boolean;
+    payment_link: boolean;
+  };
+}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+  const mp = demoFinanceGatewaysState.mercadopago;
+  const at = payload.access_token.trim();
+  const pk = payload.public_key.trim();
+  const hint = (s: string) => (s.length <= 4 ? "****" : `****${s.slice(-4)}`);
+  const mergedProducts = payload.products ?? mp.products;
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: {
+      ...mp,
+      connected: true,
+      sandbox: Boolean(payload.sandbox),
+      access_token_hint: hint(at),
+      public_key_hint: hint(pk),
+      public_key: pk,
+      account_label: "Conta demo MP",
+      mp_user_id: "999888",
+      finance_bank_account_id: payload.finance_bank_account_id,
+      products: { ...mergedProducts },
+      webhook_url: "https://demo.climaris.com.br/api/v1/webhooks/mercadopago/demo-webhook-path",
+      api_public_base_url: "https://demo.climaris.com.br",
+      webhook_signature_enforced: false,
+      last_validated_at: new Date().toISOString(),
+      last_validation_error: null,
+      cached_balance: mp.cached_balance ?? 2540.5,
+    },
+  };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+}
+
+export function demoPatchFinanceGatewayMercadoPagoProducts(payload: {
+  checkout_pro: boolean;
+  pix: boolean;
+  boleto: boolean;
+  subscriptions: boolean;
+  payment_link: boolean;
+}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+  const mp = demoFinanceGatewaysState.mercadopago;
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: { ...mp, products: { ...payload } },
+  };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+}
+
+export function demoPatchFinanceGatewayMercadoPagoWebhookSignature(payload: {
+  webhook_signature_secret?: string;
+  clear_webhook_signature_secret?: boolean;
+}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+  const mp = demoFinanceGatewaysState.mercadopago;
+  let configured = mp.webhook_signature_configured;
+  if (payload.clear_webhook_signature_secret) configured = false;
+  else if (payload.webhook_signature_secret != null && payload.webhook_signature_secret.trim()) configured = true;
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: { ...mp, webhook_signature_configured: configured },
+  };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+}
+
+export function demoDeleteFinanceGatewayMercadoPago(): void {
+  demoFinanceGatewaysState = {
+    ...demoFinanceGatewaysState,
+    mercadopago: {
+      connected: false,
+      sandbox: false,
+      access_token_hint: null,
+      public_key_hint: null,
+      public_key: null,
+      account_label: null,
+      mp_user_id: null,
+      finance_bank_account_id: null,
+      products: { checkout_pro: false, pix: false, boleto: false, subscriptions: false, payment_link: false },
+      webhook_url: null,
+      api_public_base_url: null,
+      webhook_signature_configured: false,
+      webhook_signature_enforced: false,
+      last_validated_at: null,
+      last_validation_error: null,
+      cached_balance: null,
+    },
+  };
+}
+
+export function demoMercadoPagoPixCharge(
+  entryId: number,
+  _payload: { payer_email: string; payer_first_name?: string | null; payer_last_name?: string | null },
+): {
+  status: string;
+  entry: FinanceEntryOut;
+  payment_id: string;
+  payment_status: string;
+  ticket_url: string | null;
+  pix_copy_paste: string | null;
+  external_reference: string;
+  sandbox: boolean;
+} {
+  const existing = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (existing?.gateway_preference_id) {
+    throw new Error(
+      "Este lançamento possui checkout/link Mercado Pago pendente. Remova a preferência no lançamento ou use outro lançamento para emitir PIX.",
+    );
+  }
+  const pid = `demo-mp-pix-${entryId}`;
+  const updated = demoPatchFinanceEntry(entryId, {
+    payment_provider: "mercadopago",
+    gateway_payment_id: pid,
+    payment_method: "pix",
+  });
+  return {
+    status: "ok",
+    entry: updated,
+    payment_id: pid,
+    payment_status: "pending",
+    ticket_url: "https://www.mercadopago.com.br/payments/example-ticket",
+    pix_copy_paste: "00020126580014br.gov.bcb.pix2566demo-climaris-pix",
+    external_reference: `climaris_mp_fin_${entryId}`,
+    sandbox: true,
+  };
+}
+
+export function demoMercadoPagoBoletoCharge(
+  entryId: number,
+  _payload: { payer_email: string; payer_cpf: string; payer_first_name?: string | null; payer_last_name?: string | null },
+): {
+  status: string;
+  entry: FinanceEntryOut;
+  payment_id: string;
+  payment_status: string;
+  ticket_url: string | null;
+  external_reference: string;
+  sandbox: boolean;
+} {
+  const existing = demoFinanceEntriesState.find((item) => item.id === entryId);
+  if (existing?.gateway_preference_id) {
+    throw new Error(
+      "Este lançamento possui checkout/link Mercado Pago pendente. Remova a preferência no lançamento ou use outro lançamento para emitir boleto.",
+    );
+  }
+  const pid = `demo-mp-bol-${entryId}`;
+  const updated = demoPatchFinanceEntry(entryId, {
+    payment_provider: "mercadopago",
+    gateway_payment_id: pid,
+    payment_method: "boleto",
+  });
+  return {
+    status: "ok",
+    entry: updated,
+    payment_id: pid,
+    payment_status: "pending",
+    ticket_url: "https://www.mercadopago.com.br/payments/boleto/demo-ticket.pdf",
+    external_reference: `climaris_mp_fin_${entryId}`,
+    sandbox: true,
+  };
+}
+
+export function demoMercadoPagoPreference(
+  entryId: number,
+  payload: {
+    mode: "checkout_pro" | "payment_link" | "subscription";
+    payer_email?: string | null;
+    success_url?: string | null;
+    failure_url?: string | null;
+    pending_url?: string | null;
+    subscription_frequency?: number;
+    subscription_frequency_type?: "months" | "days";
+  },
+): {
+  status: string;
+  mode: string;
+  preference_id: string;
+  init_point: string | null;
+  sandbox_init_point: string | null;
+  checkout_url: string;
+  external_reference: string;
+  sandbox: boolean;
+  entry: FinanceEntryOut;
+} {
+  const prefId = `pref_demo_${payload.mode}_${entryId}`;
+  const checkoutUrl = `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${encodeURIComponent(prefId)}`;
+  const patch: Partial<FinanceEntryOut> = {
+    gateway_preference_id: prefId,
+    payment_provider: "mercadopago",
+  };
+  if (payload.mode === "subscription") {
+    patch.mercadopago_preapproval_id = `preapp_demo_${entryId}`;
+  }
+  const entry = demoPatchFinanceEntry(entryId, patch);
+  return {
+    status: "ok",
+    mode: payload.mode,
+    preference_id: prefId,
+    init_point: checkoutUrl,
+    sandbox_init_point: checkoutUrl,
+    checkout_url: checkoutUrl,
+    external_reference: `climaris_mp_fin_${entryId}`,
+    sandbox: true,
+    entry,
+  };
 }
 
 export function demoListPmocPlans() {

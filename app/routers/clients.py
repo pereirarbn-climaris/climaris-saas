@@ -1,16 +1,24 @@
+import csv
+import io
+import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.routers.equipment_documents import serialize_equipment_document_out
 from app.schemas import (
+    ClientAuditEntryOut,
+    ClientCountOut,
     ClientCreate,
+    ClientImportSummaryOut,
     ClientOut,
     ClientServiceItemLinkRowOut,
     ClientUpdate,
@@ -20,12 +28,16 @@ from app.schemas import (
     EquipmentOut,
     EquipmentUpdate,
 )
-from app.tax_id import normalize_and_validate_tax_document
+from app.tax_id import digits_only, normalize_and_validate_tax_document
 from models import (
+    Budget,
     Client,
+    ClientAuditLog,
     Equipment,
     EquipmentDocument,
+    NfseInvoice,
     OrderStatus,
+    Schedule,
     Service,
     ServiceOrder,
     ServiceOrderServiceItem,
@@ -36,6 +48,161 @@ from models import (
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
+_CLIENT_SNAPSHOT_KEYS: tuple[str, ...] = (
+    "name",
+    "document",
+    "tax_id_kind",
+    "optante_mei",
+    "phone",
+    "whatsapp",
+    "email",
+    "trade_name",
+    "contact_person_name",
+    "state_registration",
+    "ie_indicator",
+    "municipal_registration",
+    "address_street",
+    "address_number",
+    "address_complement",
+    "address_district",
+    "address_city",
+    "address_state",
+    "address_postal_code",
+    "address_country",
+    "address_ibge_code",
+    "preventive_campaign_opt_out",
+    "is_active",
+)
+
+
+def _client_snapshot(client: Client) -> dict[str, Any]:
+    return {
+        "name": client.name,
+        "document": client.document,
+        "tax_id_kind": client.tax_id_kind,
+        "optante_mei": bool(client.optante_mei),
+        "phone": client.phone,
+        "whatsapp": client.whatsapp,
+        "email": client.email,
+        "trade_name": client.trade_name,
+        "contact_person_name": client.contact_person_name,
+        "state_registration": client.state_registration,
+        "ie_indicator": client.ie_indicator,
+        "municipal_registration": client.municipal_registration,
+        "address_street": client.address_street,
+        "address_number": client.address_number,
+        "address_complement": client.address_complement,
+        "address_district": client.address_district,
+        "address_city": client.address_city,
+        "address_state": client.address_state,
+        "address_postal_code": client.address_postal_code,
+        "address_country": client.address_country,
+        "address_ibge_code": client.address_ibge_code,
+        "preventive_campaign_opt_out": bool(client.preventive_campaign_opt_out),
+        "is_active": bool(client.is_active),
+    }
+
+
+def _audit_field_diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for k in _CLIENT_SNAPSHOT_KEYS:
+        if before.get(k) != after.get(k):
+            out[k] = {"old": before.get(k), "new": after.get(k)}
+    return out
+
+
+def _append_client_audit(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_id: int,
+    user_id: int | None,
+    action: str,
+    changes: dict[str, Any],
+) -> None:
+    db.add(
+        ClientAuditLog(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            user_id=user_id,
+            action=action,
+            changes_json=json.dumps(changes, default=str),
+        )
+    )
+
+
+def _apply_status_filter(query, status_filter: Literal["active", "inactive", "all"]):
+    if status_filter == "active":
+        return query.where(Client.is_active.is_(True))
+    if status_filter == "inactive":
+        return query.where(Client.is_active.is_(False))
+    return query
+
+
+def _delete_blockers(db: Session, tenant_id: int, client_id: int) -> list[str]:
+    reasons: list[str] = []
+    n_os = db.scalar(
+        select(func.count()).select_from(ServiceOrder).where(
+            ServiceOrder.tenant_id == tenant_id, ServiceOrder.client_id == client_id
+        )
+    )
+    if n_os:
+        reasons.append(f"{int(n_os)} ordem(ns) de serviço")
+    n_bd = db.scalar(
+        select(func.count()).select_from(Budget).where(Budget.tenant_id == tenant_id, Budget.client_id == client_id)
+    )
+    if n_bd:
+        reasons.append(f"{int(n_bd)} orçamento(s)")
+    n_sc = db.scalar(
+        select(func.count()).select_from(Schedule).where(Schedule.tenant_id == tenant_id, Schedule.client_id == client_id)
+    )
+    if n_sc:
+        reasons.append(f"{int(n_sc)} agendamento(s)")
+    n_nf = db.scalar(
+        select(func.count()).select_from(NfseInvoice).where(
+            NfseInvoice.tenant_id == tenant_id, NfseInvoice.client_id == client_id
+        )
+    )
+    if n_nf:
+        reasons.append(f"{int(n_nf)} NFS-e")
+    return reasons
+
+
+CSV_HEADERS = [
+    "id",
+    "name",
+    "document",
+    "tax_id_kind",
+    "optante_mei",
+    "phone",
+    "whatsapp",
+    "email",
+    "trade_name",
+    "contact_person_name",
+    "state_registration",
+    "ie_indicator",
+    "municipal_registration",
+    "address_street",
+    "address_number",
+    "address_complement",
+    "address_district",
+    "address_city",
+    "address_state",
+    "address_postal_code",
+    "address_country",
+    "address_ibge_code",
+    "preventive_campaign_opt_out",
+    "is_active",
+]
+
+
+def _csv_cell(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    return str(v).replace("\r\n", " ").replace("\n", " ")
+
 
 @router.get("", response_model=list[ClientOut])
 def list_clients(
@@ -44,8 +211,12 @@ def list_clients(
     q: Annotated[str | None, Query(description="Filter by name, document or email")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    status_filter: Annotated[
+        Literal["active", "inactive", "all"], Query(alias="status", description="Cadastro ativo/inativo")
+    ] = "active",
 ) -> list[Client]:
     query = select(Client).where(Client.tenant_id == current_user.tenant_id)
+    query = _apply_status_filter(query, status_filter)
     if q:
         term = f"%{q}%"
         query = query.where(
@@ -55,9 +226,246 @@ def list_clients(
                 Client.email.ilike(term),
                 Client.phone.ilike(term),
                 Client.whatsapp.ilike(term),
+                Client.contact_person_name.ilike(term),
             )
         )
     return db.execute(query.order_by(Client.id.desc()).offset(skip).limit(limit)).scalars().all()
+
+
+@router.get("/count", response_model=ClientCountOut)
+def count_clients(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    q: Annotated[str | None, Query()] = None,
+    status_filter: Annotated[
+        Literal["active", "inactive", "all"], Query(alias="status", description="Cadastro ativo/inativo")
+    ] = "active",
+) -> ClientCountOut:
+    query = select(func.count(Client.id)).where(Client.tenant_id == current_user.tenant_id)
+    query = _apply_status_filter(query, status_filter)
+    if q:
+        term = f"%{q}%"
+        query = query.where(
+            or_(
+                Client.name.ilike(term),
+                Client.document.ilike(term),
+                Client.email.ilike(term),
+                Client.phone.ilike(term),
+                Client.whatsapp.ilike(term),
+                Client.contact_person_name.ilike(term),
+            )
+        )
+    total = db.scalar(query)
+    return ClientCountOut(total=int(total or 0))
+
+
+@router.get(
+    "/export",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def export_clients_csv(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[
+        Literal["active", "inactive", "all"], Query(alias="status", description="Exportar subset por status")
+    ] = "all",
+):
+    query = select(Client).where(Client.tenant_id == current_user.tenant_id)
+    query = _apply_status_filter(query, status_filter)
+    rows = db.execute(query.order_by(Client.id.asc())).scalars().all()
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(CSV_HEADERS)
+    for c in rows:
+        w.writerow(
+            [
+                c.id,
+                _csv_cell(c.name),
+                _csv_cell(c.document),
+                _csv_cell(c.tax_id_kind),
+                _csv_cell(bool(c.optante_mei)),
+                _csv_cell(c.phone),
+                _csv_cell(c.whatsapp),
+                _csv_cell(c.email),
+                _csv_cell(c.trade_name),
+                _csv_cell(c.contact_person_name),
+                _csv_cell(c.state_registration),
+                _csv_cell(c.ie_indicator),
+                _csv_cell(c.municipal_registration),
+                _csv_cell(c.address_street),
+                _csv_cell(c.address_number),
+                _csv_cell(c.address_complement),
+                _csv_cell(c.address_district),
+                _csv_cell(c.address_city),
+                _csv_cell(c.address_state),
+                _csv_cell(c.address_postal_code),
+                _csv_cell(c.address_country),
+                _csv_cell(c.address_ibge_code),
+                _csv_cell(bool(c.preventive_campaign_opt_out)),
+                _csv_cell(bool(c.is_active)),
+            ]
+        )
+
+    data = "\ufeff" + buf.getvalue()
+    return StreamingResponse(
+        iter([data.encode("utf-8")]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="clientes.csv"'},
+    )
+
+
+@router.post("/import", response_model=ClientImportSummaryOut, dependencies=[Depends(require_roles(UserRole.ADMIN))])
+def import_clients_csv(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: Annotated[UploadFile, File()],
+) -> ClientImportSummaryOut:
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo vazio.")
+    text = raw.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV sem cabeçalho.")
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for i, row in enumerate(reader, start=2):
+        try:
+            with db.begin_nested():
+                name = (row.get("name") or "").strip()
+                if not name:
+                    raise ValueError("Nome é obrigatório.")
+
+                row_id_raw = (row.get("id") or "").strip()
+                client: Client | None = None
+                if row_id_raw.isdigit():
+                    client = db.execute(
+                        select(Client).where(
+                            Client.id == int(row_id_raw), Client.tenant_id == current_user.tenant_id
+                        )
+                    ).scalar_one_or_none()
+
+                tax_kind = (row.get("tax_id_kind") or "cnpj").strip().lower()
+                if tax_kind not in ("cpf", "cnpj"):
+                    tax_kind = "cnpj"
+
+                doc_raw = (row.get("document") or "").strip()
+                document_val: str | None = None
+                if doc_raw:
+                    try:
+                        document_val = normalize_and_validate_tax_document(doc_raw, tax_kind)  # type: ignore[arg-type]
+                    except ValueError as exc:
+                        raise ValueError(f"documento inválido ({exc})") from exc
+
+                phone = (row.get("phone") or "").strip() or None
+                whatsapp = (row.get("whatsapp") or "").strip() or None
+                email_raw = (row.get("email") or "").strip().lower() or None
+
+                optante_mei = (row.get("optante_mei") or "").strip().lower() in ("1", "true", "yes", "sim")
+                preventive_opt = (row.get("preventive_campaign_opt_out") or "").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                    "sim",
+                )
+                is_active_raw = (row.get("is_active") or "1").strip().lower()
+                is_active_val = is_active_raw not in ("0", "false", "no", "nao", "não", "inativo")
+
+                ibge_digits = digits_only(row.get("address_ibge_code") or "")[:7]
+                ie_raw = (row.get("ie_indicator") or "").strip()
+                ie_val = ie_raw[:2] if ie_raw else None
+
+                payload_common = dict(
+                    name=name,
+                    document=document_val,
+                    tax_id_kind=tax_kind,
+                    optante_mei=optante_mei,
+                    phone=phone,
+                    whatsapp=whatsapp,
+                    email=email_raw,
+                    trade_name=(row.get("trade_name") or "").strip() or None,
+                    contact_person_name=(row.get("contact_person_name") or "").strip() or None,
+                    state_registration=(row.get("state_registration") or "").strip() or None,
+                    ie_indicator=ie_val,
+                    municipal_registration=(row.get("municipal_registration") or "").strip() or None,
+                    address_street=(row.get("address_street") or "").strip() or None,
+                    address_number=(row.get("address_number") or "").strip() or None,
+                    address_complement=(row.get("address_complement") or "").strip() or None,
+                    address_district=(row.get("address_district") or "").strip() or None,
+                    address_city=(row.get("address_city") or "").strip() or None,
+                    address_state=((row.get("address_state") or "").strip().upper()[:2] or None),
+                    address_postal_code=(row.get("address_postal_code") or "").strip() or None,
+                    address_country=(row.get("address_country") or "").strip() or "Brasil",
+                    address_ibge_code=ibge_digits if len(ibge_digits) == 7 else None,
+                    preventive_campaign_opt_out=preventive_opt,
+                    is_active=is_active_val,
+                )
+
+                if client is not None:
+                    for k, v in payload_common.items():
+                        setattr(client, k, v)
+                    db.flush()
+                    updated += 1
+                else:
+                    if document_val:
+                        existing = db.execute(
+                            select(Client).where(
+                                Client.tenant_id == current_user.tenant_id, Client.document == document_val
+                            )
+                        ).scalar_one_or_none()
+                        if existing:
+                            for k, v in payload_common.items():
+                                setattr(existing, k, v)
+                            db.flush()
+                            updated += 1
+                            continue
+                    if phone:
+                        existing_p = db.execute(
+                            select(Client).where(Client.tenant_id == current_user.tenant_id, Client.phone == phone)
+                        ).scalar_one_or_none()
+                        if existing_p:
+                            for k, v in payload_common.items():
+                                setattr(existing_p, k, v)
+                            db.flush()
+                            updated += 1
+                            continue
+
+                    cnew = Client(tenant_id=current_user.tenant_id, **payload_common)
+                    db.add(cnew)
+                    db.flush()
+                    _append_client_audit(
+                        db,
+                        tenant_id=current_user.tenant_id,
+                        client_id=cnew.id,
+                        user_id=current_user.id,
+                        action="created",
+                        changes={"record": _client_snapshot(cnew)},
+                    )
+                    created += 1
+        except ValueError as exc:
+            skipped += 1
+            errors.append(f"Linha {i}: {exc}")
+            continue
+        except IntegrityError:
+            skipped += 1
+            errors.append(f"Linha {i}: conflito de unicidade (documento, telefone ou WhatsApp).")
+            continue
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Importação falhou ao gravar: {exc.orig}",
+        ) from exc
+
+    return ClientImportSummaryOut(created=created, updated=updated, skipped=skipped, errors=errors[:50])
 
 
 @router.get("/{client_id}", response_model=ClientOut)
@@ -72,6 +480,45 @@ def get_client(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
     return client
+
+
+@router.get("/{client_id}/audit", response_model=list[ClientAuditEntryOut])
+def list_client_audit(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[ClientAuditEntryOut]:
+    client = db.execute(
+        select(Client).where(Client.id == client_id, Client.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+
+    rows = db.execute(
+        select(ClientAuditLog, User.full_name)
+        .outerjoin(User, User.id == ClientAuditLog.user_id)
+        .where(ClientAuditLog.client_id == client_id, ClientAuditLog.tenant_id == current_user.tenant_id)
+        .order_by(ClientAuditLog.id.desc())
+        .limit(limit)
+    ).all()
+    out: list[ClientAuditEntryOut] = []
+    for log, user_name in rows:
+        try:
+            changes = json.loads(log.changes_json or "{}")
+        except json.JSONDecodeError:
+            changes = {}
+        out.append(
+            ClientAuditEntryOut(
+                id=log.id,
+                user_id=log.user_id,
+                user_name=user_name,
+                action=log.action,
+                changes=changes if isinstance(changes, dict) else {},
+                created_at=log.created_at,
+            )
+        )
+    return out
 
 
 @router.post(
@@ -104,16 +551,28 @@ def create_client(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Já existe um cliente com este telefone nesta empresa.",
             )
+    wa = (payload.whatsapp or "").strip() or None
+    if wa:
+        existing_wa = db.execute(
+            select(Client).where(Client.tenant_id == current_user.tenant_id, Client.whatsapp == wa)
+        ).scalar_one_or_none()
+        if existing_wa:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Já existe um cliente com este WhatsApp nesta empresa.",
+            )
 
     client = Client(
         tenant_id=current_user.tenant_id,
         name=payload.name,
         document=payload.document,
         tax_id_kind=payload.tax_id_kind,  # set by ClientCreate validator (infer CPF/CNPJ from digits)
+        optante_mei=bool(payload.optante_mei),
         phone=phone,
-        whatsapp=payload.whatsapp,
+        whatsapp=wa,
         email=payload.email.lower() if payload.email else None,
         trade_name=payload.trade_name,
+        contact_person_name=(payload.contact_person_name or "").strip() or None,
         state_registration=payload.state_registration,
         ie_indicator=payload.ie_indicator,
         municipal_registration=payload.municipal_registration,
@@ -126,8 +585,26 @@ def create_client(
         address_postal_code=payload.address_postal_code,
         address_country=payload.address_country or "Brasil",
         address_ibge_code=payload.address_ibge_code,
+        preventive_campaign_opt_out=bool(payload.preventive_campaign_opt_out),
+        is_active=bool(payload.is_active),
     )
     db.add(client)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Não foi possível salvar: conflito de CPF/CNPJ, telefone ou WhatsApp.",
+        ) from exc
+    _append_client_audit(
+        db,
+        tenant_id=current_user.tenant_id,
+        client_id=client.id,
+        user_id=current_user.id,
+        action="created",
+        changes={"record": _client_snapshot(client)},
+    )
     db.commit()
     db.refresh(client)
     return client
@@ -150,6 +627,8 @@ def update_client(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
 
+    before = _client_snapshot(client)
+
     fields_set = payload.model_fields_set
 
     def _strip_opt(v: str | None) -> str | None:
@@ -160,6 +639,8 @@ def update_client(
 
     if "tax_id_kind" in fields_set and payload.tax_id_kind is not None:
         client.tax_id_kind = payload.tax_id_kind
+    if "optante_mei" in fields_set and payload.optante_mei is not None:
+        client.optante_mei = bool(payload.optante_mei)
 
     if "document" in fields_set:
         if payload.document is not None:
@@ -213,13 +694,29 @@ def update_client(
         client.phone = phone
 
     if "whatsapp" in fields_set:
-        client.whatsapp = payload.whatsapp
+        wa = _strip_opt(payload.whatsapp) if payload.whatsapp is not None else None
+        if wa:
+            existing_wa = db.execute(
+                select(Client).where(
+                    Client.tenant_id == current_user.tenant_id,
+                    Client.whatsapp == wa,
+                    Client.id != client_id,
+                )
+            ).scalar_one_or_none()
+            if existing_wa:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Já existe um cliente com este WhatsApp nesta empresa.",
+                )
+        client.whatsapp = wa
 
     if "email" in fields_set:
         client.email = payload.email.lower() if payload.email else None
 
     if "trade_name" in fields_set:
         client.trade_name = _strip_opt(payload.trade_name)
+    if "contact_person_name" in fields_set:
+        client.contact_person_name = _strip_opt(payload.contact_person_name)
 
     if "state_registration" in fields_set:
         client.state_registration = _strip_opt(payload.state_registration)
@@ -257,7 +754,32 @@ def update_client(
     if "address_ibge_code" in fields_set:
         client.address_ibge_code = payload.address_ibge_code
 
-    db.commit()
+    if "preventive_campaign_opt_out" in fields_set and payload.preventive_campaign_opt_out is not None:
+        client.preventive_campaign_opt_out = bool(payload.preventive_campaign_opt_out)
+
+    if "is_active" in fields_set and payload.is_active is not None:
+        client.is_active = bool(payload.is_active)
+
+    after = _client_snapshot(client)
+    diff = _audit_field_diff(before, after)
+    if diff:
+        _append_client_audit(
+            db,
+            tenant_id=current_user.tenant_id,
+            client_id=client.id,
+            user_id=current_user.id,
+            action="updated",
+            changes=diff,
+        )
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Não foi possível salvar: possível WhatsApp duplicado.",
+        ) from exc
     db.refresh(client)
     return client
 
@@ -278,8 +800,24 @@ def delete_client(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
 
+    reasons = _delete_blockers(db, current_user.tenant_id, client_id)
+    if reasons:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Não é possível excluir: há "
+            + ", ".join(reasons)
+            + ". Inative o cliente ou remova os vínculos antes de excluir permanentemente.",
+        )
+
     db.delete(client)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Não é possível excluir este cliente enquanto existirem registros vinculados.",
+        ) from exc
     return None
 
 

@@ -179,7 +179,7 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-text-muted, #5c6470);
-  margin-bottom: 0.35rem;
+  margin-bottom: var(--form-label-to-control);
 }
 
 .textInput {

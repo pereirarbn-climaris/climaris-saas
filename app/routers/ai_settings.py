@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.ai_assistant import available_ai_tools, execute_ai_tool_sandbox
+from app.ai_assistant import available_ai_tools, execute_ai_tool_sandbox, normalize_tenant_model_slug
 from app.schemas_ai import (
     AIChatHistoryOut,
     AISandboxToolOut,
@@ -22,6 +22,10 @@ from app.config import CLAUDE_MODEL
 from models import AIChatHistory, TenantAISettings, User, UserRole
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+def _normalize_model_slug(value: str | None) -> str:
+    return normalize_tenant_model_slug(value)
 
 
 def _get_or_create_settings(db: Session, tenant_id: int) -> TenantAISettings:
@@ -48,6 +52,16 @@ def _get_or_create_settings(db: Session, tenant_id: int) -> TenantAISettings:
         instructions=None,
         model_slug=CLAUDE_MODEL,
         is_enabled=True,
+        ai_context_products=True,
+        ai_context_service_prices=True,
+        ai_context_services_catalog=True,
+        ai_tool_billing=False,
+        ai_tool_cancel=True,
+        ai_tool_reschedule=True,
+        ai_tool_agenda_read=True,
+        ai_allow_direct_schedule=False,
+        ai_allow_auto_client_create=False,
+        ai_clarification_instructions=None,
     )
     db.add(row)
     db.commit()
@@ -64,7 +78,14 @@ def get_ai_settings(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> TenantAISettings:
-    return _get_or_create_settings(db, current_user.tenant_id)
+    row = _get_or_create_settings(db, current_user.tenant_id)
+    normalized = normalize_tenant_model_slug(row.model_slug)
+    if normalized != row.model_slug:
+        row.model_slug = normalized
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
 
 
 @router.post(
@@ -81,8 +102,18 @@ def create_or_replace_ai_settings(
     row.agent_name = payload.agent_name
     row.tone_of_voice = payload.tone_of_voice
     row.instructions = payload.instructions
-    row.model_slug = payload.model_slug or CLAUDE_MODEL
+    row.model_slug = _normalize_model_slug(payload.model_slug)
     row.is_enabled = bool(payload.is_enabled)
+    row.ai_context_products = bool(payload.ai_context_products)
+    row.ai_context_service_prices = bool(payload.ai_context_service_prices)
+    row.ai_context_services_catalog = bool(payload.ai_context_services_catalog)
+    row.ai_tool_billing = bool(payload.ai_tool_billing)
+    row.ai_tool_cancel = bool(payload.ai_tool_cancel)
+    row.ai_tool_reschedule = bool(payload.ai_tool_reschedule)
+    row.ai_tool_agenda_read = bool(payload.ai_tool_agenda_read)
+    row.ai_allow_direct_schedule = bool(payload.ai_allow_direct_schedule)
+    row.ai_allow_auto_client_create = bool(payload.ai_allow_auto_client_create)
+    row.ai_clarification_instructions = payload.ai_clarification_instructions
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -109,9 +140,29 @@ def patch_ai_settings(
     if "instructions" in data:
         row.instructions = data["instructions"]
     if "model_slug" in data:
-        row.model_slug = (data["model_slug"] or "").strip() or CLAUDE_MODEL
+        row.model_slug = _normalize_model_slug(data["model_slug"])
     if "is_enabled" in data and data["is_enabled"] is not None:
         row.is_enabled = bool(data["is_enabled"])
+    if "ai_context_products" in data and data["ai_context_products"] is not None:
+        row.ai_context_products = bool(data["ai_context_products"])
+    if "ai_context_service_prices" in data and data["ai_context_service_prices"] is not None:
+        row.ai_context_service_prices = bool(data["ai_context_service_prices"])
+    if "ai_context_services_catalog" in data and data["ai_context_services_catalog"] is not None:
+        row.ai_context_services_catalog = bool(data["ai_context_services_catalog"])
+    if "ai_tool_billing" in data and data["ai_tool_billing"] is not None:
+        row.ai_tool_billing = bool(data["ai_tool_billing"])
+    if "ai_tool_cancel" in data and data["ai_tool_cancel"] is not None:
+        row.ai_tool_cancel = bool(data["ai_tool_cancel"])
+    if "ai_tool_reschedule" in data and data["ai_tool_reschedule"] is not None:
+        row.ai_tool_reschedule = bool(data["ai_tool_reschedule"])
+    if "ai_tool_agenda_read" in data and data["ai_tool_agenda_read"] is not None:
+        row.ai_tool_agenda_read = bool(data["ai_tool_agenda_read"])
+    if "ai_allow_direct_schedule" in data and data["ai_allow_direct_schedule"] is not None:
+        row.ai_allow_direct_schedule = bool(data["ai_allow_direct_schedule"])
+    if "ai_allow_auto_client_create" in data and data["ai_allow_auto_client_create"] is not None:
+        row.ai_allow_auto_client_create = bool(data["ai_allow_auto_client_create"])
+    if "ai_clarification_instructions" in data:
+        row.ai_clarification_instructions = data["ai_clarification_instructions"]
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -167,8 +218,11 @@ def list_ai_history(
     "/tools",
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
 )
-def list_ai_tools() -> list[dict]:
-    return available_ai_tools()
+def list_ai_tools(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict]:
+    return available_ai_tools(db, tenant_id=current_user.tenant_id)
 
 
 @router.post(

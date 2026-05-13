@@ -206,6 +206,8 @@ def create_product(
 ) -> Product:
     if payload.purchase_price < 0 or payload.sale_price < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prices must be greater than or equal to 0.")
+    if payload.btu_min is not None and payload.btu_max is not None and payload.btu_min > payload.btu_max:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="btu_min cannot be greater than btu_max.")
     existing = db.execute(
         select(Product).where(Product.tenant_id == current_user.tenant_id, Product.sku == payload.sku)
     ).scalar_one_or_none()
@@ -220,6 +222,10 @@ def create_product(
         sale_price=payload.sale_price,
         unit_price=payload.sale_price,
         stock_quantity=payload.stock_quantity,
+        compatible_equipment_tags=(payload.compatible_equipment_tags.strip() if payload.compatible_equipment_tags else None),
+        btu_min=payload.btu_min,
+        btu_max=payload.btu_max,
+        application_scope=(payload.application_scope.strip().lower() if payload.application_scope else None),
         is_active=payload.is_active,
     )
     db.add(product)
@@ -459,6 +465,8 @@ def update_product(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sale price must be greater than or equal to 0.")
     if payload.stock_quantity is not None and payload.stock_quantity < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="stock_quantity must be greater than or equal to 0.")
+    if payload.btu_min is not None and payload.btu_max is not None and payload.btu_min > payload.btu_max:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="btu_min cannot be greater than btu_max.")
 
     if payload.name is not None:
         product.name = payload.name
@@ -473,6 +481,14 @@ def update_product(
         product.is_active = payload.is_active
     if payload.stock_quantity is not None:
         product.stock_quantity = payload.stock_quantity
+    if "compatible_equipment_tags" in payload.model_fields_set:
+        product.compatible_equipment_tags = (payload.compatible_equipment_tags or "").strip() or None
+    if "btu_min" in payload.model_fields_set:
+        product.btu_min = payload.btu_min
+    if "btu_max" in payload.model_fields_set:
+        product.btu_max = payload.btu_max
+    if "application_scope" in payload.model_fields_set:
+        product.application_scope = (payload.application_scope or "").strip().lower() or None
 
     db.commit()
     db.refresh(product)

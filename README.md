@@ -10,6 +10,12 @@ Base multi-tenant ERP backend with:
 - tenant calendar (timezone, business days, holidays)
 - technician calendar (work windows, breaks, unavailability)
 
+### WhatsApp / Evolution webhook
+
+`POST /api/v1/whatsapp/webhook/evolution` aceita **token estático** (`EVOLUTION_WEBHOOK_TOKEN`, igual ao valor na URL) **ou** **JWT HS256** enviado em `?token=`, `Authorization: Bearer`, header `apikey` ou `X-Webhook-Token`. Para JWT, configure `EVOLUTION_WEBHOOK_JWT_SECRET` com o mesmo segredo usado na Evolution (ex.: `jwt_key` do webhook), ou `EVOLUTION_WEBHOOK_JWT_USE_APIKEY=true` se a Evolution assinar com a mesma chave que `EVOLUTION_API_KEY`. Se só chegar JWT da Evolution, não compare com um segredo curto fixo no `.env`: ou esvazie `EVOLUTION_WEBHOOK_TOKEN` e use só validação JWT, ou mantenha ambos coerentes.
+
+**Painel Evolution (Manager) e URL correta da API:** o hostname `evolution_api` só existe **entre containers Docker** — não use no navegador. Guia passo a passo: **`deploy/evolution/README.md`** (127.0.0.1:3001 / :8080 ou túnel SSH).
+
 ## WhatsApp bot V1
 
 O plano técnico do bot WhatsApp sem IA (menus, fluxos determinísticos e configuração por tenant) está em
@@ -36,6 +42,8 @@ Health:
 
 ```bash
 curl http://127.0.0.1:8000/health
+# Opcional: flags extras (URL pública da API, exigência de assinatura MP, etc.)
+curl "http://127.0.0.1:8000/health?extended=true"
 ```
 
 Em produção o caminho é sempre **`/health` no mesmo host** (não repita o domínio no meio da URL). Exemplo:
@@ -157,6 +165,10 @@ Para envio de confirmação de e-mail, configure no `.env` da API:
 - `EMAIL_VERIFICATION_TOKEN_TTL_HOURS` (ex.: `24`)
 
 Alternativa sem deploy: em `/operacao/chaves-api`, salve o provedor `SMTP` (host, porta, usuário, senha, remetente). A API só usa essa configuração quando `SMTP_ALLOW_DB_OVERRIDE=true`.
+
+**Dispositivos confiáveis (2FA de admin):** com SMTP e 2FA ativo, o front pode enviar `trust_this_device: true` junto com o código; a API grava o token (hash) em `login_trusted_devices`, amarra o vínculo ao **User-Agent** (o IP muda muito no celular e quebrava o “lembrar dispositivo” se misturado ao fingerprint), e envia um cookie **HTTP-only** (padrão `climaris_tf_trust`, duração `TRUST_DEVICE_DAYS`). O fetch do login usa `credentials: "include"`. Revogação: `GET/DELETE /api/v1/auth/me/trusted-devices` ou **Workspace → Dispositivos confiáveis (2FA)**.
+
+**Sessão longa (JWT + refresh):** o login pode devolver `refresh_token` (quando `REFRESH_TOKEN_ENABLED=true`). O SPA guarda em `localStorage`, chama `POST /api/v1/auth/refresh` antes do JWT expirar e no carregamento da página (`bootstrapSession`). `JWT_EXPIRE_MINUTES_ADMIN` (opcional) aumenta só para administradores do workspace. Troca ou reset de senha revoga refresh tokens no servidor.
 
 2) Login (padrão: só e-mail e senha; a resposta inclui `tenant_id` do workspace):
 

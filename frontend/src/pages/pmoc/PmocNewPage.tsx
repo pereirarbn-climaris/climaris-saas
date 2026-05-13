@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useNavigate, useOutletContext } from "react-router-dom";
+import { Link, Navigate, useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { createPmocPlan } from "../../api/pmoc";
-import { listClients, type ClientOut } from "../../api/clients";
+import { getClient, listClients, type ClientOut } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./PmocPages.module.css";
 import baseStyles from "../listPageBase.module.css";
@@ -9,6 +9,7 @@ import baseStyles from "../listPageBase.module.css";
 export function PmocNewPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState<ClientOut[]>([]);
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
@@ -24,23 +25,54 @@ export function PmocNewPage() {
     return () => window.clearTimeout(t);
   }, [input]);
 
+  const prefClientId = useMemo(() => {
+    const raw = searchParams.get("client_id");
+    if (!raw) return NaN;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n : NaN;
+  }, [searchParams]);
+
+  const fromClientId = useMemo(() => {
+    const raw = searchParams.get("from_client");
+    if (!raw) return NaN;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n : NaN;
+  }, [searchParams]);
+
+  const showClientBack =
+    Number.isFinite(fromClientId) && Number.isFinite(prefClientId) && fromClientId === prefClientId;
+
   const load = useCallback(async () => {
     setLoading(true);
     setErr("");
     try {
       const list = await listClients({ q: q || undefined, limit: 200 });
-      setRows(list);
+      let merged = [...list];
+      if (Number.isFinite(prefClientId) && prefClientId >= 1 && !merged.some((x) => x.id === prefClientId)) {
+        try {
+          const c = await getClient(prefClientId);
+          merged = [c, ...merged];
+        } catch {
+          /* cliente permanece selecionável via busca */
+        }
+      }
+      setRows(merged);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar clientes.");
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, prefClientId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!Number.isFinite(prefClientId)) return;
+    setClientId(prefClientId);
+  }, [prefClientId]);
 
   const selectedClient = useMemo(
     () => (typeof clientId === "number" ? rows.find((c) => c.id === clientId) : undefined),
@@ -67,7 +99,10 @@ export function PmocNewPage() {
     setSaveErr("");
     try {
       const plan = await createPmocPlan({ client_id: clientId, title: title.trim() });
-      navigate(`/app/pmoc/${plan.id}`);
+      const stayOnClientFlow =
+        Number.isFinite(fromClientId) && typeof clientId === "number" && fromClientId === clientId;
+      const suffix = stayOnClientFlow ? `?from_client=${clientId}` : "";
+      navigate(`/app/pmoc/${plan.id}${suffix}`);
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : "Não foi possível criar o PMOC.");
     } finally {
@@ -77,8 +112,11 @@ export function PmocNewPage() {
 
   return (
     <div className={styles.wrap}>
-      <Link to="/app/pmoc" className={styles.btnBackLink}>
-        ← Voltar à lista
+      <Link
+        to={showClientBack ? `/app/clients/${fromClientId}?tab=pmoc` : "/app/pmoc"}
+        className={styles.btnBackLink}
+      >
+        {showClientBack ? "← Voltar ao cliente" : "← Lista PMOC"}
       </Link>
       <header className={styles.hero}>
         <h1 className={styles.title}>Nova PMOC</h1>

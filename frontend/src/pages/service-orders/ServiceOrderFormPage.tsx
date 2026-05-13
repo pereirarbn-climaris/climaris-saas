@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
-import { formatPhoneBrDisplay } from "../../lib/brMask";
+import { digitsOnlyPhoneForApi, formatPhoneBrDisplay, formatPhoneBrInput } from "../../lib/brMask";
 import {
   createClientEquipment,
+  getClient,
   listClientEquipments,
-  listClients,
   type ClientOut,
   type EquipmentOut,
 } from "../../api/clients";
@@ -12,13 +12,19 @@ import { listProducts, type ProductOut } from "../../api/products";
 import {
   approveServiceOrder,
   createServiceOrder,
+  deleteServiceOrderProductItem,
+  deleteServiceOrderServiceItem,
   getServiceOrder,
   getRescheduleOptions,
   getTechnicianNextSlots,
   getTechniciansAvailability,
   listSchedules,
   patchServiceOrderDiscount,
+  patchServiceOrderProductItemQuantity,
+  patchServiceOrderServiceItemQuantity,
   patchServiceOrderStatus,
+  postServiceOrderProductItem,
+  postServiceOrderServiceItem,
   rescheduleSchedule,
   splitServiceOrderServiceItem,
   updateServiceOrderItemEquipment,
@@ -35,10 +41,25 @@ import {
   type Unavailability,
 } from "../../api/technicianCalendar";
 import { listServices, type ServiceOut } from "../../api/services";
+import {
+  createFinanceEntry,
+  getFinanceSettings,
+  listFinanceAccounts,
+  listFinanceCategories,
+  listFinanceEntries,
+  listFinancePaymentFees,
+  type FinanceEntryOut,
+  type FinancePaymentFeeOut,
+  type FinanceSettingsOut,
+  type FinanceEntryStatus,
+} from "../../api/finance";
 import { sendWhatsappAppointmentReminder } from "../../api/whatsapp";
+import { registerPreventiveFromServiceOrder } from "../../api/preventiveMaintenance";
 import { sortByNameAsc } from "../../lib/localeSort";
+import { ClientPicker } from "../../components/ClientPicker";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
+import formLayout from "../formLayout.module.css";
 import styles from "./ServiceOrderFormPage.module.css";
 
 type SelectedService = {
@@ -55,6 +76,8 @@ function newLineId(): string {
 }
 
 type SelectedProduct = {
+  /** Presente quando a linha já foi persistida na API. */
+  product_item_id?: number;
   product_id: number;
   quantity: number;
 };
@@ -64,7 +87,7 @@ type SplitOption = {
   minutesPerDay: number;
 };
 
-type OsTab = "combined" | "planning" | "closing" | "technical";
+type OsTab = "combined" | "planning" | "closing" | "technical" | "finance";
 type NavigationApp = "google" | "waze" | "apple";
 type NavigationPreference = NavigationApp | "ask";
 
@@ -290,6 +313,20 @@ function IconWrench({ className }: { className?: string }) {
   );
 }
 
+function IconFinanceTab({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function IconPackageSection({ className }: { className?: string }) {
   return (
     <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -329,11 +366,13 @@ export function ServiceOrderFormPage() {
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const isTechnician = ctx?.user.role === "technician";
+  /** Escritório (admin ou recepção): mesma aba técnica do técnico para acompanhamento em campo. */
+  const canSeeTechnicalTab = isTechnician || canEdit;
   const canUpdateStatus = canEdit || isTechnician;
   const readOnly = !canEdit;
   const tenantName = ctx?.tenant.name ?? "Sua empresa";
 
-  const [clients, setClients] = useState<ClientOut[]>([]);
+  const [selectedClient, setSelectedClient] = useState<ClientOut | null>(null);
   const [services, setServices] = useState<ServiceOut[]>([]);
   const [products, setProducts] = useState<ProductOut[]>([]);
   const [clientEquipments, setClientEquipments] = useState<EquipmentOut[]>([]);
@@ -343,6 +382,9 @@ export function ServiceOrderFormPage() {
   const [approving, setApproving] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [preventiveOsDate, setPreventiveOsDate] = useState(() => formatDateInput(new Date()));
+  const [preventiveOsLoading, setPreventiveOsLoading] = useState(false);
+  const [preventiveOsMsg, setPreventiveOsMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const [clientId, setClientId] = useState("");
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
@@ -351,13 +393,10 @@ export function ServiceOrderFormPage() {
   const [approveNotes, setApproveNotes] = useState("");
   const [activeTab, setActiveTab] = useState<OsTab>("combined");
   const [generalNotes, setGeneralNotes] = useState("");
-  const [clientSearch, setClientSearch] = useState("");
   const [serviceSearch, setServiceSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
-  const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
-  const [activeClientIndex, setActiveClientIndex] = useState(0);
   const [activeServiceIndex, setActiveServiceIndex] = useState(0);
   const [activeProductIndex, setActiveProductIndex] = useState(0);
   const [planningDay, setPlanningDay] = useState(() => formatDateInput(new Date()));
@@ -392,6 +431,48 @@ export function ServiceOrderFormPage() {
   const [navigationPreference, setNavigationPreferenceState] = useState<NavigationPreference>(() => getNavigationPreference());
   const [navigationChooserAddress, setNavigationChooserAddress] = useState<string | null>(null);
   const [rememberNavigationChoice, setRememberNavigationChoice] = useState(true);
+
+  const [osFinLoading, setOsFinLoading] = useState(false);
+  const [osFinSettings, setOsFinSettings] = useState<FinanceSettingsOut | null>(null);
+  const [osFinExisting, setOsFinExisting] = useState<FinanceEntryOut[]>([]);
+  const [osFinAccounts, setOsFinAccounts] = useState<Awaited<ReturnType<typeof listFinanceAccounts>>>([]);
+  const [osFinFees, setOsFinFees] = useState<FinancePaymentFeeOut[]>([]);
+  const [osFinCategories, setOsFinCategories] = useState<Array<{ id: number; name: string }>>([]);
+  const [osFinPaymentMethod, setOsFinPaymentMethod] = useState("pix");
+  const [osFinPaymentProvider, setOsFinPaymentProvider] = useState("");
+  const [osFinAmount, setOsFinAmount] = useState("");
+  const [osFinDueDate, setOsFinDueDate] = useState(() => formatDateInput(new Date()));
+  const [osFinCompetenceDate, setOsFinCompetenceDate] = useState(() => formatDateInput(new Date()));
+  const [osFinSettlementPlan, setOsFinSettlementPlan] = useState<"same_as_due" | "next_business_day">("same_as_due");
+  const [osFinInstallments, setOsFinInstallments] = useState("1");
+  const [osFinInstallmentInterval, setOsFinInstallmentInterval] = useState("1");
+  const [osFinAccountId, setOsFinAccountId] = useState("");
+  const [osFinCategoryId, setOsFinCategoryId] = useState("");
+  const [osFinEntryStatus, setOsFinEntryStatus] = useState<FinanceEntryStatus>("paid");
+  const [osFinRecipientWhatsapp, setOsFinRecipientWhatsapp] = useState("");
+  const [osFinSubmitting, setOsFinSubmitting] = useState(false);
+  const [osFinFeePercent, setOsFinFeePercent] = useState("0");
+  const [osFinFeeFixed, setOsFinFeeFixed] = useState("0");
+
+  const osFinShowMachineField =
+    osFinPaymentMethod === "credit_card" || osFinPaymentMethod === "debit_card";
+  const osFinShowBankAccountField =
+    osFinPaymentMethod === "pix" || osFinPaymentMethod === "boleto" || osFinPaymentMethod === "cash";
+  const osFinShowInstallmentsField = osFinPaymentMethod === "credit_card" || osFinPaymentMethod === "boleto";
+
+  const osFinProviderSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const f of osFinFees) {
+      const name = f.provider_name.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out.sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [osFinFees]);
 
   const servicesMap = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
   const productsMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
@@ -428,16 +509,32 @@ export function ServiceOrderFormPage() {
     [grandTotal, discountAmount],
   );
   const hasActiveSchedule = Boolean(order?.schedule && order.schedule.status !== "cancelled");
+  /** Admin/recepção: incluir, alterar quantidade ou remover linhas até conclusão ou cancelamento da OS. */
+  const allowEditOrderLines = Boolean(
+    canEdit &&
+      !isNew &&
+      order &&
+      order.status !== "done" &&
+      order.status !== "cancelled",
+  );
   const showConclusaoTab = useMemo(() => {
     if (isNew || !order) return false;
+    if (order.status === "cancelled") return false;
+    if (order.status === "done") return true;
     if (!hasActiveSchedule) return false;
-    if (order.status === "done" || order.status === "cancelled") return false;
     return (
       order.status === "scheduled" ||
       order.status === "in_progress" ||
       (order.status === "approved" && hasActiveSchedule)
     );
   }, [isNew, order, hasActiveSchedule]);
+
+  useEffect(() => {
+    setPreventiveOsDate(formatDateInput(new Date()));
+    setPreventiveOsMsg(null);
+  }, [order?.id]);
+
+  const showFinanceiroTab = Boolean(canEdit && !isNew && order?.status === "done");
   /** Primeiro agendamento: sugestões, calendário e aprovar na agenda. */
   const showPlanningPreSchedule = useMemo(() => {
     if (isNew || !order) return false;
@@ -473,12 +570,8 @@ export function ServiceOrderFormPage() {
     const monthTitle = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(first);
     return { calendarYear, calendarMonth, cells, monthTitle };
   }, [calendarMonthYM]);
-  const selectedClient = useMemo(
-    () => clients.find((c) => c.id === Number(clientId)),
-    [clients, clientId],
-  );
-  const selectedClientAddress = useMemo(() => formatClientAddress(selectedClient), [selectedClient]);
-  const canOpenNavigation = useMemo(() => hasClientAddress(selectedClient), [selectedClient]);
+  const selectedClientAddress = useMemo(() => formatClientAddress(selectedClient ?? undefined), [selectedClient]);
+  const canOpenNavigation = useMemo(() => hasClientAddress(selectedClient ?? undefined), [selectedClient]);
   const navigationApps = useMemo<NavigationApp[]>(
     () => (isIosDevice() ? ["google", "waze", "apple"] : ["google", "waze"]),
     [],
@@ -497,18 +590,6 @@ export function ServiceOrderFormPage() {
       selectedServices.every((s) => (s.quantity ?? 1) <= 1 && s.equipment_id && s.equipment_id > 0),
     [selectedServices],
   );
-  const filteredClients = useMemo(() => {
-    const term = clientSearch.trim().toLowerCase();
-    const rows = !term
-      ? clients
-      : clients.filter(
-          (c) =>
-            c.name.toLowerCase().includes(term) ||
-            String(c.id).includes(term) ||
-            (c.document ?? "").toLowerCase().includes(term),
-        );
-    return sortByNameAsc(rows);
-  }, [clients, clientSearch]);
   const filteredServices = useMemo(() => {
     const term = serviceSearch.trim().toLowerCase();
     const rows = services.filter((s) => !selectedServices.some((sel) => sel.service_id === s.id));
@@ -529,10 +610,6 @@ export function ServiceOrderFormPage() {
       : rows.filter((p) => p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term));
     return sortByNameAsc(filtered);
   }, [products, productSearch, selectedProducts]);
-  const visibleClients = useMemo(
-    () => (clientDropdownOpen ? filteredClients.slice(0, 8) : []),
-    [filteredClients, clientDropdownOpen],
-  );
   const visibleServices = useMemo(
     () => (serviceDropdownOpen ? filteredServices.slice(0, 8) : []),
     [filteredServices, serviceDropdownOpen],
@@ -542,9 +619,6 @@ export function ServiceOrderFormPage() {
     [filteredProducts, productDropdownOpen],
   );
 
-  useEffect(() => {
-    setActiveClientIndex(0);
-  }, [clientSearch]);
   useEffect(() => {
     setActiveServiceIndex(0);
   }, [serviceSearch]);
@@ -583,13 +657,11 @@ export function ServiceOrderFormPage() {
       setLoading(true);
       setLoadErr("");
       try {
-        const [nextClients, nextServices, nextProducts] = await Promise.all([
-          listClients({ limit: 100 }),
+        const [nextServices, nextProducts] = await Promise.all([
           listServices({ limit: 100 }),
           listProducts({ limit: 100 }),
         ]);
         if (cancelled) return;
-        setClients(nextClients);
         setServices(nextServices.filter((s) => s.is_active || !isNew));
         setProducts(nextProducts.filter((p) => p.is_active || !isNew));
 
@@ -652,6 +724,25 @@ export function ServiceOrderFormPage() {
     if (!Number.isFinite(cid) || cid < 1) return;
     setClientId(String(cid));
   }, [isNew, searchParams]);
+
+  useEffect(() => {
+    const cid = Number(clientId);
+    if (!Number.isFinite(cid) || cid < 1) {
+      setSelectedClient(null);
+      return;
+    }
+    let cancelled = false;
+    void getClient(cid)
+      .then((c) => {
+        if (!cancelled) setSelectedClient(c);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedClient(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   useEffect(() => {
     const cid = Number(clientId);
@@ -732,7 +823,7 @@ export function ServiceOrderFormPage() {
         equipment_id: item.equipment_id ?? undefined,
       })),
     );
-    setSelectedProducts(order.product_items.map((item) => ({ product_id: item.product_id, quantity: item.quantity })));
+    setSelectedProducts(order.product_items.map((item) => ({ product_item_id: item.id, product_id: item.product_id, quantity: item.quantity })));
     if (order.schedule?.starts_at) {
       const d = new Date(order.schedule.starts_at);
       if (!Number.isNaN(d.getTime())) {
@@ -780,6 +871,10 @@ export function ServiceOrderFormPage() {
   }, [activeTab, showConclusaoTab]);
 
   useEffect(() => {
+    if (activeTab === "finance" && !showFinanceiroTab) setActiveTab("combined");
+  }, [activeTab, showFinanceiroTab]);
+
+  useEffect(() => {
     if (isTechnician && !isNew && Number.isFinite(idNum) && idNum > 0) {
       setActiveTab("technical");
     }
@@ -800,6 +895,93 @@ export function ServiceOrderFormPage() {
     if (!order || isNew) return;
     setDiscountAmount(Number(order.discount_amount ?? 0));
   }, [order?.id, order?.discount_amount, isNew]);
+
+  useEffect(() => {
+    if (activeTab !== "finance" || !order || !showFinanceiroTab) return;
+    setOsFinAmount(String(grandTotalPayable));
+    setOsFinDueDate(formatDateInput(new Date()));
+    setOsFinCompetenceDate(formatDateInput(new Date()));
+    const waRaw = (selectedClient?.whatsapp ?? selectedClient?.phone ?? "").trim();
+    setOsFinRecipientWhatsapp(waRaw ? formatPhoneBrInput(waRaw) : "");
+  }, [activeTab, order?.id, showFinanceiroTab, grandTotalPayable, selectedClient?.whatsapp, selectedClient?.phone]);
+
+  useEffect(() => {
+    if (activeTab !== "finance" || !order || !canEdit || !showFinanceiroTab) return;
+    let cancelled = false;
+    void (async () => {
+      setOsFinLoading(true);
+      try {
+        const cfg = await getFinanceSettings();
+        if (cancelled) return;
+        setOsFinSettings(cfg);
+        if (!cfg.finance_enabled) {
+          setOsFinExisting([]);
+          return;
+        }
+        const [entries, accs, fees, cats] = await Promise.all([
+          listFinanceEntries({
+            start_date: "2020-01-01",
+            end_date: "2035-12-31",
+            entry_type: "income",
+            service_order_id: order.id,
+          }),
+          listFinanceAccounts(),
+          listFinancePaymentFees(),
+          listFinanceCategories(),
+        ]);
+        if (cancelled) return;
+        setOsFinExisting(entries);
+        setOsFinAccounts(accs);
+        setOsFinFees(fees);
+        setOsFinCategories(cats.map((c) => ({ id: c.id, name: c.name })));
+      } catch {
+        if (!cancelled) {
+          setOsFinSettings(null);
+          setMsg({ kind: "err", text: "Não foi possível carregar dados do financeiro." });
+        }
+      } finally {
+        if (!cancelled) setOsFinLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, order?.id, canEdit, showFinanceiroTab]);
+
+  useEffect(() => {
+    if (osFinPaymentMethod === "cash") {
+      setOsFinPaymentProvider("caixa");
+    } else if (!osFinShowMachineField) {
+      setOsFinPaymentProvider("");
+    }
+    if (!osFinShowMachineField) {
+      setOsFinFeePercent("0");
+      setOsFinFeeFixed("0");
+    }
+    if (!osFinShowBankAccountField) {
+      setOsFinAccountId("");
+    }
+    if (!osFinShowInstallmentsField) {
+      setOsFinInstallments("1");
+      setOsFinInstallmentInterval("1");
+    }
+  }, [osFinPaymentMethod, osFinShowMachineField, osFinShowBankAccountField, osFinShowInstallmentsField]);
+
+  useEffect(() => {
+    const provider = osFinPaymentProvider.trim().toLowerCase();
+    if (!provider || !osFinShowMachineField) return;
+    const installmentsNum = Math.max(1, Number.parseInt(osFinInstallments || "1", 10) || 1);
+    const fee = osFinFees.find(
+      (x) =>
+        x.is_active &&
+        x.provider_name.trim().toLowerCase() === provider &&
+        x.payment_method === osFinPaymentMethod &&
+        x.installments === installmentsNum,
+    );
+    if (!fee) return;
+    setOsFinFeePercent(String(fee.fee_percent));
+    setOsFinFeeFixed(String(fee.fee_fixed_amount));
+  }, [osFinPaymentProvider, osFinPaymentMethod, osFinInstallments, osFinFees, osFinShowMachineField]);
 
   useEffect(() => {
     const tid = Number(selectedTechnicianId);
@@ -905,29 +1087,56 @@ export function ServiceOrderFormPage() {
 
   function addService(service_id: number) {
     if (!service_id) return;
-    setSelectedServices((prev) => {
-      const existing = prev.find((s) => s.service_id === service_id);
-      if (existing) {
-        return prev.map((s) => (s.service_id === service_id ? { ...s, quantity: s.quantity + 1 } : s));
+    if (isNew) {
+      setSelectedServices((prev) => {
+        const existing = prev.find((s) => s.service_id === service_id);
+        if (existing) {
+          return prev.map((s) => (s.service_id === service_id ? { ...s, quantity: s.quantity + 1 } : s));
+        }
+        return [...prev, { lineId: newLineId(), service_id, quantity: 1 }];
+      });
+      return;
+    }
+    if (!order || !allowEditOrderLines) return;
+    void (async () => {
+      try {
+        const refreshed = await postServiceOrderServiceItem(order.id, { service_id, quantity: 1 });
+        setOrder(refreshed);
+        setMsg({ kind: "ok", text: "Serviço adicionado à OS." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao adicionar serviço." });
       }
-      return [...prev, { lineId: newLineId(), service_id, quantity: 1 }];
-    });
+    })();
   }
 
   function addProduct(product_id: number) {
     if (!product_id) return;
-    setSelectedProducts((prev) => {
-      const existing = prev.find((p) => p.product_id === product_id);
-      if (existing) {
-        return prev.map((p) => (p.product_id === product_id ? { ...p, quantity: p.quantity + 1 } : p));
+    if (isNew) {
+      setSelectedProducts((prev) => {
+        const existing = prev.find((p) => p.product_id === product_id);
+        if (existing) {
+          return prev.map((p) => (p.product_id === product_id ? { ...p, quantity: p.quantity + 1 } : p));
+        }
+        return [...prev, { product_id, quantity: 1 }];
+      });
+      return;
+    }
+    if (!order || !allowEditOrderLines) return;
+    void (async () => {
+      try {
+        const refreshed = await postServiceOrderProductItem(order.id, { product_id, quantity: 1 });
+        setOrder(refreshed);
+        setMsg({ kind: "ok", text: "Produto adicionado à OS." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao adicionar produto." });
       }
-      return [...prev, { product_id, quantity: 1 }];
-    });
+    })();
   }
 
   async function onCreateOrder(e: FormEvent) {
     e.preventDefault();
     setMsg(null);
+    if (!isNew) return;
     if (readOnly) return;
 
     if (!clientId) {
@@ -941,7 +1150,6 @@ export function ServiceOrderFormPage() {
 
     setSaving(true);
     try {
-      const selectedClient = clients.find((c) => c.id === Number(clientId));
       const generatedTitle = `OS - ${selectedClient?.name ?? `Cliente ${clientId}`}`;
       const created = await createServiceOrder({
         client_id: Number(clientId),
@@ -965,6 +1173,67 @@ export function ServiceOrderFormPage() {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao criar OS." });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function onSubmitOsFinance() {
+    if (!order || !showFinanceiroTab || !osFinSettings?.finance_enabled) return;
+    const amountNum = Number(osFinAmount);
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      setMsg({ kind: "err", text: "Informe um valor válido." });
+      return;
+    }
+    const installmentsNum = osFinShowInstallmentsField
+      ? Math.max(1, Number.parseInt(osFinInstallments || "1", 10) || 1)
+      : 1;
+    const feeMatched = osFinFees.find(
+      (x) =>
+        x.is_active &&
+        x.provider_name.trim().toLowerCase() === osFinPaymentProvider.trim().toLowerCase() &&
+        x.payment_method === osFinPaymentMethod &&
+        x.installments === installmentsNum,
+    );
+    const feePercentNum = feeMatched ? Number(feeMatched.fee_percent || 0) : Number(osFinFeePercent || "0");
+    const feeFixedNum = feeMatched ? Number(feeMatched.fee_fixed_amount || 0) : Number(osFinFeeFixed || "0");
+    const feeCalculated = amountNum * (feePercentNum / 100) + feeFixedNum;
+    const wa = digitsOnlyPhoneForApi(osFinRecipientWhatsapp);
+    const desc = `Receita OS #${order.id} — ${selectedClient?.name ?? "Cliente"}`.slice(0, 180);
+
+    setOsFinSubmitting(true);
+    setMsg(null);
+    try {
+      await createFinanceEntry({
+        description: desc,
+        entry_type: "income",
+        amount: amountNum,
+        payment_method: osFinPaymentMethod || null,
+        payment_provider: osFinPaymentProvider.trim() || null,
+        fee_percent: feePercentNum,
+        fee_fixed_amount: feeFixedNum,
+        fee_amount: feeCalculated,
+        recipient_whatsapp: wa.length >= 10 ? wa : null,
+        installments: installmentsNum,
+        installment_interval_months: installmentsNum > 1 ? Number(osFinInstallmentInterval || "1") : 1,
+        finance_account_id: osFinAccountId ? Number(osFinAccountId) : null,
+        due_date: osFinDueDate,
+        competence_date: osFinCompetenceDate,
+        ...(osFinShowMachineField ? { settlement_plan: osFinSettlementPlan } : {}),
+        category_id: osFinCategoryId ? Number(osFinCategoryId) : null,
+        status: osFinEntryStatus,
+        service_order_id: order.id,
+      });
+      const entries = await listFinanceEntries({
+        start_date: "2020-01-01",
+        end_date: "2035-12-31",
+        entry_type: "income",
+        service_order_id: order.id,
+      });
+      setOsFinExisting(entries);
+      setMsg({ kind: "ok", text: "Lançamento registrado no financeiro." });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao registrar no financeiro." });
+    } finally {
+      setOsFinSubmitting(false);
     }
   }
 
@@ -1077,9 +1346,15 @@ export function ServiceOrderFormPage() {
       });
       setSlotSuggestions(rows);
       if (rows.length === 0) {
+        const base =
+          "Não encontramos um encaixe automático para este dia, técnico e duração da OS (turnos manhã/tarde, jornada do técnico e conflitos na agenda).";
+        const longJob =
+          !allowOvertime && estimatedMinutes > 240
+            ? ' Serviços longos costumam precisar de "Permitir hora extra" ou "Sugerir divisão em dias" para caber na agenda.'
+            : "";
         setMsg({
           kind: "err",
-          text: "Não encontramos horários disponíveis para o dia/filtro selecionado. Tente outro dia ou técnico.",
+          text: `${base}${longJob} Você pode tentar outro dia ou técnico, ou informar data e hora manualmente no campo "Iniciar em" se já houver acordo com o cliente.`,
         });
       }
     } catch (e) {
@@ -1211,6 +1486,31 @@ export function ServiceOrderFormPage() {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao concluir OS." });
     } finally {
       setStatusUpdating(false);
+    }
+  }
+
+  async function onRegisterPreventiveFromOs() {
+    if (!order || !canEdit) return;
+    setPreventiveOsMsg(null);
+    setPreventiveOsLoading(true);
+    try {
+      const rows = await registerPreventiveFromServiceOrder(order.id, {
+        data_realizacao: preventiveOsDate || undefined,
+      });
+      setPreventiveOsMsg({
+        kind: "ok",
+        text:
+          rows.length === 1
+            ? "Registrado 1 tipo de serviço na gestão preventiva."
+            : `Registrados ${rows.length} tipos de serviço na gestão preventiva.`,
+      });
+    } catch (e) {
+      setPreventiveOsMsg({
+        kind: "err",
+        text: e instanceof Error ? e.message : "Falha ao registrar.",
+      });
+    } finally {
+      setPreventiveOsLoading(false);
     }
   }
 
@@ -1389,6 +1689,16 @@ export function ServiceOrderFormPage() {
               <IconTabCalendar className={styles.tabNavIcon} />
               Planejamento
             </button>
+            {!isNew && canEdit ? (
+              <button
+                type="button"
+                className={`${styles.tabNavBtn} ${activeTab === "technical" ? styles.tabNavBtnActive : ""}`}
+                onClick={() => setActiveTab("technical")}
+              >
+                <IconWrench className={styles.tabNavIcon} />
+                Técnica
+              </button>
+            ) : null}
             {showConclusaoTab ? (
               <button
                 type="button"
@@ -1397,6 +1707,16 @@ export function ServiceOrderFormPage() {
               >
                 <IconTabCheck className={styles.tabNavIcon} />
                 Conclusão
+              </button>
+            ) : null}
+            {showFinanceiroTab ? (
+              <button
+                type="button"
+                className={`${styles.tabNavBtn} ${activeTab === "finance" ? styles.tabNavBtnActive : ""}`}
+                onClick={() => setActiveTab("finance")}
+              >
+                <IconFinanceTab className={styles.tabNavIcon} />
+                Financeiro
               </button>
             ) : null}
           </>
@@ -1421,13 +1741,13 @@ export function ServiceOrderFormPage() {
                 Dados principais
               </h2>
               <div className={styles.clientRowPrimary}>
-                <div>
+                <div className={formLayout.field}>
                   <label className={loginStyles.label} htmlFor="os-client">
                     Cliente
                   </label>
                   {isNew ? (
                     <>
-                      {selectedClient ? (
+                      {clientId && selectedClient ? (
                         <div className={styles.selectedPillWrap}>
                           <div className={styles.selectedPill}>
                             <span className={styles.selectedPillLabel}>Cliente selecionado</span>
@@ -1439,75 +1759,21 @@ export function ServiceOrderFormPage() {
                             className={styles.btnGhost}
                             onClick={() => {
                               setClientId("");
-                              setClientSearch("");
-                              setClientDropdownOpen(true);
                             }}
                           >
                             Trocar cliente
                           </button>
                         </div>
+                      ) : clientId ? (
+                        <p className={styles.loading}>Carregando cliente…</p>
                       ) : (
-                        <>
-                          <div className={styles.searchFieldWrap}>
-                            <span className={styles.searchFieldIcon}>
-                              <IconSearchField />
-                            </span>
-                            <input
-                              id="os-client"
-                              className={loginStyles.input}
-                              placeholder="Buscar cliente por nome ou documento…"
-                              value={clientSearch}
-                              onChange={(e) => setClientSearch(e.target.value)}
-                              onFocus={() => setClientDropdownOpen(true)}
-                              onClick={() => setClientDropdownOpen(true)}
-                              onBlur={() => {
-                                window.setTimeout(() => setClientDropdownOpen(false), 120);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "ArrowDown") {
-                                  e.preventDefault();
-                                  setActiveClientIndex((idx) => Math.min(idx + 1, Math.max(visibleClients.length - 1, 0)));
-                                } else if (e.key === "ArrowUp") {
-                                  e.preventDefault();
-                                  setActiveClientIndex((idx) => Math.max(idx - 1, 0));
-                                } else if (e.key === "Enter") {
-                                  if (visibleClients.length > 0) {
-                                    e.preventDefault();
-                                    const c = visibleClients[Math.min(activeClientIndex, visibleClients.length - 1)];
-                                    if (!c) return;
-                                    setClientId(String(c.id));
-                                    setClientSearch("");
-                                    setClientDropdownOpen(false);
-                                  }
-                                }
-                              }}
-                              autoComplete="off"
-                            />
-                          </div>
-                          {visibleClients.length > 0 ? (
-                            <div className={styles.searchResultList}>
-                              {visibleClients.map((c, idx) => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  className={`${styles.searchResultBtn} ${idx === activeClientIndex ? styles.searchResultBtnActive : ""}`}
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => {
-                                    setClientId(String(c.id));
-                                    setClientSearch("");
-                                    setClientDropdownOpen(false);
-                                  }}
-                                >
-                                  <span>{renderHighlightedText(c.name, clientSearch)}</span>
-                                  <small>{renderHighlightedText(c.document ?? "", clientSearch)}</small>
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                          {clientDropdownOpen && visibleClients.length === 0 ? (
-                            <p className={styles.emptySearch}>Nenhum cliente encontrado.</p>
-                          ) : null}
-                        </>
+                        <ClientPicker
+                          inputId="os-client"
+                          value={clientId}
+                          onChange={(id) => setClientId(id)}
+                          disabled={readOnly}
+                          pinned={selectedClient ?? undefined}
+                        />
                       )}
                     </>
                   ) : (
@@ -1519,7 +1785,7 @@ export function ServiceOrderFormPage() {
                 </div>
                 <div>
                   <p className={styles.metaLabel}>Contato</p>
-                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient)}</p>
+                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient ?? undefined)}</p>
                 </div>
               </div>
 
@@ -1547,20 +1813,24 @@ export function ServiceOrderFormPage() {
 
             <div className={styles.section}>
               <h2 className={styles.sectionHeading}>Observações</h2>
-              <label className={loginStyles.label} htmlFor="os-general-notes">
-                Texto livre para a equipe
-              </label>
-              <textarea
-                id="os-general-notes"
-                className={loginStyles.input}
-                value={generalNotes}
-                onChange={(e) => setGeneralNotes(e.target.value)}
-                rows={4}
-                disabled={!isNew}
-                placeholder="Informações importantes para a equipe e para o atendimento."
-              />
-              <div className={styles.infoStrip}>
-                <p>Serviços, produtos, desconto e resumo ficam no card abaixo.</p>
+              <div className={formLayout.stack}>
+                <div className={formLayout.field}>
+                  <label className={loginStyles.label} htmlFor="os-general-notes">
+                    Texto livre para a equipe
+                  </label>
+                  <textarea
+                    id="os-general-notes"
+                    className={loginStyles.input}
+                    value={generalNotes}
+                    onChange={(e) => setGeneralNotes(e.target.value)}
+                    rows={4}
+                    disabled={!isNew}
+                    placeholder="Informações importantes para a equipe e para o atendimento."
+                  />
+                </div>
+                <div className={styles.infoStrip}>
+                  <p>Serviços, produtos, desconto e resumo ficam no card abaixo.</p>
+                </div>
               </div>
             </div>
 
@@ -1573,13 +1843,19 @@ export function ServiceOrderFormPage() {
                     Serviços da OS
                   </h2>
                 </div>
+                {allowEditOrderLines && hasActiveSchedule ? (
+                  <p className={styles.summaryLineMuted} style={{ margin: "0 0 0.75rem" }}>
+                    Esta OS já tem agendamento: ao alterar serviços ou quantidades, confira na aba Planejamento se o tempo total
+                    ainda cabe no horário (ou remarque).
+                  </p>
+                ) : null}
                 {isNew ? (
                   <p className={styles.summaryLineMuted} style={{ margin: "0 0 0.75rem" }}>
                     Use <strong>quantidade</strong> para várias unidades do mesmo serviço. O vínculo de cada aparelho é
                     feito pelo <strong>técnico na execução</strong> (ou separação manual após salvar a OS).
                   </p>
                 ) : null}
-                {isNew ? (
+                {(isNew || allowEditOrderLines) ? (
                   <>
                     <div className={styles.searchFieldWrap}>
                       <span className={styles.searchFieldIcon}>
@@ -1651,7 +1927,7 @@ export function ServiceOrderFormPage() {
                 </>
               ) : null}
 
-              {selectedServices.length === 0 && isNew ? (
+              {selectedServices.length === 0 && (isNew || allowEditOrderLines) ? (
                 <div className={styles.emptyStateDashed}>
                   <IconWrench className={styles.emptyStateIcon} aria-hidden />
                   <p>Nenhum serviço adicionado.</p>
@@ -1704,7 +1980,7 @@ export function ServiceOrderFormPage() {
               {showQuickEquipmentCreate ? (
                 <div className={styles.subPanel}>
                   <div className={styles.gridCompact}>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Identificação</label>
                       <input
                         className={loginStyles.input}
@@ -1714,7 +1990,7 @@ export function ServiceOrderFormPage() {
                         disabled={creatingQuickEquipment}
                       />
                     </div>
-                    <div>
+                    <div className={formLayout.field}>
                       <label className={loginStyles.label}>Local</label>
                       <input
                         className={loginStyles.input}
@@ -1761,7 +2037,27 @@ export function ServiceOrderFormPage() {
                           prev.map((s) => (s.lineId === item.lineId ? { ...s, quantity: raw } : s)),
                         );
                       }}
-                      disabled={!isNew}
+                      onBlur={() => {
+                        if (isNew || !allowEditOrderLines || !order?.id || !item.service_item_id) return;
+                        const row = selectedServices.find((s) => s.lineId === item.lineId);
+                        if (!row) return;
+                        void (async () => {
+                          try {
+                            const refreshed = await patchServiceOrderServiceItemQuantity(
+                              order.id,
+                              item.service_item_id!,
+                              Math.max(row.quantity, 1),
+                            );
+                            setOrder(refreshed);
+                          } catch (err) {
+                            setMsg({
+                              kind: "err",
+                              text: err instanceof Error ? err.message : "Erro ao salvar quantidade do serviço.",
+                            });
+                          }
+                        })();
+                      }}
+                      disabled={!isNew && !allowEditOrderLines}
                     />
                     {isNew ? (
                       <span className={styles.summaryLineMuted} title="Vínculo na execução (técnico)">
@@ -1814,11 +2110,29 @@ export function ServiceOrderFormPage() {
                         ))}
                       </select>
                     )}
-                    {isNew ? (
+                    {(isNew || allowEditOrderLines) ? (
                       <button
                         type="button"
                         className={styles.btnGhost}
-                        onClick={() => setSelectedServices((prev) => prev.filter((s) => s.lineId !== item.lineId))}
+                        onClick={() => {
+                          if (isNew) {
+                            setSelectedServices((prev) => prev.filter((s) => s.lineId !== item.lineId));
+                            return;
+                          }
+                          if (!order?.id || !item.service_item_id || !allowEditOrderLines) return;
+                          void (async () => {
+                            try {
+                              const refreshed = await deleteServiceOrderServiceItem(order.id, item.service_item_id!);
+                              setOrder(refreshed);
+                              setMsg({ kind: "ok", text: "Serviço removido da OS." });
+                            } catch (err) {
+                              setMsg({
+                                kind: "err",
+                                text: err instanceof Error ? err.message : "Erro ao remover serviço.",
+                              });
+                            }
+                          })();
+                        }}
                       >
                         Remover
                       </button>
@@ -1835,7 +2149,7 @@ export function ServiceOrderFormPage() {
                   Produtos da OS
                 </h2>
               </div>
-              {isNew ? (
+              {(isNew || allowEditOrderLines) ? (
                 <>
                   <div className={styles.searchFieldWrap}>
                     <span className={styles.searchFieldIcon}>
@@ -1905,21 +2219,22 @@ export function ServiceOrderFormPage() {
                 </>
               ) : null}
 
-              {selectedProducts.length === 0 && isNew ? (
+              {selectedProducts.length === 0 && (isNew || allowEditOrderLines) ? (
                 <div className={styles.emptyStateDashed}>
                   <IconPackageSection className={styles.emptyStateIcon} aria-hidden />
                   <p>Nenhum produto adicionado.</p>
                   <p>Use a busca acima para incluir materiais na OS.</p>
                 </div>
               ) : null}
-              {selectedProducts.length === 0 && !isNew ? (
+              {selectedProducts.length === 0 && !isNew && !allowEditOrderLines ? (
                 <p className={styles.emptyText}>Nenhum produto adicionado.</p>
               ) : null}
               {selectedProducts.map((item) => {
                 const product = productsMap.get(item.product_id);
                 const unitPrice = Number(product?.unit_price ?? 0);
+                const rowKey = item.product_item_id ?? `pid-${item.product_id}`;
                 return (
-                  <div key={item.product_id} className={`${styles.itemRowCard} ${styles.itemRowCardProduct}`}>
+                  <div key={rowKey} className={`${styles.itemRowCard} ${styles.itemRowCardProduct}`}>
                     <div>
                       <p className={styles.itemRowTitle}>{product?.name ?? `Produto #${item.product_id}`}</p>
                       <p className={styles.itemRowMeta}>{formatCurrency(unitPrice)} / un</p>
@@ -1929,20 +2244,62 @@ export function ServiceOrderFormPage() {
                       type="number"
                       min={1}
                       value={item.quantity}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const q = Math.max(Number(e.target.value), 1);
                         setSelectedProducts((prev) =>
-                          prev.map((p) =>
-                            p.product_id === item.product_id ? { ...p, quantity: Math.max(Number(e.target.value), 1) } : p,
-                          ),
-                        )
-                      }
-                      disabled={!isNew}
+                          prev.map((p) => {
+                            if (item.product_item_id != null) {
+                              return p.product_item_id === item.product_item_id ? { ...p, quantity: q } : p;
+                            }
+                            return p.product_id === item.product_id ? { ...p, quantity: q } : p;
+                          }),
+                        );
+                      }}
+                      onBlur={() => {
+                        if (isNew || !allowEditOrderLines || !order?.id || !item.product_item_id) return;
+                        const row = selectedProducts.find((p) => p.product_item_id === item.product_item_id);
+                        if (!row) return;
+                        void (async () => {
+                          try {
+                            const refreshed = await patchServiceOrderProductItemQuantity(
+                              order.id,
+                              item.product_item_id!,
+                              Math.max(row.quantity, 1),
+                            );
+                            setOrder(refreshed);
+                          } catch (err) {
+                            setMsg({
+                              kind: "err",
+                              text: err instanceof Error ? err.message : "Erro ao salvar quantidade do produto.",
+                            });
+                          }
+                        })();
+                      }}
+                      disabled={!isNew && !allowEditOrderLines}
                     />
-                    {isNew ? (
+                    {(isNew || allowEditOrderLines) ? (
                       <button
                         type="button"
                         className={styles.btnGhost}
-                        onClick={() => setSelectedProducts((prev) => prev.filter((p) => p.product_id !== item.product_id))}
+                        onClick={() => {
+                          if (isNew) {
+                            setSelectedProducts((prev) => prev.filter((p) => p.product_id !== item.product_id));
+                            return;
+                          }
+                          if (!order?.id || !item.product_item_id || !allowEditOrderLines) return;
+                          void (async () => {
+                            try {
+                              const refreshed = await deleteServiceOrderProductItem(order.id, item.product_item_id!);
+                              setOrder(refreshed);
+                              setMsg({ kind: "ok", text: "Produto removido da OS." });
+                            } catch (err) {
+                              setMsg({
+                                kind: "err",
+                                text: err instanceof Error ? err.message : "Erro ao remover produto.",
+                              });
+                            }
+                          })();
+                        }}
                       >
                         Remover
                       </button>
@@ -1954,24 +2311,27 @@ export function ServiceOrderFormPage() {
 
             <div className={styles.section}>
               <h2 className={styles.sectionHeading}>Resumo</h2>
-              <div className={styles.discountRow}>
-                <label className={loginStyles.label} htmlFor="os-discount">
-                  Desconto (R$)
-                </label>
-                <input
-                  id="os-discount"
-                  type="number"
-                  className={loginStyles.input}
-                  min={0}
-                  step={0.01}
-                  value={discountAmount}
-                  onChange={(e) => setDiscountAmount(Math.max(0, Number(e.target.value) || 0))}
-                  onBlur={() => {
-                    if (!isNew && order) void persistDiscount(discountAmount);
-                  }}
-                  disabled={readOnly || (!isNew && !canEdit)}
-                />
-              </div>
+              <div className={formLayout.stack}>
+                <div className={formLayout.field}>
+                  <div className={styles.discountRow}>
+                    <label className={loginStyles.label} htmlFor="os-discount">
+                      Desconto (R$)
+                    </label>
+                    <input
+                      id="os-discount"
+                      type="number"
+                      className={loginStyles.input}
+                      min={0}
+                      step={0.01}
+                      value={discountAmount}
+                      onChange={(e) => setDiscountAmount(Math.max(0, Number(e.target.value) || 0))}
+                      onBlur={() => {
+                        if (!isNew && order) void persistDiscount(discountAmount);
+                      }}
+                      disabled={readOnly || (!isNew && !canEdit)}
+                    />
+                  </div>
+                </div>
               <div className={styles.summaryGrid}>
                 <article className={styles.summaryCard}>
                   <p className={styles.summaryLabel}>Tempo total</p>
@@ -1994,6 +2354,14 @@ export function ServiceOrderFormPage() {
                   <p className={styles.summaryHint}>Valor líquido (após desconto)</p>
                 </article>
               </div>
+              {estimatedMinutes > 300 && !isNew ? (
+                <p className={styles.summaryLineMuted} style={{ marginTop: "0.5rem" }}>
+                  Duração elevada: a sugestão de horários trata manhã e tarde separadamente (até o fim do expediente). Se
+                  nada aparecer, use &quot;Permitir hora extra&quot;, &quot;Sugerir divisão em dias&quot; ou informe o
+                  início manualmente.
+                </p>
+              ) : null}
+              </div>
             </div>
             </div>
             </div>
@@ -2009,8 +2377,9 @@ export function ServiceOrderFormPage() {
                 <p className={styles.summaryLine}>Esta OS está {statusLabel(order?.status).toLowerCase()}.</p>
               ) : (
                 <>
+                  <div className={formLayout.stack}>
                   <div className={styles.planningTopRow}>
-                    <div className={styles.planningTechField}>
+                    <div className={`${styles.planningTechField} ${formLayout.field}`}>
                       <label className={loginStyles.label} htmlFor="planning-tech">
                         Técnico
                       </label>
@@ -2228,30 +2597,36 @@ export function ServiceOrderFormPage() {
                             <p className={styles.placeholderText}>
                               Defina início e observações. O técnico é o selecionado acima (ou o da sugestão escolhida).
                             </p>
-                            <label className={loginStyles.label} htmlFor="plan-start">
-                              Iniciar em
-                            </label>
-                            <input
-                              id="plan-start"
-                              type="datetime-local"
-                              className={loginStyles.input}
-                              value={startsAtLocal}
-                              onChange={(e) => setStartsAtLocal(e.target.value)}
-                              disabled={readOnly || isTerminal}
-                            />
+                            <div className={formLayout.stack}>
+                              <div className={formLayout.field}>
+                                <label className={loginStyles.label} htmlFor="plan-start">
+                                  Iniciar em
+                                </label>
+                                <input
+                                  id="plan-start"
+                                  type="datetime-local"
+                                  className={loginStyles.input}
+                                  value={startsAtLocal}
+                                  onChange={(e) => setStartsAtLocal(e.target.value)}
+                                  disabled={readOnly || isTerminal}
+                                />
+                              </div>
 
-                            <label className={loginStyles.label} htmlFor="plan-notes">
-                              Observações e histórico
-                            </label>
-                            <textarea
-                              id="plan-notes"
-                              className={loginStyles.input}
-                              value={approveNotes}
-                              onChange={(e) => setApproveNotes(e.target.value)}
-                              rows={4}
-                              disabled={readOnly || isTerminal}
-                              placeholder="Notas da equipe e registro de mudanças (app / WhatsApp)."
-                            />
+                              <div className={formLayout.field}>
+                                <label className={loginStyles.label} htmlFor="plan-notes">
+                                  Observações e histórico
+                                </label>
+                                <textarea
+                                  id="plan-notes"
+                                  className={loginStyles.input}
+                                  value={approveNotes}
+                                  onChange={(e) => setApproveNotes(e.target.value)}
+                                  rows={4}
+                                  disabled={readOnly || isTerminal}
+                                  placeholder="Notas da equipe e registro de mudanças (app / WhatsApp)."
+                                />
+                              </div>
+                            </div>
 
                             <p className={styles.summaryLineMuted}>
                               Fim estimado considera duração dos serviços e disponibilidade do técnico.
@@ -2320,17 +2695,19 @@ export function ServiceOrderFormPage() {
                         <p className={styles.summaryLineMuted}>
                           Até 4 sugestões por turno (manhã/tarde), respeitando agenda e feriados.
                         </p>
-                        <label className={loginStyles.label} htmlFor="planning-reschedule-start">
-                          Novo início
-                        </label>
-                        <input
-                          id="planning-reschedule-start"
-                          type="datetime-local"
-                          className={loginStyles.input}
-                          value={startsAtLocal}
-                          onChange={(e) => setStartsAtLocal(e.target.value)}
-                          disabled={readOnly || isTerminal}
-                        />
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="planning-reschedule-start">
+                            Novo início
+                          </label>
+                          <input
+                            id="planning-reschedule-start"
+                            type="datetime-local"
+                            className={loginStyles.input}
+                            value={startsAtLocal}
+                            onChange={(e) => setStartsAtLocal(e.target.value)}
+                            disabled={readOnly || isTerminal}
+                          />
+                        </div>
                         <div className={styles.actions}>
                           <button
                             type="button"
@@ -2344,6 +2721,7 @@ export function ServiceOrderFormPage() {
                       </article>
                     </div>
                   ) : null}
+                  </div>
                 </>
               )
             ) : (
@@ -2370,7 +2748,7 @@ export function ServiceOrderFormPage() {
                 </div>
                 <div>
                   <dt>Contato</dt>
-                  <dd>{clientPreferredContact(selectedClient)}</dd>
+                  <dd>{clientPreferredContact(selectedClient ?? undefined)}</dd>
                 </div>
                 <div className={styles.closingFactsWide}>
                   <dt>Endereço</dt>
@@ -2403,6 +2781,73 @@ export function ServiceOrderFormPage() {
                   </div>
                 ) : null}
               </dl>
+              {canEdit && order && order.status !== "cancelled" ? (
+                <article className={styles.conclusaoCard}>
+                  <h3 className={styles.conclusaoCardTitle}>Manutenção preventiva</h3>
+                  <p className={styles.placeholderText}>
+                    Registra na{" "}
+                    <Link to="/app/preventive-maintenance">Gestão preventiva</Link> a data da última realização para cada
+                    tipo de serviço desta OS que tenha periodicidade cadastrada (ex.: 6 ou 12 meses). Os lembretes usam esse
+                    período automaticamente.
+                  </p>
+                  {order.service_items.length === 0 ? (
+                    <p className={styles.placeholderText} style={{ marginTop: "0.5rem" }}>
+                      Esta OS não tem linhas de serviço.
+                    </p>
+                  ) : (
+                    <div style={{ marginTop: "0.5rem", marginBottom: "0.65rem" }}>
+                      <p className={styles.placeholderText} style={{ marginBottom: "0.35rem" }}>
+                        Serviços nesta OS:
+                      </p>
+                      <ul style={{ margin: 0, paddingLeft: "1.15rem", fontSize: "0.88rem", lineHeight: 1.45 }}>
+                        {order.service_items.map((it) => {
+                          const name = it.service_name?.trim() || `Serviço #${it.service_id}`;
+                          const per = it.periodicidade_meses;
+                          return (
+                            <li key={it.id}>
+                              <strong>{name}</strong>
+                              {per != null
+                                ? ` — será registrado na preventiva (${per} meses)`
+                                : " — não será registrado: defina periodicidade (6 ou 12 meses) no cadastro do serviço"}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                  <div className={formLayout.field}>
+                    <label className={loginStyles.label} htmlFor="os-preventive-date">
+                      Data da realização
+                    </label>
+                    <input
+                      id="os-preventive-date"
+                      type="date"
+                      className={loginStyles.input}
+                      value={preventiveOsDate}
+                      onChange={(e) => setPreventiveOsDate(e.target.value)}
+                      disabled={preventiveOsLoading}
+                    />
+                  </div>
+                  <div className={styles.actions} style={{ marginTop: "0.75rem" }}>
+                    <button
+                      type="button"
+                      className={styles.btnPrimary}
+                      onClick={() => void onRegisterPreventiveFromOs()}
+                      disabled={preventiveOsLoading || !preventiveOsDate}
+                    >
+                      {preventiveOsLoading ? "Registrando…" : "Registrar na gestão preventiva"}
+                    </button>
+                  </div>
+                  {preventiveOsMsg ? (
+                    <p
+                      className={preventiveOsMsg.kind === "ok" ? styles.msgOk : styles.msgErr}
+                      style={{ marginTop: "0.65rem" }}
+                    >
+                      {preventiveOsMsg.text}
+                    </p>
+                  ) : null}
+                </article>
+              ) : null}
               {canEdit && order && !isTerminal ? (
                 <article className={`${styles.conclusaoCard} ${styles.conclusaoCardDanger} ${styles.closingCancelCard}`}>
                   <h3 className={styles.conclusaoCardTitle}>Cancelar agendamento e OS</h3>
@@ -2423,7 +2868,266 @@ export function ServiceOrderFormPage() {
           </div>
         ) : null}
 
-        {activeTab === "technical" && isTechnician && !isNew && order ? (
+        {activeTab === "finance" && showFinanceiroTab && !isTechnician ? (
+          <div className={styles.tabPanel}>
+            <div className={styles.section}>
+              <h2 className={styles.sectionHeading}>
+                <IconFinanceTab className={styles.sectionHeadingIcon} aria-hidden />
+                Financeiro da OS
+              </h2>
+              <p className={styles.leadInline}>
+                Após o técnico concluir a OS, registre aqui o meio de pagamento. O valor e as taxas seguem as mesmas regras
+                do módulo Financeiro (incluindo tabela de maquininha, quando aplicável).
+              </p>
+              {!osFinSettings?.finance_enabled ? (
+                <p className={styles.summaryLineMuted}>
+                  O financeiro está desativado neste workspace. Ative em{" "}
+                  <Link to="/app/finance/settings">Configurações do Financeiro</Link>.
+                </p>
+              ) : osFinLoading ? (
+                <p className={styles.summaryLineMuted}>Carregando…</p>
+              ) : osFinExisting.length > 0 ? (
+                <div className={styles.conclusaoCard}>
+                  <h3 className={styles.conclusaoCardTitle}>Lançamento vinculado</h3>
+                  <p className={styles.summaryLine}>
+                    {osFinExisting.length === 1
+                      ? `Uma receita de ${formatCurrency(Number(osFinExisting[0]!.amount))} (${osFinExisting[0]!.payment_method ?? "—"}) já está no financeiro.`
+                      : `${osFinExisting.length} parcelas registradas para esta OS.`}
+                  </p>
+                  <Link className={styles.btnPrimary} to="/app/finance">
+                    Abrir módulo Financeiro
+                  </Link>
+                </div>
+              ) : (
+                <>
+                  <div className={formLayout.stack}>
+                    <div className={styles.clientRowPrimary}>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-amount">
+                          Valor bruto (R$)
+                        </label>
+                        <input
+                          id="os-fin-amount"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className={loginStyles.input}
+                          value={osFinAmount}
+                          onChange={(e) => setOsFinAmount(e.target.value)}
+                        />
+                      </div>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-due">
+                          Vencimento (1ª parcela)
+                        </label>
+                        <input
+                          id="os-fin-due"
+                          type="date"
+                          className={loginStyles.input}
+                          value={osFinDueDate}
+                          onChange={(e) => setOsFinDueDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className={formLayout.field}>
+                      <label className={loginStyles.label} htmlFor="os-fin-competence">
+                        Data de competência
+                      </label>
+                      <input
+                        id="os-fin-competence"
+                        type="date"
+                        className={loginStyles.input}
+                        value={osFinCompetenceDate}
+                        onChange={(e) => setOsFinCompetenceDate(e.target.value)}
+                      />
+                    </div>
+                    <div className={styles.clientRowPrimary}>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-method">
+                        Meio de pagamento
+                      </label>
+                      <select
+                        id="os-fin-method"
+                        className={loginStyles.select}
+                        value={osFinPaymentMethod}
+                        onChange={(e) => setOsFinPaymentMethod(e.target.value)}
+                      >
+                        <option value="pix">PIX</option>
+                        <option value="cash">Dinheiro</option>
+                        <option value="credit_card">Cartão de crédito</option>
+                        <option value="debit_card">Cartão de débito</option>
+                        <option value="boleto">Boleto</option>
+                      </select>
+                      </div>
+                      {osFinShowMachineField ? (
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="os-fin-provider">
+                            Maquininha / provedor
+                          </label>
+                          <input
+                            id="os-fin-provider"
+                            className={loginStyles.input}
+                            list="os-finance-provider-suggestions"
+                            value={osFinPaymentProvider}
+                            onChange={(e) => setOsFinPaymentProvider(e.target.value)}
+                            placeholder="Ex.: Stone"
+                          />
+                          <datalist id="os-finance-provider-suggestions">
+                            {osFinProviderSuggestions.map((name) => (
+                              <option key={name} value={name} />
+                            ))}
+                          </datalist>
+                        </div>
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                    {osFinShowMachineField ? (
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-settle">
+                          Previsão de compensação (caixa)
+                        </label>
+                        <select
+                          id="os-fin-settle"
+                          className={loginStyles.select}
+                          value={osFinSettlementPlan}
+                          onChange={(e) =>
+                            setOsFinSettlementPlan(e.target.value as "same_as_due" | "next_business_day")
+                          }
+                        >
+                          <option value="same_as_due">No dia do vencimento da parcela</option>
+                          <option value="next_business_day">D+1 útil após o vencimento da parcela</option>
+                        </select>
+                        <p className={styles.summaryLineMuted}>
+                          Taxa conforme tabela em Configurações → Maquininhas; valor bruto e taxas divididos entre parcelas.
+                        </p>
+                      </div>
+                    ) : null}
+                    {osFinShowInstallmentsField ? (
+                      <div className={styles.clientRowPrimary}>
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="os-fin-inst">
+                          Parcelas
+                        </label>
+                        <input
+                          id="os-fin-inst"
+                          type="number"
+                          min="1"
+                          max="24"
+                          step="1"
+                          className={loginStyles.input}
+                          value={osFinInstallments}
+                          onChange={(e) => setOsFinInstallments(e.target.value)}
+                        />
+                        </div>
+                        <div className={formLayout.field}>
+                          <label className={loginStyles.label} htmlFor="os-fin-interval">
+                            Intervalo (meses)
+                          </label>
+                          <input
+                            id="os-fin-interval"
+                            type="number"
+                            min="1"
+                            max="12"
+                            step="1"
+                            className={loginStyles.input}
+                            value={osFinInstallmentInterval}
+                            onChange={(e) => setOsFinInstallmentInterval(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                    {osFinShowBankAccountField ? (
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-account">
+                          Conta de recebimento
+                        </label>
+                        <select
+                          id="os-fin-account"
+                          className={loginStyles.select}
+                          value={osFinAccountId}
+                          onChange={(e) => setOsFinAccountId(e.target.value)}
+                        >
+                          <option value="">Selecionar conta</option>
+                          {osFinAccounts.map((a) => (
+                            <option key={a.id} value={String(a.id)}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                    <div className={styles.clientRowPrimary}>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-cat">
+                        Categoria
+                      </label>
+                      <select
+                        id="os-fin-cat"
+                        className={loginStyles.select}
+                        value={osFinCategoryId}
+                        onChange={(e) => setOsFinCategoryId(e.target.value)}
+                      >
+                        <option value="">Sem categoria</option>
+                        {osFinCategories.map((c) => (
+                          <option key={c.id} value={String(c.id)}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                      </div>
+                      <div className={formLayout.field}>
+                        <label className={loginStyles.label} htmlFor="os-fin-status">
+                          Status inicial
+                        </label>
+                        <select
+                          id="os-fin-status"
+                          className={loginStyles.select}
+                          value={osFinEntryStatus}
+                          onChange={(e) => setOsFinEntryStatus(e.target.value as FinanceEntryStatus)}
+                        >
+                          <option value="paid">Pago</option>
+                          <option value="pending">Pendente</option>
+                          <option value="overdue">Vencido</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className={formLayout.field}>
+                      <label className={loginStyles.label} htmlFor="os-fin-wa">
+                        WhatsApp do cliente (opcional, lembretes)
+                      </label>
+                      <input
+                        id="os-fin-wa"
+                        type="tel"
+                        inputMode="tel"
+                        className={loginStyles.input}
+                        value={osFinRecipientWhatsapp}
+                        onChange={(e) => setOsFinRecipientWhatsapp(formatPhoneBrInput(e.target.value))}
+                        autoComplete="tel"
+                        placeholder="(16) 99999-9999"
+                      />
+                    </div>
+                    <div className={styles.actions}>
+                      <button
+                        type="button"
+                        className={styles.btnPrimary}
+                        onClick={() => void onSubmitOsFinance()}
+                        disabled={osFinSubmitting}
+                      >
+                        {osFinSubmitting ? "Salvando..." : "Registrar no financeiro"}
+                      </button>
+                      <Link className={styles.btnGhost} to="/app/finance">
+                        Ver lançamentos
+                      </Link>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "technical" && canSeeTechnicalTab && !isNew && order ? (
           <div className={styles.tabPanel}>
             <div className={styles.section}>
               <h2 className={styles.sectionHeading}>OS #{order.id}</h2>
@@ -2438,7 +3142,7 @@ export function ServiceOrderFormPage() {
                 </div>
                 <div>
                   <p className={styles.metaLabel}>Contato</p>
-                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient)}</p>
+                  <p className={styles.clientInfoValue}>{clientPreferredContact(selectedClient ?? undefined)}</p>
                 </div>
               </div>
               <div className={styles.clientAddressBlock}>

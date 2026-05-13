@@ -101,6 +101,25 @@
   --input-border: 1px solid var(--color-border);
   --input-bg: var(--color-surface-elevated);
 
+  /*
+   * Barra de ferramentas em listagens (busca + select + botões):
+   * use a mesma altura em todos os controles para alinhar a linha.
+   * Ex.: height / min-height: var(--toolbar-control-height)
+   */
+  --toolbar-control-height: var(--input-height);
+
+  /*
+   * Formulários: distância label → campo, entre campos e em grids.
+   * Use em formLayout.module.css, LoginPage (label/inputGroup) e páginas com formulários longos.
+   */
+  --form-label-to-control: 0.25rem;
+  --form-field-gap: 0.75rem;
+  --form-field-gap-loose: 1rem;
+  --form-group-inner-gap: 0.5rem;
+  --form-hint-margin-top: 0.375rem;
+  --form-grid-column-gap: 1rem;
+  --form-grid-row-gap: 0.75rem;
+
   /* ========== TABELAS ========== */
   --table-row-height: 3.5rem;   /* 56px */
   --table-cell-padding-x: 1rem;

@@ -8,7 +8,16 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator, model_validator
 
 from app.plan_rules import get_plan_definition, normalize_plan_key
-from models import BudgetStatus, EquipmentType, FinanceEntryStatus, FinanceEntryType, StockMovementReason, TenantStatus, UserRole
+from models import (
+    BudgetStatus,
+    EquipmentType,
+    FinanceEntryStatus,
+    FinanceEntryType,
+    ServiceOrderServiceItem,
+    StockMovementReason,
+    TenantStatus,
+    UserRole,
+)
 
 
 class TokenResponse(BaseModel):
@@ -25,6 +34,20 @@ class TokenResponse(BaseModel):
     captcha_required: bool = False
     captcha_token: str | None = None
     captcha_question: str | None = None
+    refresh_token: str | None = Field(
+        default=None,
+        description="Token opaco para POST /auth/refresh quando REFRESH_TOKEN_ENABLED na API.",
+    )
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=20, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    """Revoga um refresh token conhecido (melhor esforço; usado no logout do SPA)."""
+
+    refresh_token: str | None = Field(default=None, max_length=512)
 
 
 class LoginRequest(BaseModel):
@@ -37,6 +60,20 @@ class LoginRequest(BaseModel):
     captcha_answer: str | None = Field(default=None, min_length=1, max_length=32)
     two_factor_token: str | None = Field(default=None, min_length=20, max_length=256)
     two_factor_code: str | None = Field(default=None, min_length=4, max_length=12)
+    trust_this_device: bool = Field(
+        default=False,
+        description="Após validar o código 2FA, criar cookie HTTP-only de dispositivo confiável (admin).",
+    )
+
+
+class TrustedDeviceOut(BaseModel):
+    """Dispositivo/navegador confiável para pular 2FA."""
+
+    id: int
+    expires_at: datetime
+    created_at: datetime
+    last_used_at: datetime | None = None
+    is_current_browser: bool = False
 
 
 class BootstrapAdminRequest(BaseModel):
@@ -772,6 +809,7 @@ class CnpjLookupOut(BaseModel):
     founded: str | None = None
     main_activity: str | None = None
     address: CnpjAddressOut | None = None
+    optante_mei: bool | None = None
 
 
 class CnpjRegisterLookupOut(BaseModel):
@@ -810,10 +848,16 @@ class ClientCreate(BaseModel):
     name: str
     document: str | None = None
     tax_id_kind: Literal["cpf", "cnpj"] | None = None
+    optante_mei: bool = False
     phone: str | None = None
     whatsapp: str | None = None
     email: EmailStr | None = None
     trade_name: str | None = None
+    contact_person_name: str | None = Field(
+        default=None,
+        max_length=150,
+        description="Pessoa com quem se fala na empresa (PJ).",
+    )
     state_registration: str | None = None
     ie_indicator: Literal["1", "2", "9"] | None = Field(
         default=None,
@@ -829,6 +873,15 @@ class ClientCreate(BaseModel):
     address_postal_code: str | None = None
     address_country: str | None = "Brasil"
     address_ibge_code: str | None = Field(default=None, max_length=7)
+    preventive_campaign_opt_out: bool = False
+    is_active: bool = True
+
+    @field_validator("contact_person_name", mode="before")
+    @classmethod
+    def _strip_contact_create(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip()[:150] if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _normalize_document(self) -> ClientCreate:
@@ -878,10 +931,12 @@ class ClientUpdate(BaseModel):
     name: str | None = None
     document: str | None = None
     tax_id_kind: Literal["cpf", "cnpj"] | None = None
+    optante_mei: bool | None = None
     phone: str | None = None
     whatsapp: str | None = None
     email: EmailStr | None = None
     trade_name: str | None = None
+    contact_person_name: str | None = Field(default=None, max_length=150)
     state_registration: str | None = None
     ie_indicator: Literal["1", "2", "9"] | None = None
     municipal_registration: str | None = None
@@ -894,6 +949,15 @@ class ClientUpdate(BaseModel):
     address_postal_code: str | None = None
     address_country: str | None = None
     address_ibge_code: str | None = Field(default=None, max_length=7)
+    preventive_campaign_opt_out: bool | None = None
+    is_active: bool | None = None
+
+    @field_validator("contact_person_name", mode="before")
+    @classmethod
+    def _strip_contact_person(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip()[:150] if isinstance(v, str) else v
 
     @field_validator("address_state", mode="before")
     @classmethod
@@ -923,10 +987,12 @@ class ClientOut(BaseModel):
     name: str
     document: str | None = None
     tax_id_kind: str
+    optante_mei: bool = False
     phone: str | None = None
     whatsapp: str | None = None
     email: EmailStr | None = None
     trade_name: str | None = None
+    contact_person_name: str | None = None
     state_registration: str | None = None
     ie_indicator: str | None = None
     municipal_registration: str | None = None
@@ -939,6 +1005,30 @@ class ClientOut(BaseModel):
     address_postal_code: str | None = None
     address_country: str
     address_ibge_code: str | None = None
+    preventive_campaign_opt_out: bool = False
+    is_active: bool = True
+
+
+class ClientAuditEntryOut(BaseModel):
+    """Histórico de alterações no cadastro do cliente."""
+
+    id: int
+    user_id: int | None = None
+    user_name: str | None = None
+    action: str
+    changes: dict[str, Any]
+    created_at: datetime
+
+
+class ClientCountOut(BaseModel):
+    total: int
+
+
+class ClientImportSummaryOut(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str]
 
 
 class EquipmentCreate(BaseModel):
@@ -1344,6 +1434,10 @@ class ProductCreate(BaseModel):
     purchase_price: float = 0
     sale_price: float = 0
     stock_quantity: float = Field(default=0, ge=0)
+    compatible_equipment_tags: str | None = Field(default=None, max_length=400)
+    btu_min: int | None = Field(default=None, ge=0)
+    btu_max: int | None = Field(default=None, ge=0)
+    application_scope: str | None = Field(default=None, max_length=20)
     is_active: bool = True
 
 
@@ -1353,6 +1447,10 @@ class ProductUpdate(BaseModel):
     purchase_price: float | None = None
     sale_price: float | None = None
     stock_quantity: float | None = Field(default=None, ge=0)
+    compatible_equipment_tags: str | None = Field(default=None, max_length=400)
+    btu_min: int | None = Field(default=None, ge=0)
+    btu_max: int | None = Field(default=None, ge=0)
+    application_scope: str | None = Field(default=None, max_length=20)
     is_active: bool | None = None
 
 
@@ -1367,6 +1465,10 @@ class ProductOut(BaseModel):
     sale_price: float
     unit_price: float
     stock_quantity: float
+    compatible_equipment_tags: str | None = None
+    btu_min: int | None = None
+    btu_max: int | None = None
+    application_scope: str | None = None
     is_active: bool
 
 
@@ -1516,7 +1618,19 @@ class ServiceCreate(BaseModel):
     description: str | None = None
     price: float = 0
     duration_minutes: int
+    equipment_type_tags: str | None = Field(default=None, max_length=400)
+    btu_min: int | None = Field(default=None, ge=0)
+    btu_max: int | None = Field(default=None, ge=0)
+    service_category: str | None = Field(default=None, max_length=40)
+    applies_residential: bool = True
+    applies_commercial: bool = True
     is_active: bool = True
+    nfse_codigo_tributacao_nacional: str | None = Field(default=None, max_length=32)
+    nfse_codigo_nbs: str | None = Field(default=None, max_length=32)
+    periodicidade_meses: Literal[6, 12] | None = Field(
+        default=None,
+        description="Periodicidade para alertas de manutenção preventiva (meses). Null desliga o rastreamento.",
+    )
     product_inputs: list[ServiceProductInput] = []
 
 
@@ -1525,7 +1639,16 @@ class ServiceUpdate(BaseModel):
     description: str | None = None
     price: float | None = None
     duration_minutes: int | None = None
+    equipment_type_tags: str | None = Field(default=None, max_length=400)
+    btu_min: int | None = Field(default=None, ge=0)
+    btu_max: int | None = Field(default=None, ge=0)
+    service_category: str | None = Field(default=None, max_length=40)
+    applies_residential: bool | None = None
+    applies_commercial: bool | None = None
     is_active: bool | None = None
+    nfse_codigo_tributacao_nacional: str | None = Field(default=None, max_length=32)
+    nfse_codigo_nbs: str | None = Field(default=None, max_length=32)
+    periodicidade_meses: Literal[6, 12] | None = None
     product_inputs: list[ServiceProductInput] | None = None
 
 
@@ -1538,7 +1661,16 @@ class ServiceOut(BaseModel):
     description: str | None = None
     price: float
     duration_minutes: int
+    equipment_type_tags: str | None = None
+    btu_min: int | None = None
+    btu_max: int | None = None
+    service_category: str | None = None
+    applies_residential: bool = True
+    applies_commercial: bool = True
     is_active: bool
+    nfse_codigo_tributacao_nacional: str | None = None
+    nfse_codigo_nbs: str | None = None
+    periodicidade_meses: Literal[6, 12] | None = None
     product_inputs: list[ServiceProductInputOut] = []
     estimated_material_cost: float = 0
     estimated_profit: float = 0
@@ -1638,6 +1770,11 @@ class FinanceCategoryOut(BaseModel):
     created_at: datetime
 
 
+class FinanceCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    color: str | None = Field(default=None, max_length=7)
+
+
 class FinanceEntryCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=180)
     entry_type: FinanceEntryType
@@ -1664,6 +1801,7 @@ class FinanceEntryCreate(BaseModel):
     category_id: int | None = None
     status: FinanceEntryStatus = FinanceEntryStatus.PENDING
     notes: str | None = None
+    service_order_id: int | None = Field(default=None, ge=1)
 
     @field_validator("recipient_whatsapp", mode="after")
     @classmethod
@@ -1686,6 +1824,7 @@ class FinanceEntryUpdate(BaseModel):
     fee_amount: float | None = Field(default=None, ge=0)
     recipient_whatsapp: str | None = Field(default=None, max_length=20)
     gateway_payment_id: str | None = Field(default=None, max_length=48)
+    gateway_preference_id: str | None = Field(default=None, max_length=48)
     installment_group_id: str | None = Field(default=None, max_length=64)
     installment_number: int | None = Field(default=None, ge=1, le=24)
     installment_total: int | None = Field(default=None, ge=1, le=24)
@@ -1724,6 +1863,11 @@ class FinanceEntryOut(BaseModel):
     fee_amount: float = 0
     recipient_whatsapp: str | None = None
     gateway_payment_id: str | None = None
+    gateway_preference_id: str | None = None
+    mercadopago_archived_preference_id: str | None = None
+    mercadopago_preapproval_id: str | None = None
+    mp_reversal_at: datetime | None = None
+    mp_reversal_status: str | None = None
     installment_group_id: str | None = None
     installment_number: int = 1
     installment_total: int = 1
@@ -1734,6 +1878,7 @@ class FinanceEntryOut(BaseModel):
     settlement_plan: str | None = None
     paid_at: datetime | None = None
     notes: str | None = None
+    service_order_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1765,6 +1910,176 @@ class FinanceSettingsUpdate(BaseModel):
     finance_mode: Literal["basic", "intermediate", "management"]
 
 
+class NfseSettingsOut(BaseModel):
+    mei_opt_in: bool
+    default_optante_mei: bool
+    mei_environment: Literal["homolog", "producao"]
+    has_mei_certificate: bool
+    mei_certificate_file_name: str | None = None
+    has_mei_portal_credentials: bool
+    mei_last_tested_at: datetime | None = None
+    mei_last_test_error: str | None = None
+    focus_opt_in: bool
+    has_focus_api_key: bool
+    focus_environment: Literal["homolog", "producao"]
+    auto_issue_on_payment: bool
+    default_codigo_tributacao_nacional: str | None = None
+    default_codigo_nbs: str | None = None
+    prestador_inscricao_municipal: str | None = None
+    dps_serie: str | None = Field(
+        default=None,
+        max_length=20,
+        description="Série da DPS (tag serie / Id), ex. 70000 — alinhada ao cadastro no Sefin.",
+    )
+    auto_nfse_provider: Literal["national_mei", "focus"] | None = None
+
+
+class NfseSettingsUpdate(BaseModel):
+    mei_opt_in: bool | None = None
+    default_optante_mei: bool | None = None
+    mei_environment: Literal["homolog", "producao"] | None = None
+    mei_certificate_base64: str | None = None
+    mei_certificate_password: str | None = None
+    mei_certificate_file_name: str | None = Field(default=None, max_length=260)
+    mei_portal_username: str | None = None
+    mei_portal_password: str | None = None
+    clear_mei_certificate: bool = False
+    clear_mei_portal_credentials: bool = False
+    focus_opt_in: bool | None = None
+    focus_api_key: str | None = None
+    focus_environment: Literal["homolog", "producao"] | None = None
+    clear_focus_api_key: bool = False
+    auto_issue_on_payment: bool | None = None
+    default_codigo_tributacao_nacional: str | None = Field(default=None, max_length=32)
+    default_codigo_nbs: str | None = Field(default=None, max_length=32)
+    prestador_inscricao_municipal: str | None = Field(default=None, max_length=15)
+    dps_serie: str | None = Field(default=None, max_length=20)
+    auto_nfse_provider: Literal["national_mei", "focus"] | None = None
+
+
+class NfseTributacaoNacionalItemOut(BaseModel):
+    codigo: str
+    descricao: str
+    nbs_sugerido: str | None = None
+
+
+class NfseMeiTestRequest(BaseModel):
+    mei_certificate_base64: str | None = None
+    mei_certificate_password: str | None = None
+    mei_portal_username: str | None = None
+    mei_portal_password: str | None = None
+    test_sefin_connectivity: bool = True
+
+
+class NfseMeiTestOut(BaseModel):
+    ok: bool
+    certificate_ok: bool
+    portal_credentials_present: bool
+    message: str
+    sefin_ok: bool | None = None
+    sefin_message: str | None = None
+
+
+class NfseIssueRequest(BaseModel):
+    service_order_id: int | None = Field(default=None, ge=1)
+    finance_entry_id: int | None = Field(default=None, ge=1)
+    force_provider: Literal["national_mei", "focus"] | None = None
+    codigo_tributacao_nacional: str | None = Field(default=None, max_length=32)
+    codigo_nbs: str | None = Field(default=None, max_length=32)
+    client_id: int | None = Field(default=None, ge=1)
+    amount: float | None = Field(default=None, gt=0)
+    service_description: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_issue_mode(self) -> NfseIssueRequest:
+        linked = self.service_order_id is not None or self.finance_entry_id is not None
+        desc = (self.service_description or "").strip()
+        standalone = (
+            self.client_id is not None
+            and self.amount is not None
+            and self.amount > 0
+            and len(desc) >= 5
+        )
+        if linked and (self.client_id is not None or self.amount is not None or bool(desc)):
+            raise ValueError(
+                "Para emitir por OS ou lançamento, não informe cliente, valor ou descrição avulsa. "
+                "Use outra requisição só com emissão avulsa."
+            )
+        if not linked and not standalone:
+            raise ValueError(
+                "Informe ordem de serviço ou lançamento financeiro, ou emissão avulsa: client_id, amount e service_description (mín. 5 caracteres)."
+            )
+        return self
+
+
+class NfseInvoicePatch(BaseModel):
+    service_order_id: int | None = Field(default=None, ge=1)
+    finance_entry_id: int | None = Field(default=None, ge=1)
+
+
+class NfseInvoiceOut(BaseModel):
+    id: int
+    tenant_id: int
+    client_id: int
+    client_name: str | None = None
+    service_order_id: int | None = None
+    finance_entry_id: int | None = None
+    provider: Literal["national_mei", "focus"]
+    status: Literal["pending_submission", "issued", "failed", "cancelled"]
+    amount: float
+    rps_number: str | None = None
+    nfse_number: str | None = None
+    nfse_access_key: str | None = None
+    verification_code: str | None = None
+    municipal_code: str | None = None
+    request_payload_json: str | None = None
+    response_payload_json: str | None = None
+    import_display: dict[str, Any] | None = None
+    error_message: str | None = None
+    issued_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NfseImportXmlRequest(BaseModel):
+    client_id: int | None = Field(default=None, ge=1)
+    associate_client_id: int | None = Field(default=None, ge=1)
+    auto_create_client_if_missing: bool = False
+    service_order_id: int | None = Field(default=None, ge=1)
+    finance_entry_id: int | None = Field(default=None, ge=1)
+    provider: Literal["national_mei", "focus"] = "national_mei"
+    xml_content: str = Field(..., min_length=20)
+    amount: float | None = Field(default=None, ge=0)
+
+
+class NfseImportXmlBatchRequest(BaseModel):
+    client_id: int | None = Field(default=None, ge=1)
+    associate_client_id: int | None = Field(default=None, ge=1)
+    auto_create_client_if_missing: bool = False
+    service_order_id: int | None = Field(default=None, ge=1)
+    finance_entry_id: int | None = Field(default=None, ge=1)
+    provider: Literal["national_mei", "focus"] = "national_mei"
+    xml_items: list[str] = Field(default_factory=list, min_length=1, max_length=200)
+    amount: float | None = Field(default=None, ge=0)
+    file_names: list[str] | None = None
+
+
+class NfseImportXmlBatchItemOut(BaseModel):
+    index: int
+    file_name: str | None = None
+    ok: bool
+    message: str
+    invoice_id: int | None = None
+    nfse_number: str | None = None
+
+
+class NfseImportXmlBatchOut(BaseModel):
+    total: int
+    imported: int
+    failed: int
+    items: list[NfseImportXmlBatchItemOut]
+
+
 class FinanceGatewayAsaasUpsert(BaseModel):
     api_key: str = Field(..., min_length=8, max_length=220)
     sandbox: bool = False
@@ -1775,9 +2090,69 @@ class FinanceGatewayAsaasTest(BaseModel):
     sandbox: bool = False
 
 
+class FinanceGatewayMercadoPagoProducts(BaseModel):
+    checkout_pro: bool = False
+    pix: bool = False
+    boleto: bool = False
+    subscriptions: bool = False
+    payment_link: bool = False
+
+
+class FinanceGatewayMercadoPagoTest(BaseModel):
+    access_token: str = Field(..., min_length=10, max_length=600)
+    public_key: str = Field(..., min_length=8, max_length=600)
+    sandbox: bool = False
+
+
+class FinanceGatewayMercadoPagoUpsert(BaseModel):
+    access_token: str = Field(..., min_length=10, max_length=600)
+    public_key: str = Field(..., min_length=8, max_length=600)
+    sandbox: bool = False
+    finance_bank_account_id: int = Field(..., ge=1)
+    products: FinanceGatewayMercadoPagoProducts | None = None
+
+
+class FinanceGatewayMercadoPagoProductsUpdate(BaseModel):
+    checkout_pro: bool = False
+    pix: bool = False
+    boleto: bool = False
+    subscriptions: bool = False
+    payment_link: bool = False
+
+
+class FinanceGatewayMercadoPagoWebhookSignatureUpdate(BaseModel):
+    """Segredo exibido no painel MP (Suas integrações → Webhooks) para validar x-signature."""
+
+    webhook_signature_secret: str | None = Field(default=None, max_length=256)
+    clear_webhook_signature_secret: bool = False
+
+
 class FinanceEntryAsaasChargeCreate(BaseModel):
     customer_id: str = Field(..., min_length=4, max_length=48)
     billing_type: Literal["PIX", "BOLETO"] = "PIX"
+
+
+class FinanceEntryMercadoPagoChargeCreate(BaseModel):
+    payer_email: EmailStr
+    payer_first_name: str | None = Field(default=None, max_length=80)
+    payer_last_name: str | None = Field(default=None, max_length=80)
+
+
+class FinanceEntryMercadoPagoBoletoChargeCreate(BaseModel):
+    payer_email: EmailStr
+    payer_cpf: str = Field(..., min_length=11, max_length=14)
+    payer_first_name: str | None = Field(default=None, max_length=80)
+    payer_last_name: str | None = Field(default=None, max_length=80)
+
+
+class FinanceEntryMercadoPagoPreferenceCreate(BaseModel):
+    mode: Literal["checkout_pro", "payment_link", "subscription"] = "checkout_pro"
+    payer_email: EmailStr | None = None
+    success_url: str | None = Field(default=None, max_length=400)
+    failure_url: str | None = Field(default=None, max_length=400)
+    pending_url: str | None = Field(default=None, max_length=400)
+    subscription_frequency: int = Field(default=1, ge=1, le=365)
+    subscription_frequency_type: Literal["months", "days"] = "months"
 
 
 class FinancePaymentFeeCreate(BaseModel):
@@ -1816,7 +2191,7 @@ class FinancePaymentFeeOut(BaseModel):
 class FinanceBankAccountCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     bank_name: str | None = Field(default=None, max_length=80)
-    account_type: Literal["checking", "savings", "investment", "digital_wallet", "other"] = "checking"
+    account_type: Literal["checking", "savings", "investment", "digital_wallet", "cash", "other"] = "checking"
     initial_balance: float = 0
     is_active: bool = True
 
@@ -1824,7 +2199,7 @@ class FinanceBankAccountCreate(BaseModel):
 class FinanceBankAccountUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     bank_name: str | None = Field(default=None, max_length=80)
-    account_type: Literal["checking", "savings", "investment", "digital_wallet", "other"] | None = None
+    account_type: Literal["checking", "savings", "investment", "digital_wallet", "cash", "other"] | None = None
     initial_balance: float | None = None
     is_active: bool | None = None
 
@@ -1891,6 +2266,24 @@ class FinanceCashflowOut(BaseModel):
     closing_balance: float
 
 
+class FinanceAccountBalanceRowOut(BaseModel):
+    id: int
+    name: str
+    initial_balance: float
+    current_balance: float
+    projected_balance: float
+
+
+class FinanceBalanceSnapshotOut(BaseModel):
+    date_basis: str
+    period_end: date
+    as_of: date
+    initial_balance_total: float
+    current_balance_total: float
+    projected_balance_total: float
+    accounts: list[FinanceAccountBalanceRowOut]
+
+
 class FinanceCategorySummaryOut(BaseModel):
     category_id: int | None = None
     category_name: str
@@ -1934,10 +2327,37 @@ class ServiceOrderServiceItemOut(BaseModel):
     quantity: int
     unit_price: float
     duration_minutes: int
+    service_name: str | None = None
+    periodicidade_meses: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_orm_item(cls, data: Any) -> Any:
+        if isinstance(data, ServiceOrderServiceItem):
+            svc = data.service
+            return {
+                "id": data.id,
+                "service_id": data.service_id,
+                "equipment_id": data.equipment_id,
+                "quantity": data.quantity,
+                "unit_price": float(data.unit_price),
+                "duration_minutes": data.duration_minutes,
+                "service_name": svc.name if svc is not None else None,
+                "periodicidade_meses": svc.periodicidade_meses if svc is not None else None,
+            }
+        return data
 
 
 class ServiceOrderItemEquipmentUpdate(BaseModel):
     equipment_id: int | None = Field(default=None, ge=1)
+
+
+class ServiceOrderServiceItemQuantityPatch(BaseModel):
+    quantity: int = Field(ge=1)
+
+
+class ServiceOrderProductItemQuantityPatch(BaseModel):
+    quantity: int = Field(ge=1)
 
 
 class EquipmentUsageReportRowOut(BaseModel):
@@ -2065,6 +2485,7 @@ class SuggestedSlotOut(BaseModel):
     technician_id: int
     starts_at: datetime
     ends_at: datetime
+    shift: Literal["morning", "afternoon"] | None = None
 
 
 class RescheduleOptionOut(BaseModel):

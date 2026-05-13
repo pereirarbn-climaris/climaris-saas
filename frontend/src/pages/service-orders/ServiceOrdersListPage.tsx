@@ -232,13 +232,13 @@ export function ServiceOrdersListPage() {
       </div>
 
       {/* Toolbar */}
-      <div className={styles.toolbar}>
-        <div className={styles.searchCol}>
-          <label className={styles.searchLabel} htmlFor="os-search">
+      <div className={tableStyles.listToolbar}>
+        <div className={tableStyles.listToolbarSearchCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="os-search">
             Buscar
           </label>
-          <div className={styles.searchInputWrap}>
-            <span className={styles.searchIcon} aria-hidden>
+          <div className={tableStyles.listToolbarSearchWrap}>
+            <span className={tableStyles.listToolbarSearchIcon} aria-hidden>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.35-4.35" />
@@ -246,7 +246,7 @@ export function ServiceOrdersListPage() {
             </span>
             <input
               id="os-search"
-              className={styles.searchInput}
+              className={tableStyles.listToolbarSearchInput}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               placeholder="Buscar por cliente, servico ou numero..."
@@ -255,19 +255,19 @@ export function ServiceOrdersListPage() {
           </div>
         </div>
 
-        <div className={styles.filterCol}>
-          <label className={styles.filterLabel} htmlFor="os-status-filter">
+        <div className={tableStyles.listToolbarFilterCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="os-status-filter">
             Status
           </label>
-          <div className={styles.filterSelectWrap}>
-            <span className={styles.filterIcon} aria-hidden>
+          <div className={tableStyles.listToolbarSelectWrap}>
+            <span className={tableStyles.listToolbarSelectLeadingIcon} aria-hidden>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 6h16M7 12h10M10 18h4" />
               </svg>
             </span>
             <select
               id="os-status-filter"
-              className={styles.filterSelect}
+              className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectHasLeading}`}
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as "all" | OrderStatus)}
             >
