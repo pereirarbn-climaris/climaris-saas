@@ -1105,7 +1105,7 @@ export function ClientFormPage() {
       ) : activeTab === "form" ? (
       <form className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Identificação</h2>
+          <h2 className={styles.sectionTitle}>Identificação do cliente</h2>
           <div className={formLayout.stack}>
             <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="c-name">
@@ -1336,9 +1336,9 @@ export function ClientFormPage() {
 
         {form.tax_id_kind === "cnpj" ? (
         <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Fiscal</h2>
+          <h2 className={styles.sectionTitle}>Dados fiscais</h2>
           <div className={formLayout.stack}>
-            <p className={`${styles.cepHint} ${styles.hintFlush}`}>IE e IM quando a prefeitura ou a NF-e exigirem.</p>
+            <p className={`${styles.cepHint} ${styles.hintFlush}`}>Inscrição Estadual e Municipal quando a prefeitura ou a NF-e exigirem.</p>
             <div className={styles.grid2}>
               <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="c-ie-ind">
@@ -1388,7 +1388,7 @@ export function ClientFormPage() {
         ) : null}
 
         <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Endereço</h2>
+          <h2 className={styles.sectionTitle}>Endereço de faturamento</h2>
           <div className={formLayout.stack}>
           <div className={styles.grid2}>
             <div className={formLayout.field}>
