@@ -13,6 +13,10 @@ services:
     # Evolution (`deploy/evolution`) expõe o serviço como `evolution_api` na rede externa
     # `evolution_evolution_net`. Usar URL interna evita erro de DNS no container da API
     # (ex.: URLError: [Errno -2] Name or service not known ao usar https://evo...).
+    #
+    # Obrigatório no `.env` da raiz: EVOLUTION_API_KEY = mesmo valor que AUTHENTICATION_API_KEY
+    # em `deploy/evolution/.env` (header `apikey` nas chamadas server→Evolution). Sem isso o
+    # painel WhatsApp falha ao iniciar/carregar conexão (503).
     environment:
       EVOLUTION_API_BASE_URL: http://evolution_api:8080
     ports:

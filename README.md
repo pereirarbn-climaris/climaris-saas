@@ -36,6 +36,8 @@ bash scripts/deploy-api.sh
 
 Variáveis opcionais: `API_PORT` (se a API não estiver em 8000), `DEPLOY_API_WAIT_SECS` (tempo máximo de espera, padrão 120).
 
+**Evolution (WhatsApp no Docker):** no `.env` na raiz do repositório, defina `EVOLUTION_API_KEY` com o **mesmo** valor de `AUTHENTICATION_API_KEY` em `deploy/evolution/.env`. O `docker-compose.yml` já define `EVOLUTION_API_BASE_URL=http://evolution_api:8080` para tráfego entre contentores. Em produção, defina também `APP_PUBLIC_URL` (e, se precisar, `EVOLUTION_CORS_REQUEST_ORIGIN`) com o URL público do app (ex.: `https://app.climaris.com.br`) para o header `Origin` nas chamadas à Evolution. Sem `EVOLUTION_API_KEY`, o painel de integração falha ao carregar ou iniciar conexão.
+
 **Migrações:** use sempre `python -m alembic …`. O comando direto `alembic` falha no container (`executable file not found in $PATH`) porque o entrypoint instalado pelo pip nem sempre fica visível para `docker compose exec api alembic`.
 
 Health:
