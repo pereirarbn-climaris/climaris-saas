@@ -23,6 +23,9 @@ _PLAN_ALIAS: dict[str, str] = {
     "beta-internal": "beta_internal",
     "developer": "beta_internal",
     "dev": "beta_internal",
+    # Typo comum em `tenants.active_plan` (ex.: UI "BETA_INTERNALSS") — mesmo privilégio que beta_internal.
+    "beta_internalss": "beta_internal",
+    "beta_internals": "beta_internal",
 }
 
 PLAN_DEFINITIONS: dict[str, PlanDefinition] = {

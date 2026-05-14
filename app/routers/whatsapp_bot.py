@@ -12,7 +12,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.marketplace_util import tenant_has_marketplace_app
 from app.marketplace_util import tenant_entitlement_status_for_slug
-from app.plan_rules import normalize_plan_key
+from app.plan_rules import get_plan_definition
 from app.schemas_whatsapp_bot import (
     WhatsappBotFlowCreate,
     WhatsappBotFlowOut,
@@ -52,8 +52,7 @@ def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    plan = normalize_plan_key(tenant.active_plan)
-    if plan == "beta_internal":
+    if get_plan_definition(tenant.active_plan).is_beta_internal:
         return
     if tenant_has_marketplace_app(db, tenant_id, "whatsapp"):
         return
@@ -75,8 +74,9 @@ def get_bot_module_status(
     tenant = db.get(Tenant, current_user.tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    if normalize_plan_key(tenant.active_plan) == "beta_internal":
-        return {"entitlement_active": True, "entitlement_status": "beta_internal", "blocked_reason": None}
+    plan_def = get_plan_definition(tenant.active_plan)
+    if plan_def.is_beta_internal:
+        return {"entitlement_active": True, "entitlement_status": plan_def.key, "blocked_reason": None}
     ent_status = tenant_entitlement_status_for_slug(db, current_user.tenant_id, "whatsapp")
     active = tenant_has_marketplace_app(db, current_user.tenant_id, "whatsapp")
     return {
