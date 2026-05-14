@@ -887,6 +887,59 @@ def _slugify_instance(value: str) -> str:
     return cleaned[:120]
 
 
+def _evolution_fetch_instances_entries(fetch_data: Any) -> list[dict[str, Any]]:
+    """Normaliza GET /instance/fetchInstances: corpo em lista ou envelope (`instances`, `response`, `instance`)."""
+    # `_evolution_request` envolve JSON array na raiz em `{"result": [...]}` — fetchInstances costuma ser lista.
+    if isinstance(fetch_data, dict) and isinstance(fetch_data.get("result"), list):
+        fetch_data = fetch_data["result"]
+    if isinstance(fetch_data, list):
+        return [x for x in fetch_data if isinstance(x, dict)]
+    if not isinstance(fetch_data, dict):
+        return []
+    for key in ("instances", "response", "data", "result"):
+        raw = fetch_data.get(key)
+        if isinstance(raw, list):
+            return [x for x in raw if isinstance(x, dict)]
+    inner = fetch_data.get("instance")
+    if isinstance(inner, list):
+        return [x for x in inner if isinstance(x, dict)]
+    if isinstance(inner, dict):
+        return [inner]
+    return []
+
+
+def _evolution_instance_entry_name(item: dict[str, Any]) -> str | None:
+    """Nome lógico no item do fetchInstances (Evolution v2 costuma aninhar em `instance.instanceName`)."""
+    nested = item.get("instance")
+    if isinstance(nested, dict):
+        for key in ("instanceName", "name"):
+            v = nested.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    for key in ("instanceName", "name"):
+        v = item.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _evolution_create_conflict_detail(detail: str) -> bool:
+    """True se o erro do POST /instance/create indica instância já existente (idempotência)."""
+    d = detail.lower()
+    markers = (
+        "already in use",
+        "already exists",
+        "already exist",
+        "duplicate",
+        "já existe",
+        "already registered",
+        "instance already",
+        "name is already",
+        "already created",
+    )
+    return any(m in d for m in markers)
+
+
 def ensure_tenant_instance(db: Session, *, tenant_id: int, requested_instance_name: str | None = None) -> str:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
@@ -908,15 +961,8 @@ def ensure_tenant_instance(db: Session, *, tenant_id: int, requested_instance_na
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Nome de instância já utilizado por outro tenant.")
 
     fetch_data = _evolution_request("GET", "/instance/fetchInstances")
-    instances = fetch_data if isinstance(fetch_data, list) else fetch_data.get("instances", [])
-    found = False
-    if isinstance(instances, list):
-        for item in instances:
-            if not isinstance(item, dict):
-                continue
-            if item.get("name") == instance_name or item.get("instanceName") == instance_name:
-                found = True
-                break
+    instances = _evolution_fetch_instances_entries(fetch_data)
+    found = any(_evolution_instance_entry_name(item) == instance_name for item in instances)
     if not found:
         try:
             _evolution_request(
@@ -930,10 +976,8 @@ def ensure_tenant_instance(db: Session, *, tenant_id: int, requested_instance_na
                 },
             )
         except HTTPException as exc:
-            # Idempotência: em algumas versões da Evolution o fetch não lista tudo,
-            # mas o create responde 403 quando a instância já existe.
-            detail = str(exc.detail).lower()
-            if "already in use" not in detail and "already exists" not in detail:
+            # Idempotência: fetch pode omitir itens ou formato variar; create indica duplicata.
+            if not _evolution_create_conflict_detail(str(exc.detail)):
                 raise
 
     tenant.whatsapp_instance_name = instance_name

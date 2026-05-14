@@ -80,9 +80,11 @@ def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
     response_model=list[WhatsappTemplateOut],
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
-def list_templates() -> list[dict]:
-    # Template list is available only for workspaces with WhatsApp module active.
-    # (Keep endpoint response unchanged.)
+def list_templates(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict]:
+    _require_whatsapp_module(db, current_user.tenant_id)
     return [
         {"key": key, "description": str(meta["description"]), "variables": list(meta["variables"])}
         for key, meta in TEMPLATES.items()

@@ -73,11 +73,32 @@ async function parseBody(response: Response): Promise<unknown> {
   }
 }
 
+function formatDetail(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (item && typeof item === "object" && "msg" in item && typeof (item as { msg: unknown }).msg === "string") {
+          return (item as { msg: string }).msg.trim();
+        }
+        return null;
+      })
+      .filter((s): s is string => Boolean(s));
+    return parts.length ? parts.join(" ") : null;
+  }
+  if (detail && typeof detail === "object" && "msg" in detail && typeof (detail as { msg: unknown }).msg === "string") {
+    return (detail as { msg: string }).msg.trim();
+  }
+  return null;
+}
+
 function errorMessage(body: unknown, fallback: string): string {
   if (body && typeof body === "object") {
-    const o = body as { detail?: unknown };
-    const d = o.detail;
-    if (typeof d === "string") return d;
+    const o = body as { detail?: unknown; message?: unknown; _raw?: unknown };
+    const fromDetail = formatDetail(o.detail);
+    if (fromDetail) return fromDetail;
+    if (typeof o.message === "string" && o.message.trim()) return o.message.trim();
+    if (typeof o._raw === "string" && o._raw.trim()) return o._raw.trim();
   }
   return fallback;
 }
