@@ -17,3 +17,18 @@ export {
   type TabId,
   type ClientFormViewProps,
 } from './ClientFormView';
+
+// Equipment Manager
+export {
+  ClientEquipmentManager,
+  mockCatalog,
+  mockEquipments,
+  type EquipmentCategory,
+  type EquipmentStatus,
+  type CatalogBrand,
+  type CatalogModel,
+  type EquipmentItem,
+  type EquipmentCatalog,
+  type NewEquipmentData,
+  type ClientEquipmentManagerProps,
+} from './ClientEquipmentManager';
