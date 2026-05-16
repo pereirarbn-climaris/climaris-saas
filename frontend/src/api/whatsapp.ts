@@ -55,6 +55,12 @@ export type WhatsappMessageJob = {
   updated_at: string;
 };
 
+export type WhatsappModuleStatus = {
+  entitlement_active: boolean;
+  entitlement_status: string | null;
+  blocked_reason: string | null;
+};
+
 export type WhatsappAppointmentReminderSendPayload = {
   recipient_whatsapp: string;
   nome_cliente: string;
@@ -113,6 +119,15 @@ function bearer(): HeadersInit {
   const token = getAccessToken();
   if (!token) throw new Error("Sessão expirada.");
   return { Authorization: `Bearer ${token}` };
+}
+
+export async function getWhatsappModuleStatus(): Promise<WhatsappModuleStatus> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/module-status"), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível verificar o módulo WhatsApp."));
+  }
+  return body as WhatsappModuleStatus;
 }
 
 export async function getWhatsappConnection(): Promise<WhatsappTenantConnection> {

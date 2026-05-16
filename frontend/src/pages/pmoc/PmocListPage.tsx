@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { listPmocPlans, type PmocPlanOut, type PmocPlanStatus } from "../../api/pmoc";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
+import listUi from "../../components/pmoc/PmocListUi.module.css";
 import styles from "./PmocPages.module.css";
 
 function statusLabel(s: PmocPlanStatus): string {
@@ -16,10 +18,10 @@ function statusLabel(s: PmocPlanStatus): string {
 }
 
 function statusClass(s: PmocPlanStatus): string {
-  if (s === "active") return styles.badgeActive;
-  if (s === "draft") return styles.badgeDraft;
-  if (s === "archived") return styles.badgeArchived;
-  return styles.badgeInactive;
+  if (s === "active") return listUi.badgeActive;
+  if (s === "draft") return listUi.badgeDraft;
+  if (s === "archived") return listUi.badgeArchived;
+  return listUi.badgeInactive;
 }
 
 function formatBtu(n: number): string {
@@ -131,14 +133,14 @@ export function PmocListPage() {
           ) : null}
         </div>
 
-        <div className={styles.subTabs} role="tablist" aria-label="Filtrar por status">
+        <div className={listUi.subTabs} role="tablist" aria-label="Filtrar por status">
           {STATUS_TAB_VALUES.map((key) => (
             <button
               key={key}
               type="button"
               role="tab"
               aria-selected={preset === key}
-              className={`${styles.subTab} ${preset === key ? styles.subTabActive : ""}`}
+              className={`${listUi.subTab} ${preset === key ? listUi.subTabActive : ""}`}
               onClick={() => setPreset(key)}
             >
               {TAB_LABEL[key]}
@@ -149,12 +151,18 @@ export function PmocListPage() {
 
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Busca</h2>
-        <input
-          className={loginStyles.input}
-          placeholder="Buscar por título, cliente ou notas"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
+        <div className={formLayout.field}>
+          <label className={loginStyles.label} htmlFor="pmoc-list-q">
+            Buscar por título, cliente ou notas
+          </label>
+          <input
+            id="pmoc-list-q"
+            className={loginStyles.input}
+            placeholder="Buscar por título, cliente ou notas"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+        </div>
         {err ? <p className={styles.msgErr}>{err}</p> : null}
         {loading ? <p className={styles.loading}>Carregando…</p> : null}
       </div>
@@ -181,7 +189,7 @@ export function PmocListPage() {
                     <td>{r.title}</td>
                     <td>{r.client?.name ?? "—"}</td>
                     <td>
-                      <span className={`${styles.badge} ${statusClass(r.status)}`}>{statusLabel(r.status)}</span>
+                      <span className={`${listUi.badge} ${statusClass(r.status)}`}>{statusLabel(r.status)}</span>
                     </td>
                     <td>{formatBtu(r.total_btu_sum)}</td>
                     <td>{r.air_analysis_required ? "Sim" : "Não"}</td>

@@ -134,7 +134,9 @@
 .listToolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Alinha pela base dos controles (inputs/select/botões), não pelo bloco com legenda:
+     evita que "Buscar"/"Status" participem do eixo vertical em relação aos botões. */
+  align-items: flex-end;
   gap: var(--space-5);
   border-radius: var(--card-radius);
   border: 1px solid var(--color-border);
@@ -227,7 +229,7 @@
 
 .listToolbarActions {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-3);
   flex-wrap: wrap;
 }

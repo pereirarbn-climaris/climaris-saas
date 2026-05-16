@@ -18,13 +18,14 @@ from app.config import (
 )
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.marketplace_util import tenant_has_marketplace_app
+from app.marketplace_util import tenant_entitlement_status_for_slug, tenant_has_marketplace_app
 from app.plan_rules import get_plan_definition
 from app.security import JWT_ALGORITHM, JWT_SECRET_KEY
 from app.schemas_whatsapp import (
     WhatsappAppointmentMessageSettingsOut,
     WhatsappAppointmentMessageSettingsPatch,
     WhatsappAppointmentReminderSendRequest,
+    WhatsappModuleStatusOut,
     WhatsappReminderRulesOut,
     WhatsappReminderRulesPatch,
     WhatsappMessageJobOut,
@@ -72,6 +73,30 @@ def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Módulo WhatsApp não contratado. Solicite na Loja de integrações.",
     )
+
+
+@router.get(
+    "/module-status",
+    response_model=WhatsappModuleStatusOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_whatsapp_module_status(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, bool | str | None]:
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    plan_def = get_plan_definition(tenant.active_plan)
+    if plan_def.is_beta_internal:
+        return {"entitlement_active": True, "entitlement_status": plan_def.key, "blocked_reason": None}
+    ent_status = tenant_entitlement_status_for_slug(db, current_user.tenant_id, "whatsapp")
+    active = tenant_has_marketplace_app(db, current_user.tenant_id, "whatsapp")
+    return {
+        "entitlement_active": active,
+        "entitlement_status": ent_status.value if ent_status is not None else None,
+        "blocked_reason": None if active else "Módulo WhatsApp não contratado ou ainda não aprovado.",
+    }
 
 
 @router.get(

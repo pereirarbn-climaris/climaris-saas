@@ -38,11 +38,13 @@ from app.routers.equipment_documents import router as equipment_documents_router
 from app.routers.pmoc import router as pmoc_router
 from app.routers.api_keys import router as api_keys_router
 from app.routers.platform import router as platform_router
+from app.routers.platform_finance_bank_catalog import router as platform_finance_bank_catalog_router
 from app.routers.public_portal import equipment_token_router, router as public_portal_router
 from app.routers.service_orders import router as service_orders_router
 from app.routers.finance import router as finance_router
 from app.routers.webhooks_asaas import router as webhooks_asaas_router
 from app.routers.webhooks_mercadopago import router as webhooks_mercadopago_router
+from app.routers.webhooks_stone import router as webhooks_stone_router
 from app.routers.inventory import router as inventory_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
@@ -51,6 +53,7 @@ from app.routers.ai_settings import router as ai_settings_router
 from app.routers.nfse import router as nfse_router
 from app.routers.preventive_maintenance import router as preventive_maintenance_router
 from app.routers.whatsapp_bot import router as whatsapp_bot_router
+from app.routers.whatsapp_broadcast_campaigns import router as whatsapp_broadcast_campaigns_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -368,6 +371,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(public_portal_router, prefix=API_V1_PREFIX)
 app.include_router(auth_router, prefix=API_V1_PREFIX)
 app.include_router(platform_router, prefix=API_V1_PREFIX)
+app.include_router(platform_finance_bank_catalog_router, prefix=API_V1_PREFIX)
 app.include_router(api_keys_router, prefix=API_V1_PREFIX)
 app.include_router(cep_router, prefix=API_V1_PREFIX)
 app.include_router(cnpj_router, prefix=API_V1_PREFIX)
@@ -383,6 +387,7 @@ app.include_router(budgets_router, prefix=API_V1_PREFIX)
 app.include_router(finance_router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_asaas_router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_mercadopago_router, prefix=API_V1_PREFIX)
+app.include_router(webhooks_stone_router, prefix=API_V1_PREFIX)
 app.include_router(inventory_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
@@ -391,6 +396,7 @@ app.include_router(ai_settings_router, prefix=API_V1_PREFIX)
 app.include_router(nfse_router, prefix=API_V1_PREFIX)
 app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
+app.include_router(whatsapp_broadcast_campaigns_router, prefix=API_V1_PREFIX)
 
 
 @app.on_event("startup")

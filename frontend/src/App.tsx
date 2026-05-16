@@ -40,10 +40,13 @@ import { StockPage } from "./pages/inventory/StockPage";
 import { MercadoLivreCallbackPage } from "./pages/integrations/MercadoLivreCallbackPage";
 import { MercadoLivreIntegrationPage } from "./pages/integrations/MercadoLivreIntegrationPage";
 import { WhatsappBotPage } from "./pages/integrations/WhatsappBotPage";
+import { WhatsappBroadcastCampaignsPage } from "./pages/integrations/WhatsappBroadcastCampaignsPage";
 import { WhatsappIntegrationPage } from "./pages/integrations/WhatsappIntegrationPage";
 import { AiAssistantPage } from "./pages/integrations/AiAssistantPage";
 import { MarketplacePage } from "./pages/marketplace/MarketplacePage";
 import { PlatformMarketplacePage } from "./pages/PlatformMarketplacePage";
+import { PlatformFinanceBanksPage } from "./pages/PlatformFinanceBanksPage";
+import { PlatformPagarmePage } from "./pages/platform/PlatformPagarmePage";
 import { PmocDetailPage } from "./pages/pmoc/PmocDetailPage";
 import { PmocListPage } from "./pages/pmoc/PmocListPage";
 import { PmocNewPage } from "./pages/pmoc/PmocNewPage";
@@ -84,6 +87,8 @@ export default function App() {
         <Route path="chaves-api" element={<PlatformApiCredentialsPage />} />
         <Route path="loja" element={<PlatformMarketplacePage />} />
         <Route path="planos" element={<PlatformSaasPlansPage />} />
+        <Route path="bancos" element={<PlatformFinanceBanksPage />} />
+        <Route path="pagar-me" element={<PlatformPagarmePage />} />
       </Route>
       <Route path="/app" element={<DashboardPage />}>
         <Route index element={<DashboardHomePage />} />
@@ -117,6 +122,7 @@ export default function App() {
         <Route path="agenda" element={<TechnicianSchedulePage />} />
         <Route path="preventive-maintenance" element={<PreventiveMaintenancePage />} />
         <Route path="marketplace" element={<MarketplacePage />} />
+        <Route path="integrations/whatsapp-campanhas" element={<WhatsappBroadcastCampaignsPage />} />
         <Route path="integrations/whatsapp-bot" element={<WhatsappBotPage />} />
         <Route path="integrations/whatsapp" element={<WhatsappIntegrationPage />} />
         <Route path="integrations/chat-ia" element={<AiAssistantPage />} />

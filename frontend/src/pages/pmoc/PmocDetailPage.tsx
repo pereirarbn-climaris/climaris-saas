@@ -28,6 +28,7 @@ import {
 } from "../../api/pmoc";
 import { listClientEquipments, type EquipmentOut } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
+import listUi from "../../components/pmoc/PmocListUi.module.css";
 import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./PmocPages.module.css";
@@ -450,7 +451,7 @@ export function PmocDetailPage() {
         </div>
       )}
 
-      <div className={styles.subTabs} role="tablist">
+      <div className={listUi.subTabs} role="tablist">
         {(
           [
             ["overview", "Dados e conformidade"],
@@ -464,7 +465,7 @@ export function PmocDetailPage() {
             key={k}
             type="button"
             role="tab"
-            className={`${styles.subTab} ${tab === k ? styles.subTabActive : ""}`}
+            className={`${listUi.subTab} ${tab === k ? listUi.subTabActive : ""}`}
             onClick={() => setTab(k)}
           >
             {label}
@@ -512,7 +513,7 @@ export function PmocDetailPage() {
             <h2 className={styles.sectionTitle}>Plano e responsável técnico</h2>
             <div className={styles.grid2}>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Título</span>
+                <span className={styles.metaMuted}>Título</span>
                 <input
                   className={loginStyles.input}
                   value={draft.title}
@@ -521,7 +522,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Versão / revisão</span>
+                <span className={styles.metaMuted}>Versão / revisão</span>
                 <input
                   className={loginStyles.input}
                   value={draft.version_label}
@@ -530,7 +531,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                <span className={loginStyles.label}>Nota de referência legal (editável)</span>
+                <span className={styles.metaMuted}>Nota de referência legal (editável)</span>
                 <textarea
                   className={loginStyles.input}
                   rows={3}
@@ -540,7 +541,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                <span className={loginStyles.label}>Notas internas</span>
+                <span className={styles.metaMuted}>Notas internas</span>
                 <textarea
                   className={loginStyles.input}
                   rows={2}
@@ -550,7 +551,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Responsável técnico (nome)</span>
+                <span className={styles.metaMuted}>Responsável técnico (nome)</span>
                 <input
                   className={loginStyles.input}
                   value={draft.responsible_name}
@@ -559,7 +560,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Conselho (CREA/CFT)</span>
+                <span className={styles.metaMuted}>Conselho (CREA/CFT)</span>
                 <input
                   className={loginStyles.input}
                   value={draft.responsible_council}
@@ -568,7 +569,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Registro profissional</span>
+                <span className={styles.metaMuted}>Registro profissional</span>
                 <input
                   className={loginStyles.input}
                   value={draft.responsible_registration}
@@ -577,7 +578,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Número da ART</span>
+                <span className={styles.metaMuted}>Número da ART</span>
                 <input
                   className={loginStyles.input}
                   value={draft.art_number}
@@ -586,7 +587,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Emissão ART</span>
+                <span className={styles.metaMuted}>Emissão ART</span>
                 <input
                   type="date"
                   className={loginStyles.input}
@@ -596,7 +597,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={loginStyles.label}>Próxima análise de ar (planejamento)</span>
+                <span className={styles.metaMuted}>Próxima análise de ar (planejamento)</span>
                 <input
                   type="date"
                   className={loginStyles.input}
@@ -791,7 +792,7 @@ export function PmocDetailPage() {
               <h3 className={styles.sectionTitle}>Editar atividade</h3>
               <div className={styles.grid2}>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Título</span>
+                  <span className={styles.metaMuted}>Título</span>
                   <input
                     className={loginStyles.input}
                     value={editAct.title}
@@ -799,7 +800,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Periodicidade</span>
+                  <span className={styles.metaMuted}>Periodicidade</span>
                   <select
                     className={loginStyles.input}
                     value={editAct.frequency}
@@ -815,7 +816,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                  <span className={loginStyles.label}>Descrição / procedimento</span>
+                  <span className={styles.metaMuted}>Descrição / procedimento</span>
                   <textarea
                     className={loginStyles.input}
                     rows={2}
@@ -824,7 +825,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Equipamento (vazio = plano inteiro)</span>
+                  <span className={styles.metaMuted}>Equipamento (vazio = plano inteiro)</span>
                   <select
                     className={loginStyles.input}
                     value={editAct.equipment_id ?? ""}
@@ -848,7 +849,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Código interno</span>
+                  <span className={styles.metaMuted}>Código interno</span>
                   <input
                     className={loginStyles.input}
                     value={editAct.task_code ?? ""}
@@ -872,7 +873,7 @@ export function PmocDetailPage() {
               <h3 className={styles.sectionTitle}>Nova atividade</h3>
               <div className={styles.grid2}>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Título</span>
+                  <span className={styles.metaMuted}>Título</span>
                   <input
                     className={loginStyles.input}
                     value={newAct.title}
@@ -881,7 +882,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Periodicidade</span>
+                  <span className={styles.metaMuted}>Periodicidade</span>
                   <select
                     className={loginStyles.input}
                     value={newAct.frequency}
@@ -895,7 +896,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                  <span className={loginStyles.label}>Descrição</span>
+                  <span className={styles.metaMuted}>Descrição</span>
                   <textarea
                     className={loginStyles.input}
                     rows={2}
@@ -904,7 +905,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Equipamento</span>
+                  <span className={styles.metaMuted}>Equipamento</span>
                   <select
                     className={loginStyles.input}
                     value={newAct.equipment_id === "" ? "" : String(newAct.equipment_id)}
@@ -924,7 +925,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Código</span>
+                  <span className={styles.metaMuted}>Código</span>
                   <input
                     className={loginStyles.input}
                     value={newAct.task_code}
@@ -985,7 +986,7 @@ export function PmocDetailPage() {
               <h3 className={styles.sectionTitle}>Registrar execução</h3>
               <div className={styles.grid2}>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Data e hora</span>
+                  <span className={styles.metaMuted}>Data e hora</span>
                   <input
                     type="datetime-local"
                     className={loginStyles.input}
@@ -995,7 +996,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Situação</span>
+                  <span className={styles.metaMuted}>Situação</span>
                   <select
                     className={loginStyles.input}
                     value={newEx.completion_status}
@@ -1014,7 +1015,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Atividade (opcional)</span>
+                  <span className={styles.metaMuted}>Atividade (opcional)</span>
                   <select
                     className={loginStyles.input}
                     value={newEx.scheduled_activity_id === "" ? "" : String(newEx.scheduled_activity_id)}
@@ -1034,7 +1035,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field}>
-                  <span className={loginStyles.label}>Equipamento (opcional)</span>
+                  <span className={styles.metaMuted}>Equipamento (opcional)</span>
                   <select
                     className={loginStyles.input}
                     value={newEx.equipment_id === "" ? "" : String(newEx.equipment_id)}
@@ -1054,7 +1055,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                  <span className={loginStyles.label}>Observações / evidências</span>
+                  <span className={styles.metaMuted}>Observações / evidências</span>
                   <textarea
                     className={loginStyles.input}
                     rows={2}
@@ -1167,7 +1168,7 @@ export function PmocDetailPage() {
                 <h3 className={styles.sectionTitle}>Nova análise</h3>
                 <div className={styles.grid2}>
                   <label className={formLayout.field}>
-                    <span className={loginStyles.label}>Data da coleta / laudo</span>
+                    <span className={styles.metaMuted}>Data da coleta / laudo</span>
                     <input
                       type="date"
                       className={loginStyles.input}
@@ -1177,7 +1178,7 @@ export function PmocDetailPage() {
                     />
                   </label>
                   <label className={formLayout.field}>
-                    <span className={loginStyles.label}>Laboratório</span>
+                    <span className={styles.metaMuted}>Laboratório</span>
                     <input
                       className={loginStyles.input}
                       value={newAir.lab_name}
@@ -1185,7 +1186,7 @@ export function PmocDetailPage() {
                     />
                   </label>
                   <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                    <span className={loginStyles.label}>Resumo / resultados principais</span>
+                    <span className={styles.metaMuted}>Resumo / resultados principais</span>
                     <textarea
                       className={loginStyles.input}
                       rows={2}
@@ -1194,7 +1195,7 @@ export function PmocDetailPage() {
                     />
                   </label>
                   <label className={formLayout.field}>
-                    <span className={loginStyles.label}>Próximo vencimento</span>
+                    <span className={styles.metaMuted}>Próximo vencimento</span>
                     <input
                       type="date"
                       className={loginStyles.input}

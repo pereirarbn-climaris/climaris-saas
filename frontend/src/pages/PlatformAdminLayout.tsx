@@ -39,19 +39,25 @@ export function PlatformAdminLayout() {
   const isPlansRoute = location.pathname.startsWith("/operacao/planos");
   const isSecurityRoute = location.pathname.startsWith("/operacao/seguranca");
   const isMarketplaceRoute = location.pathname.startsWith("/operacao/loja");
+  const isBanksRoute = location.pathname.startsWith("/operacao/bancos");
+  const isPagarmeRoute = location.pathname.startsWith("/operacao/pagar-me");
   const pageTitle = isApiKeysRoute
     ? "Chaves APIs"
     : isTenantsRoute
       ? "Clientes SaaS"
       : isPlansRoute
         ? "Planos SaaS"
-      : isSecurityRoute
-        ? "Segurança"
-      : isMarketplaceRoute
-        ? "Loja e liberações"
-      : location.pathname === "/operacao"
-        ? "Painel de operação"
-        : "Operação Climaris";
+        : isSecurityRoute
+          ? "Segurança"
+          : isMarketplaceRoute
+            ? "Loja e liberações"
+            : isBanksRoute
+              ? "Bancos (wizard de contas)"
+              : isPagarmeRoute
+                ? "Pagar.me (referência)"
+                : location.pathname === "/operacao"
+                  ? "Painel de operação"
+                  : "Operação Climaris";
 
   const refreshWorkspace = useCallback(async () => {
     const u = await fetchCurrentUser();
@@ -285,6 +291,37 @@ export function PlatformAdminLayout() {
                   <NavIconKey />
                 </span>
                 Chaves APIs
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/bancos"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <path d="M2 10h20" />
+                  </svg>
+                </span>
+                Bancos (contas)
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/pagar-me"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="1" y="4" width="22" height="16" rx="2" />
+                    <path d="M1 10h22" />
+                    <path d="M6 15h4" />
+                  </svg>
+                </span>
+                Pagar.me
               </NavLink>
             </li>
             <li>

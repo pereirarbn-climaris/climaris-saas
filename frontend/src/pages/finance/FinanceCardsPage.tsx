@@ -3,17 +3,25 @@ import { Link } from "react-router-dom";
 import {
   createFinanceCreditCard,
   deleteFinanceCreditCard,
+  getFinanceGateways,
   listFinanceAccounts,
+  listFinanceBankCatalog,
   listFinanceCreditCards,
   patchFinanceCreditCard,
   type FinanceBankAccountOut,
+  type FinanceBankCatalogRow,
   type FinanceCreditCardOut,
+  type FinanceGatewaysOut,
 } from "../../api/finance";
+import { FinanceAccountCombobox } from "../../components/finance/FinanceAccountCombobox";
+import formLayout from "../formLayout.module.css";
 import styles from "./FinanceCardsPage.module.css";
 
 export function FinanceCardsPage() {
   const [cards, setCards] = useState<FinanceCreditCardOut[]>([]);
   const [accounts, setAccounts] = useState<FinanceBankAccountOut[]>([]);
+  const [gateways, setGateways] = useState<FinanceGatewaysOut | null>(null);
+  const [bankCatalog, setBankCatalog] = useState<FinanceBankCatalogRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -31,9 +39,16 @@ export function FinanceCardsPage() {
   async function loadData() {
     setError(null);
     try {
-      const [c, a] = await Promise.all([listFinanceCreditCards(), listFinanceAccounts()]);
+      const [c, a, gw, cat] = await Promise.all([
+        listFinanceCreditCards(),
+        listFinanceAccounts(),
+        getFinanceGateways().catch(() => null),
+        listFinanceBankCatalog().catch(() => [] as FinanceBankCatalogRow[]),
+      ]);
       setCards(c);
       setAccounts(a);
+      setGateways(gw);
+      setBankCatalog(cat.length ? cat : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao carregar cartões.");
     }
@@ -124,36 +139,38 @@ export function FinanceCardsPage() {
       <section className={styles.card}>
         <h2>Novo cartão</h2>
         <form className={styles.grid} onSubmit={addCard}>
-          <label className={styles.field}>
+          <label className={`${formLayout.field} ${styles.field}`}>
             <span>Nome do cartão</span>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Nubank principal" />
           </label>
-          <label className={styles.field}>
+          <label className={`${formLayout.field} ${styles.field}`}>
             <span>Bandeira</span>
             <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Ex.: visa, master" />
           </label>
-          <label className={styles.field}>
+          <label className={`${formLayout.field} ${styles.field}`}>
             <span>Limite total</span>
             <input type="number" min="0" step="0.01" value={limitAmount} onChange={(e) => setLimitAmount(e.target.value)} placeholder="0,00" />
           </label>
-          <label className={styles.field}>
+          <label className={`${formLayout.field} ${styles.field}`}>
             <span>Dia de fechamento</span>
             <input type="number" min="1" max="31" value={closingDay} onChange={(e) => setClosingDay(e.target.value)} placeholder="1" />
           </label>
-          <label className={styles.field}>
+          <label className={`${formLayout.field} ${styles.field}`}>
             <span>Dia de vencimento</span>
             <input type="number" min="1" max="31" value={dueDay} onChange={(e) => setDueDay(e.target.value)} placeholder="10" />
           </label>
-          <label className={styles.field}>
+          <label className={`${formLayout.field} ${styles.field}`}>
             <span>Conta para pagar a fatura</span>
-            <select value={billingAccountId} onChange={(e) => setBillingAccountId(e.target.value)}>
-              <option value="">Não vincular agora</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={String(a.id)}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
+            <FinanceAccountCombobox
+              id="fin-card-billing-account"
+              accounts={accounts}
+              value={billingAccountId}
+              onChange={setBillingAccountId}
+              gateways={gateways}
+              catalog={bankCatalog}
+              emptyOption
+              emptyLabel="Não vincular agora"
+            />
           </label>
           <button type="submit">Criar cartão</button>
         </form>
@@ -199,35 +216,37 @@ export function FinanceCardsPage() {
 
       {configCard ? (
         <div className={styles.modalOverlay}>
-          <form className={styles.modal} onSubmit={saveConfig}>
+          <form className={`${formLayout.stack} ${styles.modal}`} onSubmit={saveConfig}>
             <header>
               <h2>Configurar {configCard.name}</h2>
               <button type="button" onClick={() => setConfigCard(null)}>
                 x
               </button>
             </header>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Limite total</span>
               <input type="number" min="0" step="0.01" value={cfgLimit} onChange={(e) => setCfgLimit(e.target.value)} placeholder="0,00" />
             </label>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Dia de fechamento</span>
               <input type="number" min="1" max="31" value={cfgClosing} onChange={(e) => setCfgClosing(e.target.value)} placeholder="1" />
             </label>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Dia de vencimento</span>
               <input type="number" min="1" max="31" value={cfgDue} onChange={(e) => setCfgDue(e.target.value)} placeholder="10" />
             </label>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Conta para pagar fatura</span>
-              <select value={cfgAccount} onChange={(e) => setCfgAccount(e.target.value)}>
-                <option value="">Não vincular agora</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={String(a.id)}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+              <FinanceAccountCombobox
+                id="fin-card-config-billing"
+                accounts={accounts}
+                value={cfgAccount}
+                onChange={setCfgAccount}
+                gateways={gateways}
+                catalog={bankCatalog}
+                emptyOption
+                emptyLabel="Não vincular agora"
+              />
             </label>
             <button type="submit">Salvar configuração</button>
           </form>

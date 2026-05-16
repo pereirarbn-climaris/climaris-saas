@@ -119,7 +119,7 @@ export async function listProducts(params?: { q?: string; skip?: number; limit?:
     const q = params?.q?.trim().toLowerCase();
     let filtered = demoListProducts();
     if (q) {
-      filtered = filtered.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+      filtered = filtered.filter((p: ProductOut) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
     }
     return Promise.resolve(filtered);
   }

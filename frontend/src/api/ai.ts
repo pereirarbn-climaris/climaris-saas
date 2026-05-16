@@ -2,12 +2,10 @@ import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 
 export type TenantAISettings = {
-  id: number;
-  tenant_id: number;
   agent_name: string;
   tone_of_voice: string;
   instructions: string | null;
-  model_slug: string;
+  model_slug: string | null;
   is_enabled: boolean;
   ai_context_products: boolean;
   ai_context_service_prices: boolean;
@@ -25,21 +23,37 @@ export type TenantAISettings = {
 
 export type AIChatHistoryRow = {
   id: number;
-  tenant_id: number;
+  created_at: string;
   client_whatsapp: string | null;
   user_message: string;
   assistant_response: string;
   used_model: string | null;
-  used_tools_json: string | null;
-  is_mock: boolean;
-  created_at: string;
 };
 
 export type AIToolDefinition = {
   name: string;
   description: string;
-  input_schema?: Record<string, unknown>;
 };
+
+export type TenantAIPatchPayload = {
+  agent_name: string;
+  tone_of_voice: string;
+  instructions: string | null;
+  model_slug: string | null;
+  is_enabled: boolean;
+  ai_context_products: boolean;
+  ai_context_service_prices: boolean;
+  ai_context_services_catalog: boolean;
+  ai_tool_billing: boolean;
+  ai_tool_cancel: boolean;
+  ai_tool_reschedule: boolean;
+  ai_tool_agenda_read: boolean;
+  ai_allow_direct_schedule: boolean;
+  ai_allow_auto_client_create: boolean;
+  ai_clarification_instructions: string | null;
+};
+
+const AI_BASE = "/api/v1/ai";
 
 async function parseBody(response: Response): Promise<unknown> {
   const text = await response.text();
@@ -53,30 +67,11 @@ async function parseBody(response: Response): Promise<unknown> {
 
 function errorMessage(body: unknown, fallback: string): string {
   if (body && typeof body === "object") {
-    const o = body as {
-      detail?: unknown;
-      error?: { message?: unknown; details?: unknown };
-    };
-    if (typeof o.detail === "string") return o.detail;
-    if (Array.isArray(o.detail) && o.detail[0] && typeof o.detail[0] === "object") {
-      const row = o.detail[0] as { msg?: unknown };
-      if (typeof row.msg === "string") return row.msg;
-    }
-    const details = o.error?.details;
-    if (Array.isArray(details) && details.length > 0) {
-      const first = details[0] as { msg?: unknown; loc?: unknown };
-      if (typeof first.msg === "string") return first.msg;
-    }
-    const nested = o.error?.message;
-    if (typeof nested === "string") return nested;
+    const o = body as { detail?: unknown; error?: { message?: string } };
+    if (typeof o.detail === "string" && o.detail) return o.detail;
+    if (typeof o.error?.message === "string" && o.error.message) return o.error.message;
   }
   return fallback;
-}
-
-function jsonHeaders(): HeadersInit {
-  const token = getAccessToken();
-  if (!token) throw new Error("Sessão expirada.");
-  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
 function bearer(): HeadersInit {
@@ -85,71 +80,53 @@ function bearer(): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
+function jsonHeaders(): HeadersInit {
+  const token = getAccessToken();
+  if (!token) throw new Error("Sessão expirada.");
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
 export async function getAiSettings(): Promise<TenantAISettings> {
-  const response = await fetch(apiUrl("/api/v1/ai/settings"), { headers: bearer() });
+  const response = await fetch(apiUrl(`${AI_BASE}/settings`), { headers: bearer() });
   const body = await parseBody(response);
-  if (!response.ok) {
-    throw new Error(errorMessage(body, "Não foi possível carregar as configurações do assistente."));
-  }
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar as configurações de IA."));
   return body as TenantAISettings;
 }
 
-export async function patchAiSettings(patch: {
-  agent_name?: string;
-  tone_of_voice?: string;
-  instructions?: string | null;
-  model_slug?: string | null;
-  is_enabled?: boolean;
-  ai_context_products?: boolean;
-  ai_context_service_prices?: boolean;
-  ai_context_services_catalog?: boolean;
-  ai_tool_billing?: boolean;
-  ai_tool_cancel?: boolean;
-  ai_tool_reschedule?: boolean;
-  ai_tool_agenda_read?: boolean;
-  ai_allow_direct_schedule?: boolean;
-  ai_allow_auto_client_create?: boolean;
-  ai_clarification_instructions?: string | null;
-}): Promise<TenantAISettings> {
-  const response = await fetch(apiUrl("/api/v1/ai/settings"), {
+export async function patchAiSettings(payload: TenantAIPatchPayload): Promise<TenantAISettings> {
+  const response = await fetch(apiUrl(`${AI_BASE}/settings`), {
     method: "PATCH",
     headers: jsonHeaders(),
-    body: JSON.stringify(patch),
+    body: JSON.stringify(payload),
   });
   const body = await parseBody(response);
-  if (!response.ok) {
-    throw new Error(errorMessage(body, "Não foi possível salvar as configurações."));
-  }
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível salvar as configurações de IA."));
   return body as TenantAISettings;
 }
 
-export async function resetAiSettings(): Promise<void> {
-  const response = await fetch(apiUrl("/api/v1/ai/settings"), {
-    method: "DELETE",
+export async function resetAiSettings(): Promise<TenantAISettings> {
+  const response = await fetch(apiUrl(`${AI_BASE}/settings/reset`), {
+    method: "POST",
     headers: bearer(),
   });
-  if (response.status === 204) return;
   const body = await parseBody(response);
-  throw new Error(errorMessage(body, "Não foi possível restaurar os padrões."));
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível restaurar os padrões de IA."));
+  return body as TenantAISettings;
 }
 
-export async function listAiHistory(params?: { limit?: number; skip?: number }): Promise<AIChatHistoryRow[]> {
-  const limit = params?.limit ?? 40;
-  const skip = params?.skip ?? 0;
-  const q = new URLSearchParams({ limit: String(limit), skip: String(skip) });
-  const response = await fetch(apiUrl(`/api/v1/ai/history?${q}`), { headers: bearer() });
+export async function listAiHistory(params?: { limit?: number }): Promise<AIChatHistoryRow[]> {
+  const sp = new URLSearchParams();
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  const response = await fetch(apiUrl(`${AI_BASE}/history${qs ? `?${qs}` : ""}`), { headers: bearer() });
   const body = await parseBody(response);
-  if (!response.ok) {
-    throw new Error(errorMessage(body, "Não foi possível carregar o histórico."));
-  }
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o histórico de IA."));
   return body as AIChatHistoryRow[];
 }
 
 export async function listAiTools(): Promise<AIToolDefinition[]> {
-  const response = await fetch(apiUrl("/api/v1/ai/tools"), { headers: bearer() });
+  const response = await fetch(apiUrl(`${AI_BASE}/tools`), { headers: bearer() });
   const body = await parseBody(response);
-  if (!response.ok) {
-    throw new Error(errorMessage(body, "Não foi possível listar as ferramentas."));
-  }
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar as ferramentas de IA."));
   return body as AIToolDefinition[];
 }

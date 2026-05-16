@@ -43,16 +43,21 @@ import {
 import { listServices, type ServiceOut } from "../../api/services";
 import {
   createFinanceEntry,
+  getFinanceGateways,
   getFinanceSettings,
   listFinanceAccounts,
+  listFinanceBankCatalog,
   listFinanceCategories,
   listFinanceEntries,
   listFinancePaymentFees,
+  type FinanceBankCatalogRow,
   type FinanceEntryOut,
+  type FinanceGatewaysOut,
   type FinancePaymentFeeOut,
   type FinanceSettingsOut,
   type FinanceEntryStatus,
 } from "../../api/finance";
+import { FinanceAccountCombobox } from "../../components/finance/FinanceAccountCombobox";
 import { sendWhatsappAppointmentReminder } from "../../api/whatsapp";
 import { registerPreventiveFromServiceOrder } from "../../api/preventiveMaintenance";
 import { sortByNameAsc } from "../../lib/localeSort";
@@ -436,6 +441,8 @@ export function ServiceOrderFormPage() {
   const [osFinSettings, setOsFinSettings] = useState<FinanceSettingsOut | null>(null);
   const [osFinExisting, setOsFinExisting] = useState<FinanceEntryOut[]>([]);
   const [osFinAccounts, setOsFinAccounts] = useState<Awaited<ReturnType<typeof listFinanceAccounts>>>([]);
+  const [osFinGateways, setOsFinGateways] = useState<FinanceGatewaysOut | null>(null);
+  const [osFinBankCatalog, setOsFinBankCatalog] = useState<FinanceBankCatalogRow[] | null>(null);
   const [osFinFees, setOsFinFees] = useState<FinancePaymentFeeOut[]>([]);
   const [osFinCategories, setOsFinCategories] = useState<Array<{ id: number; name: string }>>([]);
   const [osFinPaymentMethod, setOsFinPaymentMethod] = useState("pix");
@@ -916,9 +923,11 @@ export function ServiceOrderFormPage() {
         setOsFinSettings(cfg);
         if (!cfg.finance_enabled) {
           setOsFinExisting([]);
+          setOsFinGateways(null);
+          setOsFinBankCatalog(null);
           return;
         }
-        const [entries, accs, fees, cats] = await Promise.all([
+        const [entries, accs, fees, cats, gw, bankCat] = await Promise.all([
           listFinanceEntries({
             start_date: "2020-01-01",
             end_date: "2035-12-31",
@@ -928,12 +937,16 @@ export function ServiceOrderFormPage() {
           listFinanceAccounts(),
           listFinancePaymentFees(),
           listFinanceCategories(),
+          getFinanceGateways().catch(() => null),
+          listFinanceBankCatalog().catch(() => [] as FinanceBankCatalogRow[]),
         ]);
         if (cancelled) return;
         setOsFinExisting(entries);
         setOsFinAccounts(accs);
         setOsFinFees(fees);
         setOsFinCategories(cats.map((c) => ({ id: c.id, name: c.name })));
+        setOsFinGateways(gw);
+        setOsFinBankCatalog(bankCat.length ? bankCat : null);
       } catch {
         if (!cancelled) {
           setOsFinSettings(null);
@@ -3042,19 +3055,17 @@ export function ServiceOrderFormPage() {
                         <label className={loginStyles.label} htmlFor="os-fin-account">
                           Conta de recebimento
                         </label>
-                        <select
+                        <FinanceAccountCombobox
                           id="os-fin-account"
-                          className={loginStyles.select}
+                          accounts={osFinAccounts}
                           value={osFinAccountId}
-                          onChange={(e) => setOsFinAccountId(e.target.value)}
-                        >
-                          <option value="">Selecionar conta</option>
-                          {osFinAccounts.map((a) => (
-                            <option key={a.id} value={String(a.id)}>
-                              {a.name}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={setOsFinAccountId}
+                          gateways={osFinGateways}
+                          catalog={osFinBankCatalog}
+                          emptyOption
+                          emptyLabel="Selecionar conta"
+                          triggerClassName={loginStyles.select}
+                        />
                       </div>
                     ) : null}
                     <div className={styles.clientRowPrimary}>

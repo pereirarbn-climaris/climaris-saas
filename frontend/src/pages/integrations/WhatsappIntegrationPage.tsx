@@ -4,6 +4,7 @@ import {
   disconnectWhatsapp,
   getWhatsappConnection,
   getWhatsappMessageSettings,
+  getWhatsappModuleStatus,
   getWhatsappReminderRules,
   listWhatsappJobs,
   patchWhatsappMessageSettings,
@@ -11,6 +12,7 @@ import {
   setupWhatsappConnection,
   type WhatsappAppointmentMessageSettings,
   type WhatsappMessageJob,
+  type WhatsappModuleStatus,
   type WhatsappReminderRules,
   type WhatsappTenantConnection,
 } from "../../api/whatsapp";
@@ -77,6 +79,7 @@ export function WhatsappIntegrationPage() {
   const [msgSettings, setMsgSettings] = useState<WhatsappAppointmentMessageSettings | null>(null);
   const [rules, setRules] = useState<WhatsappReminderRules | null>(null);
   const [jobs, setJobs] = useState<WhatsappMessageJob[]>([]);
+  const [moduleStatus, setModuleStatus] = useState<WhatsappModuleStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -103,6 +106,15 @@ export function WhatsappIntegrationPage() {
     setLoading(true);
     setErr("");
     try {
+      const mod = await getWhatsappModuleStatus();
+      setModuleStatus(mod);
+      if (!mod.entitlement_active) {
+        setConnection(null);
+        setMsgSettings(null);
+        setRules(null);
+        setJobs([]);
+        return;
+      }
       const conn = await getWhatsappConnection();
       setConnection(conn);
       if (canViewMessaging) {
@@ -131,6 +143,7 @@ export function WhatsappIntegrationPage() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setConnection(null);
+      setModuleStatus(null);
     } finally {
       setLoading(false);
     }
@@ -274,6 +287,34 @@ export function WhatsappIntegrationPage() {
     !qrModalOpen &&
     (connection?.status ?? "").toLowerCase() === "connecting";
 
+  if (!loading && moduleStatus && !moduleStatus.entitlement_active) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.hero}>
+          <div className={styles.heroInner}>
+            <p className={styles.eyebrow}>Integrações</p>
+            <h1 className={styles.heroTitle}>WhatsApp (Evolution)</h1>
+            <p className={styles.heroLead}>
+              A conexão e as mensagens automáticas ficam disponíveis após liberação do módulo WhatsApp na Loja.
+            </p>
+            <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
+              <Link to="/app/marketplace" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
+                Abrir Loja de integrações
+              </Link>
+            </p>
+          </div>
+        </header>
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>Acesso bloqueado</h2>
+          <p className={styles.hint}>
+            {moduleStatus.blocked_reason ?? "Módulo WhatsApp não contratado ou pendente de aprovação."}
+            {moduleStatus.entitlement_status ? ` Status atual: ${moduleStatus.entitlement_status}.` : ""}
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.page}>
       <header className={styles.hero}>
@@ -287,6 +328,12 @@ export function WhatsappIntegrationPage() {
           <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
             <Link to="/app" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
               Voltar ao painel
+            </Link>
+            <Link to="/app/integrations/whatsapp-campanhas" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
+              Campanhas WhatsApp
+            </Link>
+            <Link to="/app/integrations/whatsapp-bot" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
+              Bot WhatsApp
             </Link>
           </p>
         </div>

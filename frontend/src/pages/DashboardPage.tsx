@@ -116,6 +116,7 @@ export function DashboardPage() {
   const isPmocRoute = location.pathname.startsWith("/app/pmoc");
   const isMarketplaceRoute = location.pathname.startsWith("/app/marketplace");
   const isWhatsappBotRoute = location.pathname.startsWith("/app/integrations/whatsapp-bot");
+  const isWhatsappCampanhasRoute = location.pathname.startsWith("/app/integrations/whatsapp-campanhas");
   const isWhatsappRoute = location.pathname.startsWith("/app/integrations/whatsapp");
   const isChatIaRoute = location.pathname.startsWith("/app/integrations/chat-ia");
   const isMercadoLivreRoute = location.pathname.startsWith("/app/integrations/mercado-livre");
@@ -147,6 +148,8 @@ export function DashboardPage() {
               ? "Loja de integrações"
             : isChatIaRoute
               ? "Chat IA"
+            : isWhatsappCampanhasRoute
+              ? "Campanhas WhatsApp"
             : isWhatsappBotRoute
               ? "Bot WhatsApp"
             : isWhatsappRoute
@@ -400,6 +403,8 @@ export function DashboardPage() {
       ["nfse", "/app/fiscal/nfse"],
       ["nota fiscal", "/app/fiscal/nfse"],
       ["mercado livre", "/app/marketplace"],
+      ["campanhas whatsapp", "/app/integrations/whatsapp-campanhas"],
+      ["reativação whatsapp", "/app/integrations/whatsapp-campanhas"],
       ["bot whatsapp", "/app/integrations/whatsapp-bot"],
       ["chatbot", "/app/integrations/whatsapp-bot"],
       ["whatsapp", "/app/integrations/whatsapp"],
@@ -407,6 +412,8 @@ export function DashboardPage() {
       ["assistente", "/app/integrations/chat-ia"],
       ["claude", "/app/integrations/chat-ia"],
       ["integra", "/app/marketplace"],
+      ["pagar me", "/app/admin?tab=pagamentos"],
+      ["pagarme", "/app/admin?tab=pagamentos"],
       ["admin", "/app/admin"],
       ["inicio", "/app"],
       ["início", "/app"],
@@ -706,15 +713,15 @@ export function DashboardPage() {
             </li>
             <li>
               <NavLink
-                to="/app/integrations/chat-ia"
-                title="Chat IA (Claude)"
+                to="/app/integrations/whatsapp-campanhas"
+                title="Campanhas WhatsApp"
                 className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
                 onClick={closeSidebar}
               >
                 <span className={styles.navIcon} aria-hidden>
-                  <NavIconClipboard className={styles.navSvg} />
+                  <NavIconPackage className={styles.navSvg} />
                 </span>
-                <span className={styles.navLabel}>Chat IA</span>
+                <span className={styles.navLabel}>Campanhas WhatsApp</span>
               </NavLink>
             </li>
             <li>
@@ -728,6 +735,19 @@ export function DashboardPage() {
                   <NavIconPackage className={styles.navSvg} />
                 </span>
                 <span className={styles.navLabel}>Bot WhatsApp</span>
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/app/integrations/chat-ia"
+                title="Chat IA (Claude)"
+                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
+                onClick={closeSidebar}
+              >
+                <span className={styles.navIcon} aria-hidden>
+                  <NavIconClipboard className={styles.navSvg} />
+                </span>
+                <span className={styles.navLabel}>Chat IA</span>
               </NavLink>
             </li>
           </ul>
@@ -775,7 +795,7 @@ export function DashboardPage() {
                 onClick={openWorkspaceDrawer}
                 aria-expanded={workspaceDrawerOpen}
                 aria-haspopup="dialog"
-                title="Administração: empresa, usuários, API e fiscal"
+                title="Administração: empresa, usuários, pagamentos, API e fiscal"
               >
                 <span className={styles.workspaceName}>{tenant?.name ?? "—"}</span>
                 <span className={styles.workspaceChevron} aria-hidden>
@@ -1149,6 +1169,19 @@ export function DashboardPage() {
                       <NavIconUsers />
                     </span>
                     Usuários
+                  </Link>
+                  <Link
+                    className={styles.accountDrawerLinkRow}
+                    to="/app/admin?tab=pagamentos"
+                    onClick={() => {
+                      setWorkspaceDrawerOpen(false);
+                      closeSidebar();
+                    }}
+                  >
+                    <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
+                      <NavIconWallet />
+                    </span>
+                    Pagamentos (Pagar.me)
                   </Link>
                   <Link
                     className={styles.accountDrawerLinkRow}

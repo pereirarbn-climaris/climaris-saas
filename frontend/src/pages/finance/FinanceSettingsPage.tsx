@@ -14,6 +14,7 @@ import {
   type FinanceSettingsOut,
 } from "../../api/finance";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import styles from "./FinanceSettingsPage.module.css";
 
 function money(v: number): string {
@@ -229,7 +230,7 @@ export function FinanceSettingsPage() {
                 <h2 className={styles.panelTitle}>Módulo financeiro</h2>
                 <p className={styles.panelDesc}>Controle se o workspace usa o financeiro e qual nível de recursos.</p>
               </div>
-              <div className={styles.panelBody}>
+              <div className={`${formLayout.stack} ${styles.panelBody}`}>
                 <label className={styles.toggleRow}>
                   <input
                     type="checkbox"
@@ -241,7 +242,7 @@ export function FinanceSettingsPage() {
                   />
                   <span>Ativar financeiro no workspace</span>
                 </label>
-                <label className={styles.fieldBlock}>
+                <label className={`${formLayout.field} ${styles.fieldBlock}`}>
                   <span className={styles.fieldLabel}>Modo de operação</span>
                   <select
                     className={styles.select}
@@ -269,18 +270,23 @@ export function FinanceSettingsPage() {
               <h2 className={styles.panelTitle}>Lembretes de vencimento</h2>
               <p className={styles.panelDesc}>Dispare avisos manuais para lançamentos em aberto na data escolhida.</p>
             </div>
-            <div className={styles.panelBody}>
-              <div className={styles.inlineActions}>
-                <input
-                  className={styles.input}
-                  type="date"
-                  value={remindDate}
-                  onChange={(e) => setRemindDate(e.target.value)}
-                  aria-label="Data de vencimento para lembretes"
-                />
-                <button type="button" className={styles.btnPrimary} onClick={() => void fireReminders()}>
-                  Disparar lembretes do dia
-                </button>
+            <div className={`${formLayout.stack} ${styles.panelBody}`}>
+              <div className={formLayout.field}>
+                <span className={styles.fieldLabel} id="finance-remind-date-label">
+                  Data de vencimento para lembretes
+                </span>
+                <div className={styles.inlineActions}>
+                  <input
+                    className={styles.input}
+                    type="date"
+                    value={remindDate}
+                    onChange={(e) => setRemindDate(e.target.value)}
+                    aria-labelledby="finance-remind-date-label"
+                  />
+                  <button type="button" className={styles.btnPrimary} onClick={() => void fireReminders()}>
+                    Disparar lembretes do dia
+                  </button>
+                </div>
               </div>
             </div>
           </article>
@@ -293,7 +299,7 @@ export function FinanceSettingsPage() {
                 ativo.
               </p>
             </div>
-            <div className={styles.panelBody}>
+            <div className={`${formLayout.stack} ${styles.panelBody}`}>
               {!settings?.finance_enabled ? (
                 <p className={styles.muted}>Ative o financeiro para gerenciar categorias.</p>
               ) : !categoriesAllowed ? (
@@ -407,26 +413,31 @@ export function FinanceSettingsPage() {
               <h2 className={styles.panelTitle}>Fluxo de caixa</h2>
               <p className={styles.panelDesc}>Resumo sintético do período — útil para conferência rápida.</p>
             </div>
-            <div className={styles.panelBody}>
-              <div className={styles.inlineActions}>
-                <input
-                  className={styles.input}
-                  type="date"
-                  value={cashflowStart}
-                  onChange={(e) => setCashflowStart(e.target.value)}
-                  aria-label="Data inicial"
-                />
-                <span className={styles.dateSep}>até</span>
-                <input
-                  className={styles.input}
-                  type="date"
-                  value={cashflowEnd}
-                  onChange={(e) => setCashflowEnd(e.target.value)}
-                  aria-label="Data final"
-                />
-                <button type="button" className={styles.btnSecondary} onClick={() => void loadCashflow()}>
-                  Calcular
-                </button>
+            <div className={`${formLayout.stack} ${styles.panelBody}`}>
+              <div className={formLayout.field}>
+                <span className={styles.fieldLabel} id="finance-cashflow-period-label">
+                  Período
+                </span>
+                <div className={styles.inlineActions}>
+                  <input
+                    className={styles.input}
+                    type="date"
+                    value={cashflowStart}
+                    onChange={(e) => setCashflowStart(e.target.value)}
+                    aria-labelledby="finance-cashflow-period-label"
+                  />
+                  <span className={styles.dateSep}>até</span>
+                  <input
+                    className={styles.input}
+                    type="date"
+                    value={cashflowEnd}
+                    onChange={(e) => setCashflowEnd(e.target.value)}
+                    aria-labelledby="finance-cashflow-period-label"
+                  />
+                  <button type="button" className={styles.btnSecondary} onClick={() => void loadCashflow()}>
+                    Calcular
+                  </button>
+                </div>
               </div>
               {cashflow ? (
                 <dl className={styles.stats}>

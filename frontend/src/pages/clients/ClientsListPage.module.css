@@ -551,3 +551,108 @@ tr:hover .avatar {
   opacity: 0;
   pointer-events: none;
 }
+
+/* —— Importar clientes (modal) —— */
+.importModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(13, 20, 32, 0.45);
+}
+
+.importModal {
+  width: min(32rem, 100%);
+  max-height: min(90vh, 36rem);
+  overflow: auto;
+  background: #fff;
+  border-radius: var(--card-radius, 12px);
+  border: 1px solid var(--color-border, #d8e0ec);
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+}
+
+.importModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border, #edf1f7);
+}
+
+.importModalTitle {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: var(--font-weight-bold, 600);
+  color: var(--color-text);
+}
+
+.importModalClose {
+  border: 1px solid #cdd6e4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.importModalClose:hover {
+  background: #f8fafc;
+}
+
+.importModalBody {
+  padding: var(--space-4);
+}
+
+.importModalIntro {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-sm, 0.9rem);
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.importSourceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.importSourceCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border-radius: 10px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: linear-gradient(135deg, #fff 0%, #f8fafc 100%);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font: inherit;
+  color: inherit;
+}
+
+.importSourceCard:hover {
+  border-color: #bae6fd;
+  box-shadow: var(--card-shadow-hover, 0 4px 14px rgba(14, 116, 144, 0.08));
+}
+
+.importSourceName {
+  font-weight: var(--font-weight-bold, 600);
+  font-size: var(--font-size-md, 0.95rem);
+  color: var(--color-text);
+}
+
+.importSourceHint {
+  font-size: var(--font-size-sm, 0.85rem);
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}

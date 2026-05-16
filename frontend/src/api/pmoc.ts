@@ -147,12 +147,12 @@ export async function listPmocPlans(params?: {
   limit?: number;
 }): Promise<PmocPlanOut[]> {
   if (isDemoMode()) {
-    let rows = demoListPmocPlans();
-    if (params?.status) rows = rows.filter((item) => item.status === params.status);
-    if (params?.client_id) rows = rows.filter((item) => item.client_id === params.client_id);
+    let rows: PmocPlanOut[] = demoListPmocPlans();
+    if (params?.status) rows = rows.filter((item: PmocPlanOut) => item.status === params.status);
+    if (params?.client_id) rows = rows.filter((item: PmocPlanOut) => item.client_id === params.client_id);
     if (params?.q?.trim()) {
       const q = params.q.trim().toLowerCase();
-      rows = rows.filter((item) => item.title.toLowerCase().includes(q));
+      rows = rows.filter((item: PmocPlanOut) => item.title.toLowerCase().includes(q));
     }
     return Promise.resolve(rows);
   }

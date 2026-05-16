@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useOutletContext, useSearchParams } from "
 import { createPmocPlan } from "../../api/pmoc";
 import { getClient, listClients, type ClientOut } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
+import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./PmocPages.module.css";
 
@@ -132,55 +133,68 @@ export function PmocNewPage() {
         </div>
       ) : (
         <form className={styles.section} onSubmit={onCreate}>
-          <h2 className={styles.sectionTitle}>Cliente do estabelecimento</h2>
-          <input
-            className={loginStyles.input}
-            placeholder="Buscar cliente por nome, documento ou cidade"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            aria-label="Buscar cliente"
-          />
-          {err ? <p className={styles.msgErr}>{err}</p> : null}
-          {loading ? <p className={styles.loading}>Carregando clientes…</p> : null}
-          {!loading ? (
-            <div style={{ marginTop: "0.65rem" }}>
-              <label htmlFor="pmoc-client-select" className={styles.metaMuted}>
-                Selecione o cliente cujo endereço será coberto por este PMOC
+          <div className={formLayout.stack}>
+            <h2 className={styles.sectionTitle}>Cliente do estabelecimento</h2>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="pmoc-client-search">
+                Buscar cliente
               </label>
-              <select
-                id="pmoc-client-select"
+              <input
+                id="pmoc-client-search"
                 className={loginStyles.input}
-                style={{ marginTop: "0.35rem" }}
-                value={clientId === "" ? "" : String(clientId)}
-                onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : "")}
-              >
-                <option value="">— Escolha —</option>
-                {rows.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.address_city ? ` — ${c.address_city}/${c.address_state ?? ""}` : ""}
-                  </option>
-                ))}
-              </select>
+                placeholder="Buscar cliente por nome, documento ou cidade"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                aria-label="Buscar cliente"
+              />
             </div>
-          ) : null}
+            {err ? <p className={styles.msgErr}>{err}</p> : null}
+            {loading ? <p className={styles.loading}>Carregando clientes…</p> : null}
+            {!loading ? (
+              <div className={formLayout.field}>
+                <label htmlFor="pmoc-client-select" className={loginStyles.label}>
+                  Selecione o cliente cujo endereço será coberto por este PMOC
+                </label>
+                <select
+                  id="pmoc-client-select"
+                  className={loginStyles.input}
+                  value={clientId === "" ? "" : String(clientId)}
+                  onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : "")}
+                >
+                  <option value="">— Escolha —</option>
+                  {rows.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.address_city ? ` — ${c.address_city}/${c.address_state ?? ""}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
-          <h2 className={styles.sectionTitle} style={{ marginTop: "1rem" }}>
-            Identificação do plano
-          </h2>
-          <input
-            className={loginStyles.input}
-            placeholder="Título do PMOC (ex.: PMOC — Empresa XYZ)"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            aria-label="Título do PMOC"
-          />
+            <h2 className={styles.sectionTitle} style={{ marginTop: "1rem" }}>
+              Identificação do plano
+            </h2>
+            <div className={formLayout.field}>
+              <label className={loginStyles.label} htmlFor="pmoc-plan-title">
+                Título do PMOC
+              </label>
+              <input
+                id="pmoc-plan-title"
+                className={loginStyles.input}
+                placeholder="Título do PMOC (ex.: PMOC — Empresa XYZ)"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                aria-label="Título do PMOC"
+              />
+            </div>
 
-          {saveErr ? <p className={styles.msgErr}>{saveErr}</p> : null}
-          <div className={styles.actions}>
-            <button type="submit" className={styles.btnPrimary} disabled={saving}>
-              {saving ? "Criando…" : "Criar rascunho"}
-            </button>
+            {saveErr ? <p className={styles.msgErr}>{saveErr}</p> : null}
+            <div className={styles.actions}>
+              <button type="submit" className={styles.btnPrimary} disabled={saving}>
+                {saving ? "Criando…" : "Criar rascunho"}
+              </button>
+            </div>
           </div>
         </form>
       )}

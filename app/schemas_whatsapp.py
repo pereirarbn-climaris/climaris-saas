@@ -164,3 +164,11 @@ class WhatsappChatbotRequest(BaseModel):
 class WhatsappChatbotReplyOut(BaseModel):
     intent: str
     reply_text: str
+
+
+class WhatsappModuleStatusOut(BaseModel):
+    """Liberação do módulo WhatsApp na Loja (independe de conexão Evolution)."""
+
+    entitlement_active: bool
+    entitlement_status: str | None = None
+    blocked_reason: str | None = None

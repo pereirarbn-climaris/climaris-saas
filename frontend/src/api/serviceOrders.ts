@@ -199,7 +199,7 @@ export async function patchServiceOrderStatus(
   return body as ServiceOrderOut;
 }
 
-export async function listServiceOrders(params?: { status?: OrderStatus; skip?: number; limit?: number }) {
+export async function listServiceOrders(params?: { status?: OrderStatus; skip?: number; limit?: number }): Promise<ServiceOrderOut[]> {
   const skip = params?.skip ?? 0;
   const limit = params?.limit ?? 100;
   if (isDemoMode()) {
@@ -488,10 +488,10 @@ export async function listSchedules(params?: {
   to_day?: string;
 }): Promise<ScheduleOut[]> {
   if (isDemoMode()) {
-    let rows = demoListServiceOrders()
+    let rows: ScheduleOut[] = demoListServiceOrders()
       .filter((item) => item.schedule)
       .map((item) => item.schedule as ScheduleOut);
-    if (params?.status) rows = rows.filter((row) => row.status === params.status);
+    if (params?.status) rows = rows.filter((row: ScheduleOut) => row.status === params.status);
     return Promise.resolve(rows);
   }
   const sp = new URLSearchParams();

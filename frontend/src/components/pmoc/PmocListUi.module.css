@@ -1,0 +1,59 @@
+/**
+ * UI compartilhada entre lista/detalhe PMOC e a aba PMOC em ClientFormPage.
+ * Mantida fora de `pages/pmoc/` para evitar dependência circular nos manualChunks (clients ↔ pmoc).
+ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badgeDraft {
+  background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
+  color: var(--color-text-muted);
+}
+
+.badgeActive {
+  background: color-mix(in srgb, #16a34a 22%, transparent);
+  color: #15803d;
+}
+
+.badgeInactive {
+  background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
+  color: var(--color-text-muted);
+}
+
+.badgeArchived {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  color: var(--color-error);
+}
+
+.subTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 1rem;
+}
+
+.subTab {
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--color-text-muted);
+}
+
+.subTabActive {
+  background: linear-gradient(135deg, var(--color-hero-start) 0%, var(--color-hero-mid) 100%);
+  border-color: transparent;
+  color: #fff;
+}

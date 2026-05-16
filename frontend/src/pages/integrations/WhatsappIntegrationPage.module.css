@@ -1,3 +1,4 @@
+/* Compartilhado com WhatsappBotPage — layout alinhado ao Chat IA */
 .page {
   max-width: 70rem;
   margin: 0 auto;
@@ -10,7 +11,7 @@
   border-radius: var(--radius-xl, 16px);
   padding: clamp(1.5rem, 3vw, 2.25rem);
   margin-bottom: 1.75rem;
-  background: linear-gradient(135deg, #0b3d2e 0%, #14532d 45%, #0f172a 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #0f766e 45%, #0f172a 100%);
   color: #f0f4f8;
   border: 1px solid color-mix(in srgb, var(--color-border, #e4e6eb) 35%, transparent);
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.25);
@@ -27,7 +28,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(52, 211, 153, 0.95);
+  color: rgba(153, 246, 228, 0.95);
 }
 
 .heroTitle {
@@ -41,8 +42,33 @@
   margin: 0;
   font-size: 0.94rem;
   line-height: 1.65;
-  color: rgba(240, 244, 248, 0.82);
-  max-width: 42rem;
+  color: rgba(240, 244, 248, 0.88);
+  max-width: 44rem;
+}
+
+.heroLinks {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.heroLink {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: #ecfdf5;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.heroLink:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .grid {
@@ -59,11 +85,22 @@
   background: var(--color-surface-elevated, #fff);
 }
 
+.cardWide {
+  grid-column: 1 / -1;
+}
+
 .cardTitle {
   margin: 0 0 0.65rem;
   font-size: 0.92rem;
   font-weight: 700;
   color: var(--color-text, #1a1d24);
+}
+
+.subsectionTitle {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-muted, #4b5563);
 }
 
 .row {
@@ -89,16 +126,6 @@
   color: #15803d;
 }
 
-.badgeWarn {
-  background: color-mix(in srgb, #eab308 22%, transparent);
-  color: #a16207;
-}
-
-.badgeErr {
-  background: color-mix(in srgb, #ef4444 18%, transparent);
-  color: #b91c1c;
-}
-
 .badgeMuted {
   background: var(--color-surface, #eef0f4);
   color: var(--color-text-muted, #5c6470);
@@ -121,9 +148,9 @@
   font-weight: 600;
   font-size: 0.875rem;
   cursor: pointer;
-  background: linear-gradient(180deg, #34d399 0%, #10b981 100%);
-  color: #052e1a;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
+  background: linear-gradient(180deg, #14b8a6 0%, #0d9488 100%);
+  color: #f8fafc;
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.35);
 }
 
 .btnPrimary:disabled {
@@ -159,21 +186,6 @@
   line-height: 1.45;
 }
 
-.qrWrap {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  border-radius: 12px;
-  background: var(--color-surface, #f8f9fb);
-  display: inline-block;
-}
-
-.qrImage {
-  display: block;
-  max-width: min(280px, 100%);
-  height: auto;
-  border-radius: 8px;
-}
-
 .fieldLabel {
   display: block;
   font-size: 0.78rem;
@@ -184,16 +196,26 @@
 
 .textInput {
   width: 100%;
-  max-width: 24rem;
+  max-width: 28rem;
   padding: 0.5rem 0.65rem;
   border-radius: 8px;
   border: 1px solid var(--color-border, #e4e6eb);
   font-size: 0.875rem;
 }
 
+.select {
+  width: 100%;
+  max-width: 28rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e4e6eb);
+  font-size: 0.875rem;
+  background: var(--color-surface-elevated, #fff);
+}
+
 .textarea {
   width: 100%;
-  min-height: 7rem;
+  min-height: 8rem;
   padding: 0.6rem 0.75rem;
   border-radius: 10px;
   border: 1px solid var(--color-border, #e4e6eb);
@@ -202,17 +224,36 @@
   resize: vertical;
 }
 
-.checkGrid {
-  display: grid;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+.toggleRow {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.875rem;
+}
+
+.toggleRow input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: #0d9488;
 }
 
 .checkRow {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.65rem;
   font-size: 0.875rem;
+}
+
+.checkRow input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: #0d9488;
+}
+
+.checkGrid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
 }
 
 .tableWrap {
@@ -263,85 +304,34 @@
   word-break: break-all;
 }
 
-.modalOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1.25rem;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(4px);
+.toolList {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
 }
 
-.modalPanel {
-  position: relative;
-  max-width: min(26rem, 100%);
-  width: 100%;
-  padding: 1.35rem 1.25rem 1.5rem;
-  border-radius: 16px;
-  background: var(--color-surface-elevated, #fff);
-  border: 1px solid var(--color-border, #e4e6eb);
-  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
-}
-
-.modalTitle {
-  margin: 0 2rem 0.75rem 0;
-  font-size: 1.05rem;
-  font-weight: 700;
+.toolName {
+  font-weight: 600;
   color: var(--color-text, #1a1d24);
 }
 
-.modalClose {
-  position: absolute;
-  top: 0.65rem;
-  right: 0.65rem;
-  width: 2.25rem;
-  height: 2.25rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
+.readOnlyNote {
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #5c6470);
+  margin: 0 0 0.75rem;
+}
+
+.qrWrap {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
   border-radius: 10px;
   background: var(--color-surface, #f1f5f9);
-  color: var(--color-text, #1a1d24);
-  font-size: 1.25rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.modalClose:hover {
-  background: #e2e8f0;
-}
-
-.modalBody {
-  text-align: center;
-}
-
-.modalQr {
   display: inline-block;
-  margin: 0 auto;
-  padding: 0.65rem;
-  border-radius: 12px;
-  background: var(--color-surface, #f8fafc);
 }
 
-.modalQr img {
+.qrImg {
   display: block;
   max-width: min(280px, 100%);
   height: auto;
-  border-radius: 8px;
-}
-
-.modalHint {
-  margin: 0.85rem 0 0;
-  font-size: 0.84rem;
-  line-height: 1.5;
-  color: var(--color-text-muted, #5c6470);
-}
-
-.modalPairing {
-  margin-top: 0.75rem;
-  font-size: 0.82rem;
 }

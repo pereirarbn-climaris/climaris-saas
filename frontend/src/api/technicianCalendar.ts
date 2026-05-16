@@ -169,7 +169,7 @@ export async function listUnavailability(
   params?: { from_at?: string; to_at?: string; limit?: number },
 ): Promise<Unavailability[]> {
   if (isDemoMode()) {
-    return Promise.resolve(demoListUnavailability().filter((item) => item.technician_id === technician_id));
+    return Promise.resolve(demoListUnavailability().filter((item: Unavailability) => item.technician_id === technician_id));
   }
   const sp = new URLSearchParams({
     technician_id: String(technician_id),

@@ -795,6 +795,69 @@ def dispatch_template(
     return job
 
 
+def dispatch_plain_whatsapp(
+    db: Session,
+    *,
+    tenant_id: int,
+    created_by_user: User | None,
+    recipient_whatsapp: str,
+    message: str,
+    template_key: str = "broadcast_campaign",
+    reference_type: str | None = None,
+    reference_id: int | None = None,
+    scheduled_for: datetime | None = None,
+) -> WhatsappMessageJob:
+    """Envia texto livre (campanhas, avisos) com o mesmo fluxo de job/eventos do template."""
+    instance_name = _resolve_tenant_instance(db, tenant_id)
+    recipient = normalize_whatsapp_number(recipient_whatsapp)
+    body = (message or "").strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Mensagem vazia.")
+    job = create_message_job(
+        db,
+        tenant_id=tenant_id,
+        created_by_user=created_by_user,
+        template_key=template_key,
+        recipient_whatsapp=recipient,
+        rendered_message=body,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        scheduled_for=scheduled_for,
+    )
+
+    if scheduled_for is not None and scheduled_for > datetime.now(timezone.utc):
+        append_event(db, tenant_id=tenant_id, event_type="scheduled", payload={"scheduled_for": scheduled_for.isoformat()}, job_id=job.id)
+        db.commit()
+        db.refresh(job)
+        return job
+
+    try:
+        send_result = _evolution_send_text(instance_name, recipient, body)
+        job.status = WhatsappMessageStatus.SENT
+        job.provider_message_id = send_result.get("message_id")
+        job.sent_at = datetime.now(timezone.utc)
+        job.error_message = None
+        append_event(db, tenant_id=tenant_id, event_type="sent", payload=send_result.get("raw_response"), job_id=job.id)
+    except HTTPException as exc:
+        job.status = WhatsappMessageStatus.FAILED
+        job.failed_at = datetime.now(timezone.utc)
+        job.error_message = str(exc.detail)
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="send_failed",
+            payload={"error": str(exc.detail)},
+            job_id=job.id,
+        )
+        db.commit()
+        db.refresh(job)
+        raise
+
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 def dispatch_appointment_reminder(
     db: Session,
     *,
@@ -1706,7 +1769,13 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
         key_block = data_block.get("key") if isinstance(data_block, dict) else {}
         from_me = bool(key_block.get("fromMe")) if isinstance(key_block, dict) else False
         remote_jid = str(key_block.get("remoteJid") or incoming_sender).strip().lower() if isinstance(key_block, dict) else incoming_sender
-        if not from_me and not remote_jid.endswith("@g.us") and not already_processed and not action_type:
+        if (
+            not from_me
+            and not remote_jid.endswith("@g.us")
+            and not already_processed
+            and not action_type
+            and not preventive_handled
+        ):
             try:
                 from app.whatsapp_bot import handle_incoming_text_and_send
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import {
   createWhatsappBotFlow,
@@ -6,6 +6,7 @@ import {
   clearWhatsappBotSession,
   deleteWhatsappBotFlow,
   deleteWhatsappBotStep,
+  getWhatsappBotMetrics,
   getWhatsappBotStatus,
   getWhatsappBotSettings,
   listWhatsappBotEvents,
@@ -18,12 +19,14 @@ import {
   testWhatsappBotMessage,
   type WhatsappBotEvent,
   type WhatsappBotFlow,
+  type WhatsappBotMetrics,
   type WhatsappBotSession,
   type WhatsappBotSettings,
   type WhatsappBotStatus,
   type WhatsappBotStep,
   type WhatsappBotTestResponse,
 } from "../../api/whatsappBot";
+import { WhatsappBotFlowDiagram } from "../../components/whatsapp/WhatsappBotFlowDiagram";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./WhatsappIntegrationPage.module.css";
 
@@ -92,6 +95,18 @@ function optionRowsFromOptions(options: Array<Record<string, unknown>>): StepOpt
       aliasesText: aliases.join(", "),
     };
   });
+}
+
+function buildStepActions(
+  prev: Record<string, unknown> | undefined,
+  opts: { saveAs: string; builtin: string },
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(prev ?? {}) };
+  if (opts.saveAs.trim()) out.save_as = opts.saveAs.trim();
+  else delete out.save_as;
+  if (opts.builtin.trim()) out.builtin = opts.builtin.trim();
+  else delete out.builtin;
+  return out;
 }
 
 function optionsFromRows(rows: StepOptionDraft[]): Array<Record<string, unknown>> {
@@ -196,6 +211,7 @@ export function WhatsappBotPage() {
   const [stepMessage, setStepMessage] = useState("");
   const [stepOptionRows, setStepOptionRows] = useState<StepOptionDraft[]>([]);
   const [stepSaveAs, setStepSaveAs] = useState("");
+  const [stepBuiltin, setStepBuiltin] = useState("");
   const [stepNext, setStepNext] = useState("");
   const [stepOrder, setStepOrder] = useState<number>(100);
 
@@ -203,6 +219,16 @@ export function WhatsappBotPage() {
   const [testPhone, setTestPhone] = useState("");
   const [testContext, setTestContext] = useState("{}");
   const [testResult, setTestResult] = useState<WhatsappBotTestResponse | null>(null);
+  const [sessionPhoneQ, setSessionPhoneQ] = useState("");
+  const [eventPhoneQ, setEventPhoneQ] = useState("");
+  const sessionPhoneQRef = useRef(sessionPhoneQ);
+  const eventPhoneQRef = useRef(eventPhoneQ);
+  sessionPhoneQRef.current = sessionPhoneQ;
+  eventPhoneQRef.current = eventPhoneQ;
+
+  const [metrics, setMetrics] = useState<WhatsappBotMetrics | null>(null);
+  const [metricsDays, setMetricsDays] = useState(7);
+  const [showFlowDiagram, setShowFlowDiagram] = useState(true);
 
   const refresh = useCallback(async () => {
     if (!canView) return;
@@ -216,18 +242,27 @@ export function WhatsappBotPage() {
         setFlows([]);
         setSessions([]);
         setEvents([]);
+        setMetrics(null);
         return;
       }
-      const [st, fl, ss, ev] = await Promise.all([
+      const [st, fl, ss, ev, met] = await Promise.all([
         getWhatsappBotSettings(),
         listWhatsappBotFlows(),
-        listWhatsappBotSessions(),
-        listWhatsappBotEvents(),
+        listWhatsappBotSessions({
+          phone_contains: sessionPhoneQRef.current.trim() || undefined,
+          limit: 120,
+        }),
+        listWhatsappBotEvents({
+          phone_contains: eventPhoneQRef.current.trim() || undefined,
+          limit: 120,
+        }),
+        getWhatsappBotMetrics(metricsDays),
       ]);
       setSettings(st);
       setFlows(fl);
       setSessions(ss);
       setEvents(ev);
+      setMetrics(met);
       setEnabled(st.enabled);
       setWelcome(st.welcome_message);
       setFallback(st.fallback_message);
@@ -240,7 +275,7 @@ export function WhatsappBotPage() {
     } finally {
       setLoading(false);
     }
-  }, [canView, selectedFlowId]);
+  }, [canView, selectedFlowId, metricsDays]);
 
   useEffect(() => {
     void refresh();
@@ -276,6 +311,7 @@ export function WhatsappBotPage() {
       setStepMessage("");
       setStepOptionRows([]);
       setStepSaveAs("");
+      setStepBuiltin("");
       setStepNext("");
       setStepOrder(100);
       return;
@@ -285,6 +321,7 @@ export function WhatsappBotPage() {
     setStepMessage(selectedStep.message_template);
     setStepOptionRows(optionRowsFromOptions(selectedStep.options));
     setStepSaveAs(stringFromUnknown(selectedStep.actions.save_as));
+    setStepBuiltin(stringFromUnknown(selectedStep.actions.builtin));
     setStepNext(selectedStep.next_step_key ?? "");
     setStepOrder(selectedStep.sort_order);
   }, [selectedStep, editingStepId]);
@@ -341,7 +378,7 @@ export function WhatsappBotPage() {
     setOk("");
     try {
       const options = optionsFromRows(stepOptionRows);
-      const actions = stepSaveAs.trim() ? { save_as: stepSaveAs.trim() } : {};
+      const actions = buildStepActions(undefined, { saveAs: stepSaveAs, builtin: stepBuiltin });
       const flow = await createWhatsappBotFlow({
         slug: flowSlug || flowName,
         name: flowName,
@@ -424,7 +461,9 @@ export function WhatsappBotPage() {
     setOk("");
     try {
       const options = optionsFromRows(stepOptionRows);
-      const actions = stepSaveAs.trim() ? { save_as: stepSaveAs.trim() } : {};
+      const prevActions = !creatingStep && selectedStep ? selectedStep.actions : undefined;
+      const builtinForSave = stepKind === "action" ? stepBuiltin : "";
+      const actions = buildStepActions(prevActions, { saveAs: stepSaveAs, builtin: builtinForSave });
       if (selectedStep && !creatingStep) {
         await patchWhatsappBotStep(selectedFlow.id, selectedStep.id, {
           step_key: stepKey,
@@ -463,6 +502,7 @@ export function WhatsappBotPage() {
     setStepMessage("Digite a mensagem deste passo.");
     setStepOptionRows([]);
     setStepSaveAs("");
+    setStepBuiltin("");
     setStepNext("");
     setStepOrder(((selectedFlow?.steps.length ?? 0) + 1) * 100);
   }
@@ -598,6 +638,101 @@ export function WhatsappBotPage() {
         <p className={styles.hint}>Carregando…</p>
       ) : (
         <>
+          {metrics ? (
+            <section className={styles.card} style={{ marginBottom: "1rem" }}>
+              <div className={styles.row} style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
+                <h2 className={styles.cardTitle} style={{ margin: 0 }}>
+                  Resumo do bot
+                </h2>
+                <label className={styles.hint} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  Período
+                  <select
+                    className={styles.textInput}
+                    style={{ width: "auto", minWidth: "7rem" }}
+                    value={metricsDays}
+                    onChange={(e) => setMetricsDays(Number(e.target.value))}
+                  >
+                    <option value={7}>7 dias</option>
+                    <option value={14}>14 dias</option>
+                    <option value={30}>30 dias</option>
+                    <option value={90}>90 dias</option>
+                  </select>
+                </label>
+              </div>
+              <p className={styles.hint} style={{ marginTop: "0.35rem" }}>
+                De {formatDateTime(metrics.since_utc)} até {formatDateTime(metrics.until_utc)} (UTC no servidor).
+              </p>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
+                  gap: "0.75rem",
+                  marginTop: "1rem",
+                }}
+              >
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Respostas enviadas
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.replies_sent}
+                  </p>
+                </div>
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Falha no envio
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.replies_failed}
+                  </p>
+                </div>
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Erro antes do envio
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.routing_failed}
+                  </p>
+                </div>
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Textos processados
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.incoming_text_events}
+                  </p>
+                </div>
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Taxa envio OK
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.reply_success_rate != null ? `${metrics.reply_success_rate}%` : "—"}
+                  </p>
+                </div>
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Sessões ativas
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.sessions_total}
+                  </p>
+                </div>
+                <div className={styles.card} style={{ padding: "0.85rem", margin: 0 }}>
+                  <p className={styles.hint} style={{ margin: 0 }}>
+                    Pausadas (humano)
+                  </p>
+                  <p className={styles.heroTitle} style={{ fontSize: "1.35rem", margin: "0.25rem 0 0" }}>
+                    {metrics.sessions_paused_now}
+                  </p>
+                </div>
+              </div>
+              <p className={styles.hint} style={{ marginTop: "0.85rem" }}>
+                Contagem bruta por tipo: bot_incoming_replied {metrics.bot_incoming_replied} (confirma que o roteador
+                decidiu responder; cada envio bem-sucedido também gera bot_reply_sent).
+              </p>
+            </section>
+          ) : null}
           <div className={styles.grid}>
             <section className={styles.card}>
               <h2 className={styles.cardTitle}>Geral</h2>
@@ -748,7 +883,32 @@ export function WhatsappBotPage() {
           </div>
 
           <section className={styles.card} style={{ marginBottom: "1.25rem" }}>
-            <h2 className={styles.cardTitle}>Passos do fluxo</h2>
+            <div className={styles.row} style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+              <h2 className={styles.cardTitle} style={{ margin: 0 }}>
+                Passos do fluxo
+              </h2>
+              <label className={styles.checkRow} style={{ margin: 0 }}>
+                <input type="checkbox" checked={showFlowDiagram} onChange={(e) => setShowFlowDiagram(e.target.checked)} />
+                Diagrama visual
+              </label>
+            </div>
+            {showFlowDiagram && selectedFlow && selectedFlow.steps.length ? (
+              <div style={{ marginTop: "0.75rem", marginBottom: "1rem" }}>
+                <p className={styles.hint} style={{ marginTop: 0 }}>
+                  Camadas pela ordem de dependência entre passos. Arestas laranja: próximo passo ainda não existe (corrija a chave). Clique no
+                  cartão para selecionar o passo no formulário.
+                </p>
+                <WhatsappBotFlowDiagram
+                  key={`${selectedFlow.id}-${selectedFlow.updated_at}-${selectedFlow.steps.map((s) => s.id).join("-")}`}
+                  flow={selectedFlow}
+                  selectedStepId={editingStepId && editingStepId > 0 ? editingStepId : selectedStep?.id ?? null}
+                  onSelectStep={(id) => {
+                    setEditingStepId(id);
+                    setOk("");
+                  }}
+                />
+              </div>
+            ) : null}
             {selectedFlow?.steps.length ? (
               <div className={styles.tableWrap} style={{ marginBottom: "1rem" }}>
                 <table className={styles.table}>
@@ -766,7 +926,14 @@ export function WhatsappBotPage() {
                       <tr key={step.id}>
                         <td>{step.sort_order}</td>
                         <td className={styles.mono}>{step.step_key}</td>
-                        <td>{step.kind}</td>
+                        <td>
+                          {step.kind}
+                          {String(step.actions?.builtin || "").trim() ? (
+                            <span className={styles.mono} style={{ display: "block", fontSize: "0.8rem", color: "#64748b" }}>
+                              {String(step.actions.builtin)}
+                            </span>
+                          ) : null}
+                        </td>
                         <td>{step.message_template.slice(0, 90)}{step.message_template.length > 90 ? "…" : ""}</td>
                         <td>
                           {canConfigure ? (
@@ -798,10 +965,39 @@ export function WhatsappBotPage() {
                   <option value="message">Mensagem</option>
                   <option value="question">Pergunta</option>
                   <option value="menu">Menu</option>
+                  <option value="action">Ação (resposta gerada no servidor)</option>
                   <option value="handoff">Atendente</option>
                   <option value="end">Encerrar</option>
                 </select>
-                <label className={styles.fieldLabel} htmlFor="step-next" style={{ marginTop: "0.85rem" }}>Próximo passo</label>
+                {stepKind === "action" ? (
+                  <>
+                    <label className={styles.fieldLabel} htmlFor="step-builtin" style={{ marginTop: "0.85rem" }}>
+                      Ação interna (builtin)
+                    </label>
+                    <select
+                      id="step-builtin"
+                      className={styles.textInput}
+                      value={stepBuiltin}
+                      disabled={!canConfigure}
+                      onChange={(e) => setStepBuiltin(e.target.value)}
+                    >
+                      <option value="">Nenhuma — usa só o texto do passo</option>
+                      <option value="finance_open_entries">Financeiro: listar cobranças em aberto + links (Asaas / MP / Stone)</option>
+                      <option value="lookup_status">Consultar status (orçamentos e OS)</option>
+                      <option value="create_budget_draft">Criar rascunho de orçamento</option>
+                      <option value="create_schedule_request">Registrar solicitação de visita/agenda</option>
+                      <option value="register_nf_request">Registrar pedido de nota fiscal</option>
+                      <option value="register_satisfaction_feedback">Registrar pesquisa de satisfação</option>
+                    </select>
+                    <p className={styles.hint}>
+                      Com builtin, a mensagem do passo costuma ser um prefácio curto; o servidor acrescenta o resultado
+                      (por exemplo, links de fatura Asaas, PIX/boleto Mercado Pago ou PDF/QR Stone).
+                    </p>
+                  </>
+                ) : null}
+                <label className={styles.fieldLabel} htmlFor="step-next" style={{ marginTop: "0.85rem" }}>
+                  Próximo passo
+                </label>
                 <input id="step-next" className={styles.textInput} value={stepNext} disabled={!canConfigure} onChange={(e) => setStepNext(e.target.value)} />
                 <label className={styles.fieldLabel} htmlFor="step-order" style={{ marginTop: "0.85rem" }}>Ordem</label>
                 <input id="step-order" type="number" className={styles.textInput} value={stepOrder} disabled={!canConfigure} onChange={(e) => setStepOrder(Number(e.target.value || 100))} />
@@ -825,7 +1021,38 @@ export function WhatsappBotPage() {
               <div>
                 <label className={styles.fieldLabel} htmlFor="step-message">Mensagem do passo</label>
                 <textarea id="step-message" className={styles.textarea} value={stepMessage} disabled={!canConfigure} onChange={(e) => setStepMessage(e.target.value)} />
-                <p className={styles.hint}>Variáveis: {"{empresa}"}, {"{nome_cliente}"}, {"{numero_os}"}, {"{valor_total}"}, {"{link_pagamento}"}.</p>
+                <p className={styles.hint}>
+                  Variáveis no texto (placeholders {"{chave}"}): {"{empresa}"}, {"{nome_cliente}"}, {"{telefone_cliente}"},{" "}
+                  {"{email_cliente}"}, {"{documento_cliente}"}, {"{numero_os}"}, {"{titulo_os}"}, {"{valor_total}"},{" "}
+                  {"{mensagem_cliente}"}, {"{opcao_escolhida}"}. Os links de pagamento (Asaas, Mercado Pago, Stone / Pagar.me) são
+                  montados automaticamente na ação interna <code style={{ fontSize: "0.9em" }}>finance_open_entries</code>, não por
+                  variável no template.
+                </p>
+                {stepBuiltin === "finance_open_entries" || selectedFlow?.slug === "financeiro-pagamentos" ? (
+                  <div
+                    className={styles.card}
+                    style={{
+                      marginTop: "0.75rem",
+                      padding: "0.85rem",
+                      borderLeft: "4px solid #0d9488",
+                      background: "#f0fdfa",
+                    }}
+                  >
+                    <p className={styles.hint} style={{ marginTop: 0, color: "#115e59" }}>
+                      <strong>Financeiro no WhatsApp:</strong> com Asaas conectado, o cliente recebe o link da fatura no Asaas (PIX
+                      ou boleto, conforme a cobrança). Com Mercado Pago, enviamos o link de checkout ou o de PIX ou boleto já emitido.
+                      Com Stone / Pagar.me, buscamos o PDF do boleto ou a página com QR de PIX no pedido do gateway.
+                    </p>
+                    <p className={styles.hint} style={{ marginBottom: 0, color: "#115e59" }}>
+                      Conecte os gateways em{" "}
+                      <Link to="/app/finance/settings/accounts" className={styles.btnGhost} style={{ display: "inline", padding: "0.15rem 0.45rem" }}>
+                        Financeiro → Contas e gateways
+                      </Link>
+                      . Os lançamentos em aberto precisam estar vinculados ao WhatsApp do cliente ou à OS presente no contexto
+                      (ex.: fluxo de OS concluída).
+                    </p>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -970,7 +1197,7 @@ export function WhatsappBotPage() {
           </section>
 
           <section className={styles.card} style={{ marginTop: "1.25rem" }}>
-            <div className={styles.row} style={{ justifyContent: "space-between" }}>
+            <div className={styles.row} style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem" }}>
               <div>
                 <h2 className={styles.cardTitle}>Conversas recentes</h2>
                 <p className={styles.hint} style={{ marginTop: 0 }}>
@@ -978,9 +1205,20 @@ export function WhatsappBotPage() {
                 </p>
               </div>
               <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => void refresh()}>
-                Atualizar conversas
+                Atualizar lista
               </button>
             </div>
+            <label className={styles.fieldLabel} htmlFor="bot-sess-phone" style={{ marginTop: "0.75rem" }}>
+              Filtrar por número (contém) — depois clique em &quot;Atualizar lista&quot;
+            </label>
+            <input
+              id="bot-sess-phone"
+              className={styles.textInput}
+              style={{ maxWidth: "22rem" }}
+              value={sessionPhoneQ}
+              onChange={(e) => setSessionPhoneQ(e.target.value)}
+              placeholder="Ex.: 5511 ou final 9999"
+            />
 
             {sessions.length ? (
               <div className={styles.tableWrap} style={{ marginTop: "1rem" }}>
@@ -1031,10 +1269,28 @@ export function WhatsappBotPage() {
           </section>
 
           <section className={styles.card} style={{ marginTop: "1.25rem" }}>
-            <h2 className={styles.cardTitle}>Histórico do bot</h2>
+            <div className={styles.row} style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem" }}>
+              <h2 className={styles.cardTitle} style={{ margin: 0 }}>
+                Histórico do bot
+              </h2>
+              <button type="button" className={styles.btnGhost} disabled={busy} onClick={() => void refresh()}>
+                Atualizar histórico
+              </button>
+            </div>
             <p className={styles.hint}>
               Últimos eventos de entrada, resposta e falha do bot. Use para auditar o que aconteceu no WhatsApp real.
             </p>
+            <label className={styles.fieldLabel} htmlFor="bot-ev-phone" style={{ marginTop: "0.75rem" }}>
+              Filtrar por número no payload (contém) — depois use &quot;Atualizar histórico&quot;
+            </label>
+            <input
+              id="bot-ev-phone"
+              className={styles.textInput}
+              style={{ maxWidth: "22rem" }}
+              value={eventPhoneQ}
+              onChange={(e) => setEventPhoneQ(e.target.value)}
+              placeholder="Ex.: 5511999999999"
+            />
             {events.length ? (
               <div className={styles.tableWrap} style={{ marginTop: "1rem" }}>
                 <table className={styles.table}>

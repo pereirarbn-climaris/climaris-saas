@@ -25,6 +25,9 @@ import type { TenantHoliday, Unavailability } from "../api/technicianCalendar";
 
 const DEMO_TOKEN = "demo_token_climaris_erp_2024";
 
+/** Token usado pelo modo demonstração (login “demo” no front). */
+export const DEMO_ACCESS_TOKEN = DEMO_TOKEN;
+
 export function isDemoMode(): boolean {
   const token = localStorage.getItem("access_token");
   return token === DEMO_TOKEN;
@@ -685,6 +688,18 @@ let demoFinanceGatewaysState: FinanceGatewaysOut = {
     last_validated_at: DEMO_TS,
     last_validation_error: null,
     cached_balance: 2540.5,
+  },
+  stone: {
+    connected: false,
+    sandbox: false,
+    secret_key_hint: null,
+    public_key_hint: null,
+    public_key: null,
+    account_label: null,
+    finance_bank_account_id: null,
+    webhook_url: null,
+    last_validated_at: null,
+    last_validation_error: null,
   },
 };
 let demoPmocPlansState: PmocPlanOut[] = [
@@ -1363,7 +1378,12 @@ export function demoUpsertFinanceGatewayMercadoPago(payload: {
     subscriptions: boolean;
     payment_link: boolean;
   };
-}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+}): {
+  status: string;
+  asaas: FinanceGatewaysOut["asaas"];
+  mercadopago: FinanceGatewaysOut["mercadopago"];
+  stone: FinanceGatewaysOut["stone"];
+} {
   const mp = demoFinanceGatewaysState.mercadopago;
   const at = payload.access_token.trim();
   const pk = payload.public_key.trim();
@@ -1390,7 +1410,7 @@ export function demoUpsertFinanceGatewayMercadoPago(payload: {
       cached_balance: mp.cached_balance ?? 2540.5,
     },
   };
-  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago, stone: demoGetFinanceGateways().stone };
 }
 
 export function demoPatchFinanceGatewayMercadoPagoProducts(payload: {
@@ -1399,19 +1419,29 @@ export function demoPatchFinanceGatewayMercadoPagoProducts(payload: {
   boleto: boolean;
   subscriptions: boolean;
   payment_link: boolean;
-}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+}): {
+  status: string;
+  asaas: FinanceGatewaysOut["asaas"];
+  mercadopago: FinanceGatewaysOut["mercadopago"];
+  stone: FinanceGatewaysOut["stone"];
+} {
   const mp = demoFinanceGatewaysState.mercadopago;
   demoFinanceGatewaysState = {
     ...demoFinanceGatewaysState,
     mercadopago: { ...mp, products: { ...payload } },
   };
-  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago, stone: demoGetFinanceGateways().stone };
 }
 
 export function demoPatchFinanceGatewayMercadoPagoWebhookSignature(payload: {
   webhook_signature_secret?: string;
   clear_webhook_signature_secret?: boolean;
-}): { status: string; asaas: FinanceGatewaysOut["asaas"]; mercadopago: FinanceGatewaysOut["mercadopago"] } {
+}): {
+  status: string;
+  asaas: FinanceGatewaysOut["asaas"];
+  mercadopago: FinanceGatewaysOut["mercadopago"];
+  stone: FinanceGatewaysOut["stone"];
+} {
   const mp = demoFinanceGatewaysState.mercadopago;
   let configured = mp.webhook_signature_configured;
   if (payload.clear_webhook_signature_secret) configured = false;
@@ -1420,7 +1450,7 @@ export function demoPatchFinanceGatewayMercadoPagoWebhookSignature(payload: {
     ...demoFinanceGatewaysState,
     mercadopago: { ...mp, webhook_signature_configured: configured },
   };
-  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago };
+  return { status: "ok", asaas: demoFinanceGatewaysState.asaas, mercadopago: demoGetFinanceGateways().mercadopago, stone: demoGetFinanceGateways().stone };
 }
 
 export function demoDeleteFinanceGatewayMercadoPago(): void {

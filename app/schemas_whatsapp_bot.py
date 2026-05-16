@@ -294,3 +294,23 @@ class WhatsappBotEventOut(BaseModel):
     payload: dict[str, Any]
     job_id: int | None = None
     created_at: datetime
+
+
+class WhatsappBotMetricsOut(BaseModel):
+    """Agregação de eventos do bot em `whatsapp_message_events` (período configurável)."""
+
+    period_days: int
+    since_utc: datetime
+    until_utc: datetime
+    counts_by_event_type: dict[str, int]
+    sessions_total: int
+    sessions_paused_now: int
+    replies_sent: int = Field(..., description="Eventos bot_reply_sent (mensagem enviada à Evolution).")
+    replies_failed: int = Field(..., description="Eventos bot_reply_failed.")
+    routing_failed: int = Field(..., description="Eventos bot_incoming_reply_failed (erro antes do envio).")
+    incoming_text_events: int = Field(..., description="Eventos incoming_text_processed.")
+    bot_incoming_replied: int = Field(..., description="Eventos bot_incoming_replied (roteador respondeu).")
+    reply_success_rate: float | None = Field(
+        default=None,
+        description="Porcentagem replies_sent / (replies_sent + replies_failed), ou null se não houve tentativa de envio.",
+    )

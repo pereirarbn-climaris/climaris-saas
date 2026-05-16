@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import {
   createFinanceCategory,
   createFinanceEntry,
   createFinanceEntryAsaasCharge,
   createFinanceEntryMercadoPagoPixCharge,
+  createFinanceEntryStonePixCharge,
+  createFinanceEntryStoneBoletoCharge,
+  createFinanceEntryStoneCardCharge,
   createFinanceEntryMercadoPagoBoletoCharge,
   createFinanceEntryMercadoPagoPreference,
   deleteFinanceEntry,
@@ -12,12 +16,15 @@ import {
   getFinanceGateways,
   getFinanceSettings,
   listFinanceAccounts,
+  listFinanceBankCatalog,
   listFinanceCreditCards,
   listFinancePaymentFees,
   listFinanceCategories,
   listFinanceEntries,
   patchFinanceEntry,
+  getFinanceEntryStoneBoletoArtifacts,
   type FinanceBalanceSnapshotOut,
+  type FinanceBankCatalogRow,
   type FinanceEntryDateBasis,
   type FinanceBankAccountOut,
   type FinanceCreditCardOut,
@@ -28,13 +35,19 @@ import {
   type FinanceSettingsOut,
   type FinanceEntryType,
 } from "../../api/finance";
+import { FinanceAccountBankMark } from "../../components/finance/FinanceAccountBankMark";
+import { FinanceAccountCombobox } from "../../components/finance/FinanceAccountCombobox";
 import { NavIconX } from "../../components/dashboard/NavIcons";
 import { mercadoPagoPreferenceCheckoutUrl } from "../../lib/mercadopagoHostedCheckout";
+import { createPagarmeCardToken } from "../../lib/pagarmeCardToken";
 import {
   amountToCurrencyBrlInput,
   formatCurrencyBrlInput,
+  formatPhoneBrInput,
   parseCurrencyBrlInput,
+  whatsappMeUrl,
 } from "../../lib/brMask";
+import formLayout from "../formLayout.module.css";
 import styles from "./FinancePage.module.css";
 
 function toDateInput(v: Date): string {
@@ -43,6 +56,44 @@ function toDateInput(v: Date): string {
 
 function money(v: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v ?? 0);
+}
+
+function stoneBoletoShareMessage(opts: {
+  description: string;
+  amountLabel: string;
+  orderId: string;
+  ticketUrl: string | null;
+  digitableLine: string | null;
+}): string {
+  const lines = [
+    "Olá!",
+    "",
+    `Segue o boleto — ${opts.description}`,
+    `Valor: ${opts.amountLabel}`,
+  ];
+  if (opts.digitableLine) {
+    lines.push("", "Linha digitável:", opts.digitableLine);
+  }
+  if (opts.ticketUrl) {
+    lines.push("", "Abrir o PDF do boleto:", opts.ticketUrl);
+  }
+  lines.push("", `Referência Pagar.me: ${opts.orderId}`);
+  return lines.join("\n");
+}
+
+function mailtoStoneBoletoHref(customerEmail: string, subject: string, body: string): string {
+  const max = 1800;
+  const clipped = body.length > max ? `${body.slice(0, max)}\n…` : body;
+  const to = encodeURIComponent(customerEmail.trim());
+  return `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(clipped)}`;
+}
+
+function whatsappStoneBoletoHref(phoneMasked: string, body: string): string | null {
+  const base = whatsappMeUrl(phoneMasked);
+  if (!base) return null;
+  const max = 3500;
+  const t = body.length > max ? `${body.slice(0, max)}…` : body;
+  return `${base}?text=${encodeURIComponent(t)}`;
 }
 
 function shortIsoDate(iso: string): string {
@@ -79,6 +130,41 @@ function statusBadgeClass(v: FinanceEntryStatus): string {
   return styles.statusPending;
 }
 
+const STANDARD_FINANCE_PAYMENT_METHOD_SET = new Set<string>(["pix", "cash", "credit_card", "debit_card", "boleto"]);
+
+/** Normaliza meio de pagamento para comparações (Stone, taxas, labels). */
+function normalizedFinancePaymentMethod(raw: string | null | undefined): string {
+  let p = (raw ?? "").trim().toLowerCase();
+  if (p === "ticket" || p === "bank_slip" || p === "bolbradesco") p = "boleto";
+  return p;
+}
+
+function isStandardFinancePaymentMethodValue(v: string): boolean {
+  return STANDARD_FINANCE_PAYMENT_METHOD_SET.has(v);
+}
+
+/**
+ * Valor controlado do <select> de meio: deve coincidir com uma <option>.
+ * Evita estado inválido (espaços, aliases) que no React impede trocar o meio.
+ */
+function financePaymentMethodSelectValue(raw: string | null | undefined): string {
+  let p = normalizedFinancePaymentMethod(raw);
+  if (!p) p = "pix";
+  if (STANDARD_FINANCE_PAYMENT_METHOD_SET.has(p)) return p;
+  return p;
+}
+
+/** Rótulo do botão Stone conforme o meio de pagamento cadastrado no lançamento. */
+function stoneEntryChargeLabel(paymentMethod: string | null | undefined): string {
+  const p = normalizedFinancePaymentMethod(paymentMethod);
+  if (p === "boleto") return "Emitir boleto (Stone)";
+  if (p === "credit_card") return "Cobrar cartão (Stone)";
+  if (p === "debit_card") return "Cobrar no cartão (Stone)";
+  if (p === "pix") return "Emitir PIX (Stone)";
+  if (p === "cash") return "Stone (indisponível)";
+  return "Cobrar (Stone)";
+}
+
 function modeLabel(m: FinanceSettingsOut["effective_mode"]): string {
   if (m === "management") return "Gestão completa";
   if (m === "intermediate") return "Intermediário";
@@ -109,6 +195,7 @@ export function FinancePage() {
   const [entries, setEntries] = useState<FinanceEntryOut[]>([]);
   const [categories, setCategories] = useState<Array<{ id: number; name: string }>>([]);
   const [accounts, setAccounts] = useState<FinanceBankAccountOut[]>([]);
+  const [bankCatalog, setBankCatalog] = useState<FinanceBankCatalogRow[] | null>(null);
   const [cards, setCards] = useState<FinanceCreditCardOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -153,6 +240,43 @@ export function FinancePage() {
     ticketUrl: string | null;
     pixCopyPaste: string | null;
   } | null>(null);
+  const [stoneChargeModalEntry, setStoneChargeModalEntry] = useState<FinanceEntryOut | null>(null);
+  const [stoneCustomerEmail, setStoneCustomerEmail] = useState("");
+  const [stoneCustomerName, setStoneCustomerName] = useState("");
+  const [stoneCustomerDocument, setStoneCustomerDocument] = useState("");
+  const [stoneChargeSubmitting, setStoneChargeSubmitting] = useState(false);
+  const [stoneChargeResult, setStoneChargeResult] = useState<{
+    orderId: string;
+    pixCopyPaste: string | null;
+    qrCodeUrl: string | null;
+  } | null>(null);
+  const [stoneBoletoModalEntry, setStoneBoletoModalEntry] = useState<FinanceEntryOut | null>(null);
+  const [stoneBoletoEmail, setStoneBoletoEmail] = useState("");
+  const [stoneBoletoName, setStoneBoletoName] = useState("");
+  const [stoneBoletoDocument, setStoneBoletoDocument] = useState("");
+  const [stoneBoletoInstructions, setStoneBoletoInstructions] = useState("");
+  const [stoneBoletoSubmitting, setStoneBoletoSubmitting] = useState(false);
+  const [stoneBoletoResult, setStoneBoletoResult] = useState<{
+    orderId: string;
+    ticketUrl: string | null;
+    digitableLine: string | null;
+    barcode: string | null;
+  } | null>(null);
+  const [stoneBoletoShareWhatsapp, setStoneBoletoShareWhatsapp] = useState("");
+  const [stoneBoletoCopyLineHint, setStoneBoletoCopyLineHint] = useState("");
+  const [stoneCardModalEntry, setStoneCardModalEntry] = useState<FinanceEntryOut | null>(null);
+  const [stoneCardEmail, setStoneCardEmail] = useState("");
+  const [stoneCardName, setStoneCardName] = useState("");
+  const [stoneCardDocument, setStoneCardDocument] = useState("");
+  const [stoneCardToken, setStoneCardToken] = useState("");
+  const [stoneCardNumber, setStoneCardNumber] = useState("");
+  const [stoneCardHolderName, setStoneCardHolderName] = useState("");
+  const [stoneCardExpMonth, setStoneCardExpMonth] = useState("");
+  const [stoneCardExpYear, setStoneCardExpYear] = useState("");
+  const [stoneCardCvv, setStoneCardCvv] = useState("");
+  const [stoneCardInstallments, setStoneCardInstallments] = useState("1");
+  const [stoneCardSubmitting, setStoneCardSubmitting] = useState(false);
+  const [stoneCardResult, setStoneCardResult] = useState<{ orderId: string } | null>(null);
   const [mpBoletoModalEntry, setMpBoletoModalEntry] = useState<FinanceEntryOut | null>(null);
   const [mpBoletoEmail, setMpBoletoEmail] = useState("");
   const [mpBoletoCpf, setMpBoletoCpf] = useState("");
@@ -189,6 +313,17 @@ export function FinancePage() {
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editScope, setEditScope] = useState<"single" | "future" | "all">("single");
+  const [editStoneBoletoBusy, setEditStoneBoletoBusy] = useState(false);
+  const [editStoneBoletoErr, setEditStoneBoletoErr] = useState<string | null>(null);
+  const [editStoneBoletoData, setEditStoneBoletoData] = useState<{
+    orderId: string;
+    ticketUrl: string | null;
+    digitableLine: string | null;
+    barcode: string | null;
+  } | null>(null);
+  const [financeBoletoPdfOverlayUrl, setFinanceBoletoPdfOverlayUrl] = useState<string | null>(null);
+  const [editStoneBoletoShareWhatsapp, setEditStoneBoletoShareWhatsapp] = useState("");
+  const [editStoneBoletoCopyLineHint, setEditStoneBoletoCopyLineHint] = useState("");
   const isIncome = entryType === "income";
   const showMachineField = isIncome && (paymentMethod === "credit_card" || paymentMethod === "debit_card");
   const showBankAccountField =
@@ -222,6 +357,83 @@ export function FinancePage() {
     return out.sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [paymentFees]);
 
+  const stoneBoletoShareBody = useMemo(() => {
+    if (!stoneBoletoResult || !stoneBoletoModalEntry) return "";
+    return stoneBoletoShareMessage({
+      description: stoneBoletoModalEntry.description,
+      amountLabel: money(stoneBoletoModalEntry.amount),
+      orderId: stoneBoletoResult.orderId,
+      ticketUrl: stoneBoletoResult.ticketUrl,
+      digitableLine: stoneBoletoResult.digitableLine,
+    });
+  }, [stoneBoletoResult, stoneBoletoModalEntry]);
+
+  const stoneBoletoMailtoHref =
+    stoneBoletoResult && stoneBoletoModalEntry && stoneBoletoEmail.trim() && stoneBoletoShareBody
+      ? mailtoStoneBoletoHref(
+          stoneBoletoEmail.trim(),
+          `Boleto — ${stoneBoletoModalEntry.description}`.slice(0, 180),
+          stoneBoletoShareBody,
+        )
+      : null;
+
+  const stoneBoletoWhatsappHref =
+    stoneBoletoShareBody && stoneBoletoShareWhatsapp.trim()
+      ? whatsappStoneBoletoHref(stoneBoletoShareWhatsapp, stoneBoletoShareBody)
+      : null;
+
+  useEffect(() => {
+    if (editPaymentMethod !== "boleto") {
+      setEditStoneBoletoData(null);
+      setEditStoneBoletoErr(null);
+      setFinanceBoletoPdfOverlayUrl(null);
+      setEditStoneBoletoCopyLineHint("");
+    }
+  }, [editPaymentMethod]);
+
+  useEffect(() => {
+    if (!financeBoletoPdfOverlayUrl) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setFinanceBoletoPdfOverlayUrl(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [financeBoletoPdfOverlayUrl]);
+
+  const editStoneBoletoToolsVisible = useMemo(() => {
+    if (!editingEntry || !editInc) return false;
+    if (editPaymentMethod !== "boleto") return false;
+    if ((editingEntry.payment_provider || "").trim().toLowerCase() !== "stone") return false;
+    return Boolean((editingEntry.gateway_payment_id || "").trim());
+  }, [editingEntry, editInc, editPaymentMethod]);
+
+  const editStoneBoletoShareText = useMemo(() => {
+    if (!editingEntry || !editStoneBoletoData) return "";
+    return stoneBoletoShareMessage({
+      description: editingEntry.description,
+      amountLabel: money(editingEntry.amount),
+      orderId: editStoneBoletoData.orderId,
+      ticketUrl: editStoneBoletoData.ticketUrl,
+      digitableLine: editStoneBoletoData.digitableLine,
+    });
+  }, [editingEntry, editStoneBoletoData]);
+
+  const editStoneBoletoMailtoHref =
+    editStoneBoletoToolsVisible &&
+    editStoneBoletoShareText &&
+    (editingEntry?.linked_payer_email || "").trim()
+      ? mailtoStoneBoletoHref(
+          (editingEntry!.linked_payer_email || "").trim(),
+          `Boleto — ${editingEntry!.description}`.slice(0, 180),
+          editStoneBoletoShareText,
+        )
+      : null;
+
+  const editStoneBoletoWhatsappHref =
+    editStoneBoletoShareText && editStoneBoletoShareWhatsapp.trim()
+      ? whatsappStoneBoletoHref(editStoneBoletoShareWhatsapp, editStoneBoletoShareText)
+      : null;
+
   async function pickCategoryOption(raw: string, setField: (id: string) => void) {
     if (raw !== "__new__") {
       setField(raw);
@@ -253,9 +465,10 @@ export function FinancePage() {
         setCategories([]);
         setGateways(null);
         setBalanceSnapshot(null);
+        setBankCatalog(null);
         return;
       }
-      const [e, c, gw, fees, accs, ccs, snap] = await Promise.all([
+      const [e, c, gw, fees, accs, ccs, snap, bankCat] = await Promise.all([
         listFinanceEntries({
           start_date: startDate,
           end_date: endDate,
@@ -267,6 +480,7 @@ export function FinancePage() {
         listFinanceAccounts(),
         listFinanceCreditCards(),
         getFinanceBalanceSnapshot({ end_date: endDate, date_basis: listDateBasis }),
+        listFinanceBankCatalog().catch(() => [] as FinanceBankCatalogRow[]),
       ]);
       setGateways(gw);
       setEntries(e);
@@ -275,6 +489,7 @@ export function FinancePage() {
       setAccounts(accs);
       setCards(ccs);
       setBalanceSnapshot(snap);
+      setBankCatalog(bankCat.length ? bankCat : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível carregar financeiro.");
     } finally {
@@ -395,6 +610,12 @@ export function FinancePage() {
   function closeEditModal() {
     setEditingEntry(null);
     setEditDeletePhase("idle");
+    setEditStoneBoletoBusy(false);
+    setEditStoneBoletoErr(null);
+    setEditStoneBoletoData(null);
+    setFinanceBoletoPdfOverlayUrl(null);
+    setEditStoneBoletoShareWhatsapp("");
+    setEditStoneBoletoCopyLineHint("");
   }
 
   function openEditModal(entry: FinanceEntryOut) {
@@ -405,13 +626,44 @@ export function FinancePage() {
     setEditDueDate(entry.due_date);
     setEditCompetenceDate(entry.competence_date ?? entry.due_date);
     setEditStatus(entry.status);
-    setEditPaymentMethod((entry.payment_method || "pix").toLowerCase());
+    setEditPaymentMethod(financePaymentMethodSelectValue(entry.payment_method));
     setEditPaymentProvider(entry.payment_provider?.trim() ?? "");
     setEditFinanceAccountId(entry.finance_account_id != null ? String(entry.finance_account_id) : "");
     setEditCreditCardId(entry.credit_card_id != null ? String(entry.credit_card_id) : "");
     setEditCategoryId(entry.category_id != null ? String(entry.category_id) : "");
     setEditNotes(entry.notes?.trim() ?? "");
     setEditScope("single");
+    setEditStoneBoletoBusy(false);
+    setEditStoneBoletoErr(null);
+    setEditStoneBoletoData(null);
+    setFinanceBoletoPdfOverlayUrl(null);
+    setEditStoneBoletoCopyLineHint("");
+    setEditStoneBoletoShareWhatsapp(
+      entry.recipient_whatsapp?.trim() ? formatPhoneBrInput(String(entry.recipient_whatsapp)) : "",
+    );
+  }
+
+  async function loadEditStoneBoletoArtifacts(opts?: { openPdf?: boolean }) {
+    if (!editingEntry?.id) return;
+    setEditStoneBoletoBusy(true);
+    setEditStoneBoletoErr(null);
+    try {
+      const r = await getFinanceEntryStoneBoletoArtifacts(editingEntry.id);
+      setEditStoneBoletoData({
+        orderId: r.order_id,
+        ticketUrl: r.ticket_url,
+        digitableLine: r.digitable_line,
+        barcode: r.barcode,
+      });
+      if (opts?.openPdf && r.ticket_url) {
+        setFinanceBoletoPdfOverlayUrl(r.ticket_url);
+      }
+    } catch (e) {
+      setEditStoneBoletoErr(e instanceof Error ? e.message : "Não foi possível carregar o boleto.");
+      setEditStoneBoletoData(null);
+    } finally {
+      setEditStoneBoletoBusy(false);
+    }
   }
 
   function handleDeleteClick() {
@@ -453,7 +705,7 @@ export function FinancePage() {
         due_date: editDueDate,
         competence_date: editInc ? editCompetenceDate : undefined,
         status: editStatus,
-        payment_method: editPaymentMethod || null,
+        payment_method: normalizedFinancePaymentMethod(editPaymentMethod) || null,
         payment_provider: editShowMachineField ? editPaymentProvider.trim() || null : null,
         finance_account_id: editFinanceAccountId ? Number(editFinanceAccountId) : null,
         credit_card_id: editCreditCardId ? Number(editCreditCardId) : null,
@@ -488,6 +740,270 @@ export function FinancePage() {
     setChargeCustomerId("");
     setChargeBillingType("PIX");
     setChargeResult(null);
+  }
+
+  function openStoneChargeForEntry(entry: FinanceEntryOut) {
+    const p = normalizedFinancePaymentMethod(entry.payment_method);
+    if (p === "cash") {
+      setError(
+        "Este lançamento está como dinheiro. Altere o meio para PIX, boleto ou cartão no lançamento para cobrar pela Stone, ou use «Baixar» quando receber em espécie.",
+      );
+      return;
+    }
+    if (p === "boleto") {
+      openStoneBoletoChargeModal(entry);
+      return;
+    }
+    if (p === "credit_card" || p === "debit_card") {
+      openStoneCardChargeModal(entry);
+      return;
+    }
+    openStoneChargeModal(entry);
+  }
+
+  function openStoneChargeModal(entry: FinanceEntryOut) {
+    if (!gateways?.stone.connected) {
+      setError("Conecte Stone / Pagar.me em Contas e carteiras antes de emitir cobrança.");
+      return;
+    }
+    if (entry.gateway_preference_id) {
+      setError(
+        "Este lançamento possui checkout Mercado Pago pendente. Remova a preferência ou use outro lançamento para cobrar via Stone / Pagar.me.",
+      );
+      return;
+    }
+    if (entry.gateway_payment_id) {
+      setError("Este lançamento já está vinculado a uma cobrança.");
+      return;
+    }
+    setStoneChargeModalEntry(entry);
+    setStoneCustomerEmail(entry.linked_payer_email ?? "");
+    setStoneCustomerName(entry.linked_payer_name ?? "");
+    setStoneCustomerDocument(entry.linked_payer_document ?? "");
+    setStoneChargeResult(null);
+  }
+
+  function closeStoneChargeModal() {
+    if (stoneChargeSubmitting) return;
+    setStoneChargeModalEntry(null);
+    setStoneCustomerEmail("");
+    setStoneCustomerName("");
+    setStoneCustomerDocument("");
+    setStoneChargeResult(null);
+  }
+
+  async function submitStoneChargeModal(ev: FormEvent) {
+    ev.preventDefault();
+    if (!stoneChargeModalEntry) return;
+    if (!stoneCustomerEmail.trim()) {
+      setError("Informe o e-mail do pagador (cadastro no Pagar.me).");
+      return;
+    }
+    setStoneChargeSubmitting(true);
+    setError(null);
+    try {
+      const r = await createFinanceEntryStonePixCharge(stoneChargeModalEntry.id, {
+        customer_email: stoneCustomerEmail.trim(),
+        customer_name: stoneCustomerName.trim() || null,
+        payer_document: stoneCustomerDocument.trim() || null,
+      });
+      setStoneChargeResult({
+        orderId: r.order_id,
+        pixCopyPaste: r.pix_copy_paste,
+        qrCodeUrl: r.qr_code_url,
+      });
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível emitir cobrança Stone / Pagar.me.");
+    } finally {
+      setStoneChargeSubmitting(false);
+    }
+  }
+
+  function openStoneBoletoChargeModal(entry: FinanceEntryOut) {
+    if (!gateways?.stone.connected) {
+      setError("Conecte Stone / Pagar.me em Contas e carteiras antes de emitir cobrança.");
+      return;
+    }
+    if (entry.gateway_preference_id) {
+      setError(
+        "Este lançamento possui checkout Mercado Pago pendente. Remova a preferência ou use outro lançamento para cobrar via Stone / Pagar.me.",
+      );
+      return;
+    }
+    if (entry.gateway_payment_id) {
+      setError("Este lançamento já está vinculado a uma cobrança.");
+      return;
+    }
+    setError(null);
+    setFinanceBoletoPdfOverlayUrl(null);
+    setStoneBoletoShareWhatsapp("");
+    setStoneBoletoCopyLineHint("");
+    setStoneBoletoModalEntry(entry);
+    setStoneBoletoEmail(entry.linked_payer_email ?? "");
+    setStoneBoletoName(entry.linked_payer_name ?? "");
+    setStoneBoletoDocument(entry.linked_payer_document ?? "");
+    setStoneBoletoInstructions("");
+    setStoneBoletoResult(null);
+  }
+
+  function closeStoneBoletoChargeModal() {
+    if (stoneBoletoSubmitting) return;
+    setError(null);
+    setFinanceBoletoPdfOverlayUrl(null);
+    setStoneBoletoShareWhatsapp("");
+    setStoneBoletoCopyLineHint("");
+    setStoneBoletoModalEntry(null);
+    setStoneBoletoEmail("");
+    setStoneBoletoName("");
+    setStoneBoletoDocument("");
+    setStoneBoletoInstructions("");
+    setStoneBoletoResult(null);
+  }
+
+  async function submitStoneBoletoChargeModal(ev: FormEvent) {
+    ev.preventDefault();
+    if (!stoneBoletoModalEntry) return;
+    if (!stoneBoletoEmail.trim()) {
+      setError("Informe o e-mail do pagador.");
+      return;
+    }
+    const docDigits = stoneBoletoDocument.replace(/\D/g, "");
+    if (docDigits.length !== 11 && docDigits.length !== 14) {
+      setError("Informe CPF (11 dígitos) ou CNPJ (14 dígitos) do pagador.");
+      return;
+    }
+    setStoneBoletoSubmitting(true);
+    setError(null);
+    try {
+      const r = await createFinanceEntryStoneBoletoCharge(stoneBoletoModalEntry.id, {
+        customer_email: stoneBoletoEmail.trim(),
+        customer_name: stoneBoletoName.trim() || null,
+        payer_document: stoneBoletoDocument,
+        instructions: stoneBoletoInstructions.trim() || null,
+      });
+      setStoneBoletoResult({
+        orderId: r.order_id,
+        ticketUrl: r.ticket_url,
+        digitableLine: r.digitable_line,
+        barcode: r.barcode,
+      });
+      setStoneBoletoShareWhatsapp(
+        stoneBoletoModalEntry.recipient_whatsapp?.trim()
+          ? formatPhoneBrInput(String(stoneBoletoModalEntry.recipient_whatsapp))
+          : "",
+      );
+      setStoneBoletoCopyLineHint("");
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível emitir boleto Stone / Pagar.me.");
+    } finally {
+      setStoneBoletoSubmitting(false);
+    }
+  }
+
+  function openStoneCardChargeModal(entry: FinanceEntryOut) {
+    if (!gateways?.stone.connected) {
+      setError("Conecte Stone / Pagar.me em Contas e carteiras antes de emitir cobrança.");
+      return;
+    }
+    if (entry.gateway_preference_id) {
+      setError(
+        "Este lançamento possui checkout Mercado Pago pendente. Remova a preferência ou use outro lançamento para cobrar via Stone / Pagar.me.",
+      );
+      return;
+    }
+    if (entry.gateway_payment_id) {
+      setError("Este lançamento já está vinculado a uma cobrança.");
+      return;
+    }
+    setStoneCardModalEntry(entry);
+    setStoneCardEmail(entry.linked_payer_email ?? "");
+    setStoneCardName(entry.linked_payer_name ?? "");
+    setStoneCardDocument(entry.linked_payer_document ?? "");
+    setStoneCardToken("");
+    setStoneCardNumber("");
+    setStoneCardHolderName("");
+    setStoneCardExpMonth("");
+    setStoneCardExpYear("");
+    setStoneCardCvv("");
+    setStoneCardInstallments("1");
+    setStoneCardResult(null);
+  }
+
+  function closeStoneCardChargeModal() {
+    if (stoneCardSubmitting) return;
+    setStoneCardModalEntry(null);
+    setStoneCardEmail("");
+    setStoneCardName("");
+    setStoneCardDocument("");
+    setStoneCardToken("");
+    setStoneCardNumber("");
+    setStoneCardHolderName("");
+    setStoneCardExpMonth("");
+    setStoneCardExpYear("");
+    setStoneCardCvv("");
+    setStoneCardInstallments("1");
+    setStoneCardResult(null);
+  }
+
+  async function submitStoneCardChargeModal(ev: FormEvent) {
+    ev.preventDefault();
+    if (!stoneCardModalEntry) return;
+    if (!stoneCardEmail.trim()) {
+      setError("Informe o e-mail do pagador.");
+      return;
+    }
+    const docDigits = stoneCardDocument.replace(/\D/g, "");
+    if (docDigits.length !== 11 && docDigits.length !== 14) {
+      setError("Informe CPF (11 dígitos) ou CNPJ (14 dígitos) do pagador.");
+      return;
+    }
+    const pk = gateways?.stone?.public_key?.trim();
+    let cardToken = stoneCardToken.trim();
+    if (!cardToken) {
+      if (!pk) {
+        setError(
+          "Cadastre a chave pública (pk_…) em Contas e carteiras → Stone, ou cole um card_token já gerado com tokenização Pagar.me.",
+        );
+        return;
+      }
+      if (!stoneCardNumber.trim() || !stoneCardExpMonth.trim() || !stoneCardExpYear.trim() || !stoneCardCvv.trim()) {
+        setError("Preencha número, validade e CVV do cartão, ou cole um card_token.");
+        return;
+      }
+    }
+    let inst = Number.parseInt(stoneCardInstallments, 10);
+    if (!Number.isFinite(inst) || inst < 1) inst = 1;
+    if (inst > 12) inst = 12;
+    setStoneCardSubmitting(true);
+    setError(null);
+    try {
+      if (!cardToken && pk) {
+        cardToken = await createPagarmeCardToken({
+          publicKey: pk,
+          number: stoneCardNumber,
+          holderName: stoneCardHolderName.trim() || stoneCardName.trim() || stoneCardEmail.split("@", 1)[0] || "Cliente",
+          expMonth: stoneCardExpMonth,
+          expYear: stoneCardExpYear,
+          cvv: stoneCardCvv,
+          holderDocumentDigits: docDigits,
+        });
+      }
+      const r = await createFinanceEntryStoneCardCharge(stoneCardModalEntry.id, {
+        customer_email: stoneCardEmail.trim(),
+        customer_name: stoneCardName.trim() || null,
+        payer_document: stoneCardDocument,
+        card_token: cardToken,
+        installments: inst,
+      });
+      setStoneCardResult({ orderId: r.order_id });
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível cobrar no cartão via Stone / Pagar.me.");
+    } finally {
+      setStoneCardSubmitting(false);
+    }
   }
 
   function openMpChargeModal(entry: FinanceEntryOut) {
@@ -831,7 +1347,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
         </div>
       </header>
 
-      {error ? (
+      {error && !stoneBoletoModalEntry ? (
         <p className={styles.error} role="alert">
           {error}
         </p>
@@ -899,13 +1415,25 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                 <div className={styles.accountBalances}>
                   <span className={styles.accountBalancesTitle}>Por conta</span>
                   <div className={styles.accountBalancesScroll}>
-                    {balanceSnapshot.accounts.map((a) => (
+                    {balanceSnapshot.accounts.map((a) => {
+                      const accRow = accounts.find((x) => x.id === a.id);
+                      return (
                       <div
                         key={a.id}
                         className={styles.accountBalanceChip}
                         title={accountChipTooltip(a.name, balanceSnapshot, a.current_balance, a.projected_balance)}
                       >
-                        <span className={styles.accountBalanceName}>{a.name}</span>
+                        <div className={styles.accountBalanceChipHead}>
+                          {accRow ? (
+                            <FinanceAccountBankMark
+                              account={accRow}
+                              gateways={gateways}
+                              catalog={bankCatalog}
+                              variant="inline"
+                            />
+                          ) : null}
+                          <span className={styles.accountBalanceName}>{a.name}</span>
+                        </div>
                         <span className={styles.accountBalanceValues}>
                           <span className={styles.accountBalanceMono}>{money(a.current_balance)}</span>
                           <span className={styles.accountBalanceArrow} aria-hidden>
@@ -914,7 +1442,8 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                           <span className={styles.accountBalanceMono}>{money(a.projected_balance)}</span>
                         </span>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -960,16 +1489,16 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                 </button>
               </div>
               <div className={styles.filtersDates}>
-                <label className={styles.fieldCompact}>
+                <label className={`${formLayout.field} ${styles.fieldCompact}`}>
                   <span>De</span>
                   <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                 </label>
-                <label className={styles.fieldCompact}>
+                <label className={`${formLayout.field} ${styles.fieldCompact}`}>
                   <span>Até</span>
                   <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                 </label>
               </div>
-              <label className={`${styles.fieldCompact} ${styles.fieldPeriod}`}>
+              <label className={`${formLayout.field} ${styles.fieldCompact} ${styles.fieldPeriod}`}>
                 <span>Período por</span>
                 <select
                   value={listDateBasis}
@@ -1024,7 +1553,12 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                                 {e.credit_card_id ? <span>Cartão #{e.credit_card_id}</span> : null}
                                 {e.gateway_payment_id ? (
                                   <span>
-                                    {e.payment_provider === "mercadopago" ? "Mercado Pago" : "Gateway"}: {e.gateway_payment_id}
+                                    {e.payment_provider === "mercadopago"
+                                      ? "Mercado Pago"
+                                      : e.payment_provider === "stone"
+                                        ? "Stone"
+                                        : "Gateway"}
+                                    : {e.gateway_payment_id}
                                   </span>
                                 ) : null}
                                 {e.gateway_preference_id ? (
@@ -1075,7 +1609,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                               <span>Líquido {money(e.net_amount)}</span>
                             </div>
                           </button>
-                          {e.entry_type === "income" && !e.gateway_payment_id && (gateways?.asaas.connected || gateways?.mercadopago.connected) ? (
+                          {e.entry_type === "income" && !e.gateway_payment_id && (gateways?.asaas.connected || gateways?.mercadopago.connected || gateways?.stone.connected) ? (
                             <div className={styles.entryQuickActions}>
                               {e.gateway_preference_id ? (
                                 <button
@@ -1132,6 +1666,11 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                               {gateways?.mercadopago.connected && gateways.mercadopago.products?.pix ? (
                                 <button type="button" onClick={() => openMpChargeModal(e)}>
                                   Cobrar MP (Pix)
+                                </button>
+                              ) : null}
+                              {gateways?.stone?.connected ? (
+                                <button type="button" onClick={() => openStoneChargeForEntry(e)}>
+                                  {stoneEntryChargeLabel(e.payment_method)}
                                 </button>
                               ) : null}
                               {gateways?.mercadopago.connected && gateways.mercadopago.products?.boleto ? (
@@ -1193,7 +1732,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
             <form className={styles.modalFormFinance} onSubmit={submitEntry}>
               <div className={styles.modalSection}>
                 <div className={styles.modalSectionLabel}>Dados principais</div>
-                <label className={styles.modalField}>
+                <label className={`${formLayout.field} ${styles.modalField}`}>
                   <span>Descrição</span>
                   <input
                     placeholder="Ex.: OS #12 — manutenção contrato mensal"
@@ -1204,7 +1743,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   />
                 </label>
                 <div className={styles.modalGridTipoPaid}>
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Tipo</span>
                     <select value={entryType} onChange={(e) => setEntryType(e.target.value as FinanceEntryType)}>
                       <option value="income">Receita</option>
@@ -1221,7 +1760,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   </label>
                 </div>
                 <div className={styles.modalValorVencGrid}>
-                  <div className={styles.modalField}>
+                  <div className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Valor</span>
                     <div className={styles.moneyInputWrap}>
                       <span className={styles.moneyPrefix}>R$</span>
@@ -1233,7 +1772,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                       />
                     </div>
                   </div>
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Vencimento</span>
                     <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
                   </label>
@@ -1243,7 +1782,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
               <div className={styles.modalSection}>
                 <div className={styles.modalSectionLabel}>Pagamento</div>
                 <div className={styles.row2}>
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Meio</span>
                     <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
                       <option value="pix">PIX</option>
@@ -1254,7 +1793,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                     </select>
                   </label>
                   {showMachineField ? (
-                    <label className={styles.modalField}>
+                    <label className={`${formLayout.field} ${styles.modalField}`}>
                       <span>Maquininha</span>
                       <select value={paymentProvider} onChange={(e) => setPaymentProvider(e.target.value)}>
                         <option value="">Selecionar</option>
@@ -1280,7 +1819,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   </p>
                 ) : null}
                 {showInstallmentsField ? (
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Parcelas</span>
                     <input type="number" min="1" max="24" step="1" value={installments} onChange={(e) => setInstallments(e.target.value)} />
                   </label>
@@ -1288,22 +1827,24 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                 {showBankAccountField || showCreditCardField ? (
                   <div className={styles.row2}>
                     {showBankAccountField ? (
-                      <label className={styles.modalField}>
+                      <label className={`${formLayout.field} ${styles.modalField}`}>
                         <span>{isIncome ? "Conta de recebimento" : "Conta de saída"}</span>
-                        <select value={financeAccountId} onChange={(e) => setFinanceAccountId(e.target.value)}>
-                          <option value="">Selecionar</option>
-                          {accounts.map((a) => (
-                            <option key={a.id} value={String(a.id)}>
-                              {a.name}
-                            </option>
-                          ))}
-                        </select>
+                        <FinanceAccountCombobox
+                          id="fin-new-entry-account"
+                          accounts={accounts}
+                          value={financeAccountId}
+                          onChange={setFinanceAccountId}
+                          gateways={gateways}
+                          catalog={bankCatalog}
+                          emptyOption
+                          emptyLabel="Selecionar"
+                        />
                       </label>
                     ) : (
                       <div />
                     )}
                     {showCreditCardField ? (
-                      <label className={styles.modalField}>
+                      <label className={`${formLayout.field} ${styles.modalField}`}>
                         <span>Cartão</span>
                         <select value={creditCardId} onChange={(e) => setCreditCardId(e.target.value)}>
                           <option value="">Selecionar</option>
@@ -1319,7 +1860,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                     )}
                   </div>
                 ) : null}
-                <label className={styles.modalField}>
+                <label className={`${formLayout.field} ${styles.modalField}`}>
                   <span>Categoria</span>
                   <select
                     value={categoryId}
@@ -1362,7 +1903,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
               Lancamento: <strong>{chargeModalEntry.description}</strong> ({money(chargeModalEntry.amount)})
             </p>
             <form className={styles.modalForm} onSubmit={submitAsaasChargeModal}>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>customer_id no Asaas</span>
                 <input
                   value={chargeCustomerId}
@@ -1372,7 +1913,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   disabled={chargeSubmitting}
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>Tipo de cobranca</span>
                 <select
                   value={chargeBillingType}
@@ -1425,7 +1966,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
               Lançamento: <strong>{mpChargeModalEntry.description}</strong> ({money(mpChargeModalEntry.amount)})
             </p>
             <form className={styles.modalForm} onSubmit={submitMpChargeModal}>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>E-mail do pagador</span>
                 <input
                   type="email"
@@ -1437,7 +1978,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   autoComplete="email"
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>Nome (opcional)</span>
                 <input
                   value={mpPayerFirstName}
@@ -1446,7 +1987,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   disabled={mpChargeSubmitting}
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>Sobrenome (opcional)</span>
                 <input
                   value={mpPayerLastName}
@@ -1488,6 +2029,448 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
         </div>
       ) : null}
 
+      {stoneChargeModalEntry ? (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Emitir cobrança Stone PIX">
+          <div className={styles.modalCard}>
+            <header className={styles.modalHeader}>
+              <h3>Cobrança Stone / Pagar.me (PIX)</h3>
+              <button type="button" className={styles.modalClose} onClick={closeStoneChargeModal} disabled={stoneChargeSubmitting}>
+                Fechar
+              </button>
+            </header>
+            <p className={styles.modalIntro}>
+              Lançamento: <strong>{stoneChargeModalEntry.description}</strong> ({money(stoneChargeModalEntry.amount)})
+            </p>
+            {stoneChargeModalEntry.service_order_id ? (
+              <p className={styles.muted} style={{ marginTop: 0 }}>
+                Dados do pagador preenchidos a partir do <strong>cliente da OS #{stoneChargeModalEntry.service_order_id}</strong> quando
+                existirem no cadastro; você pode ajustar antes de emitir.
+              </p>
+            ) : null}
+            <form className={styles.modalForm} onSubmit={submitStoneChargeModal}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>E-mail do pagador</span>
+                <input
+                  type="email"
+                  value={stoneCustomerEmail}
+                  onChange={(e) => setStoneCustomerEmail(e.target.value)}
+                  placeholder="cliente@email.com"
+                  autoFocus
+                  disabled={stoneChargeSubmitting}
+                  autoComplete="email"
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>Nome (opcional)</span>
+                <input
+                  value={stoneCustomerName}
+                  onChange={(e) => setStoneCustomerName(e.target.value)}
+                  placeholder="Nome para o cadastro no Pagar.me"
+                  disabled={stoneChargeSubmitting}
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>CPF ou CNPJ do pagador (recomendado)</span>
+                <input
+                  value={stoneCustomerDocument}
+                  onChange={(e) => setStoneCustomerDocument(e.target.value)}
+                  placeholder="Somente números — muitas contas Pagar.me exigem para PIX"
+                  disabled={stoneChargeSubmitting}
+                  autoComplete="off"
+                />
+              </label>
+              <div className={styles.modalActions}>
+                <button type="button" className={styles.modalBtnGhost} onClick={closeStoneChargeModal} disabled={stoneChargeSubmitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className={styles.modalBtnPrimary} disabled={stoneChargeSubmitting}>
+                  {stoneChargeSubmitting ? "Emitindo..." : "Emitir PIX"}
+                </button>
+              </div>
+            </form>
+            {stoneChargeResult ? (
+              <div className={styles.modalResult}>
+                <p>
+                  Pedido Pagar.me: <strong>{stoneChargeResult.orderId}</strong>
+                </p>
+                {stoneChargeResult.qrCodeUrl ? (
+                  <p>
+                    <a href={stoneChargeResult.qrCodeUrl} target="_blank" rel="noreferrer">
+                      Abrir QR no Pagar.me
+                    </a>
+                  </p>
+                ) : null}
+                {stoneChargeResult.pixCopyPaste ? (
+                  <div>
+                    <p className={styles.muted}>Copia e cola (PIX)</p>
+                    <pre className={styles.pixPayload}>{stoneChargeResult.pixCopyPaste}</pre>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {stoneBoletoModalEntry ? (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Emitir boleto Stone Pagar.me">
+          <div className={`${styles.modalCard} ${styles.modalCardStoneBoleto}`}>
+            <header className={styles.modalHeader}>
+              <h3>Cobrança Stone / Pagar.me (Boleto)</h3>
+              <button type="button" className={styles.modalClose} onClick={closeStoneBoletoChargeModal} disabled={stoneBoletoSubmitting}>
+                Fechar
+              </button>
+            </header>
+            <p className={styles.modalIntro}>
+              Lançamento: <strong>{stoneBoletoModalEntry.description}</strong> ({money(stoneBoletoModalEntry.amount)})
+            </p>
+            {stoneBoletoModalEntry.service_order_id ? (
+              <p className={styles.muted} style={{ marginTop: 0 }}>
+                E-mail, nome e documento podem vir do <strong>cliente da OS #{stoneBoletoModalEntry.service_order_id}</strong>.
+              </p>
+            ) : null}
+            <p className={styles.muted} style={{ marginTop: 0 }}>
+              Vencimento do boleto: data de vencimento do lançamento (ou +3 dias se já estiver vencida), como no fluxo Mercado Pago.
+            </p>
+            <form className={styles.modalForm} onSubmit={submitStoneBoletoChargeModal}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>E-mail do pagador</span>
+                <input
+                  type="email"
+                  value={stoneBoletoEmail}
+                  onChange={(e) => setStoneBoletoEmail(e.target.value)}
+                  placeholder="cliente@email.com"
+                  autoFocus
+                  disabled={stoneBoletoSubmitting}
+                  autoComplete="email"
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>Nome (opcional)</span>
+                <input
+                  value={stoneBoletoName}
+                  onChange={(e) => setStoneBoletoName(e.target.value)}
+                  placeholder="Nome no boleto"
+                  disabled={stoneBoletoSubmitting}
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>CPF ou CNPJ do pagador</span>
+                <input
+                  value={stoneBoletoDocument}
+                  onChange={(e) => setStoneBoletoDocument(e.target.value)}
+                  placeholder="Somente números ou com máscara"
+                  disabled={stoneBoletoSubmitting}
+                  autoComplete="off"
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>Instruções (opcional)</span>
+                <input
+                  value={stoneBoletoInstructions}
+                  onChange={(e) => setStoneBoletoInstructions(e.target.value)}
+                  placeholder="Até 256 caracteres"
+                  maxLength={256}
+                  disabled={stoneBoletoSubmitting}
+                />
+              </label>
+              {error ? (
+                <p className={styles.error} role="alert" style={{ margin: 0 }}>
+                  {error}
+                </p>
+              ) : null}
+              <div className={styles.modalActions}>
+                <button type="button" className={styles.modalBtnGhost} onClick={closeStoneBoletoChargeModal} disabled={stoneBoletoSubmitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className={styles.modalBtnPrimary} disabled={stoneBoletoSubmitting}>
+                  {stoneBoletoSubmitting ? "Emitindo..." : "Emitir boleto"}
+                </button>
+              </div>
+            </form>
+            {stoneBoletoResult ? (
+              <div className={styles.modalResult}>
+                <p>
+                  Pedido Pagar.me: <strong>{stoneBoletoResult.orderId}</strong>
+                </p>
+                {stoneBoletoResult.ticketUrl ? (
+                  <div className={styles.modalShareRow}>
+                    <button
+                      type="button"
+                      className={styles.modalBtnPrimary}
+                      onClick={() => {
+                        const u = stoneBoletoResult.ticketUrl;
+                        if (u) setFinanceBoletoPdfOverlayUrl(u);
+                      }}
+                    >
+                      Visualizar PDF
+                    </button>
+                    <a
+                      className={styles.modalBtnGhost}
+                      href={stoneBoletoResult.ticketUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir PDF (nova aba)
+                    </a>
+                  </div>
+                ) : null}
+                {stoneBoletoResult.digitableLine ? (
+                  <div>
+                    <p className={styles.muted}>Linha digitável</p>
+                    <pre className={styles.pixPayload}>{stoneBoletoResult.digitableLine}</pre>
+                    <div className={styles.modalShareRow}>
+                      <button
+                        type="button"
+                        className={styles.modalBtnGhost}
+                        onClick={() => {
+                          const line = stoneBoletoResult.digitableLine;
+                          if (!line) return;
+                          void navigator.clipboard.writeText(line).then(
+                            () => {
+                              setStoneBoletoCopyLineHint("Copiado.");
+                              window.setTimeout(() => setStoneBoletoCopyLineHint(""), 2500);
+                            },
+                            () => {
+                              setStoneBoletoCopyLineHint("Copie manualmente (Ctrl+C) no campo acima.");
+                              window.setTimeout(() => setStoneBoletoCopyLineHint(""), 5000);
+                            },
+                          );
+                        }}
+                      >
+                        Copiar linha digitável
+                      </button>
+                      {stoneBoletoCopyLineHint ? (
+                        <span className={styles.muted} style={{ fontSize: "0.8rem" }}>
+                          {stoneBoletoCopyLineHint}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {stoneBoletoResult.barcode ? (
+                  <p className={styles.muted}>
+                    Código de barras: <code>{stoneBoletoResult.barcode}</code>
+                  </p>
+                ) : null}
+                <p className={styles.muted} style={{ marginTop: "0.5rem" }}>
+                  Envie o boleto ao cliente pelo app de e-mail ou WhatsApp (abre em nova aba com a mensagem pronta).
+                </p>
+                <label className={`${formLayout.field} ${styles.modalField} ${styles.modalShareField}`}>
+                  <span>WhatsApp do cliente (com DDD)</span>
+                  <input
+                    type="tel"
+                    value={stoneBoletoShareWhatsapp}
+                    onChange={(e) => setStoneBoletoShareWhatsapp(formatPhoneBrInput(e.target.value))}
+                    placeholder="(34) 99999-9999"
+                    autoComplete="tel"
+                  />
+                </label>
+                <div className={styles.modalShareRow}>
+                  {stoneBoletoMailtoHref ? (
+                    <a className={styles.modalBtnGhost} href={stoneBoletoMailtoHref} rel="noreferrer">
+                      Enviar por e-mail
+                    </a>
+                  ) : (
+                    <button type="button" className={styles.modalBtnGhost} disabled title="Preencha o e-mail do pagador acima">
+                      Enviar por e-mail
+                    </button>
+                  )}
+                  {stoneBoletoWhatsappHref ? (
+                    <a
+                      className={styles.modalBtnPrimary}
+                      href={stoneBoletoWhatsappHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir WhatsApp
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.modalBtnPrimary}
+                      disabled
+                      title="Informe o celular com DDD (10 ou 11 dígitos) para montar o link do WhatsApp"
+                    >
+                      Abrir WhatsApp
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {stoneCardModalEntry ? (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Cobrar cartão Stone Pagar.me">
+          <div className={styles.modalCard}>
+            <header className={styles.modalHeader}>
+              <h3>Cobrança Stone / Pagar.me (cartão)</h3>
+              <button type="button" className={styles.modalClose} onClick={closeStoneCardChargeModal} disabled={stoneCardSubmitting}>
+                Fechar
+              </button>
+            </header>
+            <p className={styles.modalIntro}>
+              Lançamento: <strong>{stoneCardModalEntry.description}</strong> ({money(stoneCardModalEntry.amount)})
+            </p>
+            {stoneCardModalEntry.service_order_id ? (
+              <p className={styles.muted} style={{ marginTop: 0 }}>
+                E-mail, nome e documento podem vir do <strong>cliente da OS #{stoneCardModalEntry.service_order_id}</strong>.
+              </p>
+            ) : null}
+            <p className={styles.muted} style={{ marginTop: 0 }}>
+              {gateways?.stone?.public_key ? (
+                <>
+                  Com a chave pública cadastrada, os dados do cartão são enviados direto ao Pagar.me para gerar um token
+                  (veja{" "}
+                  <a href="https://docs.pagar.me/reference/criar-token-cart%C3%A3o-1" target="_blank" rel="noreferrer">
+                    Criar token cartão
+                  </a>
+                  ). Cadastre o domínio do app no painel Pagar.me. Sem chave pública, use o campo <strong>card_token</strong>{" "}
+                  abaixo.
+                </>
+              ) : (
+                <>
+                  Cadastre a chave pública <strong>pk_…</strong> em Contas e carteiras para preencher o cartão aqui, ou cole
+                  um <strong>card_token</strong> já gerado. Consulte a{" "}
+                  <a href="https://docs.pagar.me/reference/cart%C3%A3o-de-cr%C3%A9dito-1" target="_blank" rel="noreferrer">
+                    documentação de cartão
+                  </a>
+                  .
+                </>
+              )}
+            </p>
+            <form className={styles.modalForm} onSubmit={submitStoneCardChargeModal}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>E-mail do pagador</span>
+                <input
+                  type="email"
+                  value={stoneCardEmail}
+                  onChange={(e) => setStoneCardEmail(e.target.value)}
+                  placeholder="cliente@email.com"
+                  autoFocus
+                  disabled={stoneCardSubmitting}
+                  autoComplete="email"
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>Nome (opcional)</span>
+                <input
+                  value={stoneCardName}
+                  onChange={(e) => setStoneCardName(e.target.value)}
+                  disabled={stoneCardSubmitting}
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>CPF ou CNPJ do pagador</span>
+                <input
+                  value={stoneCardDocument}
+                  onChange={(e) => setStoneCardDocument(e.target.value)}
+                  disabled={stoneCardSubmitting}
+                  autoComplete="off"
+                />
+              </label>
+              {gateways?.stone?.public_key ? (
+                <>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
+                    <span>Nome impresso no cartão</span>
+                    <input
+                      value={stoneCardHolderName}
+                      onChange={(e) => setStoneCardHolderName(e.target.value)}
+                      placeholder="Como no cartão"
+                      disabled={stoneCardSubmitting}
+                      autoComplete="cc-name"
+                    />
+                  </label>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
+                    <span>Número do cartão</span>
+                    <input
+                      inputMode="numeric"
+                      value={stoneCardNumber}
+                      onChange={(e) => setStoneCardNumber(e.target.value)}
+                      placeholder="Somente números"
+                      disabled={stoneCardSubmitting}
+                      autoComplete="cc-number"
+                    />
+                  </label>
+                  <div className={styles.modalGridTipoPaid}>
+                    <label className={`${formLayout.field} ${styles.modalField}`}>
+                      <span>Mês (MM)</span>
+                      <input
+                        inputMode="numeric"
+                        value={stoneCardExpMonth}
+                        onChange={(e) => setStoneCardExpMonth(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                        placeholder="MM"
+                        disabled={stoneCardSubmitting}
+                        autoComplete="cc-exp-month"
+                      />
+                    </label>
+                    <label className={`${formLayout.field} ${styles.modalField}`}>
+                      <span>Ano (AA ou AAAA)</span>
+                      <input
+                        inputMode="numeric"
+                        value={stoneCardExpYear}
+                        onChange={(e) => setStoneCardExpYear(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                        placeholder="AA"
+                        disabled={stoneCardSubmitting}
+                        autoComplete="cc-exp-year"
+                      />
+                    </label>
+                  </div>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
+                    <span>CVV</span>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      value={stoneCardCvv}
+                      onChange={(e) => setStoneCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="•••"
+                      disabled={stoneCardSubmitting}
+                      autoComplete="cc-csc"
+                    />
+                  </label>
+                </>
+              ) : null}
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>Parcelas (1 a 12)</span>
+                <input
+                  inputMode="numeric"
+                  value={stoneCardInstallments}
+                  onChange={(e) => setStoneCardInstallments(e.target.value.replace(/\D/g, "").slice(0, 2))}
+                  disabled={stoneCardSubmitting}
+                />
+              </label>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
+                <span>card_token (alternativa se não usar campos do cartão)</span>
+                <input
+                  value={stoneCardToken}
+                  onChange={(e) => setStoneCardToken(e.target.value)}
+                  placeholder={gateways?.stone?.public_key ? "Opcional se preencher o cartão acima" : "Token da tokenização"}
+                  disabled={stoneCardSubmitting}
+                  autoComplete="off"
+                />
+              </label>
+              <div className={styles.modalActions}>
+                <button type="button" className={styles.modalBtnGhost} onClick={closeStoneCardChargeModal} disabled={stoneCardSubmitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className={styles.modalBtnPrimary} disabled={stoneCardSubmitting}>
+                  {stoneCardSubmitting ? "Processando..." : "Cobrar cartão"}
+                </button>
+              </div>
+            </form>
+            {stoneCardResult ? (
+              <div className={styles.modalResult}>
+                <p>
+                  Pedido Pagar.me (pago ou em análise): <strong>{stoneCardResult.orderId}</strong>
+                </p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {mpBoletoModalEntry ? (
         <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Emitir boleto Mercado Pago">
           <div className={styles.modalCard}>
@@ -1504,7 +2487,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
               Vencimento do boleto: data de vencimento do lançamento (ou +3 dias se já estiver vencida).
             </p>
             <form className={styles.modalForm} onSubmit={submitMpBoletoChargeModal}>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>E-mail do pagador</span>
                 <input
                   type="email"
@@ -1516,7 +2499,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   autoComplete="email"
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>CPF do pagador</span>
                 <input
                   value={mpBoletoCpf}
@@ -1526,7 +2509,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   autoComplete="off"
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>Nome (opcional)</span>
                 <input
                   value={mpBoletoFirstName}
@@ -1535,7 +2518,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   disabled={mpBoletoSubmitting}
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>Sobrenome (opcional)</span>
                 <input
                   value={mpBoletoLastName}
@@ -1597,7 +2580,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
               {mpPrefMode === "subscription" ? " Assinatura: cobrança mensal no valor do lançamento (1× por mês)." : ""}
             </p>
             <form className={styles.modalForm} onSubmit={submitMpPreferenceModal}>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>E-mail do pagador {mpPrefMode === "subscription" ? "(obrigatório)" : "(opcional)"}</span>
                 <input
                   type="email"
@@ -1608,7 +2591,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   autoComplete="email"
                 />
               </label>
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>URL de retorno após pagamento aprovado (opcional)</span>
                 <input
                   value={mpPrefSuccessUrl}
@@ -1679,7 +2662,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
             <form className={styles.modalFormFinance} onSubmit={submitEditEntry}>
               <div className={styles.modalSection}>
                 <div className={styles.modalSectionLabel}>Lançamento</div>
-                <label className={styles.modalField}>
+                <label className={`${formLayout.field} ${styles.modalField}`}>
                   <span>Descrição</span>
                   <input
                     value={editDescription}
@@ -1688,7 +2671,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   />
                 </label>
                 <div className={styles.modalValorVencGrid}>
-                  <div className={styles.modalField}>
+                  <div className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Valor</span>
                     <div className={styles.moneyInputWrap}>
                       <span className={styles.moneyPrefix}>R$</span>
@@ -1700,12 +2683,12 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                       />
                     </div>
                   </div>
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Vencimento</span>
                     <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
                   </label>
                 </div>
-                <label className={styles.modalField}>
+                <label className={`${formLayout.field} ${styles.modalField}`}>
                   <span>Status</span>
                   <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as FinanceEntryStatus)}>
                     <option value="pending">Pendente</option>
@@ -1715,7 +2698,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   </select>
                 </label>
                 {editInc ? (
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Competência (receita)</span>
                     <input type="date" value={editCompetenceDate} onChange={(e) => setEditCompetenceDate(e.target.value)} />
                   </label>
@@ -1725,9 +2708,12 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
               <div className={styles.modalSection}>
                 <div className={styles.modalSectionLabel}>Pagamento</div>
                 <div className={styles.row2}>
-                  <label className={styles.modalField}>
+                  <label className={`${formLayout.field} ${styles.modalField}`}>
                     <span>Meio</span>
                     <select value={editPaymentMethod} onChange={(e) => setEditPaymentMethod(e.target.value)}>
+                      {!isStandardFinancePaymentMethodValue(editPaymentMethod) ? (
+                        <option value={editPaymentMethod}>Outro: {editPaymentMethod}</option>
+                      ) : null}
                       <option value="pix">PIX</option>
                       <option value="cash">Dinheiro</option>
                       <option value="credit_card">Cartão de crédito</option>
@@ -1736,7 +2722,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                     </select>
                   </label>
                   {editShowMachineField ? (
-                    <label className={styles.modalField}>
+                    <label className={`${formLayout.field} ${styles.modalField}`}>
                       <span>Maquininha</span>
                       <select value={editPaymentProvider} onChange={(e) => setEditPaymentProvider(e.target.value)}>
                         <option value="">Selecionar</option>
@@ -1764,22 +2750,24 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                 {editShowBankAccountField || editShowCreditCardField ? (
                   <div className={styles.row2}>
                     {editShowBankAccountField ? (
-                      <label className={styles.modalField}>
+                      <label className={`${formLayout.field} ${styles.modalField}`}>
                         <span>{editInc ? "Conta de recebimento" : "Conta de saída"}</span>
-                        <select value={editFinanceAccountId} onChange={(e) => setEditFinanceAccountId(e.target.value)}>
-                          <option value="">Selecionar</option>
-                          {accounts.map((a) => (
-                            <option key={a.id} value={String(a.id)}>
-                              {a.name}
-                            </option>
-                          ))}
-                        </select>
+                        <FinanceAccountCombobox
+                          id="fin-edit-entry-account"
+                          accounts={accounts}
+                          value={editFinanceAccountId}
+                          onChange={setEditFinanceAccountId}
+                          gateways={gateways}
+                          catalog={bankCatalog}
+                          emptyOption
+                          emptyLabel="Selecionar"
+                        />
                       </label>
                     ) : (
                       <div />
                     )}
                     {editShowCreditCardField ? (
-                      <label className={styles.modalField}>
+                      <label className={`${formLayout.field} ${styles.modalField}`}>
                         <span>Cartão</span>
                         <select value={editCreditCardId} onChange={(e) => setEditCreditCardId(e.target.value)}>
                           <option value="">Selecionar</option>
@@ -1795,7 +2783,153 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                     )}
                   </div>
                 ) : null}
-                <label className={styles.modalField}>
+                {editStoneBoletoToolsVisible ? (
+                  <div className={styles.editBoletoStonePanel}>
+                    <div className={styles.editBoletoStoneHead}>
+                      <span className={styles.editBoletoStoneTitle}>Boleto Stone</span>
+                      <span className={styles.editBoletoStoneBadge}>Emitido</span>
+                    </div>
+                    <p className={styles.editBoletoStoneHint}>
+                      PDF e linha digitável vêm do Pagar.me. Use o leitor em tela cheia ou reenvie ao cliente.
+                    </p>
+                    <div className={styles.editBoletoStoneToolbar}>
+                      <button
+                        type="button"
+                        className={styles.modalBtnGhost}
+                        disabled={editStoneBoletoBusy}
+                        onClick={() => void loadEditStoneBoletoArtifacts({ openPdf: true })}
+                      >
+                        {editStoneBoletoBusy ? "Carregando…" : "Ver boleto"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.modalBtnGhost}
+                        disabled={editStoneBoletoBusy}
+                        onClick={() => void loadEditStoneBoletoArtifacts({ openPdf: false })}
+                      >
+                        {editStoneBoletoBusy ? "Carregando…" : "Atualizar dados"}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.modalBtnPrimary}
+                        disabled={!editStoneBoletoData?.ticketUrl}
+                        onClick={() => {
+                          const u = editStoneBoletoData?.ticketUrl;
+                          if (u) setFinanceBoletoPdfOverlayUrl(u);
+                        }}
+                      >
+                        Visualizar PDF
+                      </button>
+                      {editStoneBoletoData?.ticketUrl ? (
+                        <a
+                          className={styles.modalBtnGhost}
+                          href={editStoneBoletoData.ticketUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Abrir PDF (nova aba)
+                        </a>
+                      ) : null}
+                    </div>
+                    {editStoneBoletoErr ? (
+                      <p className={styles.error} role="alert" style={{ margin: "0.4rem 0 0", fontSize: "0.82rem" }}>
+                        {editStoneBoletoErr}
+                      </p>
+                    ) : null}
+                    {editStoneBoletoData ? (
+                      <div className={styles.editBoletoStoneBody}>
+                        <p className={styles.editBoletoStoneMeta}>
+                          Pedido: <code>{editStoneBoletoData.orderId}</code>
+                          {!editingEntry?.linked_payer_email?.trim() ? (
+                            <span className={styles.muted}> — sem e-mail no cliente da OS (use WhatsApp).</span>
+                          ) : null}
+                        </p>
+                        {editStoneBoletoData.digitableLine ? (
+                          <details className={styles.editBoletoDetails}>
+                            <summary>Linha digitável</summary>
+                            <pre className={styles.pixPayload}>{editStoneBoletoData.digitableLine}</pre>
+                            <div className={styles.modalShareRow}>
+                              <button
+                                type="button"
+                                className={styles.modalBtnGhost}
+                                onClick={() => {
+                                  const line = editStoneBoletoData.digitableLine;
+                                  if (!line) return;
+                                  void navigator.clipboard.writeText(line).then(
+                                    () => {
+                                      setEditStoneBoletoCopyLineHint("Copiado.");
+                                      window.setTimeout(() => setEditStoneBoletoCopyLineHint(""), 2500);
+                                    },
+                                    () => {
+                                      setEditStoneBoletoCopyLineHint("Copie manualmente (Ctrl+C).");
+                                      window.setTimeout(() => setEditStoneBoletoCopyLineHint(""), 4000);
+                                    },
+                                  );
+                                }}
+                              >
+                                Copiar linha
+                              </button>
+                              {editStoneBoletoCopyLineHint ? (
+                                <span className={styles.muted} style={{ fontSize: "0.8rem" }}>
+                                  {editStoneBoletoCopyLineHint}
+                                </span>
+                              ) : null}
+                            </div>
+                          </details>
+                        ) : null}
+                        {editStoneBoletoData.barcode ? (
+                          <details className={styles.editBoletoDetails}>
+                            <summary>Código de barras</summary>
+                            <p className={styles.muted}>
+                              <code>{editStoneBoletoData.barcode}</code>
+                            </p>
+                          </details>
+                        ) : null}
+                        <label className={`${formLayout.field} ${styles.modalField} ${styles.modalShareField}`}>
+                          <span>WhatsApp do cliente (DDD + número)</span>
+                          <input
+                            type="tel"
+                            value={editStoneBoletoShareWhatsapp}
+                            onChange={(e) => setEditStoneBoletoShareWhatsapp(formatPhoneBrInput(e.target.value))}
+                            placeholder="(34) 99999-9999"
+                            autoComplete="tel"
+                          />
+                        </label>
+                        <div className={styles.modalShareRow}>
+                          {editStoneBoletoMailtoHref ? (
+                            <a className={styles.modalBtnGhost} href={editStoneBoletoMailtoHref} rel="noreferrer">
+                              E-mail ao cliente
+                            </a>
+                          ) : (
+                            <button type="button" className={styles.modalBtnGhost} disabled title="Cadastre e-mail no cliente da OS">
+                              E-mail ao cliente
+                            </button>
+                          )}
+                          {editStoneBoletoWhatsappHref ? (
+                            <a
+                              className={styles.modalBtnPrimary}
+                              href={editStoneBoletoWhatsappHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              WhatsApp
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              className={styles.modalBtnPrimary}
+                              disabled
+                              title="Informe o celular com DDD (10 ou 11 dígitos)"
+                            >
+                              WhatsApp
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <label className={`${formLayout.field} ${styles.modalField}`}>
                   <span>Categoria</span>
                   <select
                     value={editCategoryId}
@@ -1812,7 +2946,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                 </label>
               </div>
 
-              <label className={styles.modalField}>
+              <label className={`${formLayout.field} ${styles.modalField}`}>
                 <span>Observações</span>
                 <textarea
                   className={styles.modalTextarea}
@@ -1825,7 +2959,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
 
               {(editingEntry.installment_total ?? 1) > 1 ? (
                 <div className={styles.modalScopeBanner}>
-                  <label className={styles.modalField} style={{ margin: 0 }}>
+                  <label className={`${formLayout.field} ${styles.modalField}`} style={{ margin: 0 }}>
                     <span>Alterações aplicam a</span>
                     <select value={editScope} onChange={(e) => setEditScope(e.target.value as "single" | "future" | "all")}>
                       <option value="single">Somente esta parcela</option>
@@ -1868,6 +3002,44 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
           </div>
         </div>
       ) : null}
+
+      {financeBoletoPdfOverlayUrl
+        ? createPortal(
+            <div
+              className={styles.boletoPdfOverlay}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Visualizar boleto em PDF"
+            >
+              <button
+                type="button"
+                className={styles.boletoPdfOverlayBackdrop}
+                aria-label="Fechar visualizador"
+                onClick={() => setFinanceBoletoPdfOverlayUrl(null)}
+              />
+              <div className={styles.boletoPdfOverlayCard}>
+                <header className={styles.boletoPdfOverlayHeader}>
+                  <h3>Boleto (PDF)</h3>
+                  <div className={styles.boletoPdfOverlayActions}>
+                    <a
+                      className={styles.modalBtnGhost}
+                      href={financeBoletoPdfOverlayUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir em nova aba
+                    </a>
+                    <button type="button" className={styles.modalBtnPrimary} onClick={() => setFinanceBoletoPdfOverlayUrl(null)}>
+                      Fechar
+                    </button>
+                  </div>
+                </header>
+                <iframe title="Boleto PDF" src={financeBoletoPdfOverlayUrl} className={styles.boletoPdfOverlayFrame} />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   );
 }

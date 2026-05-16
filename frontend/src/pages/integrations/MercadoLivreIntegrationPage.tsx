@@ -1,158 +1,68 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import {
-  disconnectMercadoLivre,
-  getMercadoLivreOAuthUrl,
-  getMercadoLivreStatus,
-  listMercadoLivreListings,
-  searchMercadoLivreCategories,
-  syncMercadoLivreStock,
-  type DomainDiscoveryRow,
-  type MercadoLivreListing,
-  type MercadoLivreStatus,
-} from "../../api/mercadoLivre";
+import { getMercadoLivreOAuthAuthorizeUrl, getMercadoLivreStatus, type MercadoLivreStatusOut } from "../../api/mercadoLivre";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./MercadoLivreIntegrationPage.module.css";
 
-function syncLabel(s: string): string {
-  const m: Record<string, string> = {
-    draft: "Rascunho",
-    publishing: "Publicando",
-    active: "Ativo",
-    paused: "Pausado",
-    error: "Erro",
-  };
-  return m[s] ?? s;
+function formatExp(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("pt-BR");
+  } catch {
+    return iso;
+  }
 }
 
 export function MercadoLivreIntegrationPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
-  const isAdmin = ctx?.user.role === "admin";
+  const role = ctx?.user.role;
+  const canView = role === "admin" || role === "receptionist";
 
-  const [status, setStatus] = useState<MercadoLivreStatus | null>(null);
-  const [rows, setRows] = useState<MercadoLivreListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
-  const [syncingId, setSyncingId] = useState<number | null>(null);
-  const [qDiscovery, setQDiscovery] = useState("");
-  const [discovery, setDiscovery] = useState<DomainDiscoveryRow[]>([]);
-  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [st, setSt] = useState<MercadoLivreStatusOut | null>(null);
 
-  const refresh = useCallback(async () => {
+  const load = useCallback(async () => {
+    if (!canView) return;
     setLoading(true);
     setErr("");
     try {
-      const s = await getMercadoLivreStatus();
-      setStatus(s);
-      if (s.entitlement_active) {
-        const list = await listMercadoLivreListings();
-        setRows(list);
-      } else {
-        setRows([]);
-      }
+      setSt(await getMercadoLivreStatus());
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Erro ao carregar.");
-      setStatus(null);
-      setRows([]);
+      setErr(e instanceof Error ? e.message : "Erro ao carregar status.");
+      setSt(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canView]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    const t = qDiscovery.trim();
-    if (t.length < 2) {
-      setDiscovery([]);
-      return;
-    }
-    const h = window.setTimeout(() => {
-      setDiscoveryLoading(true);
-      void searchMercadoLivreCategories(t)
-        .then(setDiscovery)
-        .catch(() => setDiscovery([]))
-        .finally(() => setDiscoveryLoading(false));
-    }, 380);
-    return () => window.clearTimeout(h);
-  }, [qDiscovery]);
+    void load();
+  }, [load]);
 
   async function onConnect() {
-    if (!isAdmin) return;
-    setConnecting(true);
+    setBusy(true);
     setErr("");
     try {
-      const { authorization_url } = await getMercadoLivreOAuthUrl();
-      window.location.assign(authorization_url);
+      const url = await getMercadoLivreOAuthAuthorizeUrl();
+      window.location.assign(url);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Não foi possível iniciar.");
-      setConnecting(false);
-    }
-  }
-
-  async function onDisconnect() {
-    if (!isAdmin || !window.confirm("Desconectar conta Mercado Livre deste workspace?")) return;
-    setDisconnecting(true);
-    setErr("");
-    try {
-      await disconnectMercadoLivre();
-      await refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Falha ao desconectar.");
+      setErr(
+        e instanceof Error
+          ? e.message
+          : "Não foi possível iniciar o OAuth. Verifique se o backend expõe GET /api/v1/integrations/mercado-livre/oauth/authorize-url e as variáveis MERCADO_LIVRE_*.",
+      );
     } finally {
-      setDisconnecting(false);
+      setBusy(false);
     }
   }
 
-  async function onSync(productId: number) {
-    setSyncingId(productId);
-    setErr("");
-    try {
-      await syncMercadoLivreStock(productId);
-      await refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Falha ao sincronizar.");
-    } finally {
-      setSyncingId(null);
-    }
-  }
-
-  const entitlementOk = status?.entitlement_active;
-  const oauthOk = status?.oauth_app_configured;
-  const connected = status?.connected;
-
-  /** Só acessa as configurações técnicas após o módulo estar ativo (aprovado) na Loja. */
-  if (!loading && status && !entitlementOk) {
+  if (!canView) {
     return (
       <div className={styles.page}>
-        <header className={styles.hero}>
-          <div className={styles.heroInner}>
-            <p className={styles.eyebrow}>Integração de vendas</p>
-            <h1 className={styles.heroTitle}>Mercado Livre</h1>
-            <p className={styles.heroLead}>
-              As configurações da integração ficam disponíveis após a aprovação e liberação do módulo na Loja de integrações.
-            </p>
-          </div>
-        </header>
-        {err ? (
-          <p className={styles.errBox} role="alert">
-            {err}
-          </p>
-        ) : null}
-        <section className={styles.card} style={{ maxWidth: "min(36rem, 100%)" }}>
-          <h2 className={styles.cardTitle}>Acesso bloqueado</h2>
-          <p className={styles.hint}>
-            Se você já solicitou o add-on, aguarde a equipe aprovar. Quando o status passar a <strong>Ativo</strong> na loja, volte
-            aqui pelo atalho <strong>Configurar</strong> no card do Mercado Livre.
-          </p>
-          <p className={styles.hint}>
-            <Link to="/app/marketplace">Abrir a Loja de integrações</Link>
-          </p>
-        </section>
+        <p className={styles.lead}>Você não tem permissão para ver esta página.</p>
+        <Link to="/app">Voltar ao painel</Link>
       </div>
     );
   }
@@ -160,165 +70,62 @@ export function MercadoLivreIntegrationPage() {
   return (
     <div className={styles.page}>
       <header className={styles.hero}>
-        <div className={styles.heroInner}>
-          <p className={styles.eyebrow}>Integração de vendas</p>
-          <h1 className={styles.heroTitle}>Mercado Livre</h1>
-          <p className={styles.heroLead}>
-            Conecte sua conta de vendedor, envie fotos nos produtos e publique anúncios com preço e estoque alinhados ao ERP.
-            A sincronização de pedidos pode ser expandida em etapas seguintes.
-          </p>
+        <p className={styles.eyebrow}>Integrações</p>
+        <h1 className={styles.title}>Mercado Livre</h1>
+        <p className={styles.lead}>
+          Publique produtos do estoque como anúncios e mantenha o add-on ativo na Loja de integrações. O OAuth redireciona
+          para o Mercado Livre e retorna a esta aplicação.
+        </p>
+        <div className={styles.links}>
+          <Link to="/app/products">Produtos</Link>
+          <span aria-hidden>·</span>
+          <Link to="/app/marketplace">Loja de integrações</Link>
         </div>
       </header>
 
-      {err ? (
-        <p className={styles.errBox} role="alert">
-          {err}
-        </p>
-      ) : null}
+      {err ? <div className={styles.err}>{err}</div> : null}
 
-      <div className={styles.grid}>
+      {loading ? (
+        <p className={styles.lead}>Carregando…</p>
+      ) : st ? (
         <section className={styles.card}>
-          <h2 className={styles.cardTitle}>Add-on e servidor</h2>
+          <h2>Status da integração</h2>
           <div className={styles.row}>
-            <span className={`${styles.badge} ${entitlementOk ? styles.badgeOk : styles.badgeWarn}`}>
-              {entitlementOk ? "Integração contratada" : "Add-on não ativo"}
-            </span>
-            <span className={`${styles.badge} ${oauthOk ? styles.badgeOk : styles.badgeErr}`}>
-              {oauthOk ? "OAuth servidor OK" : "Credenciais ML ausentes"}
-            </span>
+            <span className={styles.label}>Add-on contratado</span>
+            <span>{st.entitlement_active ? "Sim" : "Não"}</span>
           </div>
-          {!entitlementOk ? (
-            <p className={styles.hint}>
-              Ative o módulo na <Link to="/app/marketplace">Loja de integrações</Link>. Depois volte aqui para conectar sua conta.
+          <div className={styles.row}>
+            <span className={styles.label}>App OAuth no servidor</span>
+            <span>{st.oauth_app_configured ? "Configurado" : "Pendente"}</span>
+          </div>
+          <div className={styles.row}>
+            <span className={styles.label}>Conta conectada</span>
+            <span>{st.connected ? `Sim (${st.nickname ?? st.ml_user_id ?? "—"})` : "Não"}</span>
+          </div>
+          <div className={styles.row}>
+            <span className={styles.label}>Site</span>
+            <span className={styles.mono}>{st.site_id ?? "—"}</span>
+          </div>
+          <div className={styles.row}>
+            <span className={styles.label}>Token até</span>
+            <span>{formatExp(st.access_expires_at)}</span>
+          </div>
+          <div className={styles.actions}>
+            <button type="button" className={styles.btnPrimary} disabled={busy || !st.oauth_app_configured} onClick={() => void onConnect()}>
+              {busy ? "Redirecionando…" : st.connected ? "Reconectar via Mercado Livre" : "Conectar via Mercado Livre"}
+            </button>
+            <button type="button" className={styles.btn} disabled={busy} onClick={() => void load()}>
+              Atualizar
+            </button>
+          </div>
+          {!st.entitlement_active ? (
+            <p className={styles.lead} style={{ marginTop: "1rem" }}>
+              Contrate o aplicativo <strong>mercado_livre</strong> na Loja de integrações para habilitar publicação e vínculos
+              nos produtos.
             </p>
-          ) : (
-            <p className={styles.hint}>O servidor precisa das variáveis MERCADO_LIVRE_CLIENT_ID e MERCADO_LIVRE_CLIENT_SECRET (e redirect URI compatível).</p>
-          )}
+          ) : null}
         </section>
-
-        <section className={styles.card}>
-          <h2 className={styles.cardTitle}>Conta do vendedor</h2>
-          {loading ? (
-            <p className={styles.hint}>Carregando…</p>
-          ) : (
-            <>
-              <div className={styles.row}>
-                <span className={`${styles.badge} ${connected ? styles.badgeOk : styles.badgeWarn}`}>
-                  {connected ? `Conectado: ${status?.nickname ?? status?.ml_user_id ?? "conta ML"}` : "Não conectado"}
-                </span>
-                {status?.access_expires_at ? (
-                  <span className={styles.hint} style={{ margin: 0 }}>
-                    Token até {new Date(status.access_expires_at).toLocaleString("pt-BR")}
-                  </span>
-                ) : null}
-              </div>
-              <div className={styles.actions}>
-                <button type="button" className={styles.btnPrimary} disabled={!entitlementOk || !isAdmin || connecting} onClick={() => void onConnect()}>
-                  {connecting ? "Redirecionando…" : connected ? "Reautorizar conta" : "Conectar com Mercado Livre"}
-                </button>
-                {connected && isAdmin ? (
-                  <button type="button" className={styles.btnDanger} disabled={disconnecting} onClick={() => void onDisconnect()}>
-                    {disconnecting ? "…" : "Desconectar"}
-                  </button>
-                ) : null}
-              </div>
-              {!isAdmin ? <p className={styles.hint}>Apenas administradores podem autorizar ou desconectar.</p> : null}
-            </>
-          )}
-        </section>
-      </div>
-
-      <section className={styles.card} style={{ marginBottom: "1.75rem" }}>
-        <h2 className={styles.cardTitle}>Buscar categoria Mercado Livre</h2>
-        <p className={styles.hint}>Use termos como &quot;geladeira&quot; ou &quot;furadeira&quot;. Copie o category_id ao configurar o produto antes de publicar.</p>
-        <div className={styles.searchBox}>
-          <input
-            className={styles.searchInput}
-            placeholder="Digite pelo menos 2 caracteres…"
-            value={qDiscovery}
-            onChange={(e) => setQDiscovery(e.target.value)}
-            aria-label="Busca de categoria"
-          />
-          {discoveryLoading ? <span className={styles.hint}>Buscando…</span> : null}
-        </div>
-        {discovery.length > 0 ? (
-          <ul className={styles.discoveryList}>
-            {discovery.map((d, i) => (
-              <li key={`${d.category_id ?? i}-${i}`} className={styles.discoveryItem}>
-                <strong>{d.category_name ?? d.domain_name ?? "Categoria"}</strong>
-                <div>
-                  <code>{d.category_id ?? "—"}</code>
-                  {d.domain_name ? <span> · {d.domain_name}</span> : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : qDiscovery.trim().length >= 2 && !discoveryLoading ? (
-          <p className={styles.hint}>Nenhum resultado. Tente outro termo.</p>
-        ) : null}
-      </section>
-
-      <section className={styles.card}>
-        <h2 className={styles.cardTitle}>Produtos vinculados</h2>
-        <p className={styles.hint}>
-          Cadastre imagens em cada produto, defina categoria na tela do produto (vinculação) e publique. Depois use &quot;Sincronizar estoque&quot; após mudanças no ERP.
-        </p>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>SKU</th>
-                <th>Status</th>
-                <th>Anúncio</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ padding: "1rem", color: "var(--color-text-muted)" }}>
-                    Nenhuma vinculação ainda. Ao publicar um produto, ele aparecerá aqui.
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.product_name}</td>
-                    <td>{r.product_sku}</td>
-                    <td>
-                      <span className={styles.syncPill}>{syncLabel(r.sync_status)}</span>
-                      {r.last_error ? (
-                        <div style={{ fontSize: "0.72rem", color: "#b91c1c", marginTop: "0.25rem" }}>{r.last_error.slice(0, 120)}…</div>
-                      ) : null}
-                    </td>
-                    <td>
-                      {r.permalink ? (
-                        <a className={styles.linkMl} href={r.permalink} target="_blank" rel="noopener noreferrer">
-                          Abrir no ML
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      {r.ml_item_id ? (
-                        <button type="button" className={styles.btnGhost} disabled={syncingId === r.product_id} onClick={() => void onSync(r.product_id)}>
-                          {syncingId === r.product_id ? "Sincronizando…" : "Sincronizar estoque"}
-                        </button>
-                      ) : (
-                        <Link className={styles.linkMl} to={`/app/products/${r.product_id}`}>
-                          Configurar produto
-                        </Link>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      ) : null}
     </div>
   );
 }

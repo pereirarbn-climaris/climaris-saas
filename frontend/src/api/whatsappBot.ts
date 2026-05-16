@@ -64,6 +64,21 @@ export type WhatsappBotSeedDefaultsResponse = {
   flows: WhatsappBotFlow[];
 };
 
+export type WhatsappBotMetrics = {
+  period_days: number;
+  since_utc: string;
+  until_utc: string;
+  counts_by_event_type: Record<string, number>;
+  sessions_total: number;
+  sessions_paused_now: number;
+  replies_sent: number;
+  replies_failed: number;
+  routing_failed: number;
+  incoming_text_events: number;
+  bot_incoming_replied: number;
+  reply_success_rate: number | null;
+};
+
 export type WhatsappBotStatus = {
   entitlement_active: boolean;
   entitlement_status: string | null;
@@ -115,6 +130,17 @@ function errorMessage(body: unknown, fallback: string): string {
     if (typeof detail === "string") return detail;
   }
   return fallback;
+}
+
+export async function getWhatsappBotMetrics(days?: number): Promise<WhatsappBotMetrics> {
+  const q = new URLSearchParams();
+  if (days != null) q.set("days", String(days));
+  const qs = q.toString();
+  const url = qs ? `/api/v1/whatsapp/bot/metrics?${qs}` : "/api/v1/whatsapp/bot/metrics";
+  const response = await fetch(apiUrl(url), { headers: authHeaders() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar as métricas do bot."));
+  return body as WhatsappBotMetrics;
 }
 
 export async function getWhatsappBotSettings(): Promise<WhatsappBotSettings> {
@@ -301,8 +327,13 @@ export async function testWhatsappBotMessage(payload: {
   return body as WhatsappBotTestResponse;
 }
 
-export async function listWhatsappBotSessions(): Promise<WhatsappBotSession[]> {
-  const response = await fetch(apiUrl("/api/v1/whatsapp/bot/sessions"), { headers: authHeaders() });
+export async function listWhatsappBotSessions(params?: { phone_contains?: string; limit?: number }): Promise<WhatsappBotSession[]> {
+  const q = new URLSearchParams();
+  if (params?.phone_contains?.trim()) q.set("phone_contains", params.phone_contains.trim());
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  const url = qs ? `/api/v1/whatsapp/bot/sessions?${qs}` : "/api/v1/whatsapp/bot/sessions";
+  const response = await fetch(apiUrl(url), { headers: authHeaders() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar as conversas do bot."));
   return body as WhatsappBotSession[];
@@ -317,8 +348,13 @@ export async function clearWhatsappBotSession(sessionId: number): Promise<void> 
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível limpar a conversa."));
 }
 
-export async function listWhatsappBotEvents(): Promise<WhatsappBotEvent[]> {
-  const response = await fetch(apiUrl("/api/v1/whatsapp/bot/events"), { headers: authHeaders() });
+export async function listWhatsappBotEvents(params?: { phone_contains?: string; limit?: number }): Promise<WhatsappBotEvent[]> {
+  const q = new URLSearchParams();
+  if (params?.phone_contains?.trim()) q.set("phone_contains", params.phone_contains.trim());
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  const url = qs ? `/api/v1/whatsapp/bot/events?${qs}` : "/api/v1/whatsapp/bot/events";
+  const response = await fetch(apiUrl(url), { headers: authHeaders() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o histórico do bot."));
   return body as WhatsappBotEvent[];

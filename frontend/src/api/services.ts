@@ -110,7 +110,7 @@ export async function listServices(params?: { q?: string; skip?: number; limit?:
     const q = params?.q?.trim().toLowerCase();
     let filtered = demoListServices();
     if (q) {
-      filtered = filtered.filter((s) => s.name.toLowerCase().includes(q));
+      filtered = filtered.filter((s: ServiceOut) => s.name.toLowerCase().includes(q));
     }
     return Promise.resolve(filtered);
   }

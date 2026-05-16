@@ -1,25 +1,43 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   createFinanceAccount,
   deleteFinanceAccount,
   deleteFinanceGatewayAsaas,
   deleteFinanceGatewayMercadoPago,
+  deleteFinanceGatewayStone,
   getFinanceGateways,
   listFinanceAccounts,
+  listFinanceBankCatalog,
   listFinanceEntries,
   patchFinanceEntry,
   patchFinanceGatewayMercadoPagoProducts,
   patchFinanceGatewayMercadoPagoWebhookSignature,
   testFinanceGatewayAsaas,
   testFinanceGatewayMercadoPago,
+  testFinanceGatewayStone,
   upsertFinanceGatewayAsaas,
   upsertFinanceGatewayMercadoPago,
+  upsertFinanceGatewayStone,
+  applyFinanceOfxMatches,
+  uploadFinanceOfxImport,
   type FinanceBankAccountOut,
+  type FinanceOfxLineOut,
   type FinanceEntryOut,
+  type FinanceBankCatalogRow,
   type FinanceGatewayMercadoPagoProducts,
   type FinanceGatewaysOut,
 } from "../../api/finance";
+import {
+  FALLBACK_BANK_PICK,
+  FinanceAccountBankMark,
+  MP_BANK,
+  SLUG_LOGOS,
+  financeAccountConfigProvider,
+  pickerImgSrc,
+  type BankPickerEntry,
+} from "../../components/finance/FinanceAccountBankMark";
+import formLayout from "../formLayout.module.css";
 import styles from "./FinanceAccountsPage.module.css";
 
 type AccountKind = "checking" | "savings" | "investment" | "digital_wallet" | "cash" | "other";
@@ -52,10 +70,6 @@ function typeLabel(k: TypePickerKey): string {
   return KIND_LABEL[k];
 }
 
-const BANK_SUGGESTIONS = ["Bradesco", "Santander", "Banco do Brasil", "Caixa Econômica", "Itaú", "Inter", "Nubank", "Outros"];
-
-const MP_BANK = "Mercado Pago";
-
 const MP_PRODUCTS_DEFAULT: FinanceGatewayMercadoPagoProducts = {
   checkout_pro: false,
   pix: false,
@@ -74,22 +88,6 @@ function sparklinePoints(seed: number): string {
   return vals.map((v, i) => `${i * 42},${84 - v}`).join(" ");
 }
 
-function MercadoPagoLogo() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-      <circle cx="18" cy="24" r="14" fill="#009ee3" />
-      <circle cx="30" cy="24" r="14" fill="#0a0080" />
-    </svg>
-  );
-}
-
-function isMercadoPagoBankAccount(a: FinanceBankAccountOut, gw: FinanceGatewaysOut | null): boolean {
-  const bn = (a.bank_name || "").toLowerCase();
-  if (bn.includes("mercado")) return true;
-  if (gw?.mercadopago?.finance_bank_account_id === a.id) return true;
-  return false;
-}
-
 export function FinanceAccountsPage() {
   const [accounts, setAccounts] = useState<FinanceBankAccountOut[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +97,7 @@ export function FinanceAccountsPage() {
   const [mpEntryPoint, setMpEntryPoint] = useState<"type" | "bank" | null>(null);
   const [kind, setKind] = useState<AccountKind>("checking");
   const [bankName, setBankName] = useState("");
+  const [bankPickList, setBankPickList] = useState<BankPickerEntry[]>(FALLBACK_BANK_PICK);
   const [name, setName] = useState("");
   const [initialBalance, setInitialBalance] = useState("0");
   const [reconcileAccount, setReconcileAccount] = useState<FinanceBankAccountOut | null>(null);
@@ -106,9 +105,14 @@ export function FinanceAccountsPage() {
   const [reconcileEnd, setReconcileEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [reconcileRows, setReconcileRows] = useState<FinanceEntryOut[]>([]);
   const [reconcileLoading, setReconcileLoading] = useState(false);
+  const [ofxImportId, setOfxImportId] = useState<number | null>(null);
+  const [ofxLines, setOfxLines] = useState<FinanceOfxLineOut[]>([]);
+  const [ofxPicks, setOfxPicks] = useState<Record<number, string>>({});
+  const [ofxUploading, setOfxUploading] = useState(false);
+  const [ofxApplying, setOfxApplying] = useState(false);
   const [gateways, setGateways] = useState<FinanceGatewaysOut | null>(null);
   const [configAccount, setConfigAccount] = useState<FinanceBankAccountOut | null>(null);
-  const [configProvider, setConfigProvider] = useState<"asaas" | "mercadopago" | "none">("none");
+  const [configProvider, setConfigProvider] = useState<"asaas" | "mercadopago" | "stone" | "none">("none");
   const [asaasApiKey, setAsaasApiKey] = useState("");
   const [asaasSandbox, setAsaasSandbox] = useState(false);
   const [mpPublicKey, setMpPublicKey] = useState("");
@@ -117,6 +121,15 @@ export function FinanceAccountsPage() {
   const [mpTestOk, setMpTestOk] = useState(false);
   const [mpProducts, setMpProducts] = useState<FinanceGatewayMercadoPagoProducts>(MP_PRODUCTS_DEFAULT);
   const [mpWebhookSigSecret, setMpWebhookSigSecret] = useState("");
+  const [stoneSecretKey, setStoneSecretKey] = useState("");
+  const [stonePublicKey, setStonePublicKey] = useState("");
+  const [stoneSandbox, setStoneSandbox] = useState(false);
+  const [stoneTesting, setStoneTesting] = useState(false);
+  const [stoneSaving, setStoneSaving] = useState(false);
+  const [bankCatalog, setBankCatalog] = useState<FinanceBankCatalogRow[] | null>(null);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const stoneGatewayDeepLinkDone = useRef(false);
 
   async function loadAccounts() {
     setLoading(true);
@@ -135,6 +148,44 @@ export function FinanceAccountsPage() {
   useEffect(() => {
     void loadAccounts();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listFinanceBankCatalog()
+      .then((rows) => {
+        if (!cancelled) setBankCatalog(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setBankCatalog(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (wizardFlow !== "pick_bank") return;
+    let cancelled = false;
+    void listFinanceBankCatalog()
+      .then((rows) => {
+        if (cancelled) return;
+        setBankPickList(
+          rows.map((r) => ({
+            bank: r.bank_name,
+            label: r.slug === "stone" ? "Stone / Pagar.me" : r.display_label,
+            slug: r.slug,
+            logoUrl: r.logo_url,
+            Logo: SLUG_LOGOS[r.slug] ?? SLUG_LOGOS.outros,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setBankPickList(FALLBACK_BANK_PICK);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wizardFlow]);
 
   const cards = useMemo(() => accounts.sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [accounts]);
 
@@ -194,7 +245,7 @@ export function FinanceAccountsPage() {
         finance_bank_account_id: acc.id,
         products: mpProducts,
       });
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago } : g));
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
       closeWizard();
       setMsg("Conta Mercado Pago conectada.");
       setMpPublicKey("");
@@ -216,9 +267,20 @@ export function FinanceAccountsPage() {
     }
   }
 
+  function closeReconcileModal() {
+    setReconcileAccount(null);
+    setReconcileRows([]);
+    setOfxImportId(null);
+    setOfxLines([]);
+    setOfxPicks({});
+  }
+
   function openReconcile(row: FinanceBankAccountOut) {
     setReconcileAccount(row);
     setReconcileRows([]);
+    setOfxImportId(null);
+    setOfxLines([]);
+    setOfxPicks({});
     setMsg(null);
     setError(null);
   }
@@ -253,11 +315,11 @@ export function FinanceAccountsPage() {
 
   function openConfig(row: FinanceBankAccountOut) {
     setConfigAccount(row);
-    const bank = (row.bank_name || "").toLowerCase();
-    if (bank.includes("asaas")) {
+    const provider = financeAccountConfigProvider(row, gateways);
+    if (provider === "asaas") {
       setConfigProvider("asaas");
       setAsaasSandbox(Boolean(gateways?.asaas.sandbox));
-    } else if (bank.includes("mercado") || gateways?.mercadopago?.finance_bank_account_id === row.id) {
+    } else if (provider === "mercadopago") {
       setConfigProvider("mercadopago");
       setMpSandbox(Boolean(gateways?.mercadopago.sandbox));
       setMpPublicKey("");
@@ -276,8 +338,52 @@ export function FinanceAccountsPage() {
             }
           : { ...MP_PRODUCTS_DEFAULT },
       );
+    } else if (provider === "stone") {
+      setConfigProvider("stone");
+      setStoneSandbox(Boolean(gateways?.stone.sandbox));
+      setStoneSecretKey("");
+      setStonePublicKey(gateways?.stone?.public_key ?? "");
     } else setConfigProvider("none");
   }
+
+  useEffect(() => {
+    if (loading || stoneGatewayDeepLinkDone.current) return;
+    if (searchParams.get("gateway") !== "stone") return;
+    if (!gateways) return;
+    if (accounts.length === 0) {
+      stoneGatewayDeepLinkDone.current = true;
+      setMsg("Cadastre uma conta bancária em Contas e carteiras para vincular o Pagar.me.");
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("gateway");
+          return next;
+        },
+        { replace: true },
+      );
+      return;
+    }
+    stoneGatewayDeepLinkDone.current = true;
+    const accId = gateways.stone.finance_bank_account_id;
+    if (accId == null) {
+      setMsg(
+        "Para configurar o Pagar.me: abra o menu de configuração na conta bancária onde deseja vincular a integração.",
+      );
+    } else {
+      const row = accounts.find((a) => a.id === accId);
+      if (row) openConfig(row);
+      else setMsg("Conta vinculada ao Pagar.me não foi encontrada. Verifique Contas e carteiras.");
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("gateway");
+        return next;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deep link once when lista + gateways carregam
+  }, [loading, accounts, gateways, searchParams, setSearchParams]);
 
   async function testAsaasConfig() {
     if (!asaasApiKey.trim()) return;
@@ -294,7 +400,7 @@ export function FinanceAccountsPage() {
     try {
       const res = await upsertFinanceGatewayAsaas({ api_key: asaasApiKey.trim(), sandbox: asaasSandbox });
       setAsaasApiKey("");
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago } : g));
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
       await loadAccounts();
       setMsg("Integração Asaas salva.");
     } catch (e) {
@@ -354,7 +460,7 @@ export function FinanceAccountsPage() {
         finance_bank_account_id: configAccount.id,
         products: mpProducts,
       });
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago } : g));
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
       setMpPublicKey("");
       setMpAccessToken("");
       await loadAccounts();
@@ -367,7 +473,7 @@ export function FinanceAccountsPage() {
   async function saveMpProductsFromConfig() {
     try {
       const res = await patchFinanceGatewayMercadoPagoProducts(mpProducts);
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago } : g));
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
       setMsg("Produtos Mercado Pago salvos.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao salvar produtos.");
@@ -380,7 +486,7 @@ export function FinanceAccountsPage() {
       const res = await patchFinanceGatewayMercadoPagoWebhookSignature({
         webhook_signature_secret: mpWebhookSigSecret.trim(),
       });
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago } : g));
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
       setMpWebhookSigSecret("");
       setMsg("Segredo de assinatura do webhook salvo.");
       setError(null);
@@ -393,7 +499,7 @@ export function FinanceAccountsPage() {
     if (!window.confirm("Remover o segredo? Notificações deixarão de exigir x-signature até você configurar de novo.")) return;
     try {
       const res = await patchFinanceGatewayMercadoPagoWebhookSignature({ clear_webhook_signature_secret: true });
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago } : g));
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
       setMpWebhookSigSecret("");
       setMsg("Segredo de assinatura removido.");
       setError(null);
@@ -420,6 +526,78 @@ export function FinanceAccountsPage() {
     void navigator.clipboard.writeText(u).then(() => setMsg("URL do webhook copiada."));
   }
 
+  async function testStoneCredentials() {
+    if (!stoneSecretKey.trim()) {
+      setError("Informe a chave secreta Pagar.me (sk_…).");
+      return;
+    }
+    setStoneTesting(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const r = await testFinanceGatewayStone({ secret_key: stoneSecretKey.trim() });
+      setMsg(r.ok ? `Chave válida${r.account_label ? ` (${r.account_label})` : ""}.` : r.error || "Falha na validação.");
+      if (!r.ok) setError(r.error || "Chave inválida.");
+      else setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao testar Stone / Pagar.me.");
+    } finally {
+      setStoneTesting(false);
+    }
+  }
+
+  async function saveStoneGatewayFromConfig() {
+    if (!configAccount) return;
+    if (gateways?.stone?.connected && gateways.stone.finance_bank_account_id != null) {
+      if (gateways.stone.finance_bank_account_id !== configAccount.id) {
+        setError("A chave Stone / Pagar.me deve ser salva na conta já vinculada à integração.");
+        return;
+      }
+    }
+    if (!stoneSecretKey.trim() && !gateways?.stone?.connected) {
+      setError("Informe a chave secreta para conectar (cole de novo se o campo parecer preenchido mas o botão não reagir — o autocompletar do navegador às vezes não grava o valor).");
+      return;
+    }
+    setStoneSaving(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const res = await upsertFinanceGatewayStone({
+        secret_key: stoneSecretKey.trim(),
+        sandbox: stoneSandbox,
+        finance_bank_account_id: configAccount.id,
+        public_key: stonePublicKey.trim(),
+      });
+      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
+      setStoneSecretKey("");
+      setStonePublicKey(res.stone.public_key ?? "");
+      await loadAccounts();
+      setMsg("Integração Stone / Pagar.me salva. Configure o mesmo URL de webhook no painel Pagar.me.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao salvar Stone / Pagar.me.");
+    } finally {
+      setStoneSaving(false);
+    }
+  }
+
+  async function removeStoneConfig() {
+    if (!window.confirm("Remover integração Stone / Pagar.me deste workspace?")) return;
+    try {
+      await deleteFinanceGatewayStone();
+      await loadAccounts();
+      setMsg("Integração Stone / Pagar.me removida.");
+      setConfigAccount(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao remover.");
+    }
+  }
+
+  function copyStoneWebhook() {
+    const u = gateways?.stone?.webhook_url;
+    if (!u) return;
+    void navigator.clipboard.writeText(u).then(() => setMsg("URL do webhook Stone copiada."));
+  }
+
   return (
     <section className={styles.page}>
       <header className={styles.header}>
@@ -432,8 +610,8 @@ export function FinanceAccountsPage() {
         </div>
       </header>
 
-      {error ? <p className={styles.error}>{error}</p> : null}
-      {msg ? <p className={styles.msg}>{msg}</p> : null}
+      {error && !configAccount ? <p className={styles.error}>{error}</p> : null}
+      {msg && !configAccount ? <p className={styles.msg}>{msg}</p> : null}
 
       {loading ? <p>Carregando contas...</p> : null}
       {!loading ? (
@@ -442,13 +620,7 @@ export function FinanceAccountsPage() {
             <article key={a.id} className={styles.card}>
               <div className={styles.cardMain}>
                 <div className={styles.cardHead}>
-                  {isMercadoPagoBankAccount(a, gateways) ? (
-                    <div className={styles.brandLogo} title="Mercado Pago">
-                      <MercadoPagoLogo />
-                    </div>
-                  ) : (
-                    <div className={styles.bankDot}>{(a.bank_name || a.name).slice(0, 1).toUpperCase()}</div>
-                  )}
+                  <FinanceAccountBankMark account={a} gateways={gateways} catalog={bankCatalog} />
                   <div>
                     <h3>{a.name}</h3>
                     <p>{a.bank_name || "Sem banco informado"}</p>
@@ -526,13 +698,14 @@ export function FinanceAccountsPage() {
                 x
               </button>
             </header>
-            <form className={styles.form} onSubmit={submitAccount}>
+            <form className={`${formLayout.stack} ${styles.form}`} onSubmit={submitAccount}>
               <div className={styles.bankGrid}>
-                {[...BANK_SUGGESTIONS, "Asaas", MP_BANK].map((bank) => (
+                {bankPickList.map(({ bank, label, slug, Logo, logoUrl }) => (
                   <button
-                    key={bank}
+                    key={slug}
                     type="button"
                     className={`${styles.bankItem} ${bankName === bank ? styles.bankItemActive : ""}`}
+                    aria-pressed={bankName === bank}
                     onClick={() => {
                       setBankName(bank);
                       if (bank === MP_BANK && kind === "digital_wallet") {
@@ -541,18 +714,36 @@ export function FinanceAccountsPage() {
                       }
                     }}
                   >
-                    {bank}
+                    <span className={styles.bankItemLogo} aria-hidden="true">
+                      {pickerImgSrc(logoUrl) ? (
+                        <img src={pickerImgSrc(logoUrl)} alt="" className={styles.bankItemImg} />
+                      ) : (
+                        <Logo />
+                      )}
+                    </span>
+                    <span className={styles.bankItemLabel}>{label}</span>
                   </button>
                 ))}
               </div>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da conta (opcional)" />
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="pick-bank-account-name">
+                  Nome da conta (opcional)
+                </label>
+              <input id="pick-bank-account-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da conta (opcional)" />
+              </div>
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="pick-bank-initial-balance">
+                  Saldo inicial
+                </label>
               <input
+                id="pick-bank-initial-balance"
                 type="number"
                 step="0.01"
                 value={initialBalance}
                 onChange={(e) => setInitialBalance(e.target.value)}
                 placeholder="Saldo inicial"
               />
+              </div>
               <button type="submit">Salvar conta</button>
             </form>
           </div>
@@ -575,7 +766,7 @@ export function FinanceAccountsPage() {
               </button>
             </header>
             <form
-              className={styles.form}
+              className={`${formLayout.stack} ${styles.form}`}
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!mpTestOk) {
@@ -588,8 +779,12 @@ export function FinanceAccountsPage() {
               <p className={styles.smallMuted}>
                 As chaves ficam cifradas no servidor. A validação usa a API do Mercado Pago (usuário autenticado).
               </p>
-              <label className={styles.fieldLabel}>Public Key</label>
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="mp-wizard-public-key">
+                  Public Key
+                </label>
               <input
+                id="mp-wizard-public-key"
                 value={mpPublicKey}
                 onChange={(e) => {
                   setMpPublicKey(e.target.value);
@@ -598,8 +793,13 @@ export function FinanceAccountsPage() {
                 placeholder="APP_USR-… ou TEST-…"
                 autoComplete="off"
               />
-              <label className={styles.fieldLabel}>Access Token</label>
+              </div>
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="mp-wizard-access-token">
+                  Access Token
+                </label>
               <input
+                id="mp-wizard-access-token"
                 type="password"
                 value={mpAccessToken}
                 onChange={(e) => {
@@ -609,18 +809,30 @@ export function FinanceAccountsPage() {
                 placeholder="Access token de produção ou teste"
                 autoComplete="off"
               />
+              </div>
               <label className={styles.smallLink}>
                 <input type="checkbox" checked={mpSandbox} onChange={(e) => setMpSandbox(e.target.checked)} /> Ambiente de testes
                 (sandbox)
               </label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da conta (ex.: Conta Mercado Pago)" />
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="mp-wizard-account-name">
+                  Nome da conta
+                </label>
+              <input id="mp-wizard-account-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da conta (ex.: Conta Mercado Pago)" />
+              </div>
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="mp-wizard-initial-balance">
+                  Saldo inicial (opcional)
+                </label>
               <input
+                id="mp-wizard-initial-balance"
                 type="number"
                 step="0.01"
                 value={initialBalance}
                 onChange={(e) => setInitialBalance(e.target.value)}
                 placeholder="Saldo inicial (opcional)"
               />
+              </div>
               <div className={styles.rowActions}>
                 <button type="button" onClick={() => void testMpCredentials()}>
                   Testar credenciais
@@ -643,7 +855,7 @@ export function FinanceAccountsPage() {
                 x
               </button>
             </header>
-            <form className={styles.form} onSubmit={(e) => void submitMpIntegration(e)}>
+            <form className={`${formLayout.stack} ${styles.form}`} onSubmit={(e) => void submitMpIntegration(e)}>
               <p className={styles.smallMuted}>Escolha quais fluxos de pagamento deseja habilitar neste workspace.</p>
               <label className={styles.toggleRow}>
                 <input
@@ -688,7 +900,7 @@ export function FinanceAccountsPage() {
           <div className={styles.modalWide}>
             <header>
               <h2>Conciliação - {reconcileAccount.name}</h2>
-              <button type="button" onClick={() => setReconcileAccount(null)}>
+              <button type="button" onClick={closeReconcileModal}>
                 x
               </button>
             </header>
@@ -698,6 +910,118 @@ export function FinanceAccountsPage() {
               <button type="button" onClick={() => void loadReconcileRows()} disabled={reconcileLoading}>
                 {reconcileLoading ? "Carregando..." : "Atualizar extrato"}
               </button>
+            </div>
+            <div className={styles.ofxBox}>
+              <p className={styles.smallMuted}>
+                Importe um arquivo <strong>.ofx</strong> exportado pelo seu banco ou carteira (ex.: Stone, Nubank, Itaú).
+                Sugerimos lançamentos pendentes por valor e data; confira antes de aplicar.
+              </p>
+              <div className={styles.rowActions}>
+                <input
+                  type="file"
+                  accept=".ofx,.OFX"
+                  disabled={ofxUploading}
+                  onChange={(ev) => {
+                    const f = ev.target.files?.[0];
+                    ev.target.value = "";
+                    if (!f || !reconcileAccount) return;
+                    void (async () => {
+                      setOfxUploading(true);
+                      setError(null);
+                      try {
+                        const res = await uploadFinanceOfxImport(reconcileAccount.id, f);
+                        setOfxImportId(res.import_id);
+                        setOfxLines(res.lines);
+                        const picks: Record<number, string> = {};
+                        for (const L of res.lines) {
+                          picks[L.id] = L.suggestions.length ? String(L.suggestions[0].id) : "";
+                        }
+                        setOfxPicks(picks);
+                        setMsg(
+                          `OFX importado: ${res.lines_count} linha(s)${res.truncated ? " (arquivo truncado no limite do servidor)" : ""}.`,
+                        );
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : "Falha ao importar OFX.");
+                      } finally {
+                        setOfxUploading(false);
+                      }
+                    })();
+                  }}
+                />
+                {ofxImportId != null && ofxLines.length > 0 ? (
+                  <button
+                    type="button"
+                    disabled={ofxApplying}
+                    onClick={() => {
+                      if (!reconcileAccount || ofxImportId == null) return;
+                      const matches: { line_id: number; finance_entry_id: number }[] = [];
+                      for (const L of ofxLines) {
+                        if (L.matched_finance_entry_id) continue;
+                        const v = (ofxPicks[L.id] || "").trim();
+                        if (!v) continue;
+                        matches.push({ line_id: L.id, finance_entry_id: Number(v) });
+                      }
+                      if (!matches.length) {
+                        setError("Selecione ao menos um lançamento sugerido para conciliar.");
+                        return;
+                      }
+                      void (async () => {
+                        setOfxApplying(true);
+                        setError(null);
+                        try {
+                          await applyFinanceOfxMatches(reconcileAccount.id, ofxImportId, matches);
+                          setMsg(`Conciliação OFX: ${matches.length} lançamento(s) marcados como pagos.`);
+                          setOfxImportId(null);
+                          setOfxLines([]);
+                          setOfxPicks({});
+                          await loadReconcileRows();
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : "Falha ao aplicar conciliação OFX.");
+                        } finally {
+                          setOfxApplying(false);
+                        }
+                      })();
+                    }}
+                  >
+                    {ofxApplying ? "Aplicando..." : "Aplicar conciliações selecionadas"}
+                  </button>
+                ) : null}
+              </div>
+              {ofxLines.length > 0 ? (
+                <div className={styles.reconcileList} style={{ marginTop: "0.75rem" }}>
+                  {ofxLines.map((L) => (
+                    <div key={L.id} className={styles.reconcileRow}>
+                      <div>
+                        <strong>{L.payee || L.memo || "Movimentação OFX"}</strong>
+                        <p className={styles.smallMuted}>
+                          {L.posted_at} · FITID {L.fit_id}
+                          {L.matched_finance_entry_id ? ` · já vinculado ao #${L.matched_finance_entry_id}` : ""}
+                        </p>
+                      </div>
+                      <div className={styles.reconcileRowActions}>
+                        <strong>{money(Number(L.amount))}</strong>
+                        {L.matched_finance_entry_id ? (
+                          <span className={styles.badge}>Conciliado</span>
+                        ) : (
+                          <select
+                            value={ofxPicks[L.id] ?? ""}
+                            onChange={(e) => setOfxPicks((p) => ({ ...p, [L.id]: e.target.value }))}
+                            aria-label={`Sugestão para linha OFX ${L.id}`}
+                          >
+                            <option value="">— ignorar —</option>
+                            {L.suggestions.map((s) => (
+                              <option key={s.id} value={String(s.id)}>
+                                #{s.id} {s.description.slice(0, 40)}
+                                {s.description.length > 40 ? "…" : ""} · {money(s.amount)} · venc. {s.due_date}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className={styles.reconcileList}>
               {reconcileRows.length === 0 ? (
@@ -738,21 +1062,47 @@ export function FinanceAccountsPage() {
                 x
               </button>
             </header>
-            <div className={styles.form}>
-              <select value={configProvider} onChange={(e) => setConfigProvider(e.target.value as "asaas" | "mercadopago" | "none")}>
+            {error ? (
+              <p className={styles.error} role="alert">
+                {error}
+              </p>
+            ) : null}
+            {msg ? (
+              <p className={styles.msg} role="status">
+                {msg}
+              </p>
+            ) : null}
+            <div className={`${formLayout.stack} ${styles.form}`}>
+              <div className={formLayout.field}>
+                <label className={styles.fieldLabel} htmlFor="finance-config-provider">
+                  Integração
+                </label>
+              <select
+                id="finance-config-provider"
+                value={configProvider}
+                onChange={(e) => setConfigProvider(e.target.value as "asaas" | "mercadopago" | "stone" | "none")}
+              >
                 <option value="none">Sem integração API</option>
                 <option value="asaas">Asaas</option>
                 <option value="mercadopago">Mercado Pago</option>
+                <option value="stone">Stone / Pagar.me</option>
               </select>
+              </div>
               {configProvider === "asaas" ? (
                 <>
                   <p className={styles.smallLink}>Status atual: {gateways?.asaas.connected ? "Conectado" : "Desconectado"}</p>
+                  <div className={formLayout.field}>
+                    <label className={styles.fieldLabel} htmlFor="config-asaas-api-key">
+                      API Key Asaas
+                    </label>
                   <input
+                    id="config-asaas-api-key"
                     type="password"
                     value={asaasApiKey}
                     onChange={(e) => setAsaasApiKey(e.target.value)}
                     placeholder="API Key Asaas"
                   />
+                  </div>
                   <label className={styles.smallLink}>
                     <input type="checkbox" checked={asaasSandbox} onChange={(e) => setAsaasSandbox(e.target.checked)} /> Sandbox
                   </label>
@@ -804,6 +1154,7 @@ export function FinanceAccountsPage() {
                   ) : null}
                   {gateways?.mercadopago.connected ? (
                     <div className={styles.webhookBox}>
+                      <div className={formLayout.field}>
                       <span className={styles.smallMuted}>
                         Segredo para validar <code>x-signature</code> (Suas integrações → Webhooks → assinatura secreta).
                         {gateways.mercadopago.webhook_signature_configured ? " Atualmente configurado." : ""}
@@ -819,6 +1170,7 @@ export function FinanceAccountsPage() {
                         }
                         autoComplete="off"
                       />
+                      </div>
                       <div className={styles.rowActions}>
                         <button type="button" disabled={!mpWebhookSigSecret.trim()} onClick={() => void saveMpWebhookSignatureFromConfig()}>
                           Salvar segredo
@@ -843,21 +1195,31 @@ export function FinanceAccountsPage() {
                       </div>
                     </div>
                   ) : null}
-                  <label className={styles.fieldLabel}>Public Key (nova)</label>
+                  <div className={formLayout.field}>
+                    <label className={styles.fieldLabel} htmlFor="config-mp-public-key">
+                      Public Key (nova)
+                    </label>
                   <input
+                    id="config-mp-public-key"
                     value={mpPublicKey}
                     onChange={(e) => setMpPublicKey(e.target.value)}
                     placeholder="Deixe em branco para manter a chave atual"
                     autoComplete="off"
                   />
-                  <label className={styles.fieldLabel}>Access Token (novo)</label>
+                  </div>
+                  <div className={formLayout.field}>
+                    <label className={styles.fieldLabel} htmlFor="config-mp-access-token">
+                      Access Token (novo)
+                    </label>
                   <input
+                    id="config-mp-access-token"
                     type="password"
                     value={mpAccessToken}
                     onChange={(e) => setMpAccessToken(e.target.value)}
                     placeholder="Deixe em branco para manter o token atual"
                     autoComplete="off"
                   />
+                  </div>
                   <label className={styles.smallLink}>
                     <input type="checkbox" checked={mpSandbox} onChange={(e) => setMpSandbox(e.target.checked)} /> Sandbox
                   </label>
@@ -906,6 +1268,89 @@ export function FinanceAccountsPage() {
                     </button>
                     {gateways?.mercadopago.connected ? (
                       <button type="button" className={styles.btnDanger} onClick={() => void removeMpConfig()}>
+                        Remover integração
+                      </button>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+              {configProvider === "stone" ? (
+                <>
+                  <p className={styles.smallLink}>
+                    Use a chave secreta <strong>Pagar.me</strong> (Stone) para emitir <strong>PIX, boleto ou cartão</strong>{" "}
+                    nos lançamentos (em Financeiro). Ao receber o pagamento, o webhook marca o lançamento como pago e
+                    vincula à conta deste cartão (conciliação com o extrato).
+                  </p>
+                  <p className={styles.smallMuted}>
+                    O Climaris chama a API de cobrança do <strong>Pagar.me</strong> (chave <code>sk_…</code>). Em geral
+                    você copia essa chave no painel Pagar.me vinculado à Stone. Se a Stone pedir o local de integração ao
+                    criar uma chave em <strong>conta Stone → Chaves de autenticação</strong>, escolha{" "}
+                    <strong>Plataforma de e-commerce</strong> (integração do seu sistema com pagamentos online).{" "}
+                    <strong>Sistema TEF</strong> é para maquininha/TEF; <strong>API de conciliação Stone</strong> é outro
+                    produto (extrato/conciliação no modelo da conta), não é o que este campo usa.
+                  </p>
+                  <p className={styles.smallLink}>
+                    Status: {gateways?.stone.connected ? "Conectado" : "Desconectado"}
+                    {gateways?.stone.secret_key_hint ? ` · sk ${gateways.stone.secret_key_hint}` : ""}
+                    {gateways?.stone.public_key_hint ? ` · pk ${gateways.stone.public_key_hint}` : ""}
+                  </p>
+                  {gateways?.stone.webhook_url ? (
+                    <div className={styles.webhookBox}>
+                      <span className={styles.smallMuted}>URL do webhook (painel Pagar.me → Webhooks, eventos de pedido pago)</span>
+                      <code className={styles.webhookCode}>{gateways.stone.webhook_url}</code>
+                      <button type="button" className={styles.btnGhost} onClick={copyStoneWebhook}>
+                        Copiar URL
+                      </button>
+                    </div>
+                  ) : (
+                    <p className={styles.smallMuted}>
+                      Defina <code>API_PUBLIC_BASE_URL</code> no backend para exibir a URL do webhook.
+                    </p>
+                  )}
+                  <div className={formLayout.field}>
+                    <label className={styles.fieldLabel} htmlFor="config-stone-sk">
+                      Chave secreta (sk_test_… ou sk_live_…)
+                    </label>
+                    <input
+                      id="config-stone-sk"
+                      type="password"
+                      name="climaris-stone-secret-key"
+                      value={stoneSecretKey}
+                      onChange={(e) => setStoneSecretKey(e.target.value)}
+                      placeholder={gateways?.stone?.connected ? "Deixe em branco para manter a chave atual" : "Cole a chave completa"}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <div className={formLayout.field}>
+                    <label className={styles.fieldLabel} htmlFor="config-stone-pk">
+                      Chave pública (pk_test_… ou pk_live_…) — tokenização de cartão no navegador
+                    </label>
+                    <input
+                      id="config-stone-pk"
+                      type="password"
+                      name="climaris-stone-public-key"
+                      value={stonePublicKey}
+                      onChange={(e) => setStonePublicKey(e.target.value)}
+                      placeholder="Opcional; vazio remove a chave pública salva"
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <label className={styles.smallLink}>
+                    <input type="checkbox" checked={stoneSandbox} onChange={(e) => setStoneSandbox(e.target.checked)} /> Indicador sandbox (referência no painel)
+                  </label>
+                  <div className={styles.rowActions}>
+                    <button type="button" disabled={stoneTesting} onClick={() => void testStoneCredentials()}>
+                      {stoneTesting ? "Testando…" : "Testar chave"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={stoneSaving || stoneTesting}
+                      onClick={() => void saveStoneGatewayFromConfig()}
+                    >
+                      {stoneSaving ? "Salvando…" : "Salvar integração"}
+                    </button>
+                    {gateways?.stone.connected ? (
+                      <button type="button" className={styles.btnDanger} onClick={() => void removeStoneConfig()}>
                         Remover integração
                       </button>
                     ) : null}

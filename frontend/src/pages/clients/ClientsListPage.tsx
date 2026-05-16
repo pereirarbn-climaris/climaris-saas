@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
   countClients,
@@ -9,6 +10,7 @@ import {
   type ClientStatusFilter,
 } from "../../api/clients";
 import { digitsOnly, formatPhoneBrDisplay, whatsappMeUrl } from "../../lib/brMask";
+import { minhaAgendaClientsFileToClimarisCsvFile } from "../../lib/minhaAgendaClientImport";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ClientsListPage.module.css";
@@ -72,6 +74,9 @@ export function ClientsListPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [statusFilter, setStatusFilter] = useState<ClientStatusFilter>("active");
   const [totalCount, setTotalCount] = useState(0);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importSource, setImportSource] = useState<"climaris" | "minha_agenda" | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
 
@@ -170,6 +175,43 @@ export function ClientsListPage() {
       setErr(e instanceof Error ? e.message : "Erro na importação.");
     }
   }
+
+  function startImportPick(source: "climaris" | "minha_agenda") {
+    setImportSource(source);
+    queueMicrotask(() => importFileRef.current?.click());
+  }
+
+  async function onImportFilePicked(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const source = importSource;
+    setImportSource(null);
+    if (!file || !source) return;
+    setImportModalOpen(false);
+    setErr("");
+    try {
+      if (source === "minha_agenda") {
+        const converted = await minhaAgendaClientsFileToClimarisCsvFile(file);
+        await onImportCsv(converted);
+      } else {
+        await onImportCsv(file);
+      }
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "Erro ao processar o arquivo.");
+    }
+  }
+
+  useEffect(() => {
+    if (!importModalOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        setImportSource(null);
+        setImportModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [importModalOpen]);
 
   return (
     <div className={styles.wrap}>
@@ -288,26 +330,35 @@ export function ClientsListPage() {
             Exportar CSV
           </button>
           {ctx?.user.role === "admin" ? (
-            <label className={tableStyles.listToolbarBtnGhost}>
+            <>
               <input
+                ref={importFileRef}
                 type="file"
                 accept=".csv,text/csv"
                 className={styles.fileHidden}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) void onImportCsv(f);
-                }}
+                aria-hidden
+                tabIndex={-1}
+                onChange={(e) => void onImportFilePicked(e)}
               />
-              <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
-                <svg viewBox="0 0 24 24">
-                  <path d="M12 3v12" />
-                  <path d="m17 8-5-5-5 5" />
-                  <path d="M5 21h14" />
-                </svg>
-              </span>
-              Importar CSV
-            </label>
+              <button
+                type="button"
+                className={tableStyles.listToolbarBtnGhost}
+                onClick={() => {
+                  setImportSource(null);
+                  setImportModalOpen(true);
+                }}
+                title="Importar planilha de clientes"
+              >
+                <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 3v12" />
+                    <path d="m17 8-5-5-5 5" />
+                    <path d="M5 21h14" />
+                  </svg>
+                </span>
+                Importar
+              </button>
+            </>
           ) : null}
           {canEdit ? (
             <Link className={tableStyles.listToolbarBtnPrimary} to="/app/clients/new">
@@ -474,6 +525,59 @@ export function ClientsListPage() {
         <p className={styles.listFoot}>
           Mostrando {sortedRows.length} de {totalCount} cliente{totalCount === 1 ? "" : "s"}
         </p>
+      ) : null}
+
+      {importModalOpen ? (
+        <div
+          className={styles.importModalOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="clients-import-title"
+          onClick={() => {
+            setImportSource(null);
+            setImportModalOpen(false);
+          }}
+        >
+          <div className={styles.importModal} onClick={(e) => e.stopPropagation()}>
+            <header className={styles.importModalHeader}>
+              <h3 id="clients-import-title" className={styles.importModalTitle}>
+                Importar clientes
+              </h3>
+              <button type="button" className={styles.importModalClose} onClick={() => {
+                setImportSource(null);
+                setImportModalOpen(false);
+              }}>
+                Fechar
+              </button>
+            </header>
+            <div className={styles.importModalBody}>
+              <p className={styles.importModalIntro}>Escolha de qual sistema veio o arquivo. Em seguida, selecione o CSV no seu computador.</p>
+              <ul className={styles.importSourceList}>
+                <li>
+                  <button
+                    type="button"
+                    className={styles.importSourceCard}
+                    onClick={() => startImportPick("minha_agenda")}
+                  >
+                    <span className={styles.importSourceName}>Minha Agenda</span>
+                    <span className={styles.importSourceHint}>
+                      Exportação em Clientes com colunas Nome, Telefone, Endereço, E-mail, CPF etc. O arquivo pode ser CSV
+                      (UTF-8). Se estiver em Excel, use &quot;Salvar como&quot; CSV.
+                    </span>
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className={styles.importSourceCard} onClick={() => startImportPick("climaris")}>
+                    <span className={styles.importSourceName}>Climaris (exportação deste sistema)</span>
+                    <span className={styles.importSourceHint}>
+                      Mesmo formato gerado pelo botão Exportar CSV desta tela — útil para mesclar ou atualizar em lote.
+                    </span>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

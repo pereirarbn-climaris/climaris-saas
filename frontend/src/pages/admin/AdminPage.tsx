@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Navigate, useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import {
   createTenantUser,
   listTenantUsers,
@@ -28,6 +28,7 @@ import {
   type NfseSettingsOut,
   type NfseTributacaoNacionalItem,
 } from "../../api/nfse";
+import { getFinanceGateways, getFinanceSettings, type FinanceGatewaysOut } from "../../api/finance";
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import formLayout from "../formLayout.module.css";
@@ -147,8 +148,9 @@ function friendlyError(message: string): string {
   return m[message] ?? message;
 }
 
-function tabFromSearch(tabParam: string | null): "company" | "users" | "fiscal" | "apikeys" {
+function tabFromSearch(tabParam: string | null): "company" | "users" | "pagamentos" | "fiscal" | "apikeys" {
   if (tabParam === "usuarios" || tabParam === "users") return "users";
+  if (tabParam === "pagamentos" || tabParam === "pagarme" || tabParam === "pagar-me") return "pagamentos";
   if (tabParam === "fiscal") return "fiscal";
   if (tabParam === "api-keys" || tabParam === "chaves") return "apikeys";
   return "company";
@@ -196,6 +198,11 @@ export function AdminPage() {
   const [coLogoUrl, setCoLogoUrl] = useState("");
   const [coLogoMsg, setCoLogoMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [deletingLogo, setDeletingLogo] = useState(false);
+
+  const [payLoading, setPayLoading] = useState(false);
+  const [payErr, setPayErr] = useState<string | null>(null);
+  const [payFinanceEnabled, setPayFinanceEnabled] = useState<boolean | null>(null);
+  const [payGateways, setPayGateways] = useState<FinanceGatewaysOut | null>(null);
 
   const [users, setUsers] = useState<UserOut[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -385,6 +392,28 @@ export function AdminPage() {
   useEffect(() => {
     if (tab === "users") void loadUsers();
   }, [tab, loadUsers]);
+
+  useEffect(() => {
+    if (tab !== "pagamentos") return;
+    let cancelled = false;
+    void (async () => {
+      setPayLoading(true);
+      setPayErr(null);
+      try {
+        const [st, gw] = await Promise.all([getFinanceSettings(), getFinanceGateways()]);
+        if (cancelled) return;
+        setPayFinanceEnabled(Boolean(st.finance_enabled));
+        setPayGateways(gw);
+      } catch (e) {
+        if (!cancelled) setPayErr(e instanceof Error ? e.message : "Erro ao carregar integrações de pagamento.");
+      } finally {
+        if (!cancelled) setPayLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "fiscal") return;
@@ -1388,6 +1417,81 @@ export function AdminPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          ) : null}
+        </section>
+      ) : tab === "pagamentos" ? (
+        <section className={styles.panel} aria-labelledby="admin-pagamentos-title">
+          <h2 id="admin-pagamentos-title" className={styles.panelTitle}>
+            Pagamentos online (Pagar.me / Stone)
+          </h2>
+          <p className={styles.panelLead}>
+            PIX, boleto e cartão via API Pagar.me (conta Stone). As chaves ficam cifradas no servidor; a chave pública{" "}
+            <code>pk_…</code> é usada só no navegador para tokenizar cartão.
+          </p>
+          {payLoading ? <p className={styles.empty}>Carregando…</p> : null}
+          {payErr ? <p className={styles.msgErr}>{payErr}</p> : null}
+          {!payLoading && payFinanceEnabled === false ? (
+            <p className={styles.msgErr}>
+              O módulo financeiro está desativado neste workspace. Ative em{" "}
+              <Link to="/app/finance/settings">Financeiro → Configurações</Link> para usar cobranças.
+            </p>
+          ) : null}
+          {!payLoading && payFinanceEnabled && payGateways ? (
+            <div className={styles.sectionCard}>
+              <h3 className={styles.subsectionTitle}>Pagar.me (Stone)</h3>
+              <p className={styles.panelLead}>
+                Status:{" "}
+                <strong>{payGateways.stone.connected ? "Conectado" : "Desconectado"}</strong>
+                {payGateways.stone.secret_key_hint ? ` · sk ${payGateways.stone.secret_key_hint}` : ""}
+                {payGateways.stone.public_key_hint ? ` · pk ${payGateways.stone.public_key_hint}` : ""}
+                {payGateways.stone.sandbox ? " · sandbox" : ""}
+              </p>
+              {payGateways.stone.webhook_url ? (
+                <div className={styles.provisionRow} style={{ marginTop: 12, flexWrap: "wrap" }}>
+                  <span>Webhook (painel Pagar.me):</span>
+                  <code className={styles.code} style={{ wordBreak: "break-all", maxWidth: "100%" }}>
+                    {payGateways.stone.webhook_url}
+                  </code>
+                  <button
+                    type="button"
+                    className={styles.btnGhost}
+                    onClick={() => void navigator.clipboard.writeText(payGateways.stone.webhook_url ?? "")}
+                  >
+                    Copiar URL
+                  </button>
+                </div>
+              ) : (
+                <p className={styles.muted} style={{ marginTop: 8 }}>
+                  Defina <code>API_PUBLIC_BASE_URL</code> no backend para exibir a URL do webhook aqui.
+                </p>
+              )}
+              <div className={styles.actions} style={{ marginTop: 16 }}>
+                <Link className={styles.btnPrimary} to="/app/finance/settings/accounts?gateway=stone">
+                  Abrir Contas e carteiras (configurar Pagar.me)
+                </Link>
+                <Link className={styles.btnGhost} to="/app/finance">
+                  Lançamentos financeiros
+                </Link>
+              </div>
+              <p className={styles.muted} style={{ marginTop: 16 }}>
+                Documentação:{" "}
+                <a href="https://docs.pagar.me/" target="_blank" rel="noreferrer">
+                  docs.pagar.me
+                </a>
+              </p>
+              <h3 className={styles.subsectionTitle} style={{ marginTop: 24 }}>
+                Outros gateways
+              </h3>
+              <ul className={styles.panelLead} style={{ marginTop: 8 }}>
+                <li>
+                  Mercado Pago: {payGateways.mercadopago.connected ? "conectado" : "desconectado"}
+                  {payGateways.mercadopago.connected && payGateways.mercadopago.account_label
+                    ? ` (${payGateways.mercadopago.account_label})`
+                    : ""}
+                </li>
+                <li>Asaas: {payGateways.asaas.connected ? "conectado" : "desconectado"}</li>
+              </ul>
             </div>
           ) : null}
         </section>

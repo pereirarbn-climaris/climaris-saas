@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { createFinancePaymentFee, deleteFinancePaymentFee, listFinancePaymentFees, type FinancePaymentFeeOut } from "../../api/finance";
+import formLayout from "../formLayout.module.css";
 import styles from "./FinanceMachinesPage.module.css";
 
 export function FinanceMachinesPage() {
@@ -124,28 +125,28 @@ export function FinanceMachinesPage() {
 
       {machineModalOpen ? (
         <div className={styles.modalOverlay}>
-          <form className={styles.modal} onSubmit={saveMachineRates}>
+          <form className={`${formLayout.stack} ${styles.modal}`} onSubmit={saveMachineRates}>
             <header>
               <h2>Taxas da maquininha</h2>
               <button type="button" onClick={() => setMachineModalOpen(false)}>
                 x
               </button>
             </header>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Nome da maquininha</span>
               <input value={machineName} onChange={(e) => setMachineName(e.target.value)} />
             </label>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Forma de recebimento</span>
               <input value={machineReceivableLabel} onChange={(e) => setMachineReceivableLabel(e.target.value)} placeholder="Ex.: 1 dia util" />
             </label>
-            <label className={styles.field}>
+            <label className={`${formLayout.field} ${styles.field}`}>
               <span>Débito (%)</span>
               <input type="number" min="0" step="0.01" value={machineDebitFee} onChange={(e) => setMachineDebitFee(e.target.value)} />
             </label>
             <div className={styles.grid}>
               {machineCreditFees.map((value, idx) => (
-                <label key={`cfee-${idx + 1}`} className={styles.field}>
+                <label key={`cfee-${idx + 1}`} className={`${formLayout.field} ${styles.field}`}>
                   <span>Crédito {idx + 1}x (%)</span>
                   <input
                     type="number"

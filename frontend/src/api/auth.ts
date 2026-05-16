@@ -1,7 +1,7 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clearAccessToken, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "../lib/authStorage";
 import { accessTokenNeedsRefresh } from "../lib/jwtAccess";
-import { isDemoMode, demoUser, demoTenant } from "../lib/demoMode";
+import { isDemoMode, demoUser, demoTenant, DEMO_ACCESS_TOKEN } from "../lib/demoMode";
 
 export type UserRole = "admin" | "technician" | "receptionist";
 
@@ -83,14 +83,15 @@ export type TokenResponse = {
 };
 
 function isLoginDemoEnabled(): boolean {
-  return String(import.meta.env.VITE_LOGIN_DEMO_ENABLED ?? "")
+  const v = String(import.meta.env.VITE_LOGIN_DEMO_ENABLED ?? "")
     .trim()
-    .toLowerCase() === "true";
+    .toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
 }
 
 function createDemoTokenResponse(): TokenResponse {
   return {
-    access_token: "demo-access-token",
+    access_token: DEMO_ACCESS_TOKEN,
     token_type: "bearer",
     must_change_password: false,
     tenant_id: 1,
@@ -307,35 +308,31 @@ export async function loginRequest(payload: {
   two_factor_code?: string;
   trust_this_device?: boolean;
 }): Promise<TokenResponse> {
-  try {
-    const response = await fetch(apiUrl("/api/v1/auth/login"), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await parseBody(response);
-    if (!response.ok) {
-      throw new Error(mapLoginErrorToPt(errorMessage(body, "Não foi possível entrar.", response)));
-    }
-    const data = body as TokenResponse;
-    if (
-      !data.access_token &&
-      !data.captcha_required &&
-      !data.two_factor_required
-    ) {
-      throw new Error(
-        "Resposta inválida do servidor ao entrar. Atualize a página (Ctrl+F5) e tente de novo. Se persistir, avise o suporte."
-      );
-    }
-    return data;
-  } catch (err) {
-    // Em ambientes de preview/edicao sem backend acessivel, permite navegar no front.
-    if (isLoginDemoEnabled()) {
-      return createDemoTokenResponse();
-    }
-    throw err;
+  /* Previews (v0/Vercel) sem backend: não chama a API; mesmo token que `isDemoMode()` / botão Demo. */
+  if (isLoginDemoEnabled()) {
+    return createDemoTokenResponse();
   }
+  const response = await fetch(apiUrl("/api/v1/auth/login"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(mapLoginErrorToPt(errorMessage(body, "Não foi possível entrar.", response)));
+  }
+  const data = body as TokenResponse;
+  if (
+    !data.access_token &&
+    !data.captcha_required &&
+    !data.two_factor_required
+  ) {
+    throw new Error(
+      "Resposta inválida do servidor ao entrar. Atualize a página (Ctrl+F5) e tente de novo. Se persistir, avise o suporte."
+    );
+  }
+  return data;
 }
 
 export async function registerRequest(payload: {

@@ -80,6 +80,7 @@ class FinanceEntryStatus(str, enum.Enum):
 class FinanceGatewayProvider(str, enum.Enum):
     ASAAS = "asaas"
     MERCADOPAGO = "mercadopago"
+    STONE = "stone"
 
 
 class NfseProvider(str, enum.Enum):
@@ -242,6 +243,9 @@ class Tenant(Base):
     finance_gateways: Mapped[list["TenantFinanceGateway"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    finance_ofx_imports: Mapped[list["FinanceOfxImport"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     nfse_settings: Mapped["TenantNfseSettings | None"] = relationship(
         back_populates="tenant", uselist=False, cascade="all, delete-orphan"
     )
@@ -264,6 +268,9 @@ class Tenant(Base):
         back_populates="tenant", cascade="all, delete-orphan"
     )
     whatsapp_bot_sessions: Mapped[list["WhatsappBotSession"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    whatsapp_broadcast_campaigns: Mapped[list["WhatsappBroadcastCampaign"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
     plan_change_logs: Mapped[list["TenantPlanChangeLog"]] = relationship(
@@ -1750,6 +1757,9 @@ class FinanceEntry(Base):
     finance_account: Mapped["FinanceBankAccount | None"] = relationship(back_populates="entries")
     credit_card: Mapped["FinanceCreditCard | None"] = relationship(back_populates="entries")
     service_order: Mapped["ServiceOrder | None"] = relationship(back_populates="finance_entries")
+    ofx_line_matches: Mapped[list["FinanceOfxStatementLine"]] = relationship(
+        back_populates="matched_entry", foreign_keys="FinanceOfxStatementLine.matched_finance_entry_id"
+    )
 
 
 class FinanceBankAccount(Base):
@@ -1774,6 +1784,80 @@ class FinanceBankAccount(Base):
     tenant: Mapped["Tenant"] = relationship(back_populates="finance_accounts")
     entries: Mapped[list["FinanceEntry"]] = relationship(back_populates="finance_account")
     credit_cards: Mapped[list["FinanceCreditCard"]] = relationship(back_populates="billing_account")
+    ofx_imports: Mapped[list["FinanceOfxImport"]] = relationship(
+        back_populates="finance_bank_account", cascade="all, delete-orphan"
+    )
+
+
+class FinanceBankCatalog(Base):
+    """Catálogo global de bancos/carteiras (operadora): visibilidade e logo no wizard de contas."""
+
+    __tablename__ = "finance_bank_catalog"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_finance_bank_catalog_slug"),
+        UniqueConstraint("logo_file_token", name="uq_finance_bank_catalog_logo_token"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    bank_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    display_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    logo_external_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    logo_file_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    logo_mime: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class FinanceOfxImport(Base):
+    """Upload de extrato OFX por conta bancária (conciliação assistida)."""
+
+    __tablename__ = "finance_ofx_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    finance_bank_account_id: Mapped[int] = mapped_column(
+        ForeignKey("finance_bank_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="finance_ofx_imports")
+    finance_bank_account: Mapped["FinanceBankAccount"] = relationship(back_populates="ofx_imports")
+    lines: Mapped[list["FinanceOfxStatementLine"]] = relationship(
+        back_populates="import_", cascade="all, delete-orphan"
+    )
+
+
+class FinanceOfxStatementLine(Base):
+    """Linha de extrato OFX persistida para conciliação com lançamentos."""
+
+    __tablename__ = "finance_ofx_statement_lines"
+    __table_args__ = (UniqueConstraint("import_id", "fit_id", name="uq_fin_ofx_line_import_fit"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    import_id: Mapped[int] = mapped_column(ForeignKey("finance_ofx_imports.id", ondelete="CASCADE"), nullable=False, index=True)
+    fit_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    posted_at: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    trn_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payee: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    matched_finance_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_entries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    matched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    import_: Mapped["FinanceOfxImport"] = relationship(back_populates="lines")
+    matched_entry: Mapped["FinanceEntry | None"] = relationship(
+        back_populates="ofx_line_matches", foreign_keys="FinanceOfxStatementLine.matched_finance_entry_id"
+    )
 
 
 class FinanceCreditCard(Base):
@@ -1864,6 +1948,13 @@ class TenantFinanceGateway(Base):
     mercadopago_cached_balance: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
     mercadopago_mp_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     mercadopago_finance_bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    stone_secret_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stone_public_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stone_sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stone_webhook_path_token: Mapped[str | None] = mapped_column(String(48), nullable=True, unique=True, index=True)
+    stone_finance_bank_account_id: Mapped[int | None] = mapped_column(
         ForeignKey("finance_bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -2146,6 +2237,55 @@ class WhatsappBotSession(Base):
 
     tenant: Mapped["Tenant"] = relationship(back_populates="whatsapp_bot_sessions")
     current_flow: Mapped["WhatsappBotFlow | None"] = relationship(back_populates="sessions")
+
+
+class WhatsappBroadcastCampaign(Base):
+    __tablename__ = "whatsapp_broadcast_campaigns"
+    __table_args__ = (UniqueConstraint("tenant_id", "slug", name="uq_whatsapp_broadcast_campaign_tenant_slug"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    message_template: Mapped[str] = mapped_column(Text, nullable=False)
+    segment_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    segment_params_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    max_recipients_per_run: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    cooldown_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="whatsapp_broadcast_campaigns")
+    runs: Mapped[list["WhatsappBroadcastCampaignRun"]] = relationship(
+        back_populates="campaign", cascade="all, delete-orphan", order_by="WhatsappBroadcastCampaignRun.id.desc()"
+    )
+
+
+class WhatsappBroadcastCampaignRun(Base):
+    __tablename__ = "whatsapp_broadcast_campaign_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("whatsapp_broadcast_campaigns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    planned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_ok: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_cooldown: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_no_phone: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    campaign: Mapped["WhatsappBroadcastCampaign"] = relationship(back_populates="runs")
 
 
 class TechnicianWorkWindow(Base):

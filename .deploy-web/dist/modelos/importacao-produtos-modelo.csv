@@ -1,0 +1,4 @@
+nome;sku;preco_compra;preco_venda;estoque_inicial;ativo
+Filtro lavavel;FLT-001;12,50;29,90;25;sim
+Capacitor 35uF;CAP-035;18,00;42,00;10;sim
+Gas R410A 11.3kg;GAS-R410A-11;520,00;690,00;3;nao

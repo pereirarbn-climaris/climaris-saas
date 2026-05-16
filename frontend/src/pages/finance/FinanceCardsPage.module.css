@@ -3,8 +3,8 @@
 .subtitle { margin: 0.25rem 0 0; color: var(--color-text-muted); font-size: 0.88rem; }
 .actions { display: flex; gap: 0.6rem; }
 .card { border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-elevated); padding: 1rem; display: grid; gap: 0.7rem; }
-.grid { display: grid; gap: 0.55rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
-.field { display: grid; gap: 0.3rem; }
+.grid { display: grid; gap: var(--form-field-gap); grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+.field { min-width: 0; }
 .field span { font-size: 0.76rem; text-transform: uppercase; color: var(--color-text-muted); letter-spacing: 0.04em; font-weight: 600; }
 .grid input, .grid select, .grid button { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text); padding: 0.55rem 0.7rem; }
 .hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
@@ -21,7 +21,7 @@
 .row { display: grid; gap: 0.4rem; align-content: start; }
 .row button { border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text); padding: 0.45rem 0.62rem; }
 .modalOverlay { position: fixed; inset: 0; background: rgba(20,27,45,0.45); display: grid; place-items: center; z-index: 40; }
-.modal { width: min(480px, calc(100vw - 2rem)); border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-elevated); padding: 1rem; display: grid; gap: 0.6rem; }
+.modal { width: min(480px, calc(100vw - 2rem)); border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-elevated); padding: 1rem; }
 .modal header { display: flex; justify-content: space-between; align-items: center; }
 .modal input, .modal select, .modal button { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text); padding: 0.55rem 0.7rem; }
 .error { margin: 0; color: #b42318; }

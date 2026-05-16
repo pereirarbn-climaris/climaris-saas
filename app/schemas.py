@@ -1879,6 +1879,9 @@ class FinanceEntryOut(BaseModel):
     paid_at: datetime | None = None
     notes: str | None = None
     service_order_id: int | None = None
+    linked_payer_email: str | None = None
+    linked_payer_name: str | None = None
+    linked_payer_document: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -2127,6 +2130,59 @@ class FinanceGatewayMercadoPagoWebhookSignatureUpdate(BaseModel):
     clear_webhook_signature_secret: bool = False
 
 
+class FinanceGatewayStoneTest(BaseModel):
+    """Chave secreta Pagar.me (sk_test_… / sk_live_…) da conta Stone."""
+
+    secret_key: str = Field(..., min_length=16, max_length=220)
+
+
+class FinanceGatewayStoneUpsert(BaseModel):
+    """Atualiza Stone/Pagar.me. `secret_key` vazio mantém a chave atual se já houver integração."""
+
+    secret_key: str = Field(default="", max_length=220)
+    sandbox: bool = False
+    finance_bank_account_id: int = Field(..., ge=1)
+    public_key: str = Field(
+        default="",
+        max_length=220,
+        description="Chave pública pk_test_/pk_live_; vazio remove a chave salva.",
+    )
+
+
+class FinanceEntryStoneChargeCreate(BaseModel):
+    customer_email: EmailStr | None = None
+    customer_name: str | None = Field(default=None, max_length=120)
+    payer_document: str | None = Field(
+        default=None,
+        max_length=22,
+        description="CPF/CNPJ do pagador; recomendado — muitas contas Pagar.me exigem para PIX.",
+    )
+
+
+class FinanceEntryStoneBoletoChargeCreate(BaseModel):
+    customer_email: EmailStr | None = None
+    customer_name: str | None = Field(default=None, max_length=120)
+    payer_document: str | None = Field(default=None, max_length=22)
+    instructions: str | None = Field(default=None, max_length=256)
+
+
+class FinanceEntryStoneCardChargeCreate(BaseModel):
+    customer_email: EmailStr | None = None
+    customer_name: str | None = Field(default=None, max_length=120)
+    payer_document: str | None = Field(default=None, max_length=22)
+    card_token: str = Field(..., min_length=16, max_length=200)
+    installments: int = Field(default=1, ge=1, le=12)
+
+
+class FinanceOfxMatchItem(BaseModel):
+    line_id: int = Field(..., ge=1)
+    finance_entry_id: int = Field(..., ge=1)
+
+
+class FinanceOfxApplyMatches(BaseModel):
+    matches: list[FinanceOfxMatchItem] = Field(..., min_length=1, max_length=200)
+
+
 class FinanceEntryAsaasChargeCreate(BaseModel):
     customer_id: str = Field(..., min_length=4, max_length=48)
     billing_type: Literal["PIX", "BOLETO"] = "PIX"
@@ -2186,6 +2242,40 @@ class FinancePaymentFeeOut(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class FinanceBankCatalogPublicOut(BaseModel):
+    """Bancos ativos para o wizard de contas (tenant)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    slug: str
+    bank_name: str
+    display_label: str
+    sort_order: int
+    logo_url: str | None = None
+
+
+class FinanceBankCatalogAdminOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    slug: str
+    bank_name: str
+    display_label: str
+    sort_order: int
+    is_active: bool
+    logo_external_url: str | None = None
+    logo_url: str | None = None
+    has_uploaded_logo: bool = False
+
+
+class FinanceBankCatalogAdminPatch(BaseModel):
+    display_label: str | None = Field(default=None, min_length=1, max_length=80)
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=99999)
+    logo_external_url: str | None = Field(default=None, max_length=2000)
 
 
 class FinanceBankAccountCreate(BaseModel):

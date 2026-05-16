@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.schemas_whatsapp_bot import (
     WhatsappBotFlowCreate,
     WhatsappBotFlowOut,
     WhatsappBotFlowPatch,
+    WhatsappBotMetricsOut,
     WhatsappBotSeedDefaultsResponse,
     WhatsappBotEventOut,
     WhatsappBotStatusOut,
@@ -34,6 +35,7 @@ from app.whatsapp_bot import (
     create_step,
     delete_flow,
     delete_step,
+    get_bot_metrics,
     get_flow,
     get_or_create_settings,
     list_flows,
@@ -84,6 +86,20 @@ def get_bot_module_status(
         "entitlement_status": ent_status.value if ent_status is not None else None,
         "blocked_reason": None if active else "Módulo WhatsApp não contratado ou ainda não aprovado.",
     }
+
+
+@router.get(
+    "/metrics",
+    response_model=WhatsappBotMetricsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_whatsapp_bot_metrics(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    days: Annotated[int, Query(ge=1, le=90, description="Janela em dias para agregar eventos.")] = 7,
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return get_bot_metrics(db, tenant_id=current_user.tenant_id, days=days)
 
 
 @router.get(
@@ -290,15 +306,21 @@ def test_bot_message(
 def list_bot_sessions(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    phone_contains: Annotated[str | None, Query(max_length=30, description="Filtra por trecho do número (só dígitos usados na busca).")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[dict]:
     _require_whatsapp_module(db, current_user.tenant_id)
-    rows = db.execute(
+    digits = "".join(ch for ch in (phone_contains or "") if ch.isdigit())
+    stmt = (
         select(WhatsappBotSession)
         .where(WhatsappBotSession.tenant_id == current_user.tenant_id)
         .options(selectinload(WhatsappBotSession.current_flow))
         .order_by(WhatsappBotSession.updated_at.desc(), WhatsappBotSession.id.desc())
-        .limit(100)
-    ).scalars().all()
+        .limit(limit)
+    )
+    if digits:
+        stmt = stmt.where(WhatsappBotSession.client_whatsapp.contains(digits))
+    rows = db.execute(stmt).scalars().all()
     result: list[dict] = []
     for row in rows:
         try:
@@ -356,24 +378,30 @@ def clear_bot_session(
 def list_bot_events(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    phone_contains: Annotated[str | None, Query(max_length=30, description="Busca dígitos dentro do JSON do evento (ex.: trecho do JID).")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[dict]:
     _require_whatsapp_module(db, current_user.tenant_id)
+    digits = "".join(ch for ch in (phone_contains or "") if ch.isdigit())
+    conditions = [
+        WhatsappMessageEvent.tenant_id == current_user.tenant_id,
+        WhatsappMessageEvent.event_type.in_(
+            [
+                "bot_incoming_replied",
+                "bot_incoming_reply_failed",
+                "bot_reply_sent",
+                "bot_reply_failed",
+                "incoming_text_processed",
+            ]
+        ),
+    ]
+    if digits:
+        conditions.append(WhatsappMessageEvent.payload_json.contains(digits))
     rows = db.execute(
         select(WhatsappMessageEvent)
-        .where(
-            WhatsappMessageEvent.tenant_id == current_user.tenant_id,
-            WhatsappMessageEvent.event_type.in_(
-                [
-                    "bot_incoming_replied",
-                    "bot_incoming_reply_failed",
-                    "bot_reply_sent",
-                    "bot_reply_failed",
-                    "incoming_text_processed",
-                ]
-            ),
-        )
+        .where(*conditions)
         .order_by(WhatsappMessageEvent.id.desc())
-        .limit(100)
+        .limit(limit)
     ).scalars().all()
     result: list[dict] = []
     for row in rows:

@@ -145,8 +145,9 @@
 }
 
 .form {
-  display: grid;
-  gap: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--form-field-gap);
 }
 
 .form input,
@@ -162,21 +163,86 @@
 .bankGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.45rem;
+  gap: 0.55rem;
 }
 
 .bankItem {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 4.5rem;
+  border: 2px solid var(--color-border);
+  border-radius: 12px;
   background: var(--color-surface);
   color: var(--color-text);
-  padding: 0.45rem 0.5rem;
-  font-size: 0.78rem;
+  padding: 0.45rem 0.35rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
+}
+
+.bankItem:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface));
+}
+
+.bankItem:active {
+  transform: scale(0.98);
+}
+
+.bankItemLogo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.35rem;
+  height: 2.35rem;
+}
+
+.bankItemLogo svg {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.bankItemImg {
+  display: block;
+  max-width: 100%;
+  max-height: 2.35rem;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.bankItemLabel {
+  display: block;
+  max-width: 100%;
+  word-break: break-word;
+  hyphens: auto;
 }
 
 .bankItemActive {
-  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.ofxBox {
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  background: color-mix(in srgb, var(--color-surface) 92%, var(--color-primary));
 }
 
 .reconcileFilters {
@@ -272,7 +338,6 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-text-muted);
-  margin-bottom: var(--form-label-to-control);
 }
 
 .toggleRow {

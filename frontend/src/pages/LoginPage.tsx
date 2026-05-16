@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { forgotPasswordRequest, loginRequest, resendVerificationEmailRequest } from "../api/auth";
 import { isPlatformAdminEmail } from "../lib/platformAdmin";
 import { setAccessToken, setRefreshToken, setTenantId, clearRefreshToken } from "../lib/authStorage";
+import { DEMO_ACCESS_TOKEN } from "../lib/demoMode";
 import styles from "./LoginPage.module.css";
 
 // Ícones SVG inline para melhor performance
@@ -522,7 +523,7 @@ export function LoginPage() {
             type="button"
             className={styles.demoBtn}
             onClick={() => {
-              setAccessToken("demo_token_climaris_erp_2024");
+              setAccessToken(DEMO_ACCESS_TOKEN);
               setTenantId(1);
               setMessage({ text: "Entrando em modo demonstracao...", kind: "success" });
               setTimeout(() => navigate("/app", { replace: true }), 500);

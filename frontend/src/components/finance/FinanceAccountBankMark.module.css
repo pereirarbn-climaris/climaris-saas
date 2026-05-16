@@ -1,0 +1,65 @@
+.brand {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.brand svg {
+  width: 22px;
+  height: 22px;
+}
+
+.brand img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.brandInline {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.brandInline svg {
+  width: 17px;
+  height: 17px;
+}
+
+.brandInline img {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+}
+
+.bankDot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-primary) 20%, var(--color-surface));
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.bankDotInline {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-primary) 20%, var(--color-surface));
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 0.68rem;
+}

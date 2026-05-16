@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, time, timezone
+from decimal import Decimal
 from calendar import monthrange
 from uuid import uuid4
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -34,6 +36,12 @@ from app.finance_asaas_service import (
     ensure_asaas_webhook_secrets,
     register_asaas_webhook_after_save,
 )
+from app.finance_bank_catalog_storage import logo_file_path
+from app.finance_ofx_service import (
+    amount_matches_ofx_line,
+    finance_entry_matches_bank_account_for_ofx,
+    suggest_finance_entries_for_ofx_line,
+)
 from app.finance_settlement import (
     expected_settlement_for_parcel,
     normalize_settlement_plan,
@@ -43,8 +51,30 @@ from app.finance_settlement import (
 from app.finance_asaas_constants import ASAAS_FINANCE_EXTERNAL_REF_PREFIX
 from app.finance_mercadopago_constants import MERCADOPAGO_FINANCE_EXTERNAL_REF_PREFIX
 from app.finance_mercadopago_service import ensure_mercadopago_webhook_secrets, sync_mercadopago_balance_snapshot
+from app.finance_entry_payer_hints import (
+    batch_linked_payers_by_service_order_ids,
+    linked_payer_for_entry,
+    merge_stone_payer_contact,
+)
+from app.finance_stone_constants import STONE_FINANCE_EXTERNAL_REF_PREFIX
+from app.finance_stone_service import ensure_stone_webhook_secrets
+from app.stone_pagarme_client import (
+    account_label_from_pagarme_orders_payload,
+    boleto_due_at_iso_from_entry_due,
+    create_pagarme_boleto_order,
+    create_pagarme_credit_card_order,
+    create_pagarme_pix_order,
+    credit_card_charge_declined_message,
+    customer_block_with_br_document,
+    extract_boleto_from_order,
+    extract_order_id,
+    extract_pix_from_order,
+    fetch_pagarme_order,
+    test_pagarme_secret_key,
+)
 from app.marketplace_util import tenant_has_marketplace_app
 from app.plan_rules import normalize_plan_key
+from app.ofx_parser import parse_ofx_statement_transactions
 from app.saas_plan_effective import effective_finance_max_mode
 from app.security import decrypt_platform_secret, encrypt_platform_secret
 from app.whatsapp import dispatch_template
@@ -52,6 +82,7 @@ from app.schemas import (
     FinanceBankAccountCreate,
     FinanceBankAccountOut,
     FinanceBankAccountUpdate,
+    FinanceBankCatalogPublicOut,
     FinanceCategoryCreate,
     FinanceCategoryOut,
     FinanceCategorySummaryOut,
@@ -76,6 +107,12 @@ from app.schemas import (
     FinanceGatewayMercadoPagoTest,
     FinanceGatewayMercadoPagoUpsert,
     FinanceGatewayMercadoPagoWebhookSignatureUpdate,
+    FinanceGatewayStoneTest,
+    FinanceGatewayStoneUpsert,
+    FinanceEntryStoneBoletoChargeCreate,
+    FinanceEntryStoneCardChargeCreate,
+    FinanceEntryStoneChargeCreate,
+    FinanceOfxApplyMatches,
     FinanceSettingsOut,
     FinanceSettingsUpdate,
     FinanceEntryUpdate,
@@ -84,12 +121,15 @@ from app.schemas import (
 from models import (
     FinanceCategory,
     FinanceBankAccount,
+    FinanceBankCatalog,
     FinanceCreditCard,
     FinanceAccountType,
     FinanceEntry,
     FinanceEntryStatus,
     FinanceEntryType,
     FinanceGatewayProvider,
+    FinanceOfxImport,
+    FinanceOfxStatementLine,
     TenantFinancePaymentFee,
     Tenant,
     TenantFinanceGateway,
@@ -97,6 +137,7 @@ from models import (
     UserRole,
     ServiceOrder,
     OrderStatus,
+    Client,
 )
 
 router = APIRouter(tags=["finance"])
@@ -298,6 +339,92 @@ def _mercadopago_row_to_public(row: TenantFinanceGateway | None) -> dict:
     }
 
 
+def _stone_row_to_public(row: TenantFinanceGateway | None) -> dict:
+    empty: dict = {
+        "connected": False,
+        "sandbox": False,
+        "secret_key_hint": None,
+        "public_key_hint": None,
+        "public_key": None,
+        "account_label": None,
+        "finance_bank_account_id": None,
+        "webhook_url": None,
+        "last_validated_at": None,
+        "last_validation_error": None,
+    }
+    if row is None or not row.stone_secret_key_encrypted:
+        return empty
+    hint = "****"
+    try:
+        plain = decrypt_platform_secret(row.stone_secret_key_encrypted)
+        hint = _mask_api_key_hint(plain)
+    except Exception:
+        pass
+    pk_hint = None
+    plain_pk: str | None = None
+    try:
+        if row.stone_public_key_encrypted:
+            plain_pk = decrypt_platform_secret(row.stone_public_key_encrypted)
+            pk_hint = _mask_api_key_hint(plain_pk)
+    except Exception:
+        plain_pk = None
+    wh_url = None
+    base_pub = public_api_base_url()
+    if row.stone_webhook_path_token and base_pub:
+        wh_url = f"{base_pub}/api/v1/webhooks/stone/{row.stone_webhook_path_token}"
+    return {
+        "connected": True,
+        "sandbox": bool(row.stone_sandbox),
+        "secret_key_hint": hint,
+        "public_key_hint": pk_hint,
+        "public_key": plain_pk,
+        "account_label": row.account_label,
+        "finance_bank_account_id": row.stone_finance_bank_account_id,
+        "webhook_url": wh_url,
+        "last_validated_at": row.last_validated_at,
+        "last_validation_error": row.last_validation_error,
+    }
+
+
+def _assert_finance_entry_eligible_for_stone_charge(entry: FinanceEntry) -> None:
+    if entry.entry_type != FinanceEntryType.INCOME:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Somente receitas podem gerar cobrança.")
+    if entry.status == FinanceEntryStatus.PAID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lançamento já está pago.")
+    if entry.gateway_payment_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lançamento já vinculado a uma cobrança de gateway.")
+    if entry.gateway_preference_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este lançamento possui checkout Mercado Pago pendente. Remova a preferência ou use outro lançamento para cobrar via Stone / Pagar.me.",
+        )
+
+
+def _stone_gateway_for_tenant_or_400(db: Session, tenant_id: int) -> TenantFinanceGateway:
+    gw = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.STONE,
+        )
+    ).scalar_one_or_none()
+    if gw is None or not gw.stone_secret_key_encrypted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stone / Pagar.me não conectado neste workspace. Configure em Contas e carteiras.",
+        )
+    return gw
+
+
+def _finance_gateways_public_dict(db: Session, tenant_id: int) -> dict:
+    rows = db.execute(select(TenantFinanceGateway).where(TenantFinanceGateway.tenant_id == tenant_id)).scalars().all()
+    by_provider = {r.provider: r for r in rows}
+    return {
+        "asaas": _asaas_row_to_public(by_provider.get(FinanceGatewayProvider.ASAAS)),
+        "mercadopago": _mercadopago_row_to_public(by_provider.get(FinanceGatewayProvider.MERCADOPAGO)),
+        "stone": _stone_row_to_public(by_provider.get(FinanceGatewayProvider.STONE)),
+    }
+
+
 def _add_months(base: date, months: int) -> date:
     if months <= 0:
         return base
@@ -348,11 +475,11 @@ def _entry_matches_bank_account(entry: FinanceEntry, account: FinanceBankAccount
     return pm == "cash" and entry.finance_account_id is None
 
 
-def _entry_to_out(entry: FinanceEntry) -> dict:
+def _entry_to_out(entry: FinanceEntry, *, linked_payer: dict[str, str | None] | None = None) -> dict:
     amount = float(entry.amount)
     fee_amount = float(entry.fee_amount or 0)
     net_amount = amount - fee_amount if entry.entry_type == FinanceEntryType.INCOME else amount + fee_amount
-    return {
+    d: dict[str, Any] = {
         "id": entry.id,
         "tenant_id": entry.tenant_id,
         "category_id": entry.category_id,
@@ -389,6 +516,30 @@ def _entry_to_out(entry: FinanceEntry) -> dict:
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
     }
+    if linked_payer:
+        d["linked_payer_email"] = linked_payer.get("email")
+        d["linked_payer_name"] = linked_payer.get("name")
+        d["linked_payer_document"] = linked_payer.get("document")
+    else:
+        d["linked_payer_email"] = None
+        d["linked_payer_name"] = None
+        d["linked_payer_document"] = None
+    return d
+
+
+def _entry_to_out_with_client_hints(db: Session, tenant_id: int, entry: FinanceEntry) -> dict:
+    hint = linked_payer_for_entry(db, tenant_id, entry)
+    return _entry_to_out(entry, linked_payer=hint)
+
+
+def _entry_rows_to_out_with_client_hints(db: Session, tenant_id: int, rows: list[FinanceEntry]) -> list[dict]:
+    so_ids = {int(r.service_order_id) for r in rows if r.service_order_id is not None}
+    hints_by_so = batch_linked_payers_by_service_order_ids(db, tenant_id=tenant_id, service_order_ids=so_ids)
+    out: list[dict] = []
+    for r in rows:
+        h = hints_by_so.get(int(r.service_order_id)) if r.service_order_id is not None else None
+        out.append(_entry_to_out(r, linked_payer=h))
+    return out
 
 
 def _credit_card_used_limit(db: Session, tenant_id: int, card_id: int) -> float:
@@ -528,7 +679,7 @@ def list_finance_entries(
     if service_order_id is not None:
         query = query.where(FinanceEntry.service_order_id == service_order_id)
     rows = db.execute(query.order_by(date_col.desc(), FinanceEntry.id.desc()).offset(skip).limit(limit)).scalars().all()
-    return JSONResponse(content=jsonable_encoder([_entry_to_out(row) for row in rows]))
+    return JSONResponse(content=jsonable_encoder(_entry_rows_to_out_with_client_hints(db, current_user.tenant_id, list(rows))))
 
 
 @router.post(
@@ -667,14 +818,14 @@ def create_finance_entry(
         _safe_send_whatsapp_for_finance_status(db, current_user, row)
         db.refresh(row)
     if installments == 1:
-        return JSONResponse(content=jsonable_encoder(_entry_to_out(created[0])))
+        return JSONResponse(content=jsonable_encoder(_entry_to_out_with_client_hints(db, current_user.tenant_id, created[0])))
     return JSONResponse(
         content=jsonable_encoder(
             {
                 "status": "ok",
                 "installment_group_id": group_id,
                 "created_count": installments,
-                "entries": [_entry_to_out(row) for row in created],
+                "entries": _entry_rows_to_out_with_client_hints(db, current_user.tenant_id, list(created)),
             }
         )
     )
@@ -813,10 +964,10 @@ def patch_finance_entry(
         db.refresh(row)
 
     if scope == "single":
-        return JSONResponse(content=jsonable_encoder(_entry_to_out(targets[0])))
+        return JSONResponse(content=jsonable_encoder(_entry_to_out_with_client_hints(db, current_user.tenant_id, targets[0])))
     return JSONResponse(
         content=jsonable_encoder(
-            {"status": "ok", "edit_scope": scope, "updated_count": len(targets), "entries": [_entry_to_out(r) for r in targets]}
+            {"status": "ok", "edit_scope": scope, "updated_count": len(targets), "entries": _entry_rows_to_out_with_client_hints(db, current_user.tenant_id, targets)}
         )
     )
 
@@ -886,7 +1037,7 @@ def create_asaas_charge_for_entry(
     db.refresh(entry)
     return {
         "status": "ok",
-        "entry": _entry_to_out(entry),
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
         "payment_id": payment_id,
         "invoice_url": invoice_url,
         "external_reference": external_ref,
@@ -977,7 +1128,7 @@ def create_mercadopago_pix_charge_for_entry(
     db.refresh(entry)
     return {
         "status": "ok",
-        "entry": _entry_to_out(entry),
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
         "payment_id": payment_id,
         "payment_status": str(pay_data.get("status") or ""),
         "ticket_url": ticket_url,
@@ -1081,12 +1232,316 @@ def create_mercadopago_boleto_charge_for_entry(
     db.refresh(entry)
     return {
         "status": "ok",
-        "entry": _entry_to_out(entry),
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
         "payment_id": payment_id,
         "payment_status": str(pay_data.get("status") or ""),
         "ticket_url": ticket_url,
         "external_reference": external_ref,
         "sandbox": bool(gw.mercadopago_sandbox),
+    }
+
+
+@router.post(
+    "/finance/entries/{entry_id}/stone-charge",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def create_stone_pix_charge_for_entry(
+    request: Request,
+    entry_id: int,
+    payload: FinanceEntryStoneChargeCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    _assert_finance_entry_eligible_for_stone_charge(entry)
+    gw = _stone_gateway_for_tenant_or_400(db, current_user.tenant_id)
+
+    api_key = decrypt_platform_secret(gw.stone_secret_key_encrypted)
+    order_code = f"{STONE_FINANCE_EXTERNAL_REF_PREFIX}{entry.id}"
+    meta = {
+        "climaris_finance_entry_id": str(entry.id),
+        "climaris_tenant_id": str(current_user.tenant_id),
+    }
+    linked = linked_payer_for_entry(db, current_user.tenant_id, entry)
+    email, cust_name, doc_merged = merge_stone_payer_contact(
+        linked=linked,
+        customer_email=str(payload.customer_email) if payload.customer_email else None,
+        customer_name=payload.customer_name,
+        payer_document=payload.payer_document,
+    )
+    ok, err, order = create_pagarme_pix_order(
+        secret_key=api_key,
+        amount_reais=float(entry.amount),
+        description=entry.description,
+        order_code=order_code,
+        metadata=meta,
+        customer_name=cust_name,
+        customer_email=email,
+        payer_document=doc_merged if doc_merged else None,
+    )
+    if not ok or order is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Falha ao criar cobrança PIX no Pagar.me.")
+
+    order_id = extract_order_id(order)
+    _charge_id, qr_copy, qr_url = extract_pix_from_order(order)
+    if not order_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pedido criado sem id no Pagar.me.")
+
+    entry.gateway_payment_id = order_id[:48]
+    entry.payment_method = "pix"
+    entry.payment_provider = "stone"
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {
+        "status": "ok",
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
+        "order_id": order_id,
+        "pix_copy_paste": qr_copy,
+        "qr_code_url": qr_url,
+        "order_code": order_code,
+        "sandbox": bool(gw.stone_sandbox),
+    }
+
+
+@router.post(
+    "/finance/entries/{entry_id}/stone-boleto-charge",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def create_stone_boleto_charge_for_entry(
+    request: Request,
+    entry_id: int,
+    payload: FinanceEntryStoneBoletoChargeCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    _assert_finance_entry_eligible_for_stone_charge(entry)
+    gw = _stone_gateway_for_tenant_or_400(db, current_user.tenant_id)
+
+    linked = linked_payer_for_entry(db, current_user.tenant_id, entry)
+    email, nm, doc_merged = merge_stone_payer_contact(
+        linked=linked,
+        customer_email=str(payload.customer_email) if payload.customer_email else None,
+        customer_name=payload.customer_name,
+        payer_document=payload.payer_document,
+    )
+    ok_doc, doc_err, customer = customer_block_with_br_document(
+        customer_name=nm,
+        customer_email=email,
+        payer_document=doc_merged,
+    )
+    if not ok_doc or customer is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=doc_err
+            or "Informe CPF/CNPJ do pagador ou cadastre documento válido no cliente da ordem de serviço vinculada.",
+        )
+
+    api_key = decrypt_platform_secret(gw.stone_secret_key_encrypted)
+    order_code = f"{STONE_FINANCE_EXTERNAL_REF_PREFIX}{entry.id}"
+    meta = {
+        "climaris_finance_entry_id": str(entry.id),
+        "climaris_tenant_id": str(current_user.tenant_id),
+    }
+    due_at = boleto_due_at_iso_from_entry_due(entry_due=entry.due_date)
+    ok, err, order = create_pagarme_boleto_order(
+        secret_key=api_key,
+        amount_reais=float(entry.amount),
+        description=entry.description,
+        order_code=order_code,
+        metadata=meta,
+        customer=customer,
+        due_at_iso=due_at,
+        instructions=payload.instructions,
+    )
+    if not ok or order is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Falha ao criar boleto no Pagar.me.")
+
+    order_id = extract_order_id(order)
+    _cid, pdf_url, line, barcode = extract_boleto_from_order(order)
+    if not order_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pedido criado sem id no Pagar.me.")
+
+    entry.gateway_payment_id = order_id[:48]
+    entry.payment_method = "boleto"
+    entry.payment_provider = "stone"
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {
+        "status": "ok",
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
+        "order_id": order_id,
+        "ticket_url": pdf_url,
+        "digitable_line": line,
+        "barcode": barcode,
+        "order_code": order_code,
+        "sandbox": bool(gw.stone_sandbox),
+    }
+
+
+@router.get(
+    "/finance/entries/{entry_id}/stone-boleto-artifacts",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def get_stone_boleto_artifacts_for_entry(
+    request: Request,
+    entry_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Consulta o Pagar.me e devolve PDF/linha digitável do boleto já vinculado ao lançamento."""
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    oid = (entry.gateway_payment_id or "").strip()
+    if not oid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não há boleto Stone vinculado. Use «Emitir boleto (Stone)» na lista de movimentações.",
+        )
+    if (entry.payment_provider or "").strip().lower() != "stone":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este lançamento não está registrado como cobrança Stone / Pagar.me.",
+        )
+    if (entry.payment_method or "").strip().lower() != "boleto":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O meio do lançamento não é boleto.",
+        )
+    gw = _stone_gateway_for_tenant_or_400(db, current_user.tenant_id)
+    api_key = decrypt_platform_secret(gw.stone_secret_key_encrypted)
+    ok, err, order = fetch_pagarme_order(secret_key=api_key, order_id=oid)
+    if not ok or order is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Não foi possível consultar o pedido no Pagar.me.")
+    order_id = extract_order_id(order) or oid
+    _cid, pdf_url, line, barcode = extract_boleto_from_order(order)
+    return {
+        "order_id": order_id,
+        "ticket_url": pdf_url,
+        "digitable_line": line,
+        "barcode": barcode,
+        "sandbox": bool(gw.stone_sandbox),
+    }
+
+
+@router.post(
+    "/finance/entries/{entry_id}/stone-card-charge",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def create_stone_credit_card_charge_for_entry(
+    request: Request,
+    entry_id: int,
+    payload: FinanceEntryStoneCardChargeCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    entry = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.id == entry_id,
+            FinanceEntry.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
+    _assert_finance_entry_eligible_for_stone_charge(entry)
+    gw = _stone_gateway_for_tenant_or_400(db, current_user.tenant_id)
+
+    linked = linked_payer_for_entry(db, current_user.tenant_id, entry)
+    email, nm, doc_merged = merge_stone_payer_contact(
+        linked=linked,
+        customer_email=str(payload.customer_email) if payload.customer_email else None,
+        customer_name=payload.customer_name,
+        payer_document=payload.payer_document,
+    )
+    ok_doc, doc_err, customer = customer_block_with_br_document(
+        customer_name=nm,
+        customer_email=email,
+        payer_document=doc_merged,
+    )
+    if not ok_doc or customer is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=doc_err
+            or "Informe CPF/CNPJ do pagador ou cadastre documento válido no cliente da ordem de serviço vinculada.",
+        )
+
+    api_key = decrypt_platform_secret(gw.stone_secret_key_encrypted)
+    order_code = f"{STONE_FINANCE_EXTERNAL_REF_PREFIX}{entry.id}"
+    meta = {
+        "climaris_finance_entry_id": str(entry.id),
+        "climaris_tenant_id": str(current_user.tenant_id),
+    }
+    ok, err, order = create_pagarme_credit_card_order(
+        secret_key=api_key,
+        amount_reais=float(entry.amount),
+        description=entry.description,
+        order_code=order_code,
+        metadata=meta,
+        customer=customer,
+        card_token=payload.card_token.strip(),
+        installments=payload.installments,
+    )
+    if not ok or order is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Falha ao criar cobrança no Pagar.me.")
+
+    declined = credit_card_charge_declined_message(order)
+    if declined:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=declined)
+
+    order_id = extract_order_id(order)
+    if not order_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pedido criado sem id no Pagar.me.")
+
+    entry.gateway_payment_id = order_id[:48]
+    entry.payment_method = "credit_card"
+    entry.payment_provider = "stone"
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {
+        "status": "ok",
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
+        "order_id": order_id,
+        "order_code": order_code,
+        "sandbox": bool(gw.stone_sandbox),
     }
 
 
@@ -1225,7 +1680,7 @@ def create_mercadopago_checkout_preference_for_entry(
         "checkout_url": checkout_url,
         "external_reference": external_ref,
         "sandbox": bool(gw.mercadopago_sandbox),
-        "entry": _entry_to_out(entry),
+        "entry": _entry_to_out_with_client_hints(db, current_user.tenant_id, entry),
     }
 
 
@@ -1559,6 +2014,69 @@ def delete_finance_category(
     return None
 
 
+_BANK_CATALOG_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{12,80}$")
+
+
+def _finance_bank_catalog_logo_url(row: FinanceBankCatalog) -> str | None:
+    ext = (row.logo_external_url or "").strip()
+    if ext:
+        return ext
+    if row.logo_file_token:
+        return f"/api/v1/finance/bank-catalog-assets/{row.logo_file_token}"
+    return None
+
+
+@router.get("/finance/bank-catalog-assets/{token}")
+def get_finance_bank_catalog_asset(
+    token: str,
+    db: Annotated[Session, Depends(get_db)],
+) -> FileResponse:
+    if not _BANK_CATALOG_TOKEN_RE.match(token):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Não encontrado.")
+    row = db.execute(
+        select(FinanceBankCatalog).where(FinanceBankCatalog.logo_file_token == token)
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Não encontrado.")
+    path = logo_file_path(token)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Não encontrado.")
+    return FileResponse(path, media_type=row.logo_mime or "image/webp")
+
+
+@router.get(
+    "/finance/bank-catalog",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+    response_model=list[FinanceBankCatalogPublicOut],
+)
+def list_finance_bank_catalog_for_tenant(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[FinanceBankCatalogPublicOut]:
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    rows = (
+        db.execute(
+            select(FinanceBankCatalog)
+            .where(FinanceBankCatalog.is_active.is_(True))
+            .order_by(FinanceBankCatalog.sort_order.asc(), FinanceBankCatalog.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        FinanceBankCatalogPublicOut(
+            id=r.id,
+            slug=r.slug,
+            bank_name=r.bank_name,
+            display_label=r.display_label,
+            sort_order=r.sort_order,
+            logo_url=_finance_bank_catalog_logo_url(r),
+        )
+        for r in rows
+    ]
+
+
 @router.get(
     "/finance/accounts",
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
@@ -1682,9 +2200,283 @@ def delete_finance_account(
     ).scalar_one_or_none()
     if mp_gw is not None:
         db.delete(mp_gw)
+    stone_gw = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.STONE,
+            TenantFinanceGateway.stone_finance_bank_account_id == account_id,
+        )
+    ).scalar_one_or_none()
+    if stone_gw is not None:
+        db.delete(stone_gw)
     db.delete(row)
     db.commit()
     return None
+
+
+_MAX_OFX_LINES = 500
+_MAX_OFX_SUGGESTIONS_LINES = 150
+
+
+def _ofx_line_suggestions_payload(
+    db: Session,
+    *,
+    tenant_id: int,
+    bank_account: FinanceBankAccount,
+    line: FinanceOfxStatementLine,
+    compute_suggestions: bool,
+) -> dict[str, Any]:
+    if not compute_suggestions:
+        return {"suggestions": []}
+    dec = Decimal(str(line.amount))
+    hits = suggest_finance_entries_for_ofx_line(
+        db,
+        tenant_id=tenant_id,
+        bank_account=bank_account,
+        amount=dec,
+        posted_at=line.posted_at,
+    )
+    return {
+        "suggestions": [
+            {
+                "id": e.id,
+                "description": e.description,
+                "amount": float(e.amount),
+                "due_date": e.due_date.isoformat(),
+                "entry_type": e.entry_type.value if hasattr(e.entry_type, "value") else str(e.entry_type),
+                "status": e.status.value if hasattr(e.status, "value") else str(e.status),
+            }
+            for e in hits
+        ]
+    }
+
+
+@router.post(
+    "/finance/accounts/{account_id}/ofx-imports",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("20/minute")
+async def upload_finance_ofx_import(
+    request: Request,
+    account_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: UploadFile = File(...),
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    acc = _get_finance_bank_account_or_404(db, current_user.tenant_id, account_id)
+    raw_name = (file.filename or "extrato.ofx").strip() or "extrato.ofx"
+    if not raw_name.lower().endswith(".ofx"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Envie um arquivo .ofx.")
+    body = await file.read()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo vazio.")
+    txs, err = parse_ofx_statement_transactions(body)
+    if err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err)
+    total_parsed = len(txs)
+    if len(txs) > _MAX_OFX_LINES:
+        txs = txs[:_MAX_OFX_LINES]
+    imp = FinanceOfxImport(
+        tenant_id=current_user.tenant_id,
+        finance_bank_account_id=acc.id,
+        filename=raw_name[:250],
+    )
+    db.add(imp)
+    db.flush()
+    lines_out: list[dict[str, Any]] = []
+    for idx, tx in enumerate(txs):
+        row = FinanceOfxStatementLine(
+            import_id=imp.id,
+            fit_id=tx.fit_id,
+            amount=float(tx.amount),
+            posted_at=tx.posted_at,
+            trn_type=tx.trn_type,
+            payee=tx.payee,
+            memo=tx.memo,
+        )
+        db.add(row)
+        db.flush()
+        compute = idx < _MAX_OFX_SUGGESTIONS_LINES
+        lines_out.append(
+            {
+                "id": row.id,
+                "fit_id": row.fit_id,
+                "amount": float(row.amount),
+                "posted_at": row.posted_at.isoformat(),
+                "trn_type": row.trn_type,
+                "payee": row.payee,
+                "memo": row.memo,
+                "matched_finance_entry_id": None,
+                **_ofx_line_suggestions_payload(
+                    db,
+                    tenant_id=current_user.tenant_id,
+                    bank_account=acc,
+                    line=row,
+                    compute_suggestions=compute,
+                ),
+            }
+        )
+    db.commit()
+    db.refresh(imp)
+    return {
+        "import_id": imp.id,
+        "filename": imp.filename,
+        "finance_bank_account_id": acc.id,
+        "lines_count": len(lines_out),
+        "truncated": total_parsed > _MAX_OFX_LINES,
+        "lines": lines_out,
+    }
+
+
+@router.get(
+    "/finance/accounts/{account_id}/ofx-imports/{import_id}",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_finance_ofx_import(
+    account_id: int,
+    import_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    acc = _get_finance_bank_account_or_404(db, current_user.tenant_id, account_id)
+    imp = db.execute(
+        select(FinanceOfxImport).where(
+            FinanceOfxImport.id == import_id,
+            FinanceOfxImport.tenant_id == current_user.tenant_id,
+            FinanceOfxImport.finance_bank_account_id == acc.id,
+        )
+    ).scalar_one_or_none()
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Importação OFX não encontrada.")
+    lines = db.execute(
+        select(FinanceOfxStatementLine)
+        .where(FinanceOfxStatementLine.import_id == imp.id)
+        .order_by(FinanceOfxStatementLine.posted_at.asc(), FinanceOfxStatementLine.id.asc())
+    ).scalars().all()
+    out_lines = []
+    for idx, line in enumerate(lines):
+        compute = idx < _MAX_OFX_SUGGESTIONS_LINES and line.matched_finance_entry_id is None
+        out_lines.append(
+            {
+                "id": line.id,
+                "fit_id": line.fit_id,
+                "amount": float(line.amount),
+                "posted_at": line.posted_at.isoformat(),
+                "trn_type": line.trn_type,
+                "payee": line.payee,
+                "memo": line.memo,
+                "matched_finance_entry_id": line.matched_finance_entry_id,
+                **_ofx_line_suggestions_payload(
+                    db,
+                    tenant_id=current_user.tenant_id,
+                    bank_account=acc,
+                    line=line,
+                    compute_suggestions=compute,
+                ),
+            }
+        )
+    return {
+        "import_id": imp.id,
+        "filename": imp.filename,
+        "created_at": imp.created_at,
+        "lines": out_lines,
+    }
+
+
+@router.post(
+    "/finance/accounts/{account_id}/ofx-imports/{import_id}/apply-matches",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def apply_finance_ofx_matches(
+    request: Request,
+    account_id: int,
+    import_id: int,
+    payload: FinanceOfxApplyMatches,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    acc = _get_finance_bank_account_or_404(db, current_user.tenant_id, account_id)
+    imp = db.execute(
+        select(FinanceOfxImport).where(
+            FinanceOfxImport.id == import_id,
+            FinanceOfxImport.tenant_id == current_user.tenant_id,
+            FinanceOfxImport.finance_bank_account_id == acc.id,
+        )
+    ).scalar_one_or_none()
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Importação OFX não encontrada.")
+
+    applied: list[dict[str, Any]] = []
+    for m in payload.matches:
+        line = db.execute(
+            select(FinanceOfxStatementLine).where(
+                FinanceOfxStatementLine.id == m.line_id,
+                FinanceOfxStatementLine.import_id == imp.id,
+            )
+        ).scalar_one_or_none()
+        if line is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Linha OFX {m.line_id} inválida.")
+        if line.matched_finance_entry_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Linha OFX {m.line_id} já conciliada.",
+            )
+        entry = db.execute(
+            select(FinanceEntry)
+            .options(selectinload(FinanceEntry.category))
+            .where(
+                FinanceEntry.id == m.finance_entry_id,
+                FinanceEntry.tenant_id == current_user.tenant_id,
+            )
+        ).scalar_one_or_none()
+        if entry is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Lançamento {m.finance_entry_id} não encontrado.")
+        if entry.status not in (FinanceEntryStatus.PENDING, FinanceEntryStatus.OVERDUE):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lançamento {entry.id} não está pendente/vencido.",
+            )
+        if not finance_entry_matches_bank_account_for_ofx(entry, acc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lançamento {entry.id} não pertence a esta conta para conciliação OFX.",
+            )
+        amt = Decimal(str(line.amount))
+        if not amount_matches_ofx_line(entry, amt):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Valor do lançamento {entry.id} não confere com a linha OFX.",
+            )
+        paid_at = datetime.combine(line.posted_at, time(12, 0), tzinfo=timezone.utc)
+        entry.status = FinanceEntryStatus.PAID
+        entry.paid_at = paid_at
+        if entry.finance_account_id is None:
+            entry.finance_account_id = acc.id
+        note_extra = f"Conciliado OFX import {imp.id} FITID {line.fit_id}."
+        if entry.notes and entry.notes.strip():
+            entry.notes = f"{entry.notes.strip()}\n{note_extra}"
+        else:
+            entry.notes = note_extra
+        line.matched_finance_entry_id = entry.id
+        line.matched_at = datetime.now(timezone.utc)
+        db.add(entry)
+        db.add(line)
+        applied.append({"line_id": line.id, "finance_entry_id": entry.id})
+    db.commit()
+    for item in applied:
+        ent = db.execute(select(FinanceEntry).where(FinanceEntry.id == item["finance_entry_id"])).scalar_one()
+        db.refresh(ent)
+        _safe_send_whatsapp_for_finance_status(db, current_user, ent)
+    return {"status": "ok", "applied": applied}
 
 
 @router.get(
@@ -2027,23 +2819,7 @@ def list_finance_gateways(
 ) -> dict:
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     effective = _require_finance_enabled(db, tenant)
-    row = db.execute(
-        select(TenantFinanceGateway).where(
-            TenantFinanceGateway.tenant_id == current_user.tenant_id,
-            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
-        )
-    ).scalar_one_or_none()
-    mp_row = db.execute(
-        select(TenantFinanceGateway).where(
-            TenantFinanceGateway.tenant_id == current_user.tenant_id,
-            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
-        )
-    ).scalar_one_or_none()
-    return {
-        "effective_mode": effective,
-        "asaas": _asaas_row_to_public(row),
-        "mercadopago": _mercadopago_row_to_public(mp_row),
-    }
+    return {"effective_mode": effective, **_finance_gateways_public_dict(db, current_user.tenant_id)}
 
 
 @router.post(
@@ -2113,17 +2889,7 @@ def upsert_finance_gateway_asaas(
     register_asaas_webhook_after_save(db, row, payload.api_key.strip(), payload.sandbox)
     db.commit()
     db.refresh(row)
-    mp_row = db.execute(
-        select(TenantFinanceGateway).where(
-            TenantFinanceGateway.tenant_id == current_user.tenant_id,
-            TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
-        )
-    ).scalar_one_or_none()
-    return {
-        "status": "ok",
-        "asaas": _asaas_row_to_public(row),
-        "mercadopago": _mercadopago_row_to_public(mp_row),
-    }
+    return {"status": "ok", **_finance_gateways_public_dict(db, current_user.tenant_id)}
 
 
 @router.delete(
@@ -2251,17 +3017,7 @@ def upsert_finance_gateway_mercadopago(
         db.refresh(row)
     except Exception:
         db.rollback()
-    asaas_row = db.execute(
-        select(TenantFinanceGateway).where(
-            TenantFinanceGateway.tenant_id == current_user.tenant_id,
-            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
-        )
-    ).scalar_one_or_none()
-    return {
-        "status": "ok",
-        "asaas": _asaas_row_to_public(asaas_row),
-        "mercadopago": _mercadopago_row_to_public(row),
-    }
+    return {"status": "ok", **_finance_gateways_public_dict(db, current_user.tenant_id)}
 
 
 @router.patch(
@@ -2290,17 +3046,7 @@ def patch_finance_gateway_mercadopago_products(
     db.add(row)
     db.commit()
     db.refresh(row)
-    asaas_row = db.execute(
-        select(TenantFinanceGateway).where(
-            TenantFinanceGateway.tenant_id == current_user.tenant_id,
-            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
-        )
-    ).scalar_one_or_none()
-    return {
-        "status": "ok",
-        "asaas": _asaas_row_to_public(asaas_row),
-        "mercadopago": _mercadopago_row_to_public(row),
-    }
+    return {"status": "ok", **_finance_gateways_public_dict(db, current_user.tenant_id)}
 
 
 @router.patch(
@@ -2348,17 +3094,7 @@ def patch_finance_gateway_mercadopago_webhook_signature(
     db.add(row)
     db.commit()
     db.refresh(row)
-    asaas_row = db.execute(
-        select(TenantFinanceGateway).where(
-            TenantFinanceGateway.tenant_id == current_user.tenant_id,
-            TenantFinanceGateway.provider == FinanceGatewayProvider.ASAAS,
-        )
-    ).scalar_one_or_none()
-    return {
-        "status": "ok",
-        "asaas": _asaas_row_to_public(asaas_row),
-        "mercadopago": _mercadopago_row_to_public(row),
-    }
+    return {"status": "ok", **_finance_gateways_public_dict(db, current_user.tenant_id)}
 
 
 @router.delete(
@@ -2379,6 +3115,119 @@ def delete_finance_gateway_mercadopago(
         select(TenantFinanceGateway).where(
             TenantFinanceGateway.tenant_id == current_user.tenant_id,
             TenantFinanceGateway.provider == FinanceGatewayProvider.MERCADOPAGO,
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        db.delete(row)
+        db.commit()
+    return None
+
+
+@router.post(
+    "/finance/gateways/stone/test",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("30/minute")
+def test_finance_gateway_stone(
+    request: Request,
+    payload: FinanceGatewayStoneTest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    ok, err, data = test_pagarme_secret_key(payload.secret_key.strip())
+    label = account_label_from_pagarme_orders_payload(data or {}) if ok else None
+    if ok and not label:
+        label = "Pagar.me (Stone)"
+    return {"ok": ok, "error": err, "account_label": label}
+
+
+@router.put(
+    "/finance/gateways/stone",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("30/minute")
+def upsert_finance_gateway_stone(
+    request: Request,
+    payload: FinanceGatewayStoneUpsert,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    _get_finance_bank_account_or_404(db, current_user.tenant_id, payload.finance_bank_account_id)
+    row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.STONE,
+        )
+    ).scalar_one_or_none()
+    sk_in = (payload.secret_key or "").strip()
+    label = "Pagar.me (Stone)"
+    if sk_in:
+        if len(sk_in) < 16:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chave secreta inválida.")
+        ok, err, data = test_pagarme_secret_key(sk_in)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err or "Chave secreta inválida.")
+        label = account_label_from_pagarme_orders_payload(data or {}) or "Pagar.me (Stone)"
+    else:
+        if row is None or not row.stone_secret_key_encrypted:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe a chave secreta (sk_…) para conectar.")
+        label = row.account_label or "Pagar.me (Stone)"
+
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = TenantFinanceGateway(
+            tenant_id=current_user.tenant_id,
+            provider=FinanceGatewayProvider.STONE,
+        )
+        db.add(row)
+    ensure_stone_webhook_secrets(row)
+    if sk_in:
+        row.stone_secret_key_encrypted = encrypt_platform_secret(sk_in)
+    row.stone_sandbox = payload.sandbox
+    row.stone_finance_bank_account_id = payload.finance_bank_account_id
+    pk_raw = (payload.public_key or "").strip()
+    if pk_raw:
+        if not (pk_raw.startswith("pk_test_") or pk_raw.startswith("pk_live_")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Chave pública inválida (use pk_test_… ou pk_live_…, mesma conta da sk_…).",
+            )
+        row.stone_public_key_encrypted = encrypt_platform_secret(pk_raw)
+    else:
+        row.stone_public_key_encrypted = None
+    row.last_validated_at = now
+    row.last_validation_error = None
+    row.account_label = label
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"status": "ok", **_finance_gateways_public_dict(db, current_user.tenant_id)}
+
+
+@router.delete(
+    "/finance/gateways/stone",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("30/minute")
+def delete_finance_gateway_stone(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    row = db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == current_user.tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.STONE,
         )
     ).scalar_one_or_none()
     if row is not None:

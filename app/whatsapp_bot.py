@@ -8,7 +8,7 @@ from string import Formatter
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,6 +19,7 @@ from app.mercadopago_client import (
     mercadopago_payment_pix_urls,
     mercadopago_preference_redirect_url,
 )
+from app.stone_pagarme_client import extract_boleto_from_order, extract_pix_from_order, fetch_pagarme_order
 from app.security import decrypt_platform_secret
 from models import (
     Budget,
@@ -36,6 +37,7 @@ from models import (
     WhatsappBotSession,
     WhatsappBotSettings,
     WhatsappBotStep,
+    WhatsappMessageEvent,
     WhatsappMessageStatus,
 )
 
@@ -130,7 +132,14 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             {
                 "step_key": "inicio",
                 "kind": "menu",
-                "message_template": "Como podemos ajudar no financeiro hoje?",
+                "message_template": (
+                    "Como podemos ajudar no financeiro hoje?\n\n"
+                    "Se você escolher consultar pendências, listamos lançamentos em aberto e, quando existirem no sistema, "
+                    "enviamos links explícitos de pagamento:\n"
+                    "• *Asaas* — fatura (PIX ou boleto, conforme a cobrança emitida no financeiro)\n"
+                    "• *Mercado Pago* — checkout, PIX ou boleto\n"
+                    "• *Stone / Pagar.me* — PIX (QR na página) ou boleto (PDF)"
+                ),
                 "options": [
                     {
                         "key": "1",
@@ -149,7 +158,10 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             {
                 "step_key": "consultar-pendencias",
                 "kind": "action",
-                "message_template": "Vou consultar suas pendências financeiras.",
+                "message_template": (
+                    "Vou consultar suas pendências e enviar os *links de pagamento* quando estiverem cadastrados "
+                    "(Asaas, Mercado Pago ou Stone / Pagar.me), um por lançamento."
+                ),
                 "actions": {"builtin": "finance_open_entries"},
                 "sort_order": 200,
             }
@@ -195,7 +207,10 @@ DEFAULT_FLOW_TEMPLATES: list[dict[str, Any]] = [
             {
                 "step_key": "consultar-pagamento-os",
                 "kind": "action",
-                "message_template": "Vou consultar as cobranças abertas desta OS.",
+                "message_template": (
+                    "Vou consultar as cobranças abertas desta OS e enviar *links* de pagamento (Asaas, Mercado Pago ou "
+                    "Stone / Pagar.me) quando houver cobrança vinculada."
+                ),
                 "actions": {"builtin": "finance_open_entries"},
                 "sort_order": 150,
             },
@@ -535,6 +550,38 @@ def get_flow(db: Session, *, tenant_id: int, flow_id: int) -> WhatsappBotFlow:
     return row
 
 
+def _flow_step_keys(flow: WhatsappBotFlow) -> set[str]:
+    return {str(s.step_key or "").strip() for s in flow.steps if str(s.step_key or "").strip()}
+
+
+def _validate_flow_graph(flow: WhatsappBotFlow) -> None:
+    """Garante que next_step_key e opções de menu apontem para passos existentes no mesmo fluxo."""
+    keys = _flow_step_keys(flow)
+    if not keys:
+        return
+    for step in flow.steps:
+        sk = str(step.step_key or "").strip()
+        nxt = str(step.next_step_key or "").strip()
+        if nxt and nxt not in keys:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f'No passo "{sk}", next_step_key "{nxt}" não existe neste fluxo.',
+            )
+        opts = _json_loads(step.options_json, [])
+        if not isinstance(opts, list):
+            continue
+        for i, opt in enumerate(opts):
+            if not isinstance(opt, dict):
+                continue
+            nk = str(opt.get("next_step_key") or opt.get("next") or "").strip()
+            if nk and nk not in keys:
+                label = str(opt.get("label") or opt.get("key") or (i + 1))
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f'No passo "{sk}", opção "{label}" aponta para "{nk}", que não existe neste fluxo.',
+                )
+
+
 def create_flow(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     steps = payload.pop("steps", [])
     row = WhatsappBotFlow(
@@ -552,6 +599,12 @@ def create_flow(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> dict
     db.flush()
     for step_payload in steps:
         db.add(_build_step(row.id, step_payload))
+    db.flush()
+    try:
+        _validate_flow_graph(get_flow(db, tenant_id=tenant_id, flow_id=row.id))
+    except HTTPException:
+        db.rollback()
+        raise
     try:
         db.commit()
     except IntegrityError as exc:
@@ -611,6 +664,12 @@ def create_step(db: Session, *, tenant_id: int, flow_id: int, payload: dict[str,
     get_flow(db, tenant_id=tenant_id, flow_id=flow_id)
     row = _build_step(flow_id, payload)
     db.add(row)
+    db.flush()
+    try:
+        _validate_flow_graph(get_flow(db, tenant_id=tenant_id, flow_id=flow_id))
+    except HTTPException:
+        db.rollback()
+        raise
     try:
         db.commit()
     except IntegrityError as exc:
@@ -649,6 +708,12 @@ def update_step(db: Session, *, tenant_id: int, flow_id: int, step_id: int, patc
     if "sort_order" in patch and patch["sort_order"] is not None:
         row.sort_order = int(patch["sort_order"])
     db.add(row)
+    db.flush()
+    try:
+        _validate_flow_graph(get_flow(db, tenant_id=tenant_id, flow_id=flow_id))
+    except HTTPException:
+        db.rollback()
+        raise
     try:
         db.commit()
     except IntegrityError as exc:
@@ -661,6 +726,12 @@ def update_step(db: Session, *, tenant_id: int, flow_id: int, step_id: int, patc
 def delete_step(db: Session, *, tenant_id: int, flow_id: int, step_id: int) -> None:
     row = get_step(db, tenant_id=tenant_id, flow_id=flow_id, step_id=step_id)
     db.delete(row)
+    db.flush()
+    try:
+        _validate_flow_graph(get_flow(db, tenant_id=tenant_id, flow_id=flow_id))
+    except HTTPException:
+        db.rollback()
+        raise
     db.commit()
 
 
@@ -1094,6 +1165,65 @@ def _mercadopago_client_link_for_entry(db: Session, *, tenant_id: int, entry: Fi
     return (ticket_url or "").strip() or None
 
 
+def _finance_provider_method_suffix(entry: FinanceEntry) -> str:
+    prov = (entry.payment_provider or "").strip().lower()
+    pm = (entry.payment_method or "").strip().lower()
+    prov_pt = {
+        "asaas": "Asaas",
+        "mercadopago": "Mercado Pago",
+        "stone": "Stone / Pagar.me",
+    }.get(prov, prov.replace("_", " ").strip() if prov else "")
+    pm_pt = {"pix": "PIX", "boleto": "boleto", "credit_card": "cartão"}.get(pm, pm.replace("_", " ").strip() if pm else "")
+    parts = [p for p in (prov_pt, pm_pt) if p]
+    return f" ({' · '.join(parts)})" if parts else ""
+
+
+def _stone_gateway_for_tenant(db: Session, *, tenant_id: int) -> TenantFinanceGateway | None:
+    return db.execute(
+        select(TenantFinanceGateway).where(
+            TenantFinanceGateway.tenant_id == tenant_id,
+            TenantFinanceGateway.provider == FinanceGatewayProvider.STONE,
+        )
+    ).scalar_one_or_none()
+
+
+def _stone_client_link_for_entry(db: Session, *, tenant_id: int, entry: FinanceEntry) -> str | None:
+    if (entry.payment_provider or "").strip().lower() != "stone":
+        return None
+    order_id = (entry.gateway_payment_id or "").strip()
+    if not order_id:
+        return None
+    gw = _stone_gateway_for_tenant(db, tenant_id=tenant_id)
+    if gw is None or not gw.stone_secret_key_encrypted:
+        return None
+    try:
+        secret = decrypt_platform_secret(gw.stone_secret_key_encrypted)
+    except Exception:
+        return None
+    ok, _err, order = fetch_pagarme_order(secret_key=secret, order_id=order_id)
+    if not ok or not isinstance(order, dict):
+        return None
+    pm = (entry.payment_method or "").strip().lower()
+    if pm == "boleto":
+        _cid, pdf_url, _line, _bar = extract_boleto_from_order(order)
+        return (pdf_url or "").strip() or None
+    _cid, _qr, qr_url = extract_pix_from_order(order)
+    return (qr_url or "").strip() or None
+
+
+def _mercadopago_link_label(entry: FinanceEntry) -> str:
+    pref = (entry.gateway_preference_id or "").strip()
+    pay_id = (entry.gateway_payment_id or "").strip()
+    if pref and not pay_id:
+        return "Link Mercado Pago (checkout / página de pagamento)"
+    pm = (entry.payment_method or "").strip().lower()
+    if pm == "pix":
+        return "Link Mercado Pago (PIX — página com QR / pagamento)"
+    if pm == "boleto":
+        return "Link Mercado Pago (boleto — PDF ou página do boleto)"
+    return "Link Mercado Pago"
+
+
 def _finance_open_entries_reply(
     db: Session,
     *,
@@ -1110,21 +1240,28 @@ def _finance_open_entries_reply(
 
     lines = ["Encontrei estas cobranças em aberto:"]
     for entry in entries:
-        provider = (entry.payment_provider or "").strip()
-        gateway = (entry.gateway_payment_id or "").strip()
-        gateway_hint = ""
-        if provider or gateway:
-            gateway_hint = f" | cobrança {provider or 'gateway'} {gateway}".strip()
-        invoice_url = _asaas_invoice_url_for_entry(db, tenant_id=tenant_id, entry=entry)
+        suffix = _finance_provider_method_suffix(entry)
         lines.append(
             f"- #{entry.id}: {entry.description} | {_money_brl(entry.amount)} | "
-            f"venc. {_date_br(entry.due_date)} | {_status_finance_pt(entry.status)}{gateway_hint}"
+            f"venc. {_date_br(entry.due_date)} | {_status_finance_pt(entry.status)}{suffix}"
         )
+        prov = (entry.payment_provider or "").strip().lower()
+        invoice_url: str | None = None
+        if prov not in ("mercadopago", "stone"):
+            invoice_url = _asaas_invoice_url_for_entry(db, tenant_id=tenant_id, entry=entry)
         if invoice_url:
-            lines.append(f"  Link de pagamento: {invoice_url}")
+            lines.append(f"  Link Asaas (fatura; PIX ou boleto conforme a cobrança): {invoice_url}")
         mp_url = _mercadopago_client_link_for_entry(db, tenant_id=tenant_id, entry=entry)
         if mp_url:
-            lines.append(f"  Link Mercado Pago: {mp_url}")
+            lines.append(f"  {_mercadopago_link_label(entry)}: {mp_url}")
+        stone_url = _stone_client_link_for_entry(db, tenant_id=tenant_id, entry=entry)
+        if stone_url:
+            pm = (entry.payment_method or "").strip().lower()
+            if pm == "boleto":
+                stone_caption = "Link Stone / Pagar.me (boleto — PDF)"
+            else:
+                stone_caption = "Link Stone / Pagar.me (PIX — página com QR)"
+            lines.append(f"  {stone_caption}: {stone_url}")
     lines.append("Se precisar ajustar forma de pagamento, responda *atendente* que o financeiro continua por aqui.")
     return "\n".join(lines)
 
@@ -1410,7 +1547,11 @@ def _reply_for_action_step(
     if builtin == "lookup_status":
         return _lookup_status_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
     if builtin == "finance_open_entries":
-        return _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+        body = _finance_open_entries_reply(db, tenant_id=tenant_id, client_whatsapp=client_whatsapp, context=context)
+        prefix = _render_template(step.message_template, context).strip()
+        if prefix:
+            return f"{prefix}\n\n{body}"
+        return body
     if builtin == "create_budget_draft":
         return _create_budget_draft_reply(
             db,
@@ -1798,6 +1939,75 @@ def route_message(
         "handoff": False,
         "paused_until": None,
         "context": context,
+    }
+
+
+BOT_METRIC_EVENT_TYPES = (
+    "bot_incoming_replied",
+    "bot_incoming_reply_failed",
+    "bot_reply_sent",
+    "bot_reply_failed",
+    "incoming_text_processed",
+)
+
+
+def get_bot_metrics(db: Session, *, tenant_id: int, days: int = 7) -> dict[str, Any]:
+    """Contagens por tipo de evento do bot + estado de sessões."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    base_counts = {t: 0 for t in BOT_METRIC_EVENT_TYPES}
+    rows = db.execute(
+        select(WhatsappMessageEvent.event_type, func.count(WhatsappMessageEvent.id))
+        .where(
+            WhatsappMessageEvent.tenant_id == tenant_id,
+            WhatsappMessageEvent.created_at >= since,
+            WhatsappMessageEvent.event_type.in_(BOT_METRIC_EVENT_TYPES),
+        )
+        .group_by(WhatsappMessageEvent.event_type)
+    ).all()
+    for et, cnt in rows:
+        key = str(et)
+        if key in base_counts:
+            base_counts[key] = int(cnt or 0)
+
+    sessions_total = int(
+        db.execute(select(func.count()).select_from(WhatsappBotSession).where(WhatsappBotSession.tenant_id == tenant_id)).scalar_one()
+        or 0
+    )
+    sessions_paused_now = int(
+        db.execute(
+            select(func.count())
+            .select_from(WhatsappBotSession)
+            .where(
+                WhatsappBotSession.tenant_id == tenant_id,
+                WhatsappBotSession.paused_until.isnot(None),
+                WhatsappBotSession.paused_until > now,
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    replies_sent = base_counts["bot_reply_sent"]
+    replies_failed = base_counts["bot_reply_failed"]
+    routing_failed = base_counts["bot_incoming_reply_failed"]
+    incoming_text_events = base_counts["incoming_text_processed"]
+    bot_incoming_replied = base_counts["bot_incoming_replied"]
+    reply_total = replies_sent + replies_failed
+    reply_success_rate = round((replies_sent / reply_total) * 100.0, 1) if reply_total > 0 else None
+
+    return {
+        "period_days": days,
+        "since_utc": since,
+        "until_utc": now,
+        "counts_by_event_type": base_counts,
+        "sessions_total": sessions_total,
+        "sessions_paused_now": sessions_paused_now,
+        "replies_sent": replies_sent,
+        "replies_failed": replies_failed,
+        "routing_failed": routing_failed,
+        "incoming_text_events": incoming_text_events,
+        "bot_incoming_replied": bot_incoming_replied,
+        "reply_success_rate": reply_success_rate,
     }
 
 

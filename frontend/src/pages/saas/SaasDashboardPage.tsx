@@ -103,6 +103,13 @@ export function SaasDashboardPage() {
           <p className={styles.heroMeta}>
             Sessão: <strong>{user.full_name}</strong> ({user.email})
           </p>
+          <p className={styles.heroMeta}>
+            <strong>Catálogo de bancos</strong> (logos e quais aparecem ao criar conta em Financeiro):{" "}
+            <Link className={`${styles.link} ${styles.linkPrimary}`} to="/operacao/bancos">
+              abrir configuração de bancos
+            </Link>
+            .
+          </p>
         </div>
         <div className={styles.heroAccent} aria-hidden />
       </section>
@@ -169,6 +176,9 @@ export function SaasDashboardPage() {
                   {pendingAddons}
                 </span>
               ) : null}
+            </Link>
+            <Link className={`${styles.link} ${styles.linkPrimary}`} to="/operacao/bancos">
+              Bancos no wizard de contas
             </Link>
             <a className={`${styles.link} ${styles.linkPrimary}`} href="/docs" target="_blank" rel="noopener noreferrer">
               Documentação da API

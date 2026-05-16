@@ -1,0 +1,75 @@
+.wrap {
+  width: 100%;
+  min-height: 420px;
+  height: min(70vh, 640px);
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.node {
+  min-width: 200px;
+  max-width: 260px;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 2px solid rgba(15, 23, 42, 0.15);
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.node:hover {
+  border-color: rgba(14, 165, 120, 0.55);
+  box-shadow: 0 4px 14px rgba(14, 165, 120, 0.12);
+}
+
+.nodeSelected {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.25);
+}
+
+.kind {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  margin-bottom: 0.35rem;
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
+}
+
+.key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 0.25rem;
+}
+
+.preview {
+  color: #475569;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  max-height: 4.5rem;
+  overflow: hidden;
+}
+
+.missing {
+  border-style: dashed;
+  border-color: #f97316;
+  background: #fff7ed;
+}
+
+.missing .kind {
+  background: rgba(249, 115, 22, 0.15);
+  color: #c2410c;
+}

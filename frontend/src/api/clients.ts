@@ -1,15 +1,16 @@
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 import {
-  demoCreateClient,
-  demoDeleteClient,
-  demoListClients,
-  demoUpdateClient,
   demoClientServiceItemLinksAll,
   demoClients,
+  demoCreateClient,
+  demoDeleteClient,
   demoEquipmentDocuments,
   demoEquipmentHistoryRows,
   demoEquipments,
+  demoListClients,
+  demoUpdateClient,
+  type DemoEquipmentHistoryRow,
   isDemoMode,
 } from "../lib/demoMode";
 
@@ -541,7 +542,10 @@ export async function listEquipmentHistory(clientId: number, equipmentId: number
   if (isDemoMode()) {
     const rows = demoEquipmentHistoryRows.filter((r) => r.client_id === clientId && r.equipment_id === equipmentId);
     return Promise.resolve(
-      rows.map(({ client_id: _c, equipment_id: _e, ...rest }) => rest),
+      rows.map((row: DemoEquipmentHistoryRow): EquipmentHistoryRowOut => {
+        const { client_id: _c, equipment_id: _e, ...rest } = row;
+        return rest;
+      }),
     );
   }
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipments/${equipmentId}/history`), { headers: bearer() });
@@ -557,7 +561,12 @@ export async function listClientServiceItemsLinks(
   if (isDemoMode()) {
     let rows = demoClientServiceItemLinksAll.filter((l) => l.client_id === clientId);
     if (params?.only_without_equipment) rows = rows.filter((l) => l.equipment_id == null);
-    return Promise.resolve(rows.map(({ client_id: _id, ...rest }) => rest));
+    return Promise.resolve(
+      rows.map((row: ClientServiceItemLinkRowOut & { client_id: number }): ClientServiceItemLinkRowOut => {
+        const { client_id: _id, ...rest } = row;
+        return rest;
+      }),
+    );
   }
   const sp = new URLSearchParams();
   if (params?.only_without_equipment) sp.set("only_without_equipment", "true");

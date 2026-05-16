@@ -51,7 +51,7 @@ import { listPmocPlans, type PmocPlanOut, type PmocPlanStatus } from "../../api/
 import type { DashboardOutletContext } from "../dashboardContext";
 import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
-import pmocStyles from "../pmoc/PmocPages.module.css";
+import pmocListUi from "../../components/pmoc/PmocListUi.module.css";
 import styles from "./ClientFormPage.module.css";
 
 function formatEquipmentHistorySource(source: string): string {
@@ -384,10 +384,10 @@ function clientPmocStatusLabel(s: PmocPlanStatus): string {
 }
 
 function clientPmocStatusClass(s: PmocPlanStatus): string {
-  if (s === "active") return pmocStyles.badgeActive;
-  if (s === "draft") return pmocStyles.badgeDraft;
-  if (s === "archived") return pmocStyles.badgeArchived;
-  return pmocStyles.badgeInactive;
+  if (s === "active") return pmocListUi.badgeActive;
+  if (s === "draft") return pmocListUi.badgeDraft;
+  if (s === "archived") return pmocListUi.badgeArchived;
+  return pmocListUi.badgeInactive;
 }
 
 function formatPmocBtu(n: number): string {
@@ -1580,14 +1580,14 @@ export function ClientFormPage() {
             ) : null}
           </div>
 
-          <div className={pmocStyles.subTabs} role="tablist" aria-label="Filtrar PMOC por status">
+          <div className={pmocListUi.subTabs} role="tablist" aria-label="Filtrar PMOC por status">
             {CLIENT_PMOC_PRESET_ORDER.map((key) => (
               <button
                 key={key}
                 type="button"
                 role="tab"
                 aria-selected={pmocListPreset === key}
-                className={`${pmocStyles.subTab} ${pmocListPreset === key ? pmocStyles.subTabActive : ""}`}
+                className={`${pmocListUi.subTab} ${pmocListPreset === key ? pmocListUi.subTabActive : ""}`}
                 onClick={() => setPmocListPreset(key)}
               >
                 {CLIENT_PMOC_PRESET_LABEL[key]}
@@ -1615,7 +1615,7 @@ export function ClientFormPage() {
                     <tr key={r.id}>
                       <td>{r.title}</td>
                       <td>
-                        <span className={`${pmocStyles.badge} ${clientPmocStatusClass(r.status)}`}>
+                        <span className={`${pmocListUi.badge} ${clientPmocStatusClass(r.status)}`}>
                           {clientPmocStatusLabel(r.status)}
                         </span>
                       </td>

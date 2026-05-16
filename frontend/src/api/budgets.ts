@@ -84,7 +84,7 @@ function jsonHeaders(): HeadersInit {
 export async function listBudgets(params?: { status?: BudgetStatus; skip?: number; limit?: number }): Promise<BudgetOut[]> {
   if (isDemoMode()) {
     let rows = demoListBudgets();
-    if (params?.status) rows = rows.filter((b) => b.status === params.status);
+    if (params?.status) rows = rows.filter((b: BudgetOut) => b.status === params.status);
     const skip = params?.skip ?? 0;
     const limit = params?.limit ?? 100;
     return Promise.resolve(rows.slice(skip, skip + limit));
