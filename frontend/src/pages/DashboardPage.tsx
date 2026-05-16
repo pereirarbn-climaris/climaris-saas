@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { AppSidebar } from "../components/dashboard/AppSidebar";
+import { Sidebar } from "../components/v0-ui/Sidebar";
 import {
   changeMyPassword,
   fetchCurrentTenant,
@@ -13,28 +15,14 @@ import {
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
 import { digitsOnlyPhoneForApi, formatPhoneBrInput } from "../lib/brMask";
 import {
-  NavIconAirCompliance,
   NavIconBuilding,
-  NavIconBox,
-  NavIconCalendar,
-  NavIconChevronDown,
-  NavIconChevronLeft,
-  NavIconChevronRight,
-  NavIconClipboard,
-  NavIconContact,
   NavIconFileQuote,
-  NavIconHome,
-  NavIconInventory,
   NavIconKey,
   NavIconLock,
   NavIconLogOut,
-  NavIconPackage,
-  NavIconPuzzle,
-  NavIconSettings,
   NavIconUserCircle,
   NavIconUsers,
   NavIconWallet,
-  NavIconWrench,
   NavIconX,
 } from "../components/dashboard/NavIcons";
 import type { DashboardOutletContext } from "./dashboardContext";
@@ -77,7 +65,6 @@ export function DashboardPage() {
   const [checkingTenant, setCheckingTenant] = useState(true);
   const [tenant, setTenant] = useState<TenantOut | null>(null);
   const [user, setUser] = useState<UserOut | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [workspaceDrawerOpen, setWorkspaceDrawerOpen] = useState(false);
   const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
@@ -262,24 +249,6 @@ export function DashboardPage() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!sidebarOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [sidebarOpen]);
-
-  useEffect(() => {
-    if (!sidebarOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSidebarOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sidebarOpen]);
-
-  useEffect(() => {
     setWorkspaceDrawerOpen(false);
     setAccountDrawerOpen(false);
     setGlobalSearchOpen(false);
@@ -317,22 +286,12 @@ export function DashboardPage() {
     navigate("/login", { replace: true });
   }
 
-  function closeSidebar() {
-    setSidebarOpen(false);
-  }
-
   function openAccountFromMobileMenu() {
-    closeSidebar();
     openAccountDrawer();
   }
 
   function openWorkspaceFromMobileMenu() {
-    closeSidebar();
     openWorkspaceDrawer();
-  }
-
-  function toggleNavCollapsed() {
-    setNavCollapsed((v) => !v);
   }
 
   function openWorkspaceDrawer() {
@@ -495,346 +454,29 @@ export function DashboardPage() {
   }
 
   return (
-    <div className={styles.shell}>
-      <div
-        className={`${styles.backdrop} ${sidebarOpen ? styles.backdropVisible : ""}`}
-        aria-hidden={!sidebarOpen}
-        onClick={closeSidebar}
-      />
+    <Sidebar.Root
+      expanded={!navCollapsed}
+      onExpandedChange={(expanded) => setNavCollapsed(!expanded)}
+    >
+      <div className={`${styles.shell} ${navCollapsed ? styles.sidebarCollapsed : ""}`}>
+        <AppSidebar
+          navId={navId}
+          tenant={tenant}
+          user={user}
+          workspaceDrawerOpen={workspaceDrawerOpen}
+          onOpenWorkspaceDrawer={openWorkspaceDrawer}
+          onOpenAccountFromMobile={openAccountFromMobileMenu}
+          onOpenWorkspaceFromMobile={openWorkspaceFromMobileMenu}
+          onLogout={logout}
+        />
 
-      <aside
-        id={navId}
-        className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""} ${navCollapsed ? styles.sidebarCollapsed : ""}`}
-        aria-label="Navegação principal"
-      >
-        <div className={styles.sidebarHeader}>
-          <div className={styles.brandRow}>
-            <span className={styles.logoMark} aria-hidden />
-            <span className={styles.brandName}>Climaris</span>
-          </div>
-          <button
-            type="button"
-            className={styles.collapseDesktopBtn}
-            onClick={toggleNavCollapsed}
-            aria-pressed={navCollapsed}
-            title={navCollapsed ? "Expandir menu lateral" : "Recolher menu lateral"}
-          >
-            <span className={styles.collapseIcon} aria-hidden>
-              {navCollapsed ? <NavIconChevronRight /> : <NavIconChevronLeft />}
-            </span>
-            <span className={styles.srOnly}>{navCollapsed ? "Expandir menu" : "Recolher menu"}</span>
-          </button>
-        </div>
-
-        <nav className={styles.nav} aria-label="Módulos">
-          <p className={styles.navSection}>Principal</p>
-          <ul className={styles.navList}>
-            <li>
-              <NavLink
-                to="/app"
-                end
-                title="Início"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconHome className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Início</span>
-              </NavLink>
-            </li>
-          </ul>
-
-          <p className={styles.navSection}>Operação</p>
-          <ul className={styles.navList}>
-            <li>
-              <NavLink
-                to="/app/clients"
-                title="Clientes"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconContact className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Clientes</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/products"
-                title="Produtos"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconBox className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Produtos</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/inventory"
-                title="Estoque"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconInventory className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Estoque</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/services"
-                title="Serviços"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconWrench className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Serviços</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/service-orders"
-                title="Ordens de serviço"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconClipboard className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Ordens de serviço</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/agenda"
-                title="Agenda dos tecnicos"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconCalendar className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Agenda</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/preventive-maintenance"
-                title="Gestão preventiva — manutenções a vencer"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconAirCompliance className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Gestão preventiva</span>
-              </NavLink>
-            </li>
-          </ul>
-
-          <p className={styles.navSection}>Comercial</p>
-          <ul className={styles.navList}>
-            <li>
-              <NavLink
-                to="/app/budgets"
-                title="Orcamentos"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconFileQuote className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Orçamentos</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/finance"
-                title="Financeiro"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconWallet className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Financeiro</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/fiscal/nfse"
-                title="NFS-e"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconFileQuote className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>NFS-e</span>
-              </NavLink>
-            </li>
-          </ul>
-
-          <p className={styles.navSection}>Integrações</p>
-          <ul className={styles.navList}>
-            <li>
-              <NavLink
-                to="/app/marketplace"
-                title="Loja de integrações"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconPuzzle className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Loja de integrações</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/integrations/whatsapp"
-                title="WhatsApp"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconPackage className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>WhatsApp</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/integrations/whatsapp-campanhas"
-                title="Campanhas WhatsApp"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconPackage className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Campanhas WhatsApp</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/integrations/whatsapp-bot"
-                title="Bot WhatsApp"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconPackage className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Bot WhatsApp</span>
-              </NavLink>
-            </li>
-            <li>
-              <NavLink
-                to="/app/integrations/chat-ia"
-                title="Chat IA (Claude)"
-                className={({ isActive }) => `${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-                onClick={closeSidebar}
-              >
-                <span className={styles.navIcon} aria-hidden>
-                  <NavIconClipboard className={styles.navSvg} />
-                </span>
-                <span className={styles.navLabel}>Chat IA</span>
-              </NavLink>
-            </li>
-          </ul>
-
-          <div className={styles.sidebarMobileOnly} role="region" aria-label="Conta e sessão">
-            {user?.must_change_password ? (
-              <p className={styles.sidebarMobilePwHint} role="status">
-                Altere a senha temporária ao abrir Minha conta.
-              </p>
-            ) : null}
-            <button type="button" className={styles.sidebarMobileRow} onClick={openAccountFromMobileMenu}>
-              <span className={styles.sidebarMobileAvatar} aria-hidden>
-                {user ? userInitial(user.full_name) : "—"}
-              </span>
-              <span className={styles.sidebarMobileRowLabel}>Minha conta</span>
-              <span className={styles.sidebarMobileRowChevron} aria-hidden>
-                <NavIconChevronRight />
-              </span>
-            </button>
-            {user?.role === "admin" ? (
-              <button type="button" className={styles.sidebarMobileRow} onClick={openWorkspaceFromMobileMenu}>
-                <span className={styles.sidebarMobileRowIcon} aria-hidden>
-                  <NavIconSettings className={styles.navSvg} />
-                </span>
-                <span className={styles.sidebarMobileRowLabel}>Administração</span>
-                <span className={styles.sidebarMobileRowChevron} aria-hidden>
-                  <NavIconChevronRight />
-                </span>
-              </button>
-            ) : null}
-            <button type="button" className={styles.sidebarMobileLogout} onClick={logout}>
-              <NavIconLogOut className={styles.sidebarMobileLogoutIcon} />
-              Sair
-            </button>
-          </div>
-        </nav>
-
-        <div className={styles.sidebarFooter}>
-          <>
-            <p className={styles.workspaceLabel}>Workspace</p>
-            {user?.role === "admin" ? (
-              <button
-                type="button"
-                className={styles.workspaceNameBtn}
-                onClick={openWorkspaceDrawer}
-                aria-expanded={workspaceDrawerOpen}
-                aria-haspopup="dialog"
-                title="Administração: empresa, usuários, pagamentos, API e fiscal"
-              >
-                <span className={styles.workspaceName}>{tenant?.name ?? "—"}</span>
-                <span className={styles.workspaceChevron} aria-hidden>
-                  <NavIconChevronDown />
-                </span>
-              </button>
-            ) : (
-              <p className={styles.workspaceName}>{tenant?.name ?? "—"}</p>
-            )}
-            <p className={styles.planLine}>
-              Plano <span className={styles.planBadge}>{tenant?.active_plan ?? "—"}</span>
-            </p>
-            {user?.role === "admin" ? (
-              <Link
-                className={styles.footerIconLink}
-                to="/app/admin?tab=empresa"
-                title="Configurações do workspace"
-                onClick={closeSidebar}
-              >
-                <NavIconSettings className={styles.footerIconSvg} />
-              </Link>
-            ) : null}
-          </>
-        </div>
-      </aside>
-
-      <div className={styles.mainColumn}>
+        <div className={styles.mainColumn}>
         <header className={`${styles.header} ${isMobileLayout ? styles.headerMobile : ""}`}>
           <div className={styles.headerLeft}>
-            <button
-              type="button"
-              className={styles.menuBtn}
-              aria-expanded={sidebarOpen}
-              aria-controls={navId}
-              onClick={() => setSidebarOpen((v) => !v)}
-            >
+            <Sidebar.Trigger className={styles.menuBtn} aria-controls={navId}>
               <span className={styles.menuIcon} aria-hidden />
-              <span className={styles.srOnly}>{sidebarOpen ? "Fechar menu" : "Abrir menu"}</span>
-            </button>
+              <span className={styles.srOnly}>Abrir menu</span>
+            </Sidebar.Trigger>
             <div className={styles.headerTitles}>
               <h1 className={styles.headerCompanyName}>{tenant?.name?.trim() || "—"}</h1>
               <p className={styles.headerPageContext}>{pageTitle}</p>
@@ -1149,7 +791,6 @@ export function DashboardPage() {
                     to="/app/admin?tab=empresa"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1162,7 +803,6 @@ export function DashboardPage() {
                     to="/app/admin?tab=usuarios"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1175,7 +815,6 @@ export function DashboardPage() {
                     to="/app/admin?tab=pagamentos"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1188,7 +827,6 @@ export function DashboardPage() {
                     to="/app/admin?tab=api-keys"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1201,7 +839,6 @@ export function DashboardPage() {
                     to="/app/security/trusted-devices"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1214,7 +851,6 @@ export function DashboardPage() {
                     to="/app/finance/settings"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1227,7 +863,6 @@ export function DashboardPage() {
                     to="/app/admin?tab=fiscal"
                     onClick={() => {
                       setWorkspaceDrawerOpen(false);
-                      closeSidebar();
                     }}
                   >
                     <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
@@ -1359,5 +994,6 @@ export function DashboardPage() {
         </div>
       ) : null}
     </div>
+    </Sidebar.Root>
   );
 }

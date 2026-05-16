@@ -2793,3 +2793,58 @@ class PlatformMarketplaceEntitlementUpdate(BaseModel):
     status: Literal["requested", "active", "suspended", "cancelled"]
     quantity: int | None = Field(default=None, ge=1, le=500)
     internal_notes: str | None = Field(default=None, max_length=8000)
+
+
+class DashboardHomeKpisOut(BaseModel):
+    """Indicadores consolidados do painel inicial (/app)."""
+
+    period_year: int = Field(description="Ano de referência dos KPIs.")
+    period_month: int = Field(ge=1, le=12, description="Mês de referência (1–12).")
+    active_service_orders: int = Field(
+        description="Ordens de serviço ativas (status diferente de done/cancelled)."
+    )
+    active_clients: int = Field(description="Clientes/empresas cadastrados com is_active=true.")
+    monthly_revenue: float = Field(
+        description="Faturamento do período: receitas pagas + OS concluídas sem lançamento financeiro vinculado."
+    )
+    monthly_revenue_from_finance: float = Field(
+        description="Parcela do faturamento proveniente de lançamentos de receita pagos."
+    )
+    monthly_revenue_from_service_orders: float = Field(
+        description="Parcela do faturamento proveniente de OS concluídas sem receita financeira vinculada."
+    )
+    average_service_minutes: float | None = Field(
+        default=None,
+        description="Tempo médio de atendimento (opened_at → closed_at), em minutos.",
+    )
+    average_service_sample_size: int = Field(
+        default=0,
+        description="Quantidade de OS concluídas usadas no cálculo do tempo médio.",
+    )
+
+
+class DashboardRevenueChartPointOut(BaseModel):
+    year: int
+    month: int = Field(ge=1, le=12)
+    month_label: str = Field(description="Rótulo curto do mês (ex.: Jan, Fev).")
+    revenue: float = Field(description="Faturamento consolidado do mês.")
+    target: float = Field(description="Meta dinâmica calculada para o mês.")
+    revenue_from_finance: float = 0
+    revenue_from_service_orders: float = 0
+
+
+class DashboardRevenueChartOut(BaseModel):
+    months: int = Field(description="Quantidade de meses retornados na série.")
+    end_year: int
+    end_month: int = Field(ge=1, le=12)
+    points: list[DashboardRevenueChartPointOut]
+
+
+class DashboardRecentOrderOut(BaseModel):
+    id: int
+    client_name: str
+    technician_name: str | None = None
+    status: str = Field(description="Status no formato do widget (pending, scheduled, in_progress, completed, cancelled).")
+    opened_at: datetime
+    total_value: float
+    title: str | None = None

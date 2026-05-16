@@ -41,6 +41,16 @@
   font-size: 0.9375rem;
 }
 
+.kpiError {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: var(--color-error);
+  font-size: 0.875rem;
+}
+
 .heroBtn {
   min-height: 2.5rem;
   padding: 0.625rem 1rem;
@@ -325,6 +335,25 @@
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ——— Chart + table grid ——— */
+.contentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.contentGridChart,
+.contentGridTable {
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .contentGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ——— Split Cards ——— */

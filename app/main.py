@@ -28,6 +28,7 @@ from app.limiter import limiter
 from app.middleware import RequestContextMiddleware
 from app.routers.auth import router as auth_router
 from app.routers.clients import router as clients_router
+from app.routers.dashboard import router as dashboard_router
 from app.routers.cep import router as cep_router
 from app.routers.cnpj import router as cnpj_router
 from app.routers.budgets import router as budgets_router
@@ -376,6 +377,7 @@ app.include_router(api_keys_router, prefix=API_V1_PREFIX)
 app.include_router(cep_router, prefix=API_V1_PREFIX)
 app.include_router(cnpj_router, prefix=API_V1_PREFIX)
 app.include_router(clients_router, prefix=API_V1_PREFIX)
+app.include_router(dashboard_router, prefix=API_V1_PREFIX)
 app.include_router(product_images_router, prefix=API_V1_PREFIX)
 app.include_router(products_router, prefix=API_V1_PREFIX)
 app.include_router(equipment_documents_router, prefix=API_V1_PREFIX)
