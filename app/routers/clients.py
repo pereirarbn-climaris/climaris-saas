@@ -100,6 +100,7 @@ def _client_snapshot(client: Client) -> dict[str, Any]:
         "address_ibge_code": client.address_ibge_code,
         "preventive_campaign_opt_out": bool(client.preventive_campaign_opt_out),
         "is_active": bool(client.is_active),
+        "is_verified_cnpj": bool(client.is_verified_cnpj),
     }
 
 
@@ -587,6 +588,7 @@ def create_client(
         address_ibge_code=payload.address_ibge_code,
         preventive_campaign_opt_out=bool(payload.preventive_campaign_opt_out),
         is_active=bool(payload.is_active),
+        is_verified_cnpj=bool(payload.is_verified_cnpj),
     )
     db.add(client)
     try:
@@ -630,6 +632,29 @@ def update_client(
     before = _client_snapshot(client)
 
     fields_set = payload.model_fields_set
+
+    if client.is_verified_cnpj and client.tax_id_kind == "cnpj":
+        from app.tax_id import digits_only
+
+        if "document" in fields_set and payload.document is not None:
+            new_doc = digits_only(payload.document)
+            if new_doc and new_doc != digits_only(client.document or ""):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="CNPJ validado na Receita Federal não pode ser alterado.",
+                )
+        if "name" in fields_set and payload.name is not None:
+            if str(payload.name).strip() != (client.name or "").strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Razão social validada na Receita Federal não pode ser alterada.",
+                )
+        if "tax_id_kind" in fields_set and payload.tax_id_kind is not None:
+            if payload.tax_id_kind != client.tax_id_kind:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Tipo de pessoa não pode ser alterado após validação do CNPJ.",
+                )
 
     def _strip_opt(v: str | None) -> str | None:
         if v is None:
@@ -759,6 +784,9 @@ def update_client(
 
     if "is_active" in fields_set and payload.is_active is not None:
         client.is_active = bool(payload.is_active)
+
+    if "is_verified_cnpj" in fields_set and payload.is_verified_cnpj is True:
+        client.is_verified_cnpj = True
 
     after = _client_snapshot(client)
     diff = _audit_field_diff(before, after)

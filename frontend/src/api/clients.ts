@@ -45,6 +45,7 @@ export type ClientOut = {
   address_ibge_code: string | null;
   preventive_campaign_opt_out: boolean;
   is_active: boolean;
+  is_verified_cnpj?: boolean;
 };
 
 export type ClientCreatePayload = {
@@ -71,6 +72,7 @@ export type ClientCreatePayload = {
   address_ibge_code?: string;
   preventive_campaign_opt_out?: boolean;
   is_active?: boolean;
+  is_verified_cnpj?: boolean;
 };
 
 export type EquipmentOut = {
@@ -247,6 +249,7 @@ export type ClientUpdatePayload = {
   address_ibge_code?: string | null;
   preventive_campaign_opt_out?: boolean;
   is_active?: boolean;
+  is_verified_cnpj?: boolean;
 };
 
 async function parseBody(response: Response): Promise<unknown> {

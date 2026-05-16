@@ -761,6 +761,8 @@ class Client(Base):
     address_ibge_code: Mapped[str | None] = mapped_column(String(7))
     preventive_campaign_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    # True após consulta CNPJA bem-sucedida; trava CNPJ, razão social e tipo no cadastro.
+    is_verified_cnpj: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

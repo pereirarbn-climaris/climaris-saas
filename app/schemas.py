@@ -875,6 +875,7 @@ class ClientCreate(BaseModel):
     address_ibge_code: str | None = Field(default=None, max_length=7)
     preventive_campaign_opt_out: bool = False
     is_active: bool = True
+    is_verified_cnpj: bool = False
 
     @field_validator("contact_person_name", mode="before")
     @classmethod
@@ -951,6 +952,7 @@ class ClientUpdate(BaseModel):
     address_ibge_code: str | None = Field(default=None, max_length=7)
     preventive_campaign_opt_out: bool | None = None
     is_active: bool | None = None
+    is_verified_cnpj: bool | None = None
 
     @field_validator("contact_person_name", mode="before")
     @classmethod
@@ -1007,6 +1009,7 @@ class ClientOut(BaseModel):
     address_ibge_code: str | None = None
     preventive_campaign_opt_out: bool = False
     is_active: bool = True
+    is_verified_cnpj: bool = False
 
 
 class ClientAuditEntryOut(BaseModel):

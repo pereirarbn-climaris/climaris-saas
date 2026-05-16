@@ -9,392 +9,45 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import {
-  createClientEquipment,
   createClient,
   deactivateClientEquipment,
   deleteClient,
   getClient,
   listClientAudit,
-  listClientServiceItemsLinks,
   listClientEquipments,
-  listEquipmentHistory,
-  updateClientEquipment,
-  type ClientAuditEntryOut,
-  type ClientServiceItemLinkRowOut,
   updateClient,
-  type ClientCreatePayload,
-  type EquipmentHistoryRowOut,
-  type ClientIeIndicator,
-  type ClientOut,
-  type ClientTaxIdKind,
-  type ClientUpdatePayload,
   type EquipmentOut,
 } from "../../api/clients";
 import { fetchCepLookup } from "../../api/cep";
-import { fetchCnpjOpen, type CnpjLookupResult } from "../../api/cnpj";
-import { listBudgets, type BudgetOut, type BudgetStatus } from "../../api/budgets";
+import { fetchCnpjCommercial, fetchCnpjOpen } from "../../api/cnpj";
+import { listBudgets } from "../../api/budgets";
+import { listPmocPlans } from "../../api/pmoc";
+import { listServiceOrders } from "../../api/serviceOrders";
 import {
-  listServiceOrders,
-  updateServiceOrderItemEquipment,
-  type OrderStatus,
-  type ServiceOrderOut,
-} from "../../api/serviceOrders";
+  ClientFormView,
+  type Budget,
+  type ClientData,
+  type Equipment,
+  type ServiceOrder,
+  type TabId,
+} from "../../components/v0-ui/clients";
+import { digitsOnly, formatCepInput } from "../../lib/brMask";
 import {
-  digitsOnly,
-  digitsOnlyPhoneForApi,
-  formatCepInput,
-  formatPhoneBrInput,
-  formatTaxDocumentInput,
-  taxDocumentOnKindChange,
-} from "../../lib/brMask";
-import { listPmocPlans, type PmocPlanOut, type PmocPlanStatus } from "../../api/pmoc";
+  clientHasPersistedAddressFromView,
+  clientOutToViewData,
+  emptyViewData,
+  mapAuditToHistory,
+  mapBudgetsToView,
+  mapEquipmentsToView,
+  mapOrdersToView,
+  mapPmocPlansToView,
+  mergeCnpjLookupToViewData,
+  mergeViewData,
+  viewDataToCreatePayload,
+  viewDataToUpdatePayload,
+} from "../../lib/clientFormViewAdapter";
 import type { DashboardOutletContext } from "../dashboardContext";
-import formLayout from "../formLayout.module.css";
-import loginStyles from "../LoginPage.module.css";
-import pmocListUi from "../../components/pmoc/PmocListUi.module.css";
 import styles from "./ClientFormPage.module.css";
-
-function formatEquipmentHistorySource(source: string): string {
-  if (source === "ordem_concluida") return "OS concluída";
-  if (source === "auto_split") return "Separação automática";
-  if (source === "app") return "App";
-  return source;
-}
-
-function WhatsappBrandIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className={styles.waBrandSvg}>
-      <path
-        fill="#fff"
-        d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.881 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"
-      />
-    </svg>
-  );
-}
-
-type FormState = {
-  name: string;
-  document: string;
-  tax_id_kind: ClientTaxIdKind;
-  optante_mei: boolean;
-  phone: string;
-  whatsapp: string;
-  email: string;
-  trade_name: string;
-  contact_person_name: string;
-  state_registration: string;
-  ie_indicator: "" | ClientIeIndicator;
-  municipal_registration: string;
-  address_street: string;
-  address_number: string;
-  address_complement: string;
-  address_district: string;
-  address_city: string;
-  address_state: string;
-  address_postal_code: string;
-  /** Município IBGE (7 dígitos), exigido na NFS-e Nacional para o tomador. */
-  address_ibge_code: string;
-  preventive_campaign_opt_out: boolean;
-  is_active: boolean;
-};
-
-type EquipmentFormState = {
-  tipo: "AR_CONDICIONADO";
-  identificacao: string;
-  categoria_instalacao: string;
-  fabricante: string;
-  modelo: string;
-  modelo_evaporadora: string;
-  modelo_condensadora: string;
-  serial: string;
-  capacidade_btu: string;
-  capacidade_tr: string;
-  tipo_gas: string;
-  voltagem: string;
-  tecnologia_ciclo: "" | "on_off" | "inverter";
-  local_instalacao: string;
-  ambiente_nome: string;
-  ambiente_tipo: string;
-  area_m2: string;
-  ocupacao_fixa: string;
-  ocupacao_flutuante: string;
-  carga_termica_total: string;
-  massa_gas_kg: string;
-  corrente_nominal_a: string;
-  filtro_tipo: string;
-  filtro_quantidade: string;
-  filtro_dimensoes: string;
-  filtro_periodicidade_limpeza: string;
-  ativo: boolean;
-};
-
-function emptyForm(): FormState {
-  return {
-    name: "",
-    document: "",
-    tax_id_kind: "cnpj",
-    optante_mei: false,
-    phone: "",
-    whatsapp: "",
-    email: "",
-    trade_name: "",
-    contact_person_name: "",
-    state_registration: "",
-    ie_indicator: "",
-    municipal_registration: "",
-    address_street: "",
-    address_number: "",
-    address_complement: "",
-    address_district: "",
-    address_city: "",
-    address_state: "",
-    address_postal_code: "",
-    address_ibge_code: "",
-    preventive_campaign_opt_out: false,
-    is_active: true,
-  };
-}
-
-function emptyEquipmentForm(): EquipmentFormState {
-  return {
-    tipo: "AR_CONDICIONADO",
-    identificacao: "",
-    categoria_instalacao: "",
-    fabricante: "",
-    modelo: "",
-    modelo_evaporadora: "",
-    modelo_condensadora: "",
-    serial: "",
-    capacidade_btu: "",
-    capacidade_tr: "",
-    tipo_gas: "",
-    voltagem: "",
-    tecnologia_ciclo: "",
-    local_instalacao: "",
-    ambiente_nome: "",
-    ambiente_tipo: "",
-    area_m2: "",
-    ocupacao_fixa: "",
-    ocupacao_flutuante: "",
-    carga_termica_total: "",
-    massa_gas_kg: "",
-    corrente_nominal_a: "",
-    filtro_tipo: "",
-    filtro_quantidade: "",
-    filtro_dimensoes: "",
-    filtro_periodicidade_limpeza: "",
-    ativo: true,
-  };
-}
-
-/** True se o cliente já tem endereço salvo (não dispara CEP/CNPJ preenchendo endereço de novo). */
-function clientHasPersistedAddress(c: ClientOut): boolean {
-  const cepOk = digitsOnly(c.address_postal_code ?? "").length >= 8;
-  const hasStreet = Boolean((c.address_street ?? "").trim());
-  const hasCity = Boolean((c.address_city ?? "").trim());
-  return cepOk || hasStreet || hasCity;
-}
-
-function fromClient(c: ClientOut): FormState {
-  const kind = (c.tax_id_kind === "cpf" ? "cpf" : "cnpj") as ClientTaxIdKind;
-  return {
-    name: c.name,
-    document: formatTaxDocumentInput(c.document ?? "", kind),
-    tax_id_kind: kind,
-    optante_mei: Boolean(c.optante_mei),
-    phone: formatPhoneBrInput(c.phone ?? ""),
-    whatsapp: formatPhoneBrInput(c.whatsapp ?? ""),
-    email: c.email ?? "",
-    trade_name: c.trade_name ?? "",
-    contact_person_name: c.contact_person_name ?? "",
-    state_registration: c.state_registration ?? "",
-    ie_indicator: (c.ie_indicator === "1" || c.ie_indicator === "2" || c.ie_indicator === "9" ? c.ie_indicator : "") as
-      | ""
-      | ClientIeIndicator,
-    municipal_registration: c.municipal_registration ?? "",
-    address_street: c.address_street ?? "",
-    address_number: c.address_number ?? "",
-    address_complement: c.address_complement ?? "",
-    address_district: c.address_district ?? "",
-    address_city: c.address_city ?? "",
-    address_state: c.address_state ?? "",
-    address_postal_code: formatCepInput(c.address_postal_code ?? ""),
-    address_ibge_code: digitsOnly(c.address_ibge_code ?? "").slice(0, 7),
-    preventive_campaign_opt_out: Boolean(c.preventive_campaign_opt_out),
-    is_active: c.is_active !== false,
-  };
-}
-
-function mergeCnpjLookup(prev: FormState, lu: CnpjLookupResult, mergeAddress = true): FormState {
-  const nextRegime = typeof lu.optante_mei === "boolean" ? lu.optante_mei : prev.optante_mei;
-  if (!mergeAddress) {
-    return {
-      ...prev,
-      name: lu.company_name.trim() || prev.name,
-      trade_name:
-        (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.trade_name,
-      optante_mei: nextRegime,
-    };
-  }
-  const a = lu.address;
-  const zipDigits = a?.zip ? digitsOnly(a.zip).slice(0, 8) : "";
-  return {
-    ...prev,
-    name: lu.company_name.trim() || prev.name,
-    trade_name:
-      (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.trade_name,
-    optante_mei: nextRegime,
-    address_street: a?.street ?? prev.address_street,
-    address_number: a?.number ?? prev.address_number,
-    address_complement: a?.details ?? prev.address_complement,
-    address_district: a?.district ?? prev.address_district,
-    address_city: a?.city ?? prev.address_city,
-    address_state: a?.state ? a.state.toUpperCase().slice(0, 2) : prev.address_state,
-    address_postal_code: zipDigits ? formatCepInput(zipDigits) : prev.address_postal_code,
-  };
-}
-
-function buildUpdatePayload(f: FormState): ClientUpdatePayload {
-  const documentDigits = digitsOnly(f.document);
-  const common: ClientUpdatePayload = {
-    name: f.name.trim(),
-    tax_id_kind: f.tax_id_kind,
-    phone: digitsOnlyPhoneForApi(f.phone) || null,
-    whatsapp: digitsOnlyPhoneForApi(f.whatsapp) || null,
-    email: f.email.trim() || null,
-    trade_name: f.trade_name.trim() || null,
-    address_street: f.address_street.trim() || null,
-    address_number: f.address_number.trim() || null,
-    address_complement: f.address_complement.trim() || null,
-    address_district: f.address_district.trim() || null,
-    address_city: f.address_city.trim() || null,
-    address_state: f.address_state.trim() ? f.address_state.trim().toUpperCase().slice(0, 2) : null,
-    address_postal_code: digitsOnly(f.address_postal_code).slice(0, 8) || null,
-    address_country: "Brasil",
-    address_ibge_code: (() => {
-      const d = digitsOnly(f.address_ibge_code).slice(0, 7);
-      return d.length === 7 ? d : null;
-    })(),
-    preventive_campaign_opt_out: Boolean(f.preventive_campaign_opt_out),
-    is_active: Boolean(f.is_active),
-  };
-  const p: ClientUpdatePayload =
-    f.tax_id_kind === "cnpj"
-      ? {
-          ...common,
-          optante_mei: Boolean(f.optante_mei),
-          contact_person_name: f.contact_person_name.trim() || null,
-          state_registration: f.state_registration.trim() || null,
-          ie_indicator: f.ie_indicator ? f.ie_indicator : null,
-          municipal_registration: f.municipal_registration.trim() || null,
-        }
-      : {
-          ...common,
-          optante_mei: false,
-          contact_person_name: null,
-          state_registration: null,
-          ie_indicator: null,
-          municipal_registration: null,
-        };
-  if (documentDigits) {
-    p.document = documentDigits;
-  }
-  return p;
-}
-
-function budgetStatusLabel(status: BudgetStatus): string {
-  const map: Record<BudgetStatus, string> = {
-    draft: "Rascunho",
-    sent: "Enviado",
-    approved: "Aprovado",
-    rejected: "Reprovado",
-    expired: "Expirado",
-  };
-  return map[status] ?? status;
-}
-
-function serviceOrderStatusLabel(status: OrderStatus): string {
-  const map: Record<OrderStatus, string> = {
-    open: "Aberta",
-    approved: "Aprovada",
-    scheduled: "Agendada",
-    in_progress: "Em andamento",
-    done: "Concluída",
-    cancelled: "Cancelada",
-  };
-  return map[status] ?? status;
-}
-
-function budgetStatusClass(status: BudgetStatus): string {
-  const map: Record<BudgetStatus, string> = {
-    draft: styles.badgeDraft,
-    sent: styles.badgeSent,
-    approved: styles.badgeApproved,
-    rejected: styles.badgeRejected,
-    expired: styles.badgeExpired,
-  };
-  return map[status] ?? styles.badgeDraft;
-}
-
-function serviceOrderStatusClass(status: OrderStatus): string {
-  const map: Record<OrderStatus, string> = {
-    open: styles.badgeOpen,
-    approved: styles.badgeApproved,
-    scheduled: styles.badgeScheduled,
-    in_progress: styles.badgeInProgress,
-    done: styles.badgeDone,
-    cancelled: styles.badgeRejected,
-  };
-  return map[status] ?? styles.badgeOpen;
-}
-
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-type ClientPmocListPreset = "all" | PmocPlanStatus;
-
-const CLIENT_PMOC_PRESET_ORDER: ClientPmocListPreset[] = ["all", "active", "inactive", "draft", "archived"];
-
-const CLIENT_PMOC_PRESET_LABEL: Record<ClientPmocListPreset, string> = {
-  all: "Todos",
-  active: "Ativas",
-  inactive: "Inativas",
-  draft: "Rascunhos",
-  archived: "Arquivadas",
-};
-
-function clientPmocStatusLabel(s: PmocPlanStatus): string {
-  const m: Record<PmocPlanStatus, string> = {
-    draft: "Rascunho",
-    active: "Ativa",
-    inactive: "Inativa",
-    archived: "Arquivada",
-  };
-  return m[s] ?? s;
-}
-
-function clientPmocStatusClass(s: PmocPlanStatus): string {
-  if (s === "active") return pmocListUi.badgeActive;
-  if (s === "draft") return pmocListUi.badgeDraft;
-  if (s === "archived") return pmocListUi.badgeArchived;
-  return pmocListUi.badgeInactive;
-}
-
-function formatPmocBtu(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(".", ",")}M BTU`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(".", ",")}k BTU`;
-  return `${n} BTU`;
-}
 
 export function ClientFormPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -407,139 +60,74 @@ export function ClientFormPage() {
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const canDelete = ctx?.user.role === "admin";
   const readOnly = !canEdit;
-  const canCreatePmoc =
-    ctx?.user.role === "admin" || ctx?.user.role === "receptionist" || ctx?.user.role === "technician";
 
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const [loading, setLoading] = useState(!isNew);
+  const [clientData, setClientData] = useState<ClientData>(emptyViewData);
+  const [isLoading, setIsLoading] = useState(!isNew);
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [loadErr, setLoadErr] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [cepLoading, setCepLoading] = useState(false);
   const [cepErr, setCepErr] = useState("");
   const [cnpjLookupLoading, setCnpjLookupLoading] = useState(false);
+  const [cnpjCommercialLoading, setCnpjCommercialLoading] = useState(false);
   const [cnpjLookupErr, setCnpjLookupErr] = useState("");
-  const [cnpjLockedAfterLookup, setCnpjLockedAfterLookup] = useState(false);
-  const [regimeDetectedByLookup, setRegimeDetectedByLookup] = useState<boolean | null>(null);
-  /** Só usado quando já há endereço salvo: se true, o botão “Consultar CNPJ” também aplica endereço da Receita. */
   const [cnpjIncludeAddress, setCnpjIncludeAddress] = useState(true);
-  const [activeTab, setActiveTab] = useState<"form" | "equipments" | "budgets" | "orders" | "audit" | "pmoc">("form");
-  const [clientBudgets, setClientBudgets] = useState<BudgetOut[]>([]);
-  const [clientOrders, setClientOrders] = useState<ServiceOrderOut[]>([]);
-  const [clientEquipments, setClientEquipments] = useState<EquipmentOut[]>([]);
-  const [equipmentForm, setEquipmentForm] = useState<EquipmentFormState>(emptyEquipmentForm);
-  const [selectedEquipmentId, setSelectedEquipmentId] = useState<number | null>(null);
-  const [showEquipmentEditor, setShowEquipmentEditor] = useState(false);
-  const [editingEquipmentId, setEditingEquipmentId] = useState<number | null>(null);
-  const [equipmentHistory, setEquipmentHistory] = useState<EquipmentHistoryRowOut[]>([]);
-  const [clientServiceLinks, setClientServiceLinks] = useState<ClientServiceItemLinkRowOut[]>([]);
-  const [linkSavingServiceItemId, setLinkSavingServiceItemId] = useState<number | null>(null);
-  const [equipmentSaving, setEquipmentSaving] = useState(false);
+  const [addressPersisted, setAddressPersisted] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>("cadastro");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  const [equipments, setEquipments] = useState<Equipment[]>([]);
+  const [orders, setOrders] = useState<ServiceOrder[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [history, setHistory] = useState<ReturnType<typeof mapAuditToHistory>>([]);
+  const [pmocData, setPmocData] = useState<ReturnType<typeof mapPmocPlansToView>>(undefined);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedErr, setRelatedErr] = useState("");
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [auditRows, setAuditRows] = useState<ClientAuditEntryOut[]>([]);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [clientPmocPlans, setClientPmocPlans] = useState<PmocPlanOut[]>([]);
-  const [pmocPlansLoading, setPmocPlansLoading] = useState(false);
-  const [pmocPlansErr, setPmocPlansErr] = useState("");
-  const [pmocListPreset, setPmocListPreset] = useState<ClientPmocListPreset>("all");
-  /** Endereço já existe no banco (afeta padrão do CNPJ: só nomes, salvo se marcar “incluir endereço”). */
-  const [addressPersisted, setAddressPersisted] = useState(false);
 
-  const docDigits = useMemo(() => digitsOnly(form.document).slice(0, 14), [form.document]);
-
-  const showPmocTab = !isNew && form.tax_id_kind === "cnpj";
-
-  useEffect(() => {
-    if (form.tax_id_kind !== "cnpj" && activeTab === "pmoc") {
-      setActiveTab("form");
-    }
-  }, [form.tax_id_kind, activeTab]);
-
-  /** Abre a aba PMOC ao voltar de `/app/pmoc/...?from_client=` (remove `tab` da URL após aplicar). */
-  useEffect(() => {
-    if (isNew || !Number.isFinite(idNum) || idNum < 1 || loading) return;
-    const tab = searchParams.get("tab");
-    if (tab !== "pmoc") return;
-    if (!showPmocTab) {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete("tab");
-          return next;
-        },
-        { replace: true },
-      );
-      return;
-    }
-    setActiveTab("pmoc");
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("tab");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [isNew, idNum, loading, searchParams, showPmocTab, setSearchParams]);
-
-  useEffect(() => {
-    if (activeTab !== "pmoc" || isNew || !Number.isFinite(idNum) || idNum < 1 || form.tax_id_kind !== "cnpj") {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      setPmocPlansLoading(true);
-      setPmocPlansErr("");
-      try {
-        const status = pmocListPreset === "all" ? undefined : pmocListPreset;
-        const list = await listPmocPlans({ client_id: idNum, status, limit: 100 });
-        if (!cancelled) setClientPmocPlans(list);
-      } catch (e) {
-        if (!cancelled) {
-          setPmocPlansErr(e instanceof Error ? e.message : "Erro ao carregar PMOC.");
-          setClientPmocPlans([]);
-        }
-      } finally {
-        if (!cancelled) setPmocPlansLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, idNum, isNew, pmocListPreset, form.tax_id_kind]);
-
+  const docDigits = useMemo(() => digitsOnly(clientData.documento).slice(0, 14), [clientData.documento]);
   const cepDigits = useMemo(
-    () => form.address_postal_code.replace(/\D/g, "").slice(0, 8),
-    [form.address_postal_code],
+    () => digitsOnly(clientData.endereco?.cep ?? "").slice(0, 8),
+    [clientData.endereco?.cep],
   );
 
-  const setField = useCallback((key: keyof FormState, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  const showPmocTab = !isNew && clientData.type === "pj";
+  const canConsultCnpjCommercial = ctx?.user.role === "admin";
+  const fiscalFieldsLocked =
+    !readOnly && clientData.type === "pj" && Boolean(clientData.isVerifiedCnpj);
+
+  useEffect(() => {
+    if (clientData.type !== "pj" && activeTab === "pmoc") {
+      setActiveTab("cadastro");
+    }
+  }, [clientData.type, activeTab]);
 
   useEffect(() => {
     if (isNew) {
+      setClientData(emptyViewData());
       setAddressPersisted(false);
+      setIsLoading(false);
       return;
     }
     if (!clientId || !Number.isFinite(idNum) || idNum < 1) return;
+
     let cancelled = false;
     void (async () => {
-      setLoading(true);
-      setLoadErr("");
+      setIsLoading(true);
+      setError(null);
       try {
         const c = await getClient(idNum);
         if (!cancelled) {
-          setAddressPersisted(clientHasPersistedAddress(c));
-          setForm(fromClient(c));
+          const view = clientOutToViewData(c);
+          setClientData(view);
+          setAddressPersisted(clientHasPersistedAddressFromView(view));
         }
       } catch (e) {
-        if (!cancelled) setLoadErr(e instanceof Error ? e.message : "Erro ao carregar.");
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Erro ao carregar cliente.");
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     })();
     return () => {
@@ -552,21 +140,99 @@ export function ClientFormPage() {
   }, [addressPersisted]);
 
   useEffect(() => {
-    setCepErr("");
-  }, [clientId, isNew]);
-
-  useEffect(() => {
-    if (docDigits.length < 14) setCnpjLookupErr("");
-  }, [docDigits.length]);
-
-  useEffect(() => {
-    if (form.tax_id_kind !== "cnpj") {
-      setCnpjLockedAfterLookup(false);
-      setRegimeDetectedByLookup(null);
+    if (isNew || !Number.isFinite(idNum) || idNum < 1 || isLoading) return;
+    const tab = searchParams.get("tab");
+    if (tab === "pmoc" && showPmocTab) {
+      setActiveTab("pmoc");
     }
-  }, [form.tax_id_kind]);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("tab");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [isNew, idNum, isLoading, searchParams, showPmocTab, setSearchParams]);
 
-  async function onBuscarCep() {
+  useEffect(() => {
+    if (isNew || !Number.isFinite(idNum) || idNum < 1) return;
+
+    let cancelled = false;
+    void (async () => {
+      setRelatedLoading(true);
+      setRelatedErr("");
+      try {
+        const [equipmentRows, budgetRows, orderRows] = await Promise.all([
+          listClientEquipments(idNum),
+          listBudgets({ limit: 100 }),
+          listServiceOrders({ limit: 100 }),
+        ]);
+        if (cancelled) return;
+        setEquipments(mapEquipmentsToView(equipmentRows));
+        setBudgets(mapBudgetsToView(budgetRows.filter((b) => b.client_id === idNum)));
+        setOrders(mapOrdersToView(orderRows.filter((o) => o.client_id === idNum)));
+      } catch (e) {
+        if (!cancelled) {
+          setRelatedErr(e instanceof Error ? e.message : "Não foi possível carregar dados relacionados.");
+        }
+      } finally {
+        if (!cancelled) setRelatedLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew, idNum]);
+
+  useEffect(() => {
+    if (isNew || !Number.isFinite(idNum) || idNum < 1 || activeTab !== "historico") {
+      setHistory([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listClientAudit(idNum);
+        if (!cancelled) setHistory(mapAuditToHistory(rows));
+      } catch {
+        if (!cancelled) setHistory([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, idNum, isNew]);
+
+  useEffect(() => {
+    if (
+      isNew ||
+      !Number.isFinite(idNum) ||
+      idNum < 1 ||
+      activeTab !== "pmoc" ||
+      clientData.type !== "pj"
+    ) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const plans = await listPmocPlans({ client_id: idNum, limit: 100 });
+        if (!cancelled) setPmocData(mapPmocPlansToView(plans));
+      } catch {
+        if (!cancelled) setPmocData({ status: "sem_contrato" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, idNum, isNew, clientData.type]);
+
+  const handleClientChange = useCallback((patch: Partial<ClientData>) => {
+    setClientData((prev) => mergeViewData(prev, patch));
+  }, []);
+
+  const onBuscarCep = useCallback(async () => {
     if (readOnly) return;
     if (cepDigits.length !== 8) {
       setCepErr("Informe um CEP com 8 dígitos.");
@@ -577,373 +243,170 @@ export function ClientFormPage() {
     setMsg(null);
     try {
       const data = await fetchCepLookup(cepDigits);
-      setForm((prev) => {
-        const cur = prev.address_postal_code.replace(/\D/g, "").slice(0, 8);
+      setClientData((prev) => {
+        const cur = digitsOnly(prev.endereco?.cep ?? "").slice(0, 8);
         if (cur !== cepDigits) return prev;
-        // Substitui pelo retorno da API: se o novo CEP não tem complemento no ViaCEP, o campo zera (não mantém o do endereço antigo).
         const uf = (data.address_state ?? "").trim();
         const ibgeFromCep = digitsOnly(data.address_ibge_code ?? "").slice(0, 7);
-        return {
-          ...prev,
-          address_street: (data.address_street ?? "").trim(),
-          address_complement: (data.address_complement ?? "").trim(),
-          address_district: (data.address_district ?? "").trim(),
-          address_city: (data.address_city ?? "").trim(),
-          address_state: uf ? uf.toUpperCase().slice(0, 2) : "",
-          address_postal_code: data.address_postal_code
-            ? formatCepInput(data.address_postal_code)
-            : formatCepInput(cepDigits),
-          address_ibge_code: ibgeFromCep.length === 7 ? ibgeFromCep : "",
-        };
+        return mergeViewData(prev, {
+          endereco: {
+            logradouro: (data.address_street ?? "").trim(),
+            complemento: (data.address_complement ?? "").trim(),
+            bairro: (data.address_district ?? "").trim(),
+            cidade: (data.address_city ?? "").trim(),
+            estado: uf ? uf.toUpperCase().slice(0, 2) : "",
+            cep: data.address_postal_code
+              ? formatCepInput(data.address_postal_code)
+              : formatCepInput(cepDigits),
+          },
+          addressIbgeCode: ibgeFromCep.length === 7 ? ibgeFromCep : prev.addressIbgeCode,
+        });
       });
       setMsg({
         kind: "ok",
-        text: "Endereço preenchido pela consulta de CEP. Clique em Salvar alterações para gravar no banco.",
+        text: "Endereço preenchido pela consulta de CEP. Clique em Salvar para gravar.",
       });
     } catch (e) {
       setCepErr(e instanceof Error ? e.message : "Não foi possível buscar o CEP.");
     } finally {
       setCepLoading(false);
     }
-  }
+  }, [cepDigits, readOnly]);
 
-  async function onConsultarCnpj() {
-    if (readOnly) return;
-    if (form.tax_id_kind !== "cnpj" || docDigits.length !== 14) {
-      setCnpjLookupErr("Informe um CNPJ válido com 14 dígitos.");
-      return;
-    }
-    setCnpjLookupLoading(true);
-    setCnpjLookupErr("");
-    setMsg(null);
-    try {
-      const lu = await fetchCnpjOpen(docDigits);
-      setForm((prev) => {
-        const cur = digitsOnly(prev.document).slice(0, 14);
+  const applyCnpjLookupResult = useCallback(
+    (lu: Awaited<ReturnType<typeof fetchCnpjOpen>>, source: "open" | "commercial") => {
+      setClientData((prev) => {
+        const cur = digitsOnly(prev.documento).slice(0, 14);
         if (cur !== docDigits) return prev;
-        return mergeCnpjLookup(prev, lu, cnpjIncludeAddress);
+        return mergeCnpjLookupToViewData(prev, lu, cnpjIncludeAddress);
       });
-      setCnpjLockedAfterLookup(true);
-      setRegimeDetectedByLookup(typeof lu.optante_mei === "boolean" ? lu.optante_mei : null);
+      const sourceLabel = source === "open" ? "consulta rápida (CNPJA Open)" : "validação fiscal (CNPJA Comercial)";
       setMsg({
         kind: "ok",
         text: cnpjIncludeAddress
-          ? "Dados da Receita aplicados. Clique em Salvar alterações para gravar no banco."
-          : "Razão social e nome fantasia atualizados. Clique em Salvar alterações para gravar no banco.",
+          ? `Dados aplicados via ${sourceLabel}. CNPJ, razão social e tipo ficam protegidos após salvar.`
+          : `Razão social e nome fantasia atualizados via ${sourceLabel}. Clique em Salvar para gravar.`,
       });
-    } catch (e) {
-      setCnpjLookupErr(e instanceof Error ? e.message : "Não foi possível consultar o CNPJ.");
-    } finally {
-      setCnpjLookupLoading(false);
-    }
-  }
+    },
+    [cnpjIncludeAddress, docDigits],
+  );
 
-  useEffect(() => {
-    if (isNew || !Number.isFinite(idNum) || idNum < 1) return;
-    let cancelled = false;
-    void (async () => {
-      setRelatedLoading(true);
-      setRelatedErr("");
+  const onConsultCNPJ = useCallback(
+    async (_cnpj: string) => {
+      if (readOnly || clientData.type !== "pj" || docDigits.length !== 14) {
+        setCnpjLookupErr("Informe um CNPJ válido com 14 dígitos.");
+        return;
+      }
+      setCnpjLookupLoading(true);
+      setCnpjLookupErr("");
+      setMsg(null);
       try {
-        const tasks: Promise<unknown>[] = [listClientEquipments(idNum)];
-        if (activeTab !== "equipments") {
-          tasks.push(listBudgets({ limit: 100 }), listServiceOrders({ limit: 100 }));
-        } else {
-          tasks.push(listClientServiceItemsLinks(idNum, { only_without_equipment: true }));
-        }
-        const [equipments, budgets, orders] = await Promise.all(tasks);
-        if (cancelled) return;
-        setClientEquipments((equipments as EquipmentOut[]) ?? []);
-        if (activeTab === "equipments") {
-          setClientServiceLinks((budgets as ClientServiceItemLinkRowOut[]) ?? []);
-        }
-        if (activeTab !== "equipments") {
-          setClientBudgets((budgets as BudgetOut[]).filter((row) => row.client_id === idNum));
-          setClientOrders((orders as ServiceOrderOut[]).filter((row) => row.client_id === idNum));
-        }
+        const lu = await fetchCnpjOpen(docDigits);
+        applyCnpjLookupResult(lu, "open");
       } catch (e) {
-        if (!cancelled) {
-          setRelatedErr(e instanceof Error ? e.message : "Não foi possível carregar dados relacionados do cliente.");
+        setCnpjLookupErr(e instanceof Error ? e.message : "Não foi possível consultar o CNPJ.");
+      } finally {
+        setCnpjLookupLoading(false);
+      }
+    },
+    [applyCnpjLookupResult, clientData.type, docDigits, readOnly],
+  );
+
+  const onConsultCNPJCommercial = useCallback(
+    async (_cnpj: string) => {
+      if (readOnly || !canConsultCnpjCommercial || clientData.type !== "pj" || docDigits.length !== 14) {
+        setCnpjLookupErr("Informe um CNPJ válido com 14 dígitos.");
+        return;
+      }
+      setCnpjCommercialLoading(true);
+      setCnpjLookupErr("");
+      setMsg(null);
+      try {
+        const lu = await fetchCnpjCommercial(docDigits, true);
+        applyCnpjLookupResult(lu, "commercial");
+      } catch (e) {
+        setCnpjLookupErr(
+          e instanceof Error ? e.message : "Consulta comercial indisponível. Verifique CNPJA_API_KEY no servidor.",
+        );
+      } finally {
+        setCnpjCommercialLoading(false);
+      }
+    },
+    [applyCnpjLookupResult, canConsultCnpjCommercial, clientData.type, docDigits, readOnly],
+  );
+
+  const reloadEquipments = useCallback(async () => {
+    if (!Number.isFinite(idNum) || idNum < 1) return;
+    const rows = await listClientEquipments(idNum);
+    setEquipments(mapEquipmentsToView(rows));
+  }, [idNum]);
+
+  const onEquipmentAction = useCallback(
+    async (action: "view" | "edit" | "delete", equipment: Equipment) => {
+      const eqId = Number(equipment.id);
+      if (!Number.isFinite(eqId) || eqId < 1) return;
+
+      if (action === "view" || action === "edit") {
+        const row = (await listClientEquipments(idNum)).find((e) => e.id === eqId) as EquipmentOut | undefined;
+        if (row?.public_token) {
+          window.open(`${window.location.origin}/p/e/${row.public_token}`, "_blank", "noopener,noreferrer");
+        } else {
+          setMsg({ kind: "err", text: "Ficha pública do equipamento indisponível." });
         }
-      } finally {
-        if (!cancelled) setRelatedLoading(false);
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, idNum, isNew]);
 
-  const closeEquipmentPanel = useCallback(() => {
-    setShowEquipmentEditor(false);
-    setSelectedEquipmentId(null);
-    setEditingEquipmentId(null);
-    setEquipmentHistory([]);
-    setEquipmentForm(emptyEquipmentForm());
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "equipments") return;
-    closeEquipmentPanel();
-  }, [activeTab, closeEquipmentPanel]);
-
-  function startEditEquipment(row: EquipmentOut) {
-    setEditingEquipmentId(row.id);
-    setSelectedEquipmentId(row.id);
-    setShowEquipmentEditor(true);
-    const nomeAmbiente = row.ambiente_nome ?? row.local_instalacao ?? "";
-    setEquipmentForm({
-      tipo: row.tipo,
-      identificacao: row.identificacao,
-      categoria_instalacao: row.categoria_instalacao ?? "",
-      fabricante: row.fabricante ?? "",
-      modelo: row.modelo ?? "",
-      modelo_evaporadora: row.modelo_evaporadora ?? "",
-      modelo_condensadora: row.modelo_condensadora ?? "",
-      serial: row.serial ?? "",
-      capacidade_btu: row.capacidade_btu ? String(row.capacidade_btu) : "",
-      capacidade_tr: row.capacidade_tr != null && row.capacidade_tr !== undefined ? String(row.capacidade_tr) : "",
-      tipo_gas: row.tipo_gas ?? "",
-      voltagem: row.voltagem ?? "",
-      tecnologia_ciclo: (row.tecnologia_ciclo as "" | "on_off" | "inverter" | null) ?? "",
-      local_instalacao: row.local_instalacao ?? "",
-      ambiente_nome: nomeAmbiente,
-      ambiente_tipo: row.ambiente_tipo ?? "",
-      area_m2: row.area_m2 != null && row.area_m2 !== undefined ? String(row.area_m2) : "",
-      ocupacao_fixa: row.ocupacao_fixa != null ? String(row.ocupacao_fixa) : "",
-      ocupacao_flutuante: row.ocupacao_flutuante != null ? String(row.ocupacao_flutuante) : "",
-      carga_termica_total: row.carga_termica_total ?? "",
-      massa_gas_kg: row.massa_gas_kg != null && row.massa_gas_kg !== undefined ? String(row.massa_gas_kg) : "",
-      corrente_nominal_a:
-        row.corrente_nominal_a != null && row.corrente_nominal_a !== undefined ? String(row.corrente_nominal_a) : "",
-      filtro_tipo: row.filtro_tipo ?? "",
-      filtro_quantidade: row.filtro_quantidade != null ? String(row.filtro_quantidade) : "",
-      filtro_dimensoes: row.filtro_dimensoes ?? "",
-      filtro_periodicidade_limpeza: row.filtro_periodicidade_limpeza ?? "",
-      ativo: row.ativo,
-    });
-  }
-
-  function optNumFromInput(s: string): number | undefined {
-    const t = s.trim().replace(",", ".");
-    if (!t) return undefined;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : undefined;
-  }
-
-  function optIntFromInput(s: string): number | undefined {
-    const t = s.trim();
-    if (!t) return undefined;
-    const n = parseInt(t, 10);
-    return Number.isFinite(n) && n >= 0 ? n : undefined;
-  }
-
-  async function onSubmitEquipment(e: FormEvent) {
-    e.preventDefault();
-    if (isNew || !canEdit || !Number.isFinite(idNum) || idNum < 1) return;
-    if (!equipmentForm.identificacao.trim()) {
-      setMsg({ kind: "err", text: "Informe a identificação do equipamento." });
-      return;
-    }
-    setEquipmentSaving(true);
-    setMsg(null);
-    try {
-      const payload = {
-        tipo: equipmentForm.tipo,
-        identificacao: equipmentForm.identificacao.trim(),
-        fabricante: equipmentForm.fabricante.trim() || undefined,
-        modelo: equipmentForm.modelo.trim() || undefined,
-        serial: equipmentForm.serial.trim() || undefined,
-        capacidade_btu: equipmentForm.capacidade_btu.trim() ? Number(equipmentForm.capacidade_btu) : undefined,
-        capacidade_tr: optNumFromInput(equipmentForm.capacidade_tr),
-        categoria_instalacao: equipmentForm.categoria_instalacao.trim() || undefined,
-        modelo_evaporadora: equipmentForm.modelo_evaporadora.trim() || undefined,
-        modelo_condensadora: equipmentForm.modelo_condensadora.trim() || undefined,
-        tipo_gas: equipmentForm.tipo_gas.trim() || undefined,
-        voltagem: equipmentForm.voltagem.trim() || undefined,
-        tecnologia_ciclo: equipmentForm.tecnologia_ciclo || undefined,
-        local_instalacao: equipmentForm.local_instalacao.trim() || undefined,
-        ambiente_nome: equipmentForm.ambiente_nome.trim() || undefined,
-        ambiente_tipo: equipmentForm.ambiente_tipo.trim() || undefined,
-        area_m2: optNumFromInput(equipmentForm.area_m2),
-        ocupacao_fixa: optIntFromInput(equipmentForm.ocupacao_fixa),
-        ocupacao_flutuante: optIntFromInput(equipmentForm.ocupacao_flutuante),
-        carga_termica_total: equipmentForm.carga_termica_total.trim() || undefined,
-        massa_gas_kg: optNumFromInput(equipmentForm.massa_gas_kg),
-        corrente_nominal_a: optNumFromInput(equipmentForm.corrente_nominal_a),
-        filtro_tipo: equipmentForm.filtro_tipo.trim() || undefined,
-        filtro_quantidade: optIntFromInput(equipmentForm.filtro_quantidade),
-        filtro_dimensoes: equipmentForm.filtro_dimensoes.trim() || undefined,
-        filtro_periodicidade_limpeza: equipmentForm.filtro_periodicidade_limpeza.trim() || undefined,
-        ativo: equipmentForm.ativo,
-      };
-      if (editingEquipmentId) {
-        await updateClientEquipment(idNum, editingEquipmentId, payload);
-        setMsg({ kind: "ok", text: "Equipamento atualizado." });
-      } else {
-        await createClientEquipment(idNum, payload);
-        setMsg({ kind: "ok", text: "Equipamento cadastrado." });
-      }
-      const rows = await listClientEquipments(idNum);
-      setClientEquipments(rows);
-      setClientServiceLinks(await listClientServiceItemsLinks(idNum, { only_without_equipment: true }));
-      closeEquipmentPanel();
-    } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao salvar equipamento." });
-    } finally {
-      setEquipmentSaving(false);
-    }
-  }
-
-  async function onDeactivateEquipment(equipmentId: number) {
-    if (!canEdit || isNew || !Number.isFinite(idNum) || idNum < 1) return;
-    setEquipmentSaving(true);
-    setMsg(null);
-    try {
-      await deactivateClientEquipment(idNum, equipmentId);
-      setClientEquipments(await listClientEquipments(idNum));
-      setClientServiceLinks(await listClientServiceItemsLinks(idNum, { only_without_equipment: true }));
-      if (editingEquipmentId === equipmentId) {
-        closeEquipmentPanel();
-      }
-      setMsg({ kind: "ok", text: "Equipamento inativado." });
-    } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao inativar equipamento." });
-    } finally {
-      setEquipmentSaving(false);
-    }
-  }
-
-  async function onLinkServiceItemToEquipment(serviceItemId: number, equipmentId: number | null) {
-    if (!canEdit || isNew || !Number.isFinite(idNum) || idNum < 1) return;
-    const row = clientServiceLinks.find((item) => item.service_item_id === serviceItemId);
-    if (!row) return;
-    setLinkSavingServiceItemId(serviceItemId);
-    setMsg(null);
-    try {
-      await updateServiceOrderItemEquipment(row.service_order_id, row.service_item_id, equipmentId);
-      setClientServiceLinks(await listClientServiceItemsLinks(idNum, { only_without_equipment: true }));
-      if (selectedEquipmentId) {
-        setEquipmentHistory(await listEquipmentHistory(idNum, selectedEquipmentId));
-      }
-      setMsg({ kind: "ok", text: "Vínculo do serviço atualizado." });
-    } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao vincular serviço ao equipamento." });
-    } finally {
-      setLinkSavingServiceItemId(null);
-    }
-  }
-
-  useEffect(() => {
-    if (activeTab !== "equipments" || isNew || !selectedEquipmentId || !Number.isFinite(idNum) || idNum < 1) {
-      setEquipmentHistory([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
+      if (!canEdit || readOnly) return;
+      if (!window.confirm(`Inativar o equipamento ${equipment.marca} ${equipment.modelo}?`)) return;
       try {
-        const historyRows = await listEquipmentHistory(idNum, selectedEquipmentId);
-        if (!cancelled) setEquipmentHistory(historyRows);
-      } catch {
-        if (!cancelled) setEquipmentHistory([]);
+        await deactivateClientEquipment(idNum, eqId);
+        await reloadEquipments();
+        setMsg({ kind: "ok", text: "Equipamento inativado." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao inativar equipamento." });
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, idNum, isNew, selectedEquipmentId]);
+    },
+    [canEdit, idNum, readOnly, reloadEquipments],
+  );
 
-  useEffect(() => {
-    if (isNew || activeTab !== "audit" || !Number.isFinite(idNum) || idNum < 1) {
-      setAuditRows([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      setAuditLoading(true);
-      try {
-        const rows = await listClientAudit(idNum);
-        if (!cancelled) setAuditRows(rows);
-      } catch {
-        if (!cancelled) setAuditRows([]);
-      } finally {
-        if (!cancelled) setAuditLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, idNum, isNew]);
+  const onOrderAction = useCallback(
+    (action: "view" | "edit", order: ServiceOrder) => {
+      const path = `/app/service-orders/${order.id}`;
+      if (action === "edit" && canEdit) navigate(path);
+      else navigate(path);
+    },
+    [canEdit, navigate],
+  );
 
-  if (!ctx) {
-    return <Navigate to="/login" replace />;
-  }
-
-  if (isNew && !canEdit) {
-    return <Navigate to="/app/clients" replace />;
-  }
-
-  if (!isNew && (!clientId || !Number.isFinite(idNum) || idNum < 1)) {
-    return <Navigate to="/app/clients" replace />;
-  }
+  const onBudgetAction = useCallback(
+    (action: "view" | "edit" | "send", budget: Budget) => {
+      void action;
+      navigate(`/app/budgets/${budget.id}`);
+    },
+    [navigate],
+  );
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setMsg(null);
     if (readOnly) return;
 
-    const digits = digitsOnly(form.document);
+    const digits = digitsOnly(clientData.documento);
     if (digits && digits.length !== 11 && digits.length !== 14) {
-      setMsg({ kind: "err", text: "Quando informado, o documento deve ser CPF (11 dígitos) ou CNPJ (14 dígitos)." });
+      setMsg({ kind: "err", text: "Documento deve ser CPF (11 dígitos) ou CNPJ (14 dígitos)." });
       return;
     }
 
     setSaving(true);
     try {
-      const ibgeCreate = digitsOnly(form.address_ibge_code).slice(0, 7);
       if (isNew) {
-        const basePayload: ClientCreatePayload = {
-          name: form.name.trim(),
-          tax_id_kind: form.tax_id_kind,
-          phone: digitsOnlyPhoneForApi(form.phone) || undefined,
-          whatsapp: digitsOnlyPhoneForApi(form.whatsapp) || undefined,
-          email: form.email.trim() || undefined,
-          trade_name: form.trade_name.trim() || undefined,
-          address_street: form.address_street.trim() || undefined,
-          address_number: form.address_number.trim() || undefined,
-          address_complement: form.address_complement.trim() || undefined,
-          address_district: form.address_district.trim() || undefined,
-          address_city: form.address_city.trim() || undefined,
-          address_state: form.address_state.trim() ? form.address_state.trim().toUpperCase().slice(0, 2) : undefined,
-          address_postal_code: digitsOnly(form.address_postal_code).slice(0, 8) || undefined,
-          address_country: "Brasil",
-          ...(ibgeCreate.length === 7 ? { address_ibge_code: ibgeCreate } : {}),
-          preventive_campaign_opt_out: Boolean(form.preventive_campaign_opt_out),
-          is_active: Boolean(form.is_active),
-        };
-        const payload: ClientCreatePayload =
-          form.tax_id_kind === "cnpj"
-            ? {
-                ...basePayload,
-                optante_mei: Boolean(form.optante_mei),
-                contact_person_name: form.contact_person_name.trim() || undefined,
-                state_registration: form.state_registration.trim() || undefined,
-                ie_indicator: form.ie_indicator || undefined,
-                municipal_registration: form.municipal_registration.trim() || undefined,
-              }
-            : {
-                ...basePayload,
-                optante_mei: false,
-              };
-        if (digits) {
-          payload.document = digits;
-        }
-        const created = await createClient(payload);
+        const created = await createClient(viewDataToCreatePayload(clientData));
         navigate(`/app/clients/${created.id}`, { replace: true });
       } else {
-        const updated = await updateClient(idNum, buildUpdatePayload(form));
-        setAddressPersisted(clientHasPersistedAddress(updated));
-        setForm(fromClient(updated));
+        const updated = await updateClient(idNum, viewDataToUpdatePayload(clientData));
+        const view = clientOutToViewData(updated);
+        setClientData(view);
+        setAddressPersisted(clientHasPersistedAddressFromView(view));
         setMsg({ kind: "ok", text: "Cliente atualizado." });
       }
     } catch (err) {
@@ -968,7 +431,19 @@ export function ClientFormPage() {
     }
   }
 
-  if (!isNew && loading) {
+  if (!ctx) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (isNew && !canEdit) {
+    return <Navigate to="/app/clients" replace />;
+  }
+
+  if (!isNew && (!clientId || !Number.isFinite(idNum) || idNum < 1)) {
+    return <Navigate to="/app/clients" replace />;
+  }
+
+  if (!isNew && isLoading) {
     return (
       <div className={styles.wrap}>
         <p className={styles.loading}>Carregando cliente…</p>
@@ -976,13 +451,13 @@ export function ClientFormPage() {
     );
   }
 
-  if (!isNew && loadErr) {
+  if (!isNew && error) {
     return (
       <div className={styles.wrap}>
         <Link className={styles.btnBackLink} to="/app/clients">
           ← Voltar à lista
         </Link>
-        <p className={styles.msgErr}>{loadErr}</p>
+        <p className={styles.msgErr}>{error}</p>
       </div>
     );
   }
@@ -1001,1323 +476,83 @@ export function ClientFormPage() {
           <div>
             <h1 className={styles.title}>{isNew ? "Novo cliente" : "Editar cliente"}</h1>
             <p className={styles.lead}>
-              Cadastro completo para faturamento e operacao (CPF/CNPJ, fiscal, endereco e historico comercial).
+              Cadastro completo para faturamento e operação (CPF/CNPJ, fiscal, endereço e histórico comercial).
             </p>
           </div>
         </div>
       </header>
-      {!isNew ? (
-        <div className={styles.tabs} role="tablist" aria-label="Seções do cliente">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "form"}
-            className={`${styles.tabBtn} ${activeTab === "form" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("form")}
-          >
-            Cadastro
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "audit"}
-            className={`${styles.tabBtn} ${activeTab === "audit" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("audit")}
-          >
-            Histórico
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "equipments"}
-            className={`${styles.tabBtn} ${activeTab === "equipments" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("equipments")}
-          >
-            Equipamentos ({clientEquipments.length})
-          </button>
-          {showPmocTab ? (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "pmoc"}
-              className={`${styles.tabBtn} ${activeTab === "pmoc" ? styles.tabBtnActive : ""}`}
-              onClick={() => setActiveTab("pmoc")}
-            >
-              PMOC
-            </button>
-          ) : null}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "budgets"}
-            className={`${styles.tabBtn} ${activeTab === "budgets" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("budgets")}
-          >
-            Orcamentos ({clientBudgets.length})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "orders"}
-            className={`${styles.tabBtn} ${activeTab === "orders" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("orders")}
-          >
-            OS ({clientOrders.length})
-          </button>
-        </div>
+
+      {relatedLoading && !isNew ? <p className={styles.loading}>Carregando equipamentos, OS e orçamentos…</p> : null}
+      {relatedErr ? <p className={styles.msgErr}>{relatedErr}</p> : null}
+      {cepErr ? <p className={styles.msgErr}>{cepErr}</p> : null}
+      {cnpjLookupErr ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
+
+      {!isNew && clientData.type === "pj" && addressPersisted && canEdit ? (
+        <p className={styles.cepHint}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={cnpjIncludeAddress}
+              onChange={(e) => setCnpjIncludeAddress(e.target.checked)}
+            />
+            Ao consultar CNPJ, atualizar também o endereço da Receita
+          </label>
+        </p>
       ) : null}
 
-      {activeTab === "audit" && !isNew ? (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Histórico do cadastro</h2>
-          <p className={styles.cepHint}>Alterações registradas automaticamente ao criar ou atualizar o cliente.</p>
-          {auditLoading ? <p className={styles.loading}>Carregando histórico…</p> : null}
-          {!auditLoading && auditRows.length === 0 ? (
-            <p className={styles.loading}>Nenhum evento registrado.</p>
-          ) : null}
-          {!auditLoading && auditRows.length > 0 ? (
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Quando</th>
-                    <th>Usuário</th>
-                    <th>Ação</th>
-                    <th>Alterações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditRows.map((r) => (
-                    <tr key={r.id}>
-                      <td>{formatDateTime(r.created_at)}</td>
-                      <td>{r.user_name ?? "—"}</td>
-                      <td>{r.action}</td>
-                      <td>
-                        <pre className={styles.auditPre}>{JSON.stringify(r.changes, null, 2)}</pre>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </section>
-      ) : activeTab === "form" ? (
       <form className={styles.form} onSubmit={onSubmit}>
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Identificação</h2>
-          <div className={formLayout.stack}>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-name">
-                Razão social / nome
-              </label>
-              <input
-                id="c-name"
-                className={loginStyles.input}
-                value={form.name}
-                onChange={(e) => setField("name", e.target.value)}
-                required
-                disabled={readOnly}
-              />
-            </div>
-            <div className={formLayout.fieldGroup}>
-              <div className={styles.grid2}>
-                <div className={formLayout.field}>
-                  <label className={loginStyles.label} htmlFor="c-kind">
-                    Tipo
-                  </label>
-                  <select
-                    id="c-kind"
-                    className={loginStyles.select}
-                    value={form.tax_id_kind}
-                    onChange={(e) => {
-                      setCnpjLookupErr("");
-                      const k = e.target.value as ClientTaxIdKind;
-                      setForm((prev) => ({
-                        ...prev,
-                        tax_id_kind: k,
-                        document: taxDocumentOnKindChange(prev.document, k),
-                      }));
-                    }}
-                    disabled={readOnly || cnpjLockedAfterLookup}
-                  >
-                    <option value="cnpj">CNPJ</option>
-                    <option value="cpf">CPF</option>
-                  </select>
-                </div>
-                {form.tax_id_kind === "cnpj" ? (
-                  <div className={formLayout.field}>
-                    <label className={loginStyles.label} htmlFor="c-mei">
-                      Regime
-                    </label>
-                    <select
-                      id="c-mei"
-                      className={loginStyles.select}
-                      value={form.optante_mei ? "mei" : "regular"}
-                      onChange={(e) => setForm((prev) => ({ ...prev, optante_mei: e.target.value === "mei" }))}
-                      disabled={readOnly}
-                    >
-                      <option value="regular">Empresa regular</option>
-                      <option value="mei">MEI (NFS-e Nacional)</option>
-                    </select>
-                  </div>
-                ) : null}
-                <div className={formLayout.field}>
-                  <label className={loginStyles.label} htmlFor="c-doc">
-                    CPF / CNPJ
-                  </label>
-                  <input
-                    id="c-doc"
-                    className={loginStyles.input}
-                    value={form.document}
-                    onChange={(e) =>
-                      setField("document", formatTaxDocumentInput(e.target.value, form.tax_id_kind))
-                    }
-                    inputMode="numeric"
-                    maxLength={form.tax_id_kind === "cpf" ? 14 : 18}
-                    disabled={readOnly || (form.tax_id_kind === "cnpj" && cnpjLockedAfterLookup)}
-                    aria-busy={form.tax_id_kind === "cnpj" && cnpjLookupLoading}
-                  />
-                  {form.tax_id_kind === "cnpj" && cnpjLockedAfterLookup && !readOnly ? (
-                    <p className={styles.cepHint}>
-                      CNPJ bloqueado após a consulta para evitar alterações acidentais.{" "}
-                      <button
-                        type="button"
-                        className={styles.linkButtonInline}
-                        onClick={() => {
-                          setCnpjLockedAfterLookup(false);
-                          setRegimeDetectedByLookup(null);
-                        }}
-                      >
-                        Alterar CNPJ
-                      </button>
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              {form.tax_id_kind === "cnpj" && !readOnly ? (
-                <div className={styles.externalLookupBlock}>
-                  <div className={styles.externalLookupActions}>
-                    <button
-                      type="button"
-                      className={styles.btnSecondary}
-                      disabled={cnpjLookupLoading || docDigits.length !== 14}
-                      onClick={() => void onConsultarCnpj()}
-                    >
-                      {cnpjLookupLoading ? "Consultando…" : "Consultar CNPJ na Receita"}
-                    </button>
-                    {addressPersisted ? (
-                      <label className={styles.checkboxRow}>
-                        <input
-                          type="checkbox"
-                          checked={cnpjIncludeAddress}
-                          onChange={(e) => setCnpjIncludeAddress(e.target.checked)}
-                          disabled={cnpjLookupLoading}
-                        />
-                        Incluir endereço retornado pela Receita (substitui logradouro, complemento, CEP etc.)
-                      </label>
-                    ) : null}
-                  </div>
-                  <p className={styles.cepHint}>
-                    {cnpjLookupLoading
-                      ? "Consultando CNPJ…"
-                      : "A consulta não roda sozinha: use o botão acima. O que vier da API só entra no formulário; para gravar no banco, clique em Salvar alterações."}
-                  </p>
-                  {regimeDetectedByLookup !== null && !cnpjLookupLoading ? (
-                    <p className={styles.cepHint}>
-                      Regime detectado automaticamente:{" "}
-                      <strong>{regimeDetectedByLookup ? "MEI (NFS-e Nacional)" : "Empresa regular"}</strong>.
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {cnpjLookupErr && !cnpjLookupLoading ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-trade">
-                Nome fantasia
-              </label>
-              <input
-                id="c-trade"
-                className={loginStyles.input}
-                value={form.trade_name}
-                onChange={(e) => setField("trade_name", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <div className={styles.grid2}>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="c-wa">
-                  WhatsApp
-                </label>
-                <div className={styles.waInputWrap}>
-                  <span className={styles.waInputIcon} aria-hidden>
-                    <WhatsappBrandIcon />
-                  </span>
-                  <input
-                    id="c-wa"
-                    className={`${loginStyles.input} ${styles.waInputField}`}
-                    type="tel"
-                    value={form.whatsapp}
-                    onChange={(e) => setField("whatsapp", formatPhoneBrInput(e.target.value))}
-                    placeholder="(11) 98765-4321 — celular com DDD"
-                    autoComplete="tel-national"
-                    maxLength={15}
-                    disabled={readOnly}
-                  />
-                </div>
-              </div>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="c-phone">
-                  Telefone
-                </label>
-                <input
-                  id="c-phone"
-                  className={loginStyles.input}
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => setField("phone", formatPhoneBrInput(e.target.value))}
-                  placeholder="(11) 3456-7890 — fixo ou ramal"
-                  autoComplete="tel-national"
-                  maxLength={15}
-                  disabled={readOnly}
-                />
-              </div>
-            </div>
-            {form.tax_id_kind === "cnpj" ? (
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="c-contact-person">
-                  Contato na empresa
-                </label>
-                <input
-                  id="c-contact-person"
-                  className={loginStyles.input}
-                  value={form.contact_person_name}
-                  onChange={(e) => setField("contact_person_name", e.target.value)}
-                  placeholder="Nome de quem atende por telefone ou WhatsApp"
-                  maxLength={150}
-                  disabled={readOnly}
-                />
-              </div>
-            ) : null}
-            <label className={styles.checkboxRow}>
-              <input
-                type="checkbox"
-                checked={form.preventive_campaign_opt_out}
-                onChange={(e) => setForm((prev) => ({ ...prev, preventive_campaign_opt_out: e.target.checked }))}
-                disabled={readOnly}
-              />
-              Não enviar campanhas de manutenção preventiva por WhatsApp
-            </label>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-email">
-                E-mail
-              </label>
-              <input
-                id="c-email"
-                className={loginStyles.input}
-                type="email"
-                value={form.email}
-                onChange={(e) => setField("email", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <label className={styles.checkboxRow}>
-              <input
-                type="checkbox"
-                checked={form.is_active}
-                onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                disabled={readOnly}
-              />
-              Cliente ativo no cadastro
-            </label>
-          </div>
-        </div>
-
-        {form.tax_id_kind === "cnpj" ? (
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Fiscal</h2>
-          <div className={formLayout.stack}>
-            <p className={`${styles.cepHint} ${styles.hintFlush}`}>IE e IM quando a prefeitura ou a NF-e exigirem.</p>
-            <div className={styles.grid2}>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="c-ie-ind">
-                  Indicador IE (NF-e)
-                </label>
-                <select
-                  id="c-ie-ind"
-                  className={loginStyles.select}
-                  value={form.ie_indicator}
-                  onChange={(e) => setField("ie_indicator", e.target.value as FormState["ie_indicator"])}
-                  disabled={readOnly}
-                >
-                  <option value="">—</option>
-                  <option value="1">1 — Contribuinte ICMS</option>
-                  <option value="2">2 — Isento</option>
-                  <option value="9">9 — Não contribuinte</option>
-                </select>
-              </div>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="c-ie">
-                  Inscrição estadual
-                </label>
-                <input
-                  id="c-ie"
-                  className={loginStyles.input}
-                  value={form.state_registration}
-                  onChange={(e) => setField("state_registration", e.target.value)}
-                  placeholder="ou ISENTO"
-                  disabled={readOnly}
-                />
-              </div>
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-im">
-                Inscrição municipal
-              </label>
-              <input
-                id="c-im"
-                className={loginStyles.input}
-                value={form.municipal_registration}
-                onChange={(e) => setField("municipal_registration", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-          </div>
-        </div>
-        ) : null}
-
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Endereço</h2>
-          <div className={formLayout.stack}>
-          <div className={styles.grid2}>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-cep">
-                CEP
-              </label>
-              <div className={styles.cepRow}>
-                <input
-                  id="c-cep"
-                  className={`${loginStyles.input} ${styles.cepInputGrow}`}
-                  value={form.address_postal_code}
-                  onChange={(e) => setField("address_postal_code", formatCepInput(e.target.value))}
-                  placeholder="00000-000"
-                  autoComplete="postal-code"
-                  maxLength={9}
-                  disabled={readOnly}
-                  aria-busy={cepLoading}
-                />
-                {canEdit ? (
-                  <button
-                    type="button"
-                    className={styles.btnSecondary}
-                    disabled={readOnly || cepLoading || cepDigits.length !== 8}
-                    onClick={() => void onBuscarCep()}
-                  >
-                    {cepLoading ? "Buscando…" : "Buscar CEP"}
-                  </button>
-                ) : null}
-              </div>
-              {cepLoading ? <p className={styles.cepHint}>Buscando endereço…</p> : null}
-              {cepErr && !cepLoading ? <p className={styles.msgErr}>{cepErr}</p> : null}
-              {!readOnly && !cepLoading && !cepErr ? (
-                <p className={styles.cepHint}>
-                  Ao buscar outro CEP, logradouro, bairro, cidade, UF, complemento e código IBGE do município são substituídos quando o serviço os informa. O número não vem do CEP e não é alterado. Salve para gravar no banco.
-                </p>
-              ) : null}
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-ibge">
-                Código IBGE (município)
-              </label>
-              <input
-                id="c-ibge"
-                className={loginStyles.input}
-                value={form.address_ibge_code}
-                onChange={(e) => setField("address_ibge_code", digitsOnly(e.target.value).slice(0, 7))}
-                placeholder="7 dígitos — obrigatório p/ NFS-e Nacional"
-                maxLength={7}
-                inputMode="numeric"
-                autoComplete="off"
-                disabled={readOnly}
-              />
-              <p className={styles.cepHint}>Preenchido pela busca de CEP quando disponível. Obrigatório para emitir NFS-e nacional ao cliente.</p>
-            </div>
-            <div className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-              <label className={loginStyles.label} htmlFor="c-street">
-                Logradouro
-              </label>
-              <input
-                id="c-street"
-                className={loginStyles.input}
-                value={form.address_street}
-                onChange={(e) => setField("address_street", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-num">
-                Número
-              </label>
-              <input
-                id="c-num"
-                className={loginStyles.input}
-                value={form.address_number}
-                onChange={(e) => setField("address_number", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-comp">
-                Complemento
-              </label>
-              <input
-                id="c-comp"
-                className={loginStyles.input}
-                value={form.address_complement}
-                onChange={(e) => setField("address_complement", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-dist">
-                Bairro
-              </label>
-              <input
-                id="c-dist"
-                className={loginStyles.input}
-                value={form.address_district}
-                onChange={(e) => setField("address_district", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-city">
-                Cidade
-              </label>
-              <input
-                id="c-city"
-                className={loginStyles.input}
-                value={form.address_city}
-                onChange={(e) => setField("address_city", e.target.value)}
-                disabled={readOnly}
-              />
-            </div>
-            <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="c-uf">
-                UF
-              </label>
-              <input
-                id="c-uf"
-                className={loginStyles.input}
-                value={form.address_state}
-                onChange={(e) => setField("address_state", e.target.value.toUpperCase())}
-                maxLength={2}
-                disabled={readOnly}
-              />
-            </div>
-          </div>
-          </div>
-        </div>
+        <ClientFormView
+          client={clientData}
+          equipments={isNew ? [] : equipments}
+          history={history}
+          orders={isNew ? [] : orders}
+          budgets={isNew ? [] : budgets}
+          pmocData={showPmocTab ? pmocData : { status: "sem_contrato" }}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onClientChange={handleClientChange}
+          onConsultCNPJ={onConsultCNPJ}
+          onConsultCNPJCommercial={canConsultCnpjCommercial ? onConsultCNPJCommercial : undefined}
+          onBuscarCep={() => void onBuscarCep()}
+          loadingCNPJ={cnpjLookupLoading}
+          loadingCNPJCommercial={cnpjCommercialLoading}
+          fiscalFieldsLocked={fiscalFieldsLocked}
+          cepLoading={cepLoading}
+          readOnly={readOnly}
+          onEquipmentAction={(action, eq) => void onEquipmentAction(action, eq)}
+          onOrderAction={onOrderAction}
+          onBudgetAction={onBudgetAction}
+        />
 
         {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
         {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
 
-        {canEdit ? (
-          <div className={styles.actions}>
-            <Link className={styles.btnBackLink} to="/app/clients">
-              ← Voltar à lista
-            </Link>
-            <button type="submit" className={styles.btnPrimary} disabled={saving || deleting}>
-              {saving ? "Salvando…" : isNew ? "Cadastrar" : "Salvar alterações"}
-            </button>
-            {canDelete && !isNew ? (
-              <button
-                type="button"
-                className={styles.btnDanger}
-                onClick={() => setShowDeleteModal(true)}
-                disabled={saving || deleting}
-              >
-                {deleting ? "Excluindo…" : "Excluir cliente"}
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className={styles.actions}>
-            <Link className={styles.btnBackLink} to="/app/clients">
-              ← Voltar à lista
-            </Link>
-            <p className={styles.readOnlyHint}>
-              Você pode visualizar os dados. Para alterar, use um perfil de recepção ou administrador.
-            </p>
-          </div>
-        )}
-      </form>
-      ) : activeTab === "pmoc" && !isNew ? (
-        <section className={styles.section}>
-          <div className={styles.sectionHeaderRow}>
-            <div>
-              <h2 className={styles.sectionHeaderTitle}>PMOC (Lei 13.589/2018)</h2>
-              <p className={styles.cepHint} style={{ marginTop: "0.35rem" }}>
-                Planos de manutenção, operações e controle do ar deste estabelecimento. Um plano por endereço; detalhes e fichas
-                na página do plano.
-              </p>
-              <p className={styles.cepHint} style={{ marginTop: "0.5rem" }}>
-                PMOC e laudos <strong>técnicos por equipamento</strong> ficam na aba{" "}
-                <button type="button" className={styles.linkButtonInline} onClick={() => setActiveTab("equipments")}>
-                  Equipamentos
-                </button>
-                {" "}(abra a ficha do aparelho).
-              </p>
-            </div>
-            {canCreatePmoc ? (
-              <Link
-                className={styles.btnPrimary}
-                to={`/app/pmoc/new?client_id=${idNum}&from_client=${idNum}`}
-              >
-                Nova PMOC
-              </Link>
-            ) : null}
-          </div>
-
-          <div className={pmocListUi.subTabs} role="tablist" aria-label="Filtrar PMOC por status">
-            {CLIENT_PMOC_PRESET_ORDER.map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={pmocListPreset === key}
-                className={`${pmocListUi.subTab} ${pmocListPreset === key ? pmocListUi.subTabActive : ""}`}
-                onClick={() => setPmocListPreset(key)}
-              >
-                {CLIENT_PMOC_PRESET_LABEL[key]}
-              </button>
-            ))}
-          </div>
-
-          {pmocPlansErr ? <p className={styles.msgErr}>{pmocPlansErr}</p> : null}
-          {pmocPlansLoading ? <p className={styles.loading}>Carregando PMOC…</p> : null}
-          {!pmocPlansLoading ? (
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Título</th>
-                    <th>Status</th>
-                    <th>Soma BTU</th>
-                    <th>Ar (obr.)</th>
-                    <th>Atualizado</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {clientPmocPlans.map((r) => (
-                    <tr key={r.id}>
-                      <td>{r.title}</td>
-                      <td>
-                        <span className={`${pmocListUi.badge} ${clientPmocStatusClass(r.status)}`}>
-                          {clientPmocStatusLabel(r.status)}
-                        </span>
-                      </td>
-                      <td>{formatPmocBtu(r.total_btu_sum)}</td>
-                      <td>{r.air_analysis_required ? "Sim" : "Não"}</td>
-                      <td>{new Date(r.updated_at).toLocaleString("pt-BR")}</td>
-                      <td>
-                        <Link className={styles.rowLink} to={`/app/pmoc/${r.id}?from_client=${idNum}`}>
-                          Abrir
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                  {clientPmocPlans.length === 0 ? (
-                    <tr>
-                      <td colSpan={6}>
-                        Nenhum PMOC nesta visão.{" "}
-                        {canCreatePmoc ? (
-                          <Link
-                            className={styles.rowLink}
-                            to={`/app/pmoc/new?client_id=${idNum}&from_client=${idNum}`}
-                          >
-                            Criar PMOC para este cliente
-                          </Link>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </section>
-      ) : activeTab === "equipments" ? (
-        <section className={styles.section}>
-          <div className={styles.sectionHeaderRow}>
-            <h2 className={styles.sectionHeaderTitle}>Equipamento do cliente</h2>
-            {canEdit ? (
-              <button
-                type="button"
-                className={styles.btnPrimary}
-                disabled={equipmentSaving}
-                onClick={() => {
-                  setShowEquipmentEditor(true);
-                  setSelectedEquipmentId(null);
-                  setEquipmentHistory([]);
-                  setEquipmentForm(emptyEquipmentForm());
-                  setEditingEquipmentId(null);
-                }}
-              >
-                Novo equipamento
-              </button>
-            ) : null}
-          </div>
-          {relatedErr ? <p className={styles.msgErr}>{relatedErr}</p> : null}
-          {relatedLoading ? <p className={styles.loading}>Carregando equipamentos...</p> : null}
-          {!relatedLoading ? (
-            <>
-              {canEdit && (showEquipmentEditor || selectedEquipmentId) ? (
-                <div className={styles.actions}>
-                  <button type="button" className={styles.btnSecondary} onClick={() => closeEquipmentPanel()}>
-                    Fechar ficha e voltar para lista
-                  </button>
-                </div>
-              ) : null}
-
-              {!(showEquipmentEditor || selectedEquipmentId) ? (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Identificação</th>
-                      <th>Tipo</th>
-                      <th>Local</th>
-                      <th>Modelo</th>
-                      <th>Status</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clientEquipments.map((row) => (
-                      <tr
-                        key={row.id}
-                        style={{ cursor: "pointer" }}
-                        onClick={() => {
-                          setSelectedEquipmentId(row.id);
-                          startEditEquipment(row);
-                        }}
-                      >
-                        <td>{row.identificacao}</td>
-                        <td>{row.categoria_instalacao?.trim() || row.tipo.replaceAll("_", " ")}</td>
-                        <td>{row.ambiente_nome?.trim() || row.local_instalacao?.trim() || "—"}</td>
-                        <td>{row.modelo?.trim() || row.modelo_evaporadora?.trim() || "—"}</td>
-                        <td>
-                          <span className={`${styles.badge} ${row.ativo ? styles.badgeApproved : styles.badgeExpired}`}>
-                            {row.ativo ? "Ativo" : "Inativo"}
-                          </span>
-                        </td>
-                        <td>
-                          {canEdit ? (
-                            <div className={styles.actions}>
-                              {row.ativo ? (
-                                <button
-                                  type="button"
-                                  className={styles.btnDanger}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void onDeactivateEquipment(row.id);
-                                  }}
-                                  disabled={equipmentSaving}
-                                >
-                                  Inativar
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                    {clientEquipments.length === 0 ? (
-                      <tr>
-                        <td colSpan={6}>Nenhum equipamento cadastrado.</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-              ) : (
-              <div className={styles.equipmentOverlay}>
-              {showEquipmentEditor ? (
-                <form className={styles.form} onSubmit={onSubmitEquipment}>
-                  <h3 className={styles.sectionTitle} style={{ marginTop: 0 }}>
-                    {editingEquipmentId ? "Cadastro do equipamento" : "Novo equipamento"}
-                  </h3>
-                  <div className={formLayout.stack}>
-                  <h4 className={styles.subSectionTitle}>1. Identificação geral</h4>
-                  <div className={styles.grid2}>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Tipo de equipamento</label>
-                      <select
-                        className={loginStyles.select}
-                        value={equipmentForm.categoria_instalacao}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, categoria_instalacao: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      >
-                        <option value="">—</option>
-                        {["Split", "Cassete", "Piso-Teto", "Window", "Self", "FanCoil", "Chiller"].map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Família</label>
-                      <select
-                        className={loginStyles.select}
-                        value={equipmentForm.tipo}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, tipo: e.target.value as "AR_CONDICIONADO" }))}
-                        disabled={readOnly || equipmentSaving}
-                      >
-                        <option value="AR_CONDICIONADO">Ar-condicionado</option>
-                      </select>
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Identificação / TAG</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.identificacao}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, identificacao: e.target.value }))}
-                        placeholder='Ex.: AC-01'
-                        required
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Fabricante</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.fabricante}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, fabricante: e.target.value }))}
-                        placeholder="Ex.: Samsung"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Modelo (resumo / legado)</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.modelo}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, modelo: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Modelo evaporadora</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.modelo_evaporadora}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, modelo_evaporadora: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Modelo condensadora</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.modelo_condensadora}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, modelo_condensadora: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Capacidade (BTU)</label>
-                      <input
-                        className={loginStyles.input}
-                        type="number"
-                        min={1}
-                        value={equipmentForm.capacidade_btu}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, capacidade_btu: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Capacidade (TR)</label>
-                      <input
-                        className={loginStyles.input}
-                        inputMode="decimal"
-                        value={equipmentForm.capacidade_tr}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, capacidade_tr: e.target.value }))}
-                        placeholder="Ex.: 5"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Número de série</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.serial}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, serial: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                  </div>
-                  <h4 className={styles.subSectionTitle}>2. Localização e abrangência</h4>
-                  <div className={styles.grid2}>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Nome do ambiente</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.ambiente_nome}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, ambiente_nome: e.target.value }))}
-                        placeholder="Ex.: Sala de reuniões"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Tipo de ambiente</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.ambiente_tipo}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, ambiente_tipo: e.target.value }))}
-                        placeholder="Ex.: Escritório"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Local de instalação (livre)</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.local_instalacao}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, local_instalacao: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>
-                        Área climatizada (m<sup>2</sup>)
-                      </label>
-                      <input
-                        className={loginStyles.input}
-                        inputMode="decimal"
-                        value={equipmentForm.area_m2}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, area_m2: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Ocupação fixa (pessoas)</label>
-                      <input
-                        className={loginStyles.input}
-                        type="number"
-                        min={0}
-                        value={equipmentForm.ocupacao_fixa}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, ocupacao_fixa: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Ocupação flutuante (média)</label>
-                      <input
-                        className={loginStyles.input}
-                        type="number"
-                        min={0}
-                        value={equipmentForm.ocupacao_flutuante}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, ocupacao_flutuante: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                      <label className={loginStyles.label}>Carga térmica total</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.carga_termica_total}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, carga_termica_total: e.target.value }))}
-                        placeholder="Soma de eletrônicos, pessoas, etc."
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                  </div>
-                  <h4 className={styles.subSectionTitle}>3. Especificações técnicas</h4>
-                  <div className={styles.grid2}>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Fluido refrigerante</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.tipo_gas}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, tipo_gas: e.target.value }))}
-                        placeholder="Ex.: R-410A"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Massa de gás (kg)</label>
-                      <input
-                        className={loginStyles.input}
-                        inputMode="decimal"
-                        value={equipmentForm.massa_gas_kg}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, massa_gas_kg: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Tensão / voltagem</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.voltagem}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, voltagem: e.target.value }))}
-                        placeholder="Ex.: 220V ou 380V"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Corrente nominal (A)</label>
-                      <input
-                        className={loginStyles.input}
-                        inputMode="decimal"
-                        value={equipmentForm.corrente_nominal_a}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, corrente_nominal_a: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Tecnologia</label>
-                      <select
-                        className={loginStyles.select}
-                        value={equipmentForm.tecnologia_ciclo}
-                        onChange={(e) =>
-                          setEquipmentForm((prev) => ({
-                            ...prev,
-                            tecnologia_ciclo: e.target.value as "" | "on_off" | "inverter",
-                          }))
-                        }
-                        disabled={readOnly || equipmentSaving}
-                      >
-                        <option value="">Não informado</option>
-                        <option value="on_off">On/Off</option>
-                        <option value="inverter">Inverter</option>
-                      </select>
-                    </div>
-                  </div>
-                  <h4 className={styles.subSectionTitle}>4. Filtros e qualidade do ar</h4>
-                  <div className={styles.grid2}>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Tipo de filtro</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.filtro_tipo}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, filtro_tipo: e.target.value }))}
-                        placeholder="Nylon, Hepa, G4…"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Quantidade de filtros</label>
-                      <input
-                        className={loginStyles.input}
-                        type="number"
-                        min={0}
-                        value={equipmentForm.filtro_quantidade}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, filtro_quantidade: e.target.value }))}
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Dimensões (L × A × E)</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.filtro_dimensoes}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, filtro_dimensoes: e.target.value }))}
-                        placeholder="cm"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                    <div className={formLayout.field}>
-                      <label className={loginStyles.label}>Periodicidade de limpeza</label>
-                      <input
-                        className={loginStyles.input}
-                        value={equipmentForm.filtro_periodicidade_limpeza}
-                        onChange={(e) => setEquipmentForm((prev) => ({ ...prev, filtro_periodicidade_limpeza: e.target.value }))}
-                        placeholder="Ex.: Mensal"
-                        disabled={readOnly || equipmentSaving}
-                      />
-                    </div>
-                  </div>
-                  </div>
-                  {canEdit ? (
-                    <div className={styles.actions}>
-                      <button type="submit" className={styles.btnPrimary} disabled={equipmentSaving}>
-                        {equipmentSaving ? "Salvando..." : editingEquipmentId ? "Salvar equipamento" : "Adicionar equipamento"}
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.btnSecondary}
-                        onClick={() => closeEquipmentPanel()}
-                        disabled={equipmentSaving}
-                      >
-                        Fechar
-                      </button>
-                    </div>
-                  ) : null}
-                </form>
-              ) : null}
-
-              {selectedEquipmentId ? (
-                <>
-                  {(() => {
-                    const eq = clientEquipments.find((e) => e.id === selectedEquipmentId);
-                    if (!eq?.public_token) return null;
-                    const publicUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/p/e/${eq.public_token}`;
-                    return (
-                      <div className={styles.subPanel} style={{ marginTop: "1rem" }}>
-                        <h3 className={styles.sectionTitle}>Ficha pública e QR</h3>
-                        <p className={styles.lead} style={{ margin: "0 0 0.5rem" }}>
-                          Imprima e cole no aparelho. O link mostra somente o histórico de serviços deste equipamento
-                          (sem dados pessoais do cliente).
-                        </p>
-                        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-start" }}>
-                          <img
-                            alt="QR code ficha pública"
-                            width={160}
-                            height={160}
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(publicUrl)}`}
-                          />
-                          <div className={formLayout.field} style={{ flex: 1, minWidth: "12rem" }}>
-                            <label className={loginStyles.label}>URL pública</label>
-                            <input
-                              className={loginStyles.input}
-                              readOnly
-                              value={publicUrl}
-                              onFocus={(e) => e.target.select()}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  <h3 className={styles.sectionTitle} style={{ marginTop: "1rem" }}>
-                    Histórico do equipamento
-                  </h3>
-                  <p className={styles.lead} style={{ margin: "0 0 0.5rem" }}>
-                    Vínculos de serviços da OS com este equipamento e ordens concluídas que incluíram o equipamento.
-                  </p>
-                  <div className={styles.tableWrap}>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Quando</th>
-                          <th>Origem</th>
-                          <th>OS</th>
-                          <th>Serviço</th>
-                          <th>Responsável</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {equipmentHistory.map((row) => (
-                          <tr key={`${row.service_item_id}-${row.changed_at}`}>
-                            <td>{formatDateTime(row.changed_at)}</td>
-                            <td>{formatEquipmentHistorySource(row.source)}</td>
-                            <td>
-                              <Link className={styles.rowLink} to={`/app/service-orders/${row.service_order_id}`}>
-                                #{row.service_order_id}
-                              </Link>
-                            </td>
-                            <td>{row.service_name ?? "-"}</td>
-                            <td>{row.changed_by_user_name ?? "-"}</td>
-                          </tr>
-                        ))}
-                        {equipmentHistory.length === 0 ? (
-                          <tr>
-                            <td colSpan={5}>Sem histórico para este equipamento.</td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              ) : null}
-              </div>
-              )}
-
-              {(selectedEquipmentId || showEquipmentEditor) && (
-                <>
-                  <h3 className={styles.sectionTitle} style={{ marginTop: "1rem" }}>
-                    OS do cliente sem equipamento vinculado
-                  </h3>
-                  <div className={styles.tableWrap}>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>OS</th>
-                          <th>Serviço</th>
-                          <th>Status</th>
-                          <th>Vincular equipamento</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {clientServiceLinks.map((row) => (
-                          <tr key={row.service_item_id}>
-                            <td>#{row.service_order_id}</td>
-                            <td>{row.service_name}</td>
-                            <td>{row.order_status}</td>
-                            <td>
-                              <select
-                                className={loginStyles.select}
-                                value={row.equipment_id ?? ""}
-                                disabled={!canEdit || linkSavingServiceItemId === row.service_item_id}
-                                onChange={(e) =>
-                                  void onLinkServiceItemToEquipment(
-                                    row.service_item_id,
-                                    e.target.value ? Number(e.target.value) : null,
-                                  )
-                                }
-                              >
-                                <option value="">Sem equipamento</option>
-                                {clientEquipments.filter((item) => item.ativo).map((item) => (
-                                  <option key={item.id} value={item.id}>
-                                    {item.identificacao}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                          </tr>
-                        ))}
-                        {clientServiceLinks.length === 0 ? (
-                          <tr>
-                            <td colSpan={4}>Nenhuma OS pendente de vínculo de equipamento.</td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </>
-          ) : null}
-        </section>
-      ) : (
-        <section className={styles.section}>
-          {relatedErr ? <p className={styles.msgErr}>{relatedErr}</p> : null}
-          {relatedLoading ? <p className={styles.loading}>Carregando dados do cliente...</p> : null}
-
-          {!relatedLoading && !relatedErr && activeTab === "budgets" ? (
-            <>
-              <div className={styles.sectionHeaderRow}>
-                <h2 className={styles.sectionHeaderTitle}>Orçamentos</h2>
-                {canEdit ? (
-                  <button
-                    type="button"
-                    className={styles.btnPrimary}
-                    onClick={() => navigate(`/app/budgets/new?client_id=${idNum}`)}
-                  >
-                    Criar Orçamento
-                  </button>
-                ) : null}
-              </div>
-              {clientBudgets.length === 0 ? (
-                <p className={styles.loading}>Nenhum orçamento encontrado para este cliente.</p>
-              ) : (
-                <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Orçamento</th>
-                        <th>Status</th>
-                        <th>Criado em</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {clientBudgets.map((row) => (
-                        <tr key={row.id}>
-                          <td>#{row.id}</td>
-                          <td>
-                            <span className={`${styles.badge} ${budgetStatusClass(row.status)}`}>{budgetStatusLabel(row.status)}</span>
-                          </td>
-                          <td>{formatDateTime(row.created_at)}</td>
-                          <td>
-                            <Link className={styles.rowLink} to={`/app/budgets/${row.id}`}>
-                              Abrir
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          ) : null}
-
-          {!relatedLoading && !relatedErr && activeTab === "orders" ? (
-            <>
-              <div className={styles.sectionHeaderRow}>
-                <h2 className={styles.sectionHeaderTitle}>Ordem de Serviço</h2>
-                {canEdit ? (
-                  <button
-                    type="button"
-                    className={styles.btnPrimary}
-                    onClick={() => navigate(`/app/service-orders/new?client_id=${idNum}`)}
-                  >
-                    Criar OS
-                  </button>
-                ) : null}
-              </div>
-              {clientOrders.length === 0 ? (
-                <p className={styles.loading}>Nenhuma OS encontrada para este cliente.</p>
-              ) : (
-                <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>OS</th>
-                        <th>Titulo</th>
-                        <th>Status</th>
-                        <th>Agendamento</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {clientOrders.map((row) => (
-                        <tr key={row.id}>
-                          <td>#{row.id}</td>
-                          <td>{row.title}</td>
-                          <td>
-                            <span className={`${styles.badge} ${serviceOrderStatusClass(row.status)}`}>
-                              {serviceOrderStatusLabel(row.status)}
-                            </span>
-                          </td>
-                          <td>{formatDateTime(row.schedule?.starts_at)}</td>
-                          <td>
-                            <Link className={styles.rowLink} to={`/app/service-orders/${row.id}`}>
-                              Abrir
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          ) : null}
-        </section>
-      )}
-      {!isNew && activeTab !== "form" ? (
         <div className={styles.actions}>
           <Link className={styles.btnBackLink} to="/app/clients">
             ← Voltar à lista
           </Link>
           {canEdit ? (
-            <button type="button" className={styles.btnPrimary} onClick={() => setActiveTab("form")}>
-              Salvar alterações
+            <button type="submit" className={styles.btnPrimary} disabled={saving || deleting}>
+              {saving ? "Salvando…" : isNew ? "Cadastrar" : "Salvar alterações"}
             </button>
-          ) : null}
-          {canDelete ? (
-            <button type="button" className={styles.btnDanger} onClick={() => setShowDeleteModal(true)} disabled={deleting}>
+          ) : (
+            <p className={styles.readOnlyHint}>
+              Você pode visualizar os dados. Para alterar, use um perfil de recepção ou administrador.
+            </p>
+          )}
+          {canDelete && !isNew ? (
+            <button
+              type="button"
+              className={styles.btnDanger}
+              onClick={() => setShowDeleteModal(true)}
+              disabled={saving || deleting}
+            >
               {deleting ? "Excluindo…" : "Excluir cliente"}
             </button>
           ) : null}
         </div>
-      ) : null}
+      </form>
+
       {showDeleteModal ? (
         <div className={styles.modalRoot} role="presentation">
           <button type="button" className={styles.modalBackdrop} aria-label="Fechar" onClick={() => setShowDeleteModal(false)} />
@@ -2326,8 +561,8 @@ export function ClientFormPage() {
               Excluir cliente
             </h3>
             <p className={styles.modalText}>
-              Prefira desmarcar &quot;Cliente ativo no cadastro&quot; para inativar. A exclusão permanente só deve ser usada
-              quando não houver ordens, orçamentos, agendamentos ou NFS-e vinculados — caso contrário o sistema bloqueia.
+              Prefira desmarcar &quot;Cadastro ativo&quot; para inativar. A exclusão permanente só deve ser usada quando não
+              houver ordens, orçamentos ou NFS-e vinculados.
             </p>
             <div className={styles.modalActions}>
               <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={deleting}>
