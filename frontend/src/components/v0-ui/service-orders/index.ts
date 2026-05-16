@@ -18,3 +18,18 @@ export type {
   ServiceOrderMetrics,
   ServiceOrdersListViewProps,
 } from "./ServiceOrdersListView";
+
+// Form View
+export {
+  ServiceOrderFormView,
+} from "./ServiceOrderFormView";
+
+export type {
+  ServiceOrderData,
+  ServiceOrderFormViewProps,
+  Cliente,
+  Tecnico,
+  Equipamento,
+  ChecklistItem,
+  ChecklistItemStatus,
+} from "./ServiceOrderFormView";
