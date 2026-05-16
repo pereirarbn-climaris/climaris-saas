@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend-smoke:
+    name: Backend smoke flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare env file for compose
+        run: |
+          cat > .env <<'EOF'
+          JWT_SECRET_KEY=ci-jwt-secret
+          JWT_BOOTSTRAP_TOKEN=bootstrap-change-me
+          LOGIN_ADMIN_TWO_FACTOR_ENABLED=false
+          SMTP_ALLOW_DB_OVERRIDE=false
+          PUBLIC_REGISTER_ENABLED=true
+          DATABASE_URL=postgresql+psycopg://erp_user:erp_password@db:5432/erp_db
+          EOF
+
+      - name: Ensure external docker network exists
+        run: docker network create evolution_evolution_net || true
+
+      - name: Start API and DB
+        run: docker compose up -d db api
+
+      - name: Wait for API runtime dependencies
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            if docker compose exec -T api python -c "import alembic" >/dev/null 2>&1; then
+              echo "API runtime ready for migrations."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting API dependencies." >&2
+          docker compose logs --tail 120 api >&2 || true
+          exit 1
+
+      - name: Run database migrations
+        run: docker compose exec -T api python -m alembic upgrade heads
+
+      - name: Run critical smoke test
+        run: bash scripts/smoke-critical-flow.sh
+
+      - name: Run Asaas webhook smoke test
+        run: bash scripts/smoke-asaas-webhook.sh
+
+      - name: Run plan guard smoke test
+        run: bash scripts/smoke-plan-guards.sh
+
+      - name: Check observability envelope
+        run: bash scripts/check-observability.sh
+
+      - name: Stop compose stack
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
