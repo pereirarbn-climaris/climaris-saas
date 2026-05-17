@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 
 // ============================================================================
 // TYPES
@@ -9,6 +9,7 @@ import React from "react";
 export type EquipmentStatus = "ativo" | "inativo";
 export type EquipmentCategory = "ar_condicionado" | "climatizador" | "geladeira" | "bebedouro" | "freezer";
 export type MaintenanceEventType = "registro" | "servico" | "instalacao" | "garantia";
+export type ViewVariant = "public" | "embedded";
 
 export interface TechnicalSpec {
   id: string;
@@ -36,6 +37,9 @@ export interface ProviderCompany {
   phone?: string;
   email?: string;
   website?: string;
+  address?: string;
+  city?: string;
+  state?: string;
 }
 
 export interface EquipmentProfileData {
@@ -56,8 +60,10 @@ export interface EquipmentProfileData {
 
 export interface PublicEquipmentProfileViewProps {
   equipment: EquipmentProfileData;
+  variant?: ViewVariant;
   onLoginClick?: () => void;
   onViewOrdersClick?: () => void;
+  onClose?: () => void;
   className?: string;
 }
 
@@ -190,6 +196,47 @@ const Icons = {
       <path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2M9.6 4.6A2 2 0 1 1 11 8H2M12.6 19.4A2 2 0 1 0 14 16H2" />
     </svg>
   ),
+  mapPin: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  ),
+  qrCode: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect width="5" height="5" x="3" y="3" rx="1" />
+      <rect width="5" height="5" x="16" y="3" rx="1" />
+      <rect width="5" height="5" x="3" y="16" rx="1" />
+      <path d="M21 16h-3a2 2 0 0 0-2 2v3M21 21v.01M12 7v3a2 2 0 0 1-2 2H7M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1" />
+    </svg>
+  ),
+  link: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  ),
+  copy: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  ),
+  externalLink: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" />
+    </svg>
+  ),
+  x: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  ),
+  check: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  ),
 };
 
 // ============================================================================
@@ -304,24 +351,24 @@ const TechnicalSpecCard: React.FC<{ spec: TechnicalSpec }> = ({ spec }) => {
     <div
       className="
         flex flex-col gap-2 p-4 rounded-xl 
-        bg-white border border-[var(--color-border)]
-        shadow-[0_1px_3px_rgba(0,0,0,0.04)]
-        hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)]
+        bg-white border border-slate-200
+        shadow-[0_1px_2px_rgba(0,0,0,0.04)]
+        hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)]
         transition-shadow duration-200
       "
     >
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center">
-          <IconComponent className="w-4 h-4 text-[var(--color-primary)]" />
+        <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+          <IconComponent className="w-4 h-4 text-slate-500" />
         </div>
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
           {spec.label}
         </span>
       </div>
-      <p className="text-lg font-bold text-[var(--color-text)]">
+      <p className="text-lg font-bold text-slate-900">
         {spec.value}
         {spec.unit && (
-          <span className="text-sm font-medium text-[var(--color-text-muted)] ml-1">
+          <span className="text-sm font-medium text-slate-500 ml-1">
             {spec.unit}
           </span>
         )}
@@ -339,23 +386,21 @@ const MaintenanceEventCard: React.FC<{ event: MaintenanceEvent; isLast: boolean 
       <div className="flex flex-col items-center">
         <div className={`w-3 h-3 rounded-full ${config.dotColor} ring-4 ring-white z-10`} />
         {!isLast && (
-          <div className="w-0.5 flex-1 bg-[var(--color-border)] -mt-1" />
+          <div className="w-0.5 flex-1 bg-slate-200 -mt-1" />
         )}
       </div>
 
       {/* Event content */}
-      <div className="flex-1 pb-6">
+      <div className="flex-1 pb-5">
         <div
           className="
-            p-4 rounded-xl bg-white border border-[var(--color-border)]
-            shadow-[0_1px_3px_rgba(0,0,0,0.04)]
-            hover:shadow-[0_4px_12px_rgba(0,0,0,0.06)]
-            transition-shadow duration-200
+            p-4 rounded-xl bg-white border border-slate-200
+            shadow-[0_1px_2px_rgba(0,0,0,0.04)]
           "
         >
           {/* Header */}
           <div className="flex items-start justify-between gap-3 mb-2">
-            <time className="text-xs text-[var(--color-text-muted)]">
+            <time className="text-xs text-slate-500">
               {formatDate(event.date)}
             </time>
             <span
@@ -369,7 +414,7 @@ const MaintenanceEventCard: React.FC<{ event: MaintenanceEvent; isLast: boolean 
           </div>
 
           {/* Title */}
-          <h4 className="text-sm font-semibold text-[var(--color-text)] mb-1">
+          <h4 className="text-sm font-semibold text-slate-900 mb-1">
             {event.osNumber && (
               <span className="text-[var(--color-primary)]">OS #{event.osNumber}</span>
             )}
@@ -379,13 +424,13 @@ const MaintenanceEventCard: React.FC<{ event: MaintenanceEvent; isLast: boolean 
 
           {/* Description */}
           {event.description && (
-            <p className="text-xs text-[var(--color-text-muted)] mb-2">
+            <p className="text-xs text-slate-500 mb-2">
               {event.description}
             </p>
           )}
 
           {/* Meta info */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-subtle)]">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
             {event.origin && (
               <span className="flex items-center gap-1">
                 <Icons.clipboard className="w-3 h-3" />
@@ -395,7 +440,7 @@ const MaintenanceEventCard: React.FC<{ event: MaintenanceEvent; isLast: boolean 
             {event.technicianName && (
               <span className="flex items-center gap-1">
                 <Icons.user className="w-3 h-3" />
-                {event.technicianName}
+                Por: {event.technicianName}
               </span>
             )}
           </div>
@@ -405,45 +450,159 @@ const MaintenanceEventCard: React.FC<{ event: MaintenanceEvent; isLast: boolean 
   );
 };
 
-// Provider Header
-const ProviderHeader: React.FC<{ provider: ProviderCompany }> = ({ provider }) => (
-  <div className="flex items-start justify-between gap-4 mb-6">
-    {/* Logo and company info */}
-    <div className="flex items-center gap-4">
-      {provider.logoUrl ? (
-        <img
-          src={provider.logoUrl}
-          alt={`Logo ${provider.name}`}
-          className="w-12 h-12 object-contain rounded-lg border border-[var(--color-border)]"
-        />
-      ) : (
-        <div className="w-12 h-12 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center">
-          <Icons.building className="w-6 h-6 text-[var(--color-primary)]" />
-        </div>
-      )}
-      <div>
-        <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--color-primary)]">
-          {provider.name}
-        </h2>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-[var(--color-text-muted)]">
-          {provider.cnpj && <span>CNPJ: {provider.cnpj}</span>}
-          {provider.phone && (
-            <span className="flex items-center gap-1">
-              <Icons.phone className="w-3 h-3" />
-              {provider.phone}
+// Corporate Header - Baseado no layout de orçamentos
+const CorporateHeader: React.FC<{ provider: ProviderCompany }> = ({ provider }) => (
+  <div className="mb-0">
+    {/* Header Content */}
+    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 p-5 sm:p-6">
+      {/* Left Side - Logo + Company Info */}
+      <div className="flex items-start gap-4">
+        {/* Logo */}
+        {provider.logoUrl ? (
+          <img
+            src={provider.logoUrl}
+            alt={`Logo ${provider.name}`}
+            className="w-14 h-14 object-contain rounded-full border-2 border-slate-200 bg-white flex-shrink-0"
+          />
+        ) : (
+          <div className="w-14 h-14 rounded-full bg-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
+            <span className="text-white text-xl font-bold">
+              {provider.name.charAt(0)}
             </span>
-          )}
-          {provider.email && (
-            <span className="flex items-center gap-1">
-              <Icons.mail className="w-3 h-3" />
-              {provider.email}
-            </span>
-          )}
+          </div>
+        )}
+
+        {/* Company Details */}
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold text-slate-900 mb-1">
+            {provider.name}
+          </h2>
+          <div className="grid grid-cols-1 gap-1 text-xs text-slate-600">
+            {provider.cnpj && (
+              <span className="flex items-center gap-1.5">
+                <span className="font-medium text-slate-500">CNPJ:</span>
+                {provider.cnpj}
+              </span>
+            )}
+            {provider.address && (
+              <span className="flex items-start gap-1.5">
+                <Icons.mapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-slate-400" />
+                <span className="break-words">{provider.address}</span>
+              </span>
+            )}
+            {(provider.city || provider.state) && (
+              <span className="text-slate-500 pl-5">
+                {provider.city}{provider.city && provider.state && " - "}{provider.state}
+              </span>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Right Side - Contact Info */}
+      <div className="flex flex-col items-start sm:items-end gap-1.5 text-xs text-slate-600 sm:text-right">
+        {provider.phone && (
+          <span className="flex items-center gap-1.5">
+            <Icons.phone className="w-3.5 h-3.5 text-slate-400" />
+            {provider.phone}
+          </span>
+        )}
+        {provider.email && (
+          <span className="flex items-center gap-1.5">
+            <Icons.mail className="w-3.5 h-3.5 text-slate-400" />
+            {provider.email}
+          </span>
+        )}
+        {provider.website && (
+          <a 
+            href={provider.website.startsWith('http') ? provider.website : `https://${provider.website}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[var(--color-primary)] hover:underline"
+          >
+            <Icons.globe className="w-3.5 h-3.5" />
+            {provider.website.replace(/^https?:\/\//, '')}
+          </a>
+        )}
+      </div>
     </div>
+
+    {/* Blue Divider */}
+    <div className="h-1 bg-[var(--color-primary)]" />
   </div>
 );
+
+// QR Code / Public Link Section
+const QRCodeSection: React.FC<{ publicUrl?: string }> = ({ publicUrl }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyLink = async () => {
+    if (!publicUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  if (!publicUrl) return null;
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-5">
+      <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
+        <Icons.qrCode className="w-4 h-4 text-[var(--color-primary)]" />
+        Link público (QR Code)
+      </h4>
+      <p className="text-xs text-slate-500 mb-4">
+        O cliente acessa pelo celular para ver dados técnicos e histórico de manutenções.
+      </p>
+      
+      {/* Public Link Preview */}
+      <a 
+        href={publicUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-xs text-[var(--color-primary)] hover:underline mb-4"
+      >
+        <Icons.externalLink className="w-3 h-3" />
+        Abrir ficha pública
+      </a>
+
+      {/* Copy Button */}
+      <button
+        onClick={handleCopyLink}
+        className="
+          w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg
+          text-sm font-semibold text-white
+          bg-[var(--color-primary)]
+          hover:bg-[var(--color-primary-hover)]
+          transition-colors duration-200
+        "
+      >
+        {copied ? (
+          <>
+            <Icons.check className="w-4 h-4" />
+            Link copiado!
+          </>
+        ) : (
+          <>
+            <Icons.copy className="w-4 h-4" />
+            Copiar link
+          </>
+        )}
+      </button>
+
+      {/* URL Preview */}
+      <div className="mt-3 p-2 bg-slate-50 rounded-lg">
+        <p className="text-[10px] text-slate-400 font-mono truncate">
+          {publicUrl}
+        </p>
+      </div>
+    </div>
+  );
+};
 
 // ============================================================================
 // MAIN COMPONENT
@@ -451,210 +610,306 @@ const ProviderHeader: React.FC<{ provider: ProviderCompany }> = ({ provider }) =
 
 export const PublicEquipmentProfileView: React.FC<PublicEquipmentProfileViewProps> = ({
   equipment,
+  variant = "public",
   onLoginClick,
   onViewOrdersClick,
+  onClose,
   className = "",
 }) => {
+  const isEmbedded = variant === "embedded";
+
+  // Container classes based on variant
+  const containerClasses = isEmbedded
+    ? "bg-white"
+    : "min-h-screen bg-gradient-to-b from-slate-50 to-white";
+
+  const maxWidthClasses = isEmbedded
+    ? "max-w-5xl"
+    : "max-w-2xl";
+
   return (
-    <div
-      className={`
-        min-h-screen bg-gradient-to-b from-[var(--color-surface)] to-white
-        ${className}
-      `}
-    >
+    <div className={`${containerClasses} ${className}`}>
       {/* Main Container */}
-      <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 sm:py-8">
+      <div className={`${maxWidthClasses} mx-auto ${isEmbedded ? '' : 'px-4 py-6 sm:px-6 sm:py-8'}`}>
         
-        {/* Provider Header Card */}
+        {/* Modal Header for Embedded */}
+        {isEmbedded && (
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+            <h2 className="text-sm font-semibold text-slate-600 uppercase tracking-wider">
+              Ficha do Equipamento
+            </h2>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <Icons.x className="w-5 h-5 text-slate-500" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Corporate Header Card */}
         <div
-          className="
-            bg-white rounded-2xl border border-[var(--color-border)]
-            shadow-[var(--card-shadow)] p-5 sm:p-6 mb-4
-          "
+          className={`
+            bg-white overflow-hidden
+            ${isEmbedded ? '' : 'rounded-2xl border border-slate-200 shadow-sm mb-4'}
+          `}
         >
-          <ProviderHeader provider={equipment.provider} />
+          <CorporateHeader provider={equipment.provider} />
 
-          {/* Equipment Identity */}
-          <div className="mb-5">
-            <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text)] mb-1 text-balance">
-              {equipment.tag}
-            </h1>
-            <p className="text-base sm:text-lg text-[var(--color-text-muted)] font-medium">
-              {equipment.brand} · {equipment.model}
-            </p>
-          </div>
-
-          {/* Badges */}
-          <div className="flex flex-wrap items-center gap-2 mb-5">
-            <StatusBadge status={equipment.status} />
-            <CategoryBadge category={equipment.category} />
-          </div>
-
-          {/* Serial Number */}
-          <div className="text-sm text-[var(--color-text-muted)]">
-            <span className="font-medium">Nº de série:</span>{" "}
-            <span className="font-mono">{equipment.serialNumber}</span>
-          </div>
-
-          {/* Installation and Warranty */}
-          {(equipment.installationDate || equipment.warrantyExpiration) && (
-            <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-[var(--color-border)]">
-              {equipment.installationDate && (
-                <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-                  <Icons.calendar className="w-4 h-4" />
-                  <span>
-                    <span className="font-medium">Instalação:</span>{" "}
-                    {formatDateShort(equipment.installationDate)}
-                  </span>
+          {/* Two-column layout for embedded, single column for public */}
+          <div className={`${isEmbedded ? 'flex flex-col lg:flex-row' : ''}`}>
+            
+            {/* Left Column - Equipment Info & Specs */}
+            <div className={`${isEmbedded ? 'flex-1 lg:border-r lg:border-slate-200' : ''}`}>
+              <div className="p-5 sm:p-6">
+                {/* Equipment Identity */}
+                <div className="mb-5">
+                  <h1 className="text-2xl font-bold text-slate-900 mb-1 text-balance">
+                    {equipment.tag}
+                  </h1>
+                  <p className="text-base text-slate-600 font-medium">
+                    {equipment.brand} · {equipment.model}
+                  </p>
                 </div>
-              )}
-              {equipment.warrantyExpiration && (
-                <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-                  <Icons.shield className="w-4 h-4" />
-                  <span>
-                    <span className="font-medium">Garantia até:</span>{" "}
-                    {formatDateShort(equipment.warrantyExpiration)}
-                  </span>
+
+                {/* Badges */}
+                <div className="flex flex-wrap items-center gap-2 mb-5">
+                  <StatusBadge status={equipment.status} />
+                  <CategoryBadge category={equipment.category} />
                 </div>
-              )}
-            </div>
-          )}
-        </div>
 
-        {/* Technical Specs Card */}
-        {equipment.technicalSpecs.length > 0 && (
-          <div
-            className="
-              bg-white rounded-2xl border border-[var(--color-border)]
-              shadow-[var(--card-shadow)] p-5 sm:p-6 mb-4
-            "
-          >
-            <h3 className="text-base font-bold text-[var(--color-text)] mb-4 flex items-center gap-2">
-              <Icons.wrench className="w-5 h-5 text-[var(--color-primary)]" />
-              Dados técnicos
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {equipment.technicalSpecs.map((spec) => (
-                <TechnicalSpecCard key={spec.id} spec={spec} />
-              ))}
-            </div>
-          </div>
-        )}
+                {/* Serial Number */}
+                <div className="text-sm text-slate-600 mb-5">
+                  <span className="font-medium">Nº de série:</span>{" "}
+                  <span className="font-mono">{equipment.serialNumber}</span>
+                </div>
 
-        {/* Maintenance History Card */}
-        {equipment.maintenanceHistory.length > 0 && (
-          <div
-            className="
-              bg-white rounded-2xl border border-[var(--color-border)]
-              shadow-[var(--card-shadow)] p-5 sm:p-6 mb-4
-            "
-          >
-            <h3 className="text-base font-bold text-[var(--color-text)] mb-2 flex items-center gap-2">
-              <Icons.clipboard className="w-5 h-5 text-[var(--color-primary)]" />
-              Histórico de manutenções
-            </h3>
-            <p className="text-xs text-[var(--color-text-muted)] mb-5">
-              Serviços registrados neste aparelho. Não exibe dados pessoais do cliente.
-            </p>
+                {/* Technical Specs */}
+                {equipment.technicalSpecs.length > 0 && (
+                  <div className="mb-5">
+                    <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                      <Icons.wrench className="w-4 h-4 text-slate-400" />
+                      Dados técnicos
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {equipment.technicalSpecs.map((spec) => (
+                        <TechnicalSpecCard key={spec.id} spec={spec} />
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-            {/* Timeline */}
-            <div className="relative">
-              {equipment.maintenanceHistory.map((event, index) => (
-                <MaintenanceEventCard
-                  key={event.id}
-                  event={event}
-                  isLast={index === equipment.maintenanceHistory.length - 1}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Empty State for Maintenance */}
-        {equipment.maintenanceHistory.length === 0 && (
-          <div
-            className="
-              bg-white rounded-2xl border border-[var(--color-border)]
-              shadow-[var(--card-shadow)] p-8 mb-4 text-center
-            "
-          >
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--color-surface)] flex items-center justify-center">
-              <Icons.clipboard className="w-8 h-8 text-[var(--color-text-subtle)]" />
-            </div>
-            <h3 className="text-base font-semibold text-[var(--color-text)] mb-1">
-              Nenhuma manutenção registrada
-            </h3>
-            <p className="text-sm text-[var(--color-text-muted)]">
-              Este equipamento ainda não possui histórico de serviços.
-            </p>
-          </div>
-        )}
-
-        {/* Technician Login CTA */}
-        <div
-          className="
-            bg-white rounded-2xl border border-[var(--color-border)]
-            shadow-[var(--card-shadow)] p-5 sm:p-6
-          "
-        >
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center flex-shrink-0">
-              <Icons.user className="w-5 h-5 text-[var(--color-primary)]" />
-            </div>
-            <div className="flex-1">
-              <h4 className="text-sm font-semibold text-[var(--color-text)] mb-1">
-                É técnico da empresa?
-              </h4>
-              <p className="text-xs text-[var(--color-text-muted)] mb-3">
-                Após login, abra a OS do cliente e vincule cada serviço ao aparelho correspondente.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={onLoginClick}
-                  className="
-                    inline-flex items-center gap-2 px-4 py-2 rounded-lg
-                    text-sm font-semibold text-[var(--color-primary)]
-                    bg-[var(--color-primary)]/10
-                    hover:bg-[var(--color-primary)]/20
-                    transition-colors duration-200
-                  "
-                >
-                  Entrar
-                  <Icons.arrowRight className="w-4 h-4" />
-                </button>
-                {onViewOrdersClick && (
-                  <button
-                    onClick={onViewOrdersClick}
-                    className="
-                      inline-flex items-center gap-2 px-4 py-2 rounded-lg
-                      text-sm font-semibold text-white
-                      bg-[var(--color-primary)]
-                      hover:bg-[var(--color-primary-hover)]
-                      transition-colors duration-200
-                    "
-                  >
-                    Abrir ordens de serviço
-                  </button>
+                {/* Installation and Warranty */}
+                {(equipment.installationDate || equipment.warrantyExpiration) && (
+                  <div className="flex flex-wrap gap-4 pt-4 border-t border-slate-200">
+                    {equipment.installationDate && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Icons.calendar className="w-4 h-4" />
+                        <span>
+                          <span className="font-medium">Instalação:</span>{" "}
+                          {formatDateShort(equipment.installationDate)}
+                        </span>
+                      </div>
+                    )}
+                    {equipment.warrantyExpiration && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Icons.shield className="w-4 h-4" />
+                        <span>
+                          <span className="font-medium">Garantia até:</span>{" "}
+                          {formatDateShort(equipment.warrantyExpiration)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
+
+            {/* Right Column - Timeline & QR Code (only in embedded mode) */}
+            {isEmbedded && (
+              <div className="lg:w-[400px] p-5 sm:p-6 bg-slate-50">
+                {/* Maintenance History */}
+                {equipment.maintenanceHistory.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                      <Icons.clipboard className="w-4 h-4 text-slate-400" />
+                      Histórico de manutenções
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Serviços registrados neste aparelho.
+                    </p>
+
+                    {/* Timeline */}
+                    <div className="relative max-h-[300px] overflow-y-auto pr-2">
+                      {equipment.maintenanceHistory.map((event, index) => (
+                        <MaintenanceEventCard
+                          key={event.id}
+                          event={event}
+                          isLast={index === equipment.maintenanceHistory.length - 1}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* QR Code Section */}
+                <QRCodeSection publicUrl={equipment.publicUrl} />
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Footer */}
-        <footer className="mt-8 text-center">
-          <p className="text-[11px] text-[var(--color-text-subtle)]">
-            Ficha pública do equipamento • Powered by{" "}
-            <a
-              href="https://climaris.com.br"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-[var(--color-primary)] hover:underline"
+        {/* Cards for Public variant only */}
+        {!isEmbedded && (
+          <>
+            {/* Maintenance History Card */}
+            {equipment.maintenanceHistory.length > 0 && (
+              <div
+                className="
+                  bg-white rounded-2xl border border-slate-200
+                  shadow-sm p-5 sm:p-6 mb-4
+                "
+              >
+                <h3 className="text-base font-bold text-slate-900 mb-2 flex items-center gap-2">
+                  <Icons.clipboard className="w-5 h-5 text-[var(--color-primary)]" />
+                  Histórico de manutenções
+                </h3>
+                <p className="text-xs text-slate-500 mb-5">
+                  Serviços registrados neste aparelho. Não exibe dados pessoais do cliente.
+                </p>
+
+                {/* Timeline */}
+                <div className="relative">
+                  {equipment.maintenanceHistory.map((event, index) => (
+                    <MaintenanceEventCard
+                      key={event.id}
+                      event={event}
+                      isLast={index === equipment.maintenanceHistory.length - 1}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Empty State for Maintenance */}
+            {equipment.maintenanceHistory.length === 0 && (
+              <div
+                className="
+                  bg-white rounded-2xl border border-slate-200
+                  shadow-sm p-8 mb-4 text-center
+                "
+              >
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-100 flex items-center justify-center">
+                  <Icons.clipboard className="w-8 h-8 text-slate-400" />
+                </div>
+                <h3 className="text-base font-semibold text-slate-900 mb-1">
+                  Nenhuma manutenção registrada
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Este equipamento ainda não possui histórico de serviços.
+                </p>
+              </div>
+            )}
+
+            {/* Technician Login CTA */}
+            <div
+              className="
+                bg-white rounded-2xl border border-slate-200
+                shadow-sm p-5 sm:p-6
+              "
             >
-              Climaris
-            </a>
-          </p>
-        </footer>
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center flex-shrink-0">
+                  <Icons.user className="w-5 h-5 text-[var(--color-primary)]" />
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-1">
+                    É técnico da empresa?
+                  </h4>
+                  <p className="text-xs text-slate-500 mb-3">
+                    Após login, abra a OS do cliente e vincule cada serviço ao aparelho correspondente.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={onLoginClick}
+                      className="
+                        inline-flex items-center gap-2 px-4 py-2 rounded-lg
+                        text-sm font-semibold text-[var(--color-primary)]
+                        bg-[var(--color-primary)]/10
+                        hover:bg-[var(--color-primary)]/20
+                        transition-colors duration-200
+                      "
+                    >
+                      Entrar
+                      <Icons.arrowRight className="w-4 h-4" />
+                    </button>
+                    {onViewOrdersClick && (
+                      <button
+                        onClick={onViewOrdersClick}
+                        className="
+                          inline-flex items-center gap-2 px-4 py-2 rounded-lg
+                          text-sm font-semibold text-white
+                          bg-[var(--color-primary)]
+                          hover:bg-[var(--color-primary-hover)]
+                          transition-colors duration-200
+                        "
+                      >
+                        Abrir ordens de serviço
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <footer className="mt-8 text-center">
+              <p className="text-[11px] text-slate-400">
+                Ficha pública do equipamento • Powered by{" "}
+                <a
+                  href="https://climaris.com.br"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-[var(--color-primary)] hover:underline"
+                >
+                  Climaris
+                </a>
+              </p>
+            </footer>
+          </>
+        )}
+
+        {/* Footer Actions for Embedded */}
+        {isEmbedded && (
+          <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-slate-200 bg-slate-50">
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="
+                  px-4 py-2 rounded-lg text-sm font-medium
+                  text-slate-600 bg-white border border-slate-200
+                  hover:bg-slate-50 transition-colors
+                "
+              >
+                Fechar
+              </button>
+            )}
+            {onViewOrdersClick && (
+              <button
+                onClick={onViewOrdersClick}
+                className="
+                  px-4 py-2 rounded-lg text-sm font-medium
+                  text-white bg-[var(--color-primary)]
+                  hover:bg-[var(--color-primary-hover)] transition-colors
+                "
+              >
+                Ver ordens de serviço
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -677,8 +932,12 @@ export const mockEquipmentProfile: EquipmentProfileData = {
   provider: {
     name: "Ar Ideal Climatizadora",
     cnpj: "12.345.678/0001-90",
-    phone: "(11) 99999-9999",
+    phone: "(16) 99999-9999",
     email: "contato@arideal.com.br",
+    website: "www.arideal.com.br",
+    address: "Avenida Paulo Antonio Ribeiro Demarco, 413",
+    city: "Araraquara",
+    state: "SP",
   },
   technicalSpecs: [
     { id: "1", label: "Capacidade", value: "60000", unit: "m³/h", icon: "capacity" },
@@ -710,15 +969,25 @@ export const mockEquipmentProfile: EquipmentProfileData = {
 // ============================================================================
 
 /*
+// Public page (acessível via QR Code)
 import { PublicEquipmentProfileView, mockEquipmentProfile } from '@/components/v0-ui/clients';
 
 export default function PublicEquipmentPage() {
   return (
     <PublicEquipmentProfileView
       equipment={mockEquipmentProfile}
+      variant="public"
       onLoginClick={() => router.push('/login')}
       onViewOrdersClick={() => router.push('/app/service-orders')}
     />
   );
 }
+
+// Embedded in modal (dentro do painel administrativo)
+<PublicEquipmentProfileView
+  equipment={selectedEquipment}
+  variant="embedded"
+  onClose={() => setShowModal(false)}
+  onViewOrdersClick={() => router.push(`/app/service-orders?equipment=${selectedEquipment.id}`)}
+/>
 */
