@@ -32,3 +32,17 @@ export {
   type NewEquipmentData,
   type ClientEquipmentManagerProps,
 } from './ClientEquipmentManager';
+
+// Public Equipment Profile (QR Code Page)
+export {
+  PublicEquipmentProfileView,
+  mockEquipmentProfile,
+  type EquipmentStatus as PublicEquipmentStatus,
+  type EquipmentCategory as PublicEquipmentCategory,
+  type MaintenanceEventType,
+  type TechnicalSpec,
+  type MaintenanceEvent,
+  type ProviderCompany,
+  type EquipmentProfileData,
+  type PublicEquipmentProfileViewProps,
+} from './PublicEquipmentProfileView';
