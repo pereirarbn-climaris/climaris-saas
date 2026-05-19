@@ -14,3 +14,14 @@ export {
   type DynamicTag,
   type PreventiveTemplateSettingsProps,
 } from './PreventiveTemplateSettings';
+
+// Preventive Management View
+export {
+  PreventiveManagementView,
+  mockPreventiveContracts,
+  mockPreventiveMetrics,
+  type PreventiveStatus,
+  type PreventiveContract,
+  type PreventiveMetrics,
+  type PreventiveManagementViewProps,
+} from './PreventiveManagementView';
