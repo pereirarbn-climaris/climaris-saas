@@ -10,10 +10,10 @@ from app.cnpja_client import (
     fetch_brasilapi_cnpj,
     fetch_office_commercial,
     fetch_office_open,
-    get_cnpja_api_key,
     normalize_cnpj_digits,
     office_payload_to_lookup,
 )
+from app.platform_credentials import resolve_cnpja_api_key
 from app.database import get_db
 from app.dependencies import require_roles
 from app.limiter import limiter
@@ -28,12 +28,14 @@ _LOOKUP_HINT = (
 )
 
 
-def _fetch_office_open_with_commercial_fallback(digits: str) -> tuple[dict, str]:
-    """Tenta API pública; se falhar e houver CNPJA_API_KEY, tenta a comercial."""
+def _fetch_office_open_with_commercial_fallback(
+    digits: str, db: Session,
+) -> tuple[dict, str]:
+    """Tenta API pública; se falhar e houver chave comercial, tenta a comercial."""
     try:
         return fetch_office_open(digits), "open"
     except (CnpjaHttpError, OSError) as first:
-        key = get_cnpja_api_key()
+        key = resolve_cnpja_api_key(db)
         if not key:
             raise first
         try:
@@ -59,7 +61,7 @@ def _http_error_from_cnpja(exc: CnpjaHttpError) -> HTTPException:
     if code == 401:
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Falha de autenticação na API CNPJá (verifique CNPJA_API_KEY).",
+            detail="Falha de autenticação na API CNPJá. Verifique a chave em Credenciais da plataforma (CNPJá) ou CNPJA_API_KEY.",
         )
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -84,7 +86,7 @@ def _run_register_lookup(tax_id: str, db: Session) -> CnpjRegisterLookupOut:
 
     out: CnpjLookupOut | None = None
     try:
-        raw, src = _fetch_office_open_with_commercial_fallback(digits)
+        raw, src = _fetch_office_open_with_commercial_fallback(digits, db)
         out = office_payload_to_lookup(raw, src)  # type: ignore[arg-type]
     except (CnpjaHttpError, OSError):
         out = None
@@ -176,6 +178,7 @@ def lookup_cnpj_open(request: Request, tax_id: str) -> CnpjLookupOut:
 def lookup_cnpj_commercial(
     request: Request,
     tax_id: str,
+    db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
     full: Annotated[
         bool,
@@ -184,12 +187,12 @@ def lookup_cnpj_commercial(
         ),
     ] = False,
 ) -> CnpjCommercialLookupOut:
-    """Consulta comercial (api.cnpja.com) com CNPJA_API_KEY — dados mais completos / atualizados."""
-    api_key = get_cnpja_api_key()
+    """Consulta comercial (api.cnpja.com) — chave em Credenciais da plataforma (CNPJá) ou CNPJA_API_KEY."""
+    api_key = resolve_cnpja_api_key(db)
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="API CNPJá comercial não configurada. Defina CNPJA_API_KEY no ambiente do servidor.",
+            detail="API CNPJá comercial não configurada. Cadastre a chave em Credenciais da plataforma (CNPJá) ou defina CNPJA_API_KEY.",
         )
     try:
         digits = normalize_cnpj_digits(tax_id)

@@ -1,0 +1,1 @@
+"""Serviços utilitários da aplicação."""

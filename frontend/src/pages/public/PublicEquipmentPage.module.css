@@ -1,86 +1,116 @@
+.page {
+  min-height: 100dvh;
+  background: linear-gradient(165deg, #f0f7ff 0%, #f8fafc 42%, #eef2ff 100%);
+}
+
 .wrap {
-  max-width: 40rem;
+  max-width: 28rem;
   margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
-  font-family: system-ui, sans-serif;
+  padding: 1.25rem 1rem 2.5rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   color: #0f172a;
 }
 
-.header {
-  margin-bottom: 1rem;
+.hero {
+  margin-bottom: 1.25rem;
+  padding: 1.1rem 1rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
 
 .brand {
   margin: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 700;
   color: #64748b;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+}
+
+.heroTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
 }
 
 .title {
-  margin: 0.25rem 0 0;
-  font-size: 1.5rem;
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.statusActive,
+.statusInactive {
+  flex-shrink: 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
   font-weight: 700;
+}
+
+.statusActive {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.statusInactive {
+  background: rgba(100, 116, 139, 0.14);
+  color: #475569;
+}
+
+.modelLine {
+  margin: 0.45rem 0 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.35;
 }
 
 .meta {
   margin: 0.35rem 0 0;
-  font-size: 0.9rem;
-  color: #475569;
+  font-size: 0.85rem;
+  color: #64748b;
+  line-height: 1.4;
 }
 
-.lead {
-  margin: 1rem 0;
-  font-size: 0.9rem;
-  color: #475569;
-  line-height: 1.45;
+.serial {
+  margin: 0.65rem 0 0;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.serial code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #0f172a;
 }
 
 .section {
-  margin-top: 1.25rem;
+  margin-bottom: 1.25rem;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
 }
 
 .sectionTitle {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.65rem;
   font-size: 1rem;
+  font-weight: 700;
 }
 
-.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-
-.item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.65rem 0.85rem;
-  border-bottom: 1px solid #f1f5f9;
-  font-size: 0.88rem;
-}
-
-.item:last-child {
-  border-bottom: none;
-}
-
-.when {
-  font-size: 0.78rem;
-  color: #64748b;
-}
-
-.lineTitle {
-  font-weight: 600;
-}
-
-.detail {
+.lead {
+  margin: -0.25rem 0 0.85rem;
   font-size: 0.82rem;
   color: #64748b;
+  line-height: 1.45;
 }
 
 .muted {
@@ -90,16 +120,25 @@
 
 .err {
   color: #b91c1c;
+  font-weight: 600;
 }
 
 .footer {
-  margin-top: 2rem;
-  padding-top: 1rem;
-  border-top: 1px solid #e2e8f0;
+  margin-top: 0.5rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid #e2e8f0;
+  border-radius: 0.85rem;
+}
+
+.footerLead {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #475569;
 }
 
 .footerActions {
-  margin: 0.25rem 0;
+  margin: 0.35rem 0 0;
   font-size: 0.9rem;
 }
 
@@ -115,6 +154,168 @@
 
 .hint {
   margin: 0.5rem 0 0;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   color: #94a3b8;
+  line-height: 1.4;
+}
+
+.wrapWide {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2.5rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #0f172a;
+}
+
+.leadSection {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.statusMaintenance {
+  flex-shrink: 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(234, 88, 12, 0.14);
+  color: #c2410c;
+}
+
+.historyList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyItem {
+  padding: 0.85rem 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.historyItem:last-child {
+  border-bottom: none;
+}
+
+.historyDate {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.historyTitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.historyDetail {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.pageWithFab {
+  min-height: 100dvh;
+  padding-bottom: 5rem;
+}
+
+.statusBar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid #e2e8f0;
+  backdrop-filter: blur(8px);
+}
+
+.codeChip {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.codeChip code {
+  font-family: ui-monospace, monospace;
+}
+
+.fabNewOs {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 40;
+  padding: 0.9rem 1.35rem;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 28px rgba(194, 65, 12, 0.45);
+  cursor: pointer;
+}
+
+.fabNewOs:hover {
+  filter: brightness(1.05);
+}
+
+.fabNewOs:active {
+  transform: translateY(1px);
+}
+
+.notFoundCard {
+  margin-top: 2rem;
+  padding: 1.5rem 1.25rem;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.notFoundIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.85rem;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.notFoundTitle {
+  margin: 0.85rem 0 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.notFoundText {
+  margin: 0.5rem 0 0;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.notFoundCode {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.notFoundHint {
+  margin: 0.75rem 0 1rem;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  line-height: 1.4;
 }

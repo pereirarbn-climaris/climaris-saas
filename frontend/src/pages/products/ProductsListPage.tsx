@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { createProduct, importProductsFile, listProducts, type ProductOut } from "../../api/products";
+import { ProductsListTable } from "../../components/products";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ProductsListPage.module.css";
+
+function compareProductName(a: ProductOut, b: ProductOut): number {
+  return (a.name || "").localeCompare(b.name || "", "pt-BR");
+}
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
@@ -139,7 +144,7 @@ export function ProductsListPage() {
     setErr("");
     try {
       const list = await listProducts({ q: q || undefined, limit: 100 });
-      setRows(list);
+      setRows([...list].sort(compareProductName));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setRows([]);
@@ -168,7 +173,7 @@ export function ProductsListPage() {
     const num = (a: number, b: number) => a - b;
     switch (sort) {
       case "name_asc":
-        return list.sort((a, b) => cmp(a.name, b.name));
+        return list.sort(compareProductName);
       case "name_desc":
         return list.sort((a, b) => cmp(b.name, a.name));
       case "sku_asc":
@@ -196,7 +201,7 @@ export function ProductsListPage() {
       case "status_inactive_first":
         return list.sort((a, b) => Number(a.is_active) - Number(b.is_active) || cmp(a.name, b.name));
       default:
-        return list;
+        return list.sort(compareProductName);
     }
   }, [rows, sort]);
 
@@ -407,95 +412,19 @@ export function ProductsListPage() {
       {!loading && !err && rows.length === 0 ? <p className={styles.empty}>Nenhum produto encontrado.</p> : null}
 
       {!loading && rows.length > 0 ? (
-        <div className={styles.tableContainer}>
-          <div className={tableStyles.tableWrap}>
-            <table className={tableStyles.table}>
-              <thead>
-                <tr>
-                  <th>Produto</th>
-                  <th>Compra</th>
-                  <th>Venda</th>
-                  <th>Margem</th>
-                  <th>Status</th>
-                  <th className={tableStyles.tailActionsCol} aria-hidden="true" />
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((p) => {
-                  const margin = marginOf(p);
-                  return (
-                    <tr
-                      key={p.id}
-                      className={tableStyles.rowClickable}
-                      onClick={() => navigate(`/app/products/${p.id}`)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          navigate(`/app/products/${p.id}`);
-                        }
-                      }}
-                      role="link"
-                      tabIndex={0}
-                      aria-label={`Abrir produto ${p.name}`}
-                    >
-                      <td>
-                        <div className={styles.productCell}>
-                          <div className={styles.productIcon}>
-                            <PackageIcon />
-                          </div>
-                          <div className={styles.productInfo}>
-                            <span className={styles.productName}>{p.name}</span>
-                            <span className={styles.productSku}>{p.sku}</span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className={styles.priceCell}>{formatCurrency(Number(p.purchase_price || 0))}</td>
-                      <td className={styles.priceCell}>{formatCurrency(Number(p.sale_price || p.unit_price || 0))}</td>
-                      <td className={`${styles.marginCell} ${margin >= 0 ? styles.marginPositive : styles.marginNegative}`}>
-                        {formatCurrency(margin)}
-                      </td>
-                      <td>
-                        <span className={p.is_active ? styles.statusActive : styles.statusInactive}>
-                          {p.is_active ? "Ativo" : "Inativo"}
-                        </span>
-                      </td>
-                      <td className={`${tableStyles.tailActionsCol} ${tableStyles.rowHint}`}>
-                        <div className={tableStyles.rowActions}>
-                          {canEdit ? (
-                            <button
-                              type="button"
-                              className={styles.iconCellBtn}
-                              title="Duplicar produto"
-                              aria-label="Duplicar produto"
-                              disabled={dupBusy === p.id}
-                              onClick={(e) => void duplicateProduct(p, e)}
-                            >
-                              <DuplicateIcon />
-                            </button>
-                          ) : null}
-                          <span className={tableStyles.rowHintIcon} aria-hidden>
-                            <svg viewBox="0 0 20 20" fill="none" focusable="false">
-                              <path
-                                d="M7 4L13 10L7 16"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <>
+          <ProductsListTable
+            rows={sortedRows}
+            canEdit={canEdit}
+            dupBusy={dupBusy}
+            onDuplicate={(p, e) => void duplicateProduct(p, e)}
+            productIcon={<PackageIcon />}
+            duplicateIcon={<DuplicateIcon />}
+          />
           <p className={styles.listFoot}>
             Mostrando {sortedRows.length} de {rows.length} produtos
           </p>
-        </div>
+        </>
       ) : null}
     </div>
   );

@@ -11,7 +11,6 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
 from app.schemas import InventoryProductRowOut, StockAdjustmentCreate, StockMovementOut
-from app.stock_ops import reserved_quantities_by_product
 from models import Product, StockMovement, StockMovementReason, User, UserRole
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -24,7 +23,6 @@ def list_inventory(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[InventoryProductRowOut]:
-    reserved_map = reserved_quantities_by_product(db, current_user.tenant_id)
     products = db.execute(
         select(Product)
         .where(Product.tenant_id == current_user.tenant_id)
@@ -34,16 +32,16 @@ def list_inventory(
     ).scalars().all()
     rows: list[InventoryProductRowOut] = []
     for p in products:
-        r = float(reserved_map.get(p.id, Decimal(0)))
-        s = float(p.stock_quantity)
+        physical = float(p.quantity_physical)
+        reserved = float(p.quantity_reserved)
         rows.append(
             InventoryProductRowOut(
                 product_id=p.id,
                 name=p.name,
                 sku=p.sku,
-                stock_quantity=s,
-                reserved_quantity=r,
-                available_quantity=s - r,
+                stock_quantity=physical,
+                reserved_quantity=reserved,
+                available_quantity=max(0.0, physical - reserved),
                 is_active=p.is_active,
             )
         )
@@ -86,7 +84,7 @@ def create_stock_adjustment(
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado.")
 
-    cur = Decimal(str(product.stock_quantity))
+    cur = Decimal(str(product.quantity_physical))
     nxt = cur + Decimal(str(payload.quantity_delta))
     if nxt < 0:
         raise HTTPException(
@@ -94,6 +92,7 @@ def create_stock_adjustment(
             detail=f"Ajuste resultaria em estoque negativo (atual {cur}, delta {payload.quantity_delta}).",
         )
 
+    product.quantity_physical = float(nxt)
     product.stock_quantity = float(nxt)
     row = StockMovement(
         tenant_id=current_user.tenant_id,

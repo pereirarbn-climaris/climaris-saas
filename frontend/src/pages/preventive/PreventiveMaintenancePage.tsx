@@ -1,379 +1,430 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useOutletContext } from "react-router-dom";
-import { listClients, type ClientOut } from "../../api/clients";
+/**
+ * PreventiveMaintenancePage
+ * Layout 100% baseado em CSS modules — mesma linguagem visual de ClientsListPage.
+ * Nenhum uso de PreventiveManagementView para estrutura visual.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
   fetchPreventivePreview,
   fetchPreventiveSettings,
-  listPreventiveItems,
-  listPreventiveLeads,
-  patchPreventiveSettings,
-  registerPreventiveEntry,
+  listPreventiveItemsGrouped,
   sendPreventiveReminder,
   sendPreventiveRemindersBulk,
   type PreventiveItem,
-  type PreventiveLead,
   type PreventivePreview,
   type PreventiveSettings,
 } from "../../api/preventiveMaintenance";
-import { listServices, type ServiceOut } from "../../api/services";
 import type { DashboardOutletContext } from "../dashboardContext";
+import { PreventiveCreateFormView } from "../../components/preventive";
+import { getPreventiveStatus } from "../../lib/preventiveStatus";
+import tableStyles from "../listTableCommon.module.css";
 import styles from "./PreventiveMaintenancePage.module.css";
 
-/** Janela da lista / envio em lote (dias corridos; rótulos para a UI). */
-const PREVENTIVE_WINDOW_OPTIONS = [
-  { days: 7, label: "7 dias" },
-  { days: 15, label: "15 dias" },
-  { days: 30, label: "30 dias" },
+// ─── types ────────────────────────────────────────────────────────────────────
+type PreventiveStatus = "em_dia" | "vence_este_mes" | "atrasada";
+type StatusFilter = "all" | PreventiveStatus;
+
+// ─── constants ────────────────────────────────────────────────────────────────
+const WINDOW_OPTIONS = [
+  { days: 7,   label: "7 dias"  },
+  { days: 15,  label: "15 dias" },
+  { days: 30,  label: "30 dias" },
   { days: 180, label: "6 meses" },
-  { days: 365, label: "1 ano" },
+  { days: 365, label: "1 ano"   },
 ] as const;
 
-function windowLabel(days: number): string {
-  const row = PREVENTIVE_WINDOW_OPTIONS.find((o) => o.days === days);
-  return row ? row.label : `${days} dias`;
+// ─── helpers ──────────────────────────────────────────────────────────────────
+function getItemStatus(row: PreventiveItem): PreventiveStatus {
+  const kind = getPreventiveStatus(row.dias_ate_vencimento, row.data_proximo_vencimento);
+  if (kind === "overdue") return "atrasada";
+  if (kind === "due_this_month") return "vence_este_mes";
+  return "em_dia";
 }
 
-function fmtDateTime(iso: string | undefined | null): string {
-  if (!iso) return "";
+function formatDate(d: string | null | undefined): string {
+  if (!d) return "—";
+  const dt = new Date(d);
+  return dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function normalizeEquipmentLabelText(label: string): string {
+  const parts = label.split(" · ").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return label;
+  if (parts.length >= 2 && parts[0]!.toLowerCase() === parts[parts.length - 1]!.toLowerCase()) {
+    parts.pop();
+  }
+  const deduped: string[] = [];
+  for (const part of parts) {
+    if (deduped.length > 0 && deduped[deduped.length - 1]!.toLowerCase() === part.toLowerCase()) continue;
+    deduped.push(part);
+  }
+  return deduped.join(" · ");
+}
+
+function equipmentCategoryLabel(tipo: string | null | undefined): string | null {
+  const raw = (tipo ?? "").trim();
+  if (!raw) return null;
+  if (raw.toUpperCase() === "AR_CONDICIONADO") return "Ar condicionado";
+  return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function equipmentLabel(row: PreventiveItem): string {
+  const ident = row.equipment_identificacao?.trim();
+  const fromService = row.service_name?.replace(/^Preventiva\s*[—-]\s*/i, "").trim();
+  let base = ident && fromService && ident !== fromService ? `${ident} — ${fromService}` : ident || fromService || "Equipamento";
+  base = normalizeEquipmentLabelText(base);
+  const category = equipmentCategoryLabel(row.equipment_tipo);
+  if (category && !base.toLowerCase().startsWith(category.toLowerCase())) {
+    base = `${category} ${base}`;
+  }
+  return base;
+}
+
+function historyPath(row: PreventiveItem): string {
+  return row.equipment_id != null && row.equipment_id > 0
+    ? `/app/clients/${row.client_id}?tab=historico`
+    : `/app/clients/${row.client_id}?tab=preventiva`;
+}
+
+function initials(name: string): string {
+  const chunks = name.trim().split(/\s+/).filter(Boolean);
+  if (chunks.length === 0) return "?";
+  if (chunks.length === 1) return chunks[0]!.slice(0, 2).toUpperCase();
+  return `${chunks[0]![0] ?? ""}${chunks[1]![0] ?? ""}`.toUpperCase();
+}
+
+function avatarClass(id: number): string {
+  const i = Math.abs(id) % 5;
+  return [styles.avatarA, styles.avatarB, styles.avatarC, styles.avatarD, styles.avatarE][i] ?? styles.avatarA;
+}
+
+function windowLabel(d: number): string {
+  return WINDOW_OPTIONS.find((o) => o.days === d)?.label ?? `${d} dias`;
+}
+
+function preventiveItemRowKey(row: PreventiveItem): string {
+  return `${row.client_id}-${row.rule_id ?? 0}-${row.equipment_id ?? 0}-${row.historico_servico_id}`;
+}
+
+function preventiveWhatsAppGroupKey(row: PreventiveItem): string {
+  const d = new Date(row.data_proximo_vencimento);
+  return `${row.client_id}-${d.getFullYear()}-${d.getMonth() + 1}`;
+}
+
+type PreventiveMonthGroup = {
+  key: string;
+  client_id: number;
+  client_name: string;
+  whatsapp_valido: boolean;
+  items: PreventiveItem[];
+  dias_ate_vencimento: number;
+  data_proximo_vencimento: string;
+  data_ultima_realizacao: string;
+};
+
+function buildPreventiveMonthGroups(items: PreventiveItem[]): PreventiveMonthGroup[] {
+  const map = new Map<string, PreventiveMonthGroup>();
+  for (const row of items) {
+    const key = preventiveWhatsAppGroupKey(row);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
+        key,
+        client_id: row.client_id,
+        client_name: row.client_name,
+        whatsapp_valido: row.whatsapp_valido,
+        items: [row],
+        dias_ate_vencimento: row.dias_ate_vencimento,
+        data_proximo_vencimento: row.data_proximo_vencimento,
+        data_ultima_realizacao: row.data_ultima_realizacao,
+      });
+      continue;
+    }
+    existing.items.push(row);
+    if (row.dias_ate_vencimento < existing.dias_ate_vencimento) {
+      existing.dias_ate_vencimento = row.dias_ate_vencimento;
+      existing.data_proximo_vencimento = row.data_proximo_vencimento;
+    }
+    if (row.data_ultima_realizacao < existing.data_ultima_realizacao) {
+      existing.data_ultima_realizacao = row.data_ultima_realizacao;
+    }
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => a.dias_ate_vencimento - b.dias_ate_vencimento || a.client_name.localeCompare(b.client_name),
+  );
+}
+
+function getGroupStatus(group: PreventiveMonthGroup): PreventiveStatus {
+  let status: PreventiveStatus = "em_dia";
+  for (const item of group.items) {
+    const s = getItemStatus(item);
+    if (s === "atrasada") return "atrasada";
+    if (s === "vence_este_mes") status = "vence_este_mes";
+  }
+  return status;
+}
+
+function formatDueMonthLabel(iso: string): string {
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  const label = d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-function truncateText(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max)}…`;
+// ─── sub-components ───────────────────────────────────────────────────────────
+
+interface RowDropdownProps {
+  row: PreventiveItem;
+  canEdit: boolean;
+  sending: boolean;
+  previewOpen: boolean;
+  whatsappGroupSize: number;
+  onGenerateOS: () => void;
+  onViewHistory: () => void;
+  onPreviewWhatsApp: () => void;
+  onSendWhatsApp: () => void;
 }
 
-/** Mensagem acionável para erros comuns da Evolution (resposta técnica fica no `title`). */
-function evolutionWhatsappFailureHint(detail: string): string | null {
-  const d = detail.toLowerCase();
-  if (d.includes("sendmessage") || d.includes("cannot read properties")) {
-    return "WhatsApp desta instância não está conectado na Evolution. No Evolution Manager, abra a instância do tenant e reconecte (QR).";
+function RowDropdown({
+  row,
+  canEdit,
+  sending,
+  previewOpen,
+  whatsappGroupSize,
+  onGenerateOS,
+  onViewHistory,
+  onPreviewWhatsApp,
+  onSendWhatsApp,
+}: RowDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const canSendWa    = row.whatsapp_valido;
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  function toggleOpen(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!open && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      const menuHeight = 220;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUp = spaceBelow < menuHeight;
+      setMenuStyle({
+        position: "fixed",
+        right: Math.max(12, window.innerWidth - rect.right),
+        top: openUp ? Math.max(12, rect.top - 4) : rect.bottom + 4,
+        transform: openUp ? "translateY(-100%)" : undefined,
+        zIndex: 1200,
+      });
+    }
+    setOpen((v) => !v);
   }
-  if (d.includes("does not exist") && d.includes("instance")) {
-    return "Nome da instância não existe na Evolution. Confira em Integrações → WhatsApp e no Evolution Manager.";
-  }
-  if (d.includes("not allowed by cors")) {
-    return "CORS na Evolution: alinhe a origem permitida com a URL do app (variáveis da API e da Evolution).";
-  }
-  return null;
+
+  return (
+    <div className={styles.dropdownWrap} ref={wrapRef}>
+      <button
+        type="button"
+        aria-label="Ações"
+        aria-expanded={open}
+        className={`${styles.dropdownTrigger} ${open ? styles.dropdownTriggerOpen : ""}`}
+        onClick={toggleOpen}
+      >
+        {/* three-dots icon */}
+        <svg viewBox="0 0 24 24" style={{ width: "1rem", height: "1rem", stroke: "currentColor", fill: "none", strokeWidth: 2 }}>
+          <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className={styles.dropdownMenu} style={menuStyle} role="menu">
+          <button
+            type="button"
+            className={styles.dropdownItem}
+            role="menuitem"
+            onClick={() => { onGenerateOS(); setOpen(false); }}
+          >
+            <svg viewBox="0 0 24 24" className={styles.dropdownItemIcon}>
+              <rect width="8" height="4" x="8" y="2" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <path d="M12 11h4" /><path d="M12 16h4" /><path d="M8 11h.01" /><path d="M8 16h.01" />
+            </svg>
+            Gerar OS
+          </button>
+          <button
+            type="button"
+            className={styles.dropdownItem}
+            role="menuitem"
+            onClick={() => { onViewHistory(); setOpen(false); }}
+          >
+            <svg viewBox="0 0 24 24" className={styles.dropdownItemIcon}>
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" />
+            </svg>
+            Ver Histórico
+          </button>
+
+          {canSendWa && (
+            <>
+              <div className={styles.dropdownDivider} role="separator" />
+              <button
+                type="button"
+                className={styles.dropdownItem}
+                role="menuitem"
+                onClick={() => { onPreviewWhatsApp(); setOpen(false); }}
+              >
+                {previewOpen ? "Fechar prévia" : "Prévia WhatsApp"}
+              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  className={styles.dropdownItem}
+                  role="menuitem"
+                  disabled={sending}
+                  onClick={() => { onSendWhatsApp(); setOpen(false); }}
+                >
+                  {sending
+                    ? "Enviando…"
+                    : whatsappGroupSize > 1
+                      ? `Enviar WhatsApp (${whatsappGroupSize} equip.)`
+                      : "Enviar WhatsApp"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
-function fmtDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
+// ─── table skeleton ───────────────────────────────────────────────────────────
+function TableSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }, (_, i) => (
+        <tr key={i}>
+          {[100, 140, 90, 90, 70, 32].map((w, j) => (
+            <td key={j}>
+              <div
+                style={{
+                  height: "1.25rem",
+                  width: `${w}px`,
+                  borderRadius: "0.375rem",
+                  background: "linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%)",
+                  backgroundSize: "200% 100%",
+                  animation: "shimmer 1.2s ease-in-out infinite",
+                }}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
 }
 
-function todayIsoDate(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
+// ─── main component ───────────────────────────────────────────────────────────
 export function PreventiveMaintenancePage() {
-  const ctx = useOutletContext<DashboardOutletContext | undefined>();
-  const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+  const navigate  = useNavigate();
+  const ctx       = useOutletContext<DashboardOutletContext | undefined>();
+  const canEdit   = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
 
-  const [days, setDays] = useState<number>(30);
-  const [items, setItems] = useState<PreventiveItem[]>([]);
-  const [leads, setLeads] = useState<PreventiveLead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadErr, setLoadErr] = useState("");
-  const [settings, setSettings] = useState<PreventiveSettings | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState({
-    preventive_promo_image_url: "",
-    preventive_technical_problem_hint: "",
-    preventive_button_more_text: "",
-    preventive_button_schedule_text: "",
-    preventive_message_template: "",
-    preventive_auto_remind_days_before: 0,
-  });
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [selectedHistorico, setSelectedHistorico] = useState<number | null>(null);
-  const [preview, setPreview] = useState<PreventivePreview | null>(null);
-  const [previewErr, setPreviewErr] = useState("");
-  const [sendErr, setSendErr] = useState("");
-  const [sendingId, setSendingId] = useState<number | null>(null);
-  const [bulkSending, setBulkSending] = useState(false);
-  const [bulkNotice, setBulkNotice] = useState("");
+  // ── data state ──────────────────────────────────────────────────────────────
+  const [days,          setDays]          = useState<number>(30);
+  const [items,         setItems]         = useState<PreventiveItem[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [loadErr,       setLoadErr]       = useState("");
+  const [settings,      setSettings]      = useState<PreventiveSettings | null>(null);
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createSubmitting, setCreateSubmitting] = useState(false);
-  const [createErr, setCreateErr] = useState("");
-  const [clientQuery, setClientQuery] = useState("");
-  const [clientHits, setClientHits] = useState<ClientOut[]>([]);
-  const [clientSearchLoading, setClientSearchLoading] = useState(false);
-  const [clientListOpen, setClientListOpen] = useState(false);
-  const [selectedClient, setSelectedClient] = useState<ClientOut | null>(null);
-  const [clientCreateNew, setClientCreateNew] = useState(false);
-  const [newClientName, setNewClientName] = useState("");
-  const [newClientPhone, setNewClientPhone] = useState("");
-  const [newClientWhatsapp, setNewClientWhatsapp] = useState("");
-  const [modalServicesActive, setModalServicesActive] = useState<ServiceOut[]>([]);
-  const [servicesLoading, setServicesLoading] = useState(false);
-  const [servicesLoadErr, setServicesLoadErr] = useState("");
-  const [serviceId, setServiceId] = useState<number | "">("");
-  const [dataRealizacao, setDataRealizacao] = useState(todayIsoDate());
-  const [reminderSend, setReminderSend] = useState<"none" | "now" | "scheduled">("none");
-  const [reminderLocalDate, setReminderLocalDate] = useState(todayIsoDate());
-  const [reminderLocalTime, setReminderLocalTime] = useState("09:00");
-  const [createNotes, setCreateNotes] = useState("");
+  // ── filter state ────────────────────────────────────────────────────────────
+  const [searchInput,   setSearchInput]   = useState("");
+  const [searchQ,       setSearchQ]       = useState("");
+  const [statusFilter,  setStatusFilter]  = useState<StatusFilter>("all");
 
+  // ── preview / send state ─────────────────────────────────────────────────────
+  const [selectedPreviewGroupKey, setSelectedPreviewGroupKey] = useState<string | null>(null);
+  const [preview,           setPreview]           = useState<PreventivePreview | null>(null);
+  const [previewErr,        setPreviewErr]        = useState("");
+  const [sendErr,           setSendErr]           = useState("");
+  const [sendingId,         setSendingId]         = useState<number | null>(null);
+  const [bulkSending,       setBulkSending]       = useState(false);
+  const [bulkNotice,        setBulkNotice]        = useState("");
+  const [createOpen,        setCreateOpen]        = useState(false);
+
+  // ── debounce search ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchQ(searchInput.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  // ── fetch ────────────────────────────────────────────────────────────────────
   const refreshList = useCallback(async () => {
     setLoading(true);
     setLoadErr("");
     try {
-      const [list, ld, st] = await Promise.all([
-        listPreventiveItems(days),
-        listPreventiveLeads(80),
+      const [grouped, st] = await Promise.all([
+        listPreventiveItemsGrouped(days),
         fetchPreventiveSettings(),
       ]);
-      setItems(list);
-      setLeads(ld);
+      setItems(grouped.items);
       setSettings(st);
-      setSettingsDraft({
-        preventive_promo_image_url: st.preventive_promo_image_url ?? "",
-        preventive_technical_problem_hint: st.preventive_technical_problem_hint ?? "",
-        preventive_button_more_text: st.preventive_button_more_text,
-        preventive_button_schedule_text: st.preventive_button_schedule_text,
-        preventive_message_template: st.preventive_message_template ?? "",
-        preventive_auto_remind_days_before: st.preventive_auto_remind_days_before ?? 0,
-      });
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setItems([]);
-      setLeads([]);
     } finally {
       setLoading(false);
     }
   }, [days]);
 
-  useEffect(() => {
-    void refreshList();
-  }, [refreshList]);
+  useEffect(() => { void refreshList(); }, [refreshList]);
 
+  // ── preview loader ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (selectedHistorico == null) {
-      setPreview(null);
-      setPreviewErr("");
-      return;
-    }
+    if (selectedPreviewGroupKey == null) { setPreview(null); setPreviewErr(""); return; }
+    const row = items.find((r) => preventiveWhatsAppGroupKey(r) === selectedPreviewGroupKey);
+    if (row == null) { setPreview(null); setPreviewErr(""); return; }
     let cancelled = false;
     void (async () => {
       try {
-        const p = await fetchPreventivePreview(selectedHistorico);
-        if (!cancelled) {
-          setPreview(p);
-          setPreviewErr("");
-        }
+        const p = await fetchPreventivePreview({
+          historico_servico_id: row.historico_servico_id > 0 ? row.historico_servico_id : undefined,
+          rule_id: row.rule_id ?? undefined,
+          window_days: days,
+        });
+        if (!cancelled) { setPreview(p); setPreviewErr(""); }
       } catch (e) {
-        if (!cancelled) {
-          setPreview(null);
-          setPreviewErr(e instanceof Error ? e.message : "Prévia indisponível.");
-        }
+        if (!cancelled) { setPreview(null); setPreviewErr(e instanceof Error ? e.message : "Prévia indisponível."); }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedHistorico]);
-
-  useEffect(() => {
-    if (!createOpen) return;
-    let cancelled = false;
-    setServicesLoading(true);
-    setServicesLoadErr("");
-    void (async () => {
-      try {
-        const batches: ServiceOut[] = [];
-        let skip = 0;
-        const page = 100;
-        for (;;) {
-          const part = await listServices({ limit: page, skip });
-          batches.push(...part);
-          if (part.length < page) break;
-          skip += page;
-          if (skip > 2500) break;
-        }
-        if (!cancelled) setModalServicesActive(batches.filter((s) => s.is_active));
-      } catch (e) {
-        if (!cancelled) {
-          setModalServicesActive([]);
-          setServicesLoadErr(e instanceof Error ? e.message : "Erro ao carregar serviços.");
-        }
-      } finally {
-        if (!cancelled) setServicesLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [createOpen]);
-
-  useEffect(() => {
-    if (!createOpen || clientCreateNew || selectedClient != null) return;
-    const q = clientQuery.trim();
-    if (q.length < 2) {
-      setClientHits([]);
-      setClientSearchLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setClientSearchLoading(true);
-    const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const rows = await listClients({ q, limit: 40 });
-          if (!cancelled) setClientHits(rows);
-        } catch {
-          if (!cancelled) setClientHits([]);
-        } finally {
-          if (!cancelled) setClientSearchLoading(false);
-        }
-      })();
-    }, 350);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [clientQuery, clientCreateNew, selectedClient, createOpen]);
-
-  function openCreateModal() {
-    setCreateErr("");
-    setClientQuery("");
-    setClientHits([]);
-    setClientListOpen(false);
-    setSelectedClient(null);
-    setClientCreateNew(false);
-    setNewClientName("");
-    setNewClientPhone("");
-    setNewClientWhatsapp("");
-    setServiceId("");
-    setDataRealizacao(todayIsoDate());
-    setReminderSend("none");
-    setReminderLocalDate(todayIsoDate());
-    setReminderLocalTime("09:00");
-    setCreateNotes("");
-    setCreateOpen(true);
-  }
-
-  async function handleCreateSubmit(e: FormEvent) {
-    e.preventDefault();
-    setCreateErr("");
-    if (serviceId === "") {
-      setCreateErr("Selecione um serviço com periodicidade cadastrada (6 ou 12 meses).");
-      return;
-    }
-    if (!clientCreateNew) {
-      if (selectedClient == null) {
-        setCreateErr("Busque na lista, escolha um cliente ou use “Criar novo cliente”.");
-        return;
-      }
-    } else {
-      if (!newClientName.trim()) {
-        setCreateErr("Informe o nome do cliente.");
-        return;
-      }
-      if (!newClientPhone.trim() && !newClientWhatsapp.trim()) {
-        setCreateErr("Informe telefone ou WhatsApp do novo cliente.");
-        return;
-      }
-    }
-    if (reminderSend === "scheduled" && !reminderLocalDate) {
-      setCreateErr("Informe a data do lembrete.");
-      return;
-    }
-
-    const sid = typeof serviceId === "number" ? serviceId : 0;
-    setCreateSubmitting(true);
-    try {
-      const common = {
-        service_id: sid,
-        data_realizacao: dataRealizacao,
-        notes: createNotes.trim() ? createNotes.trim() : null,
-        reminder_send: reminderSend,
-        promo_image_url: settings?.preventive_promo_image_url ?? null,
-        technical_problem_hint: settings?.preventive_technical_problem_hint ?? null,
-        ...(reminderSend === "scheduled"
-          ? { reminder_local_date: reminderLocalDate, reminder_local_time: reminderLocalTime || "09:00" }
-          : {}),
-      } as const;
-
-      const out = !clientCreateNew
-        ? await registerPreventiveEntry({
-            ...common,
-            client_id: selectedClient!.id,
-          })
-        : await registerPreventiveEntry({
-            ...common,
-            new_client: {
-              name: newClientName.trim(),
-              phone: newClientPhone.trim() || null,
-              whatsapp: newClientWhatsapp.trim() || null,
-            },
-          });
-
-      setCreateOpen(false);
-      await refreshList();
-      if (out.whatsapp_job?.scheduled_for) {
-        window.alert(
-          `Lembrete agendado para ${new Date(out.whatsapp_job.scheduled_for).toLocaleString("pt-BR", {
-            dateStyle: "short",
-            timeStyle: "short",
-          })}.`,
-        );
-      } else if (reminderSend === "now") {
-        window.alert("Lembrete enviado por WhatsApp.");
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Falha ao registrar.";
-      setCreateErr(msg);
-    } finally {
-      setCreateSubmitting(false);
-    }
-  }
-
-  async function handleSaveSettings(e: FormEvent) {
-    e.preventDefault();
-    setSavingSettings(true);
-    try {
-      const next = await patchPreventiveSettings({
-        preventive_promo_image_url: settingsDraft.preventive_promo_image_url.trim() || null,
-        preventive_technical_problem_hint: settingsDraft.preventive_technical_problem_hint.trim() || null,
-        preventive_button_more_text: settingsDraft.preventive_button_more_text.trim() || undefined,
-        preventive_button_schedule_text: settingsDraft.preventive_button_schedule_text.trim() || undefined,
-        preventive_message_template: settingsDraft.preventive_message_template.trim() || null,
-        preventive_auto_remind_days_before: Math.min(
-          90,
-          Math.max(0, Math.floor(Number(settingsDraft.preventive_auto_remind_days_before) || 0)),
-        ),
-      });
-      setSettings(next);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Falha ao salvar.");
-    } finally {
-      setSavingSettings(false);
-    }
-  }
+    return () => { cancelled = true; };
+  }, [selectedPreviewGroupKey, items, days]);
 
   async function handleSend(row: PreventiveItem) {
-    setSendErr("");
-    setBulkNotice("");
-    setSendingId(row.historico_servico_id);
+    setSendErr(""); setBulkNotice("");
+    const sendKey = row.historico_servico_id > 0 ? row.historico_servico_id : (row.rule_id ?? 0);
+    setSendingId(sendKey);
     try {
-      const result = await sendPreventiveReminder({
-        historico_servico_id: row.historico_servico_id,
-        promo_image_url: settings?.preventive_promo_image_url ?? undefined,
-      });
-      if (result.processing_in_background) {
-        setBulkNotice(
-          "Envio por WhatsApp iniciado em segundo plano (evita erro de servidor por tempo limite). Aguarde alguns instantes e clique em Atualizar para conferir.",
-        );
-      }
+      const payload =
+        row.historico_servico_id > 0
+          ? {
+              historico_servico_id: row.historico_servico_id,
+              window_days: days,
+              promo_image_url: settings?.preventive_promo_image_url ?? undefined,
+            }
+          : {
+              rule_id: row.rule_id ?? undefined,
+              window_days: days,
+              promo_image_url: settings?.preventive_promo_image_url ?? undefined,
+            };
+      const r = await sendPreventiveReminder(payload);
+      if (r.processing_in_background)
+        setBulkNotice("Envio iniciado em segundo plano (agrupado por cliente e mês). Clique em Atualizar para conferir.");
       await refreshList();
     } catch (e) {
       setSendErr(e instanceof Error ? e.message : "Falha no envio.");
@@ -383,31 +434,19 @@ export function PreventiveMaintenancePage() {
   }
 
   async function handleBulkSend() {
-    const okWa = items.filter((r) => r.whatsapp_valido).length;
-    if (
-      !window.confirm(
-        `Enviar campanha por WhatsApp para até ${okWa} cliente(s) nesta lista (janela: ${windowLabel(days)})?`,
-      )
-    ) {
-      return;
-    }
-    setSendErr("");
-    setBulkNotice("");
-    setBulkSending(true);
+    if (!window.confirm(
+      `Enviar campanha WhatsApp para ${whatsappEligibleCount} cliente(s) (agrupado por mês de vencimento) nesta janela (${windowLabel(days)})?`
+    )) return;
+    setSendErr(""); setBulkNotice(""); setBulkSending(true);
     try {
-      const result = await sendPreventiveRemindersBulk({
+      const r = await sendPreventiveRemindersBulk({
         window_days_if_empty: days,
-        promo_image_url: settings?.preventive_promo_image_url ?? undefined,
+        promo_image_url:      settings?.preventive_promo_image_url ?? undefined,
       });
-      if (result.processing_in_background) {
-        setBulkNotice(
-          `Envio em lote para ${result.attempted} cliente(s) foi iniciado em segundo plano (evita erro de servidor por tempo limite). Aguarde cerca de um minuto e clique em Atualizar para conferir.`,
-        );
-      } else if (result.failed > 0) {
-        setSendErr(
-          `Enviados ${result.sent} de ${result.attempted}. Falhas: ${result.failed}. Veja detalhes no primeiro erro: ${result.errors[0]?.detail ?? "—"}`,
-        );
-      }
+      if (r.processing_in_background)
+        setBulkNotice(`Envio em lote para ${r.attempted} cliente(s) (agrupado por mês) iniciado em segundo plano.`);
+      else if (r.failed > 0)
+        setSendErr(`Enviados ${r.sent}/${r.attempted}. Falhas: ${r.failed}. Primeiro erro: ${r.errors[0]?.detail ?? "—"}`);
       await refreshList();
     } catch (e) {
       setSendErr(e instanceof Error ? e.message : "Falha no envio em lote.");
@@ -416,566 +455,394 @@ export function PreventiveMaintenancePage() {
     }
   }
 
-  const servicesWithPeriod = modalServicesActive.filter((s) => s.periodicidade_meses != null);
-  const servicesWithoutPeriod = modalServicesActive.filter((s) => s.periodicidade_meses == null);
+  // ── derived ──────────────────────────────────────────────────────────────────
+  const whatsappEligibleCount = useMemo(() => {
+    const groups = new Set<string>();
+    for (const r of items) {
+      if (!r.whatsapp_valido) continue;
+      groups.add(preventiveWhatsAppGroupKey(r));
+    }
+    return groups.size;
+  }, [items]);
 
+  const selectedPreviewRow = useMemo(
+    () => selectedPreviewGroupKey != null
+      ? (items.find((r) => preventiveWhatsAppGroupKey(r) === selectedPreviewGroupKey) ?? null)
+      : null,
+    [items, selectedPreviewGroupKey],
+  );
+
+  const selectedPreviewGroupItems = useMemo(
+    () => selectedPreviewGroupKey != null
+      ? items.filter((r) => preventiveWhatsAppGroupKey(r) === selectedPreviewGroupKey)
+      : [],
+    [items, selectedPreviewGroupKey],
+  );
+
+  const filteredItems = useMemo(() => {
+    const q = searchQ.toLowerCase();
+    return items
+      .filter((row) => {
+        if (q) {
+          const matchName = row.client_name.toLowerCase().includes(q);
+          const matchEquip = equipmentLabel(row).toLowerCase().includes(q);
+          if (!matchName && !matchEquip) return false;
+        }
+        if (statusFilter === "all") return true;
+        return getItemStatus(row) === statusFilter;
+      })
+      .sort(
+        (a, b) =>
+          a.dias_ate_vencimento - b.dias_ate_vencimento ||
+          a.client_name.localeCompare(b.client_name) ||
+          equipmentLabel(a).localeCompare(equipmentLabel(b)),
+      );
+  }, [items, searchQ, statusFilter]);
+
+  const whatsappGroupSizes = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of items) {
+      if (!row.whatsapp_valido) continue;
+      const key = preventiveWhatsAppGroupKey(row);
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [items]);
+
+  const metrics = useMemo(() => {
+    const groups = buildPreventiveMonthGroups(items);
+    const clientIds = new Set(groups.map((g) => g.client_id));
+    let onTime = 0;
+    let overdue = 0;
+    for (const group of groups) {
+      if (getGroupStatus(group) === "atrasada") overdue++;
+      else onTime++;
+    }
+    return { activeContracts: clientIds.size, onTime, overdue, groupCount: groups.length };
+  }, [items]);
+
+  // ── status pill helper ───────────────────────────────────────────────────────
+  function StatusPill({ status }: { status: PreventiveStatus }) {
+    const cls =
+      status === "atrasada"       ? styles.statusAtrasada :
+      status === "vence_este_mes" ? styles.statusVence    :
+                                    styles.statusEmDia;
+    const label =
+      status === "atrasada"       ? "Atrasada"        :
+      status === "vence_este_mes" ? "Vence este Mês"  :
+                                    "Em Dia";
+    return <span className={`${styles.statusPill} ${cls}`}>{label}</span>;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   return (
     <div className={styles.wrap}>
-      <header className={styles.head}>
-        <h1>Gestão preventiva</h1>
-        <p>
-          Clientes com manutenção vencida ou a vencer conforme o histórico de serviços e a periodicidade definida em cada
-          tipo de serviço (6 ou 12 meses).
-        </p>
-      </header>
 
-      <div className={styles.toolbar}>
-        <label>
-          Janela:
-          <span className={styles.filters}>
-            {PREVENTIVE_WINDOW_OPTIONS.map(({ days: d, label }) => (
-              <button
-                key={d}
-                type="button"
-                className={days === d ? styles.filterActive : ""}
-                onClick={() => setDays(d)}
-              >
-                {label}
-              </button>
-            ))}
-          </span>
-        </label>
-        <button type="button" className={`${styles.btn} ${styles.btnGhost}`} onClick={() => void refreshList()}>
-          Atualizar
-        </button>
-        {canEdit ? (
-          <button type="button" className={`${styles.btn} ${styles.btnGhost}`} onClick={() => openCreateModal()}>
-            Criar registro
-          </button>
-        ) : null}
+      {/* ── Page header ───────────────────────────────────────────────────── */}
+      <header className={styles.pageHeader}>
+        <div>
+          <h1 className={styles.pageTitle}>Gestão Preventiva</h1>
+          <p className={styles.pageSubtitle}>
+            Gerencie os contratos e cronogramas de manutenção preventiva
+          </p>
+        </div>
         {canEdit ? (
           <button
             type="button"
-            className={styles.btn}
-            disabled={
-              bulkSending || loading || items.filter((r) => r.whatsapp_valido).length === 0
-            }
-            onClick={() => void handleBulkSend()}
+            className={tableStyles.listToolbarBtnPrimary}
+            onClick={() => setCreateOpen(true)}
           >
-            {bulkSending ? "Enviando lote…" : "Enviar todos (WhatsApp OK)"}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.125rem", height: "1.125rem" }}>
+              <path d="M5 12h14" /><path d="M12 5v14" />
+            </svg>
+            Nova Preventiva
           </button>
         ) : null}
+      </header>
+
+      <p className={styles.pageSubtitle} style={{ marginBottom: "1rem" }}>
+        Mensagens WhatsApp, botões e respostas dos clientes:{" "}
+        <Link to="/app/integrations/whatsapp">Integrações → WhatsApp → Gestão preventiva</Link>
+      </p>
+
+      {/* ── Stat cards (3 cols — same token as Clients) ───────────────────── */}
+      <div className={styles.heroStats}>
+        {/* Contratos Ativos */}
+        <article className={styles.statCard}>
+          <div className={styles.statHead}>
+            <div>
+              <p className={styles.statLabel}>Contratos Ativos</p>
+              <p className={styles.statValue}>{loading ? "—" : metrics.activeContracts}</p>
+            </div>
+            <span className={styles.statIconWrap} aria-hidden>
+              <svg viewBox="0 0 24 24">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                <path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+              </svg>
+            </span>
+          </div>
+          <p className={styles.statHint}>clientes distintos</p>
+        </article>
+
+        {/* No Prazo */}
+        <article className={styles.statCard}>
+          <div className={styles.statHead}>
+            <div>
+              <p className={styles.statLabel}>Grupos no Prazo</p>
+              <p className={styles.statValue}>{loading ? "—" : metrics.onTime}</p>
+            </div>
+            <span className={styles.statIconWrap} aria-hidden>
+              <svg viewBox="0 0 24 24">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <path d="m9 11 3 3L22 4" />
+              </svg>
+            </span>
+          </div>
+          <p className={styles.statHint}>dentro do período</p>
+        </article>
+
+        {/* Atrasadas */}
+        <article className={styles.statCard}>
+          <div className={styles.statHead}>
+            <div>
+              <p className={styles.statLabel}>Atrasadas</p>
+              <p className={styles.statValue}>{loading ? "—" : metrics.overdue}</p>
+            </div>
+            <span className={styles.statIconWrap} aria-hidden>
+              <svg viewBox="0 0 24 24">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                <path d="M12 9v4" /><path d="M12 17h.01" />
+              </svg>
+            </span>
+          </div>
+          <p className={styles.statHint}>fora do prazo</p>
+        </article>
       </div>
 
-      {loadErr ? <p className={styles.err}>{loadErr}</p> : null}
-      {bulkNotice ? <p className={styles.notice}>{bulkNotice}</p> : null}
-      {sendErr ? <p className={styles.err}>{sendErr}</p> : null}
-
-      <section className={styles.card}>
-        <h2>Manutenções vencidas / a vencer</h2>
-        {loading ? (
-          <p>Carregando…</p>
-        ) : items.length === 0 ? (
-          <p>Nenhum cliente nesta janela. Cadastre histórico de realização e periodicidade nos serviços.</p>
-        ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Cliente</th>
-                  <th>Serviço</th>
-                  <th>Última realização</th>
-                  <th>Próximo vencimento</th>
-                  <th>Dias</th>
-                  <th>WhatsApp</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((row) => (
-                  <tr key={row.historico_servico_id} className={row.dias_ate_vencimento < 0 ? styles.rowWarn : undefined}>
-                    <td>{row.client_name}</td>
-                    <td>{row.service_name}</td>
-                    <td>{fmtDate(row.data_ultima_realizacao)}</td>
-                    <td>{fmtDate(row.data_proximo_vencimento)}</td>
-                    <td>{row.dias_ate_vencimento}</td>
-                    <td>
-                      <div>{row.whatsapp_valido ? "OK" : "—"}</div>
-                      {row.ultimo_whatsapp_status ? (
-                        <div className={styles.waMeta}>
-                          {row.ultimo_whatsapp_status === "failed" && row.ultimo_whatsapp_erro ? (
-                            <span
-                              className={evolutionWhatsappFailureHint(row.ultimo_whatsapp_erro) ? styles.waHint : styles.waErr}
-                              title={row.ultimo_whatsapp_erro}
-                            >
-                              {evolutionWhatsappFailureHint(row.ultimo_whatsapp_erro) ??
-                                truncateText(row.ultimo_whatsapp_erro, 110)}
-                            </span>
-                          ) : row.ultimo_whatsapp_status === "failed" ? (
-                            <span className={styles.waErr}>Falhou (sem detalhe).</span>
-                          ) : row.ultimo_whatsapp_status === "queued" ? (
-                            <span className={styles.waPending}>Na fila / enviando…</span>
-                          ) : row.ultimo_whatsapp_status === "sent" ||
-                            row.ultimo_whatsapp_status === "delivered" ||
-                            row.ultimo_whatsapp_status === "read" ? (
-                            <span className={styles.waOk}>Último envio OK</span>
-                          ) : (
-                            <span>{row.ultimo_whatsapp_status}</span>
-                          )}
-                          {row.ultimo_whatsapp_em ? (
-                            <span className={styles.waWhen}> · {fmtDateTime(row.ultimo_whatsapp_em)}</span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className={styles.btnGhost}
-                        onClick={() =>
-                          setSelectedHistorico(
-                            selectedHistorico === row.historico_servico_id ? null : row.historico_servico_id,
-                          )
-                        }
-                      >
-                        Prévia
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.btn}
-                        style={{ marginLeft: 8 }}
-                        disabled={!canEdit || !row.whatsapp_valido || sendingId === row.historico_servico_id}
-                        onClick={() => void handleSend(row)}
-                      >
-                        {sendingId === row.historico_servico_id ? "Enviando…" : "Enviar WhatsApp"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {selectedHistorico != null ? (
-          <div style={{ marginTop: "1rem" }}>
-            <h3 style={{ fontSize: "0.95rem", marginBottom: "0.5rem" }}>Prévia da mensagem</h3>
-            {previewErr ? <p className={styles.err}>{previewErr}</p> : null}
-            {preview ? (
-              <>
-                <div className={styles.previewBox}>{preview.message_text}</div>
-                <p style={{ fontSize: "0.82rem", color: "#64748b", marginBottom: "0.35rem" }}>
-                  Botões: “{preview.button_more_label}” · “{preview.button_schedule_label}”
-                </p>
-                {preview.image_url ? (
-                  <img
-                    className={styles.previewImg}
-                    src={preview.image_url}
-                    alt="Campanha"
-                    onError={(ev) => {
-                      ev.currentTarget.style.display = "none";
-                    }}
-                  />
-                ) : (
-                  <p style={{ fontSize: "0.85rem", color: "#64748b" }}>
-                    Nenhuma imagem de propaganda configurada (opcional).
-                  </p>
-                )}
-              </>
-            ) : (
-              !previewErr && <p style={{ fontSize: "0.9rem" }}>Carregando prévia…</p>
-            )}
-          </div>
-        ) : null}
-      </section>
-
-      <section className={styles.card}>
-        <h2>Interessados (respostas WhatsApp)</h2>
-        <p style={{ fontSize: "0.88rem", color: "#64748b", marginTop: "-0.35rem", marginBottom: "0.65rem" }}>
-          Clientes que responderam aos botões da campanha ou enviaram MAIS / AGENDAR em texto (fallback sem botões).
-        </p>
-        {leads.length === 0 ? (
-          <p style={{ fontSize: "0.9rem" }}>Nenhuma resposta registrada ainda.</p>
-        ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Quando</th>
-                  <th>Cliente ID</th>
-                  <th>Tipo</th>
-                  <th>WhatsApp</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leads.map((l) => (
-                  <tr key={l.id}>
-                    <td>{new Date(l.created_at).toLocaleString()}</td>
-                    <td>{l.client_id}</td>
-                    <td>{l.interest_kind === "more" ? "Quero saber mais" : "Agendar"}</td>
-                    <td>{l.whatsapp_digits}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {canEdit ? (
-        <section className={styles.card}>
-          <h2>Mensagem e imagem padrão</h2>
-          <form onSubmit={(e) => void handleSaveSettings(e)} className={styles.settingsGrid}>
-            <label>
-              <span>URL da imagem de propaganda (recomendado; não bloqueia a fila como Base64 grande)</span>
-              <input
-                className={styles.input}
-                value={settingsDraft.preventive_promo_image_url}
-                onChange={(ev) => setSettingsDraft((s) => ({ ...s, preventive_promo_image_url: ev.target.value }))}
-                placeholder="https://..."
-              />
-            </label>
-            <label>
-              <span>Problema técnico (trecho da mensagem)</span>
-              <textarea
-                className={`${styles.input} ${styles.textarea}`}
-                value={settingsDraft.preventive_technical_problem_hint}
-                onChange={(ev) =>
-                  setSettingsDraft((s) => ({ ...s, preventive_technical_problem_hint: ev.target.value }))
-                }
-                placeholder="Ex.: perdas de eficiência energética e PMOC"
-              />
-            </label>
-            <label>
-              <span>Rótulo botão “saber mais”</span>
-              <input
-                className={styles.input}
-                value={settingsDraft.preventive_button_more_text}
-                onChange={(ev) =>
-                  setSettingsDraft((s) => ({ ...s, preventive_button_more_text: ev.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Rótulo botão agendar</span>
-              <input
-                className={styles.input}
-                value={settingsDraft.preventive_button_schedule_text}
-                onChange={(ev) =>
-                  setSettingsDraft((s) => ({ ...s, preventive_button_schedule_text: ev.target.value }))
-                }
-              />
-            </label>
-            <label>
-              <span>Lembrete automático antecipado (dias antes do vencimento; 0 = só no dia). Usa o fuso da empresa.</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={0}
-                max={90}
-                value={settingsDraft.preventive_auto_remind_days_before}
-                onChange={(ev) =>
-                  setSettingsDraft((s) => ({
-                    ...s,
-                    preventive_auto_remind_days_before: Number(ev.target.value),
-                  }))
-                }
-              />
-            </label>
-            <label>
-              <span>Template (opcional). Variáveis: {"{nome}"}, {"{meses}"}, {"{servico}"}, {"{problema}"}</span>
-              <textarea
-                className={`${styles.input} ${styles.textarea}`}
-                value={settingsDraft.preventive_message_template}
-                onChange={(ev) =>
-                  setSettingsDraft((s) => ({ ...s, preventive_message_template: ev.target.value }))
-                }
-                placeholder="Deixe em branco para o texto padrão Climaris."
-              />
-            </label>
-            <button type="submit" className={styles.btn} disabled={savingSettings}>
-              {savingSettings ? "Salvando…" : "Salvar configurações"}
-            </button>
-          </form>
-        </section>
-      ) : null}
-
-      {createOpen ? (
-        <div
-          className={styles.modalBackdrop}
-          role="presentation"
-          onMouseDown={(ev) => {
-            if (ev.target === ev.currentTarget) setCreateOpen(false);
-          }}
-        >
-          <div className={styles.modalPanel} role="dialog" aria-labelledby="preventive-create-title">
-            <h2 id="preventive-create-title" className={styles.modalTitle}>
-              Novo registro preventivo
-            </h2>
-            <p style={{ fontSize: "0.88rem", color: "#64748b", marginTop: "-0.25rem", marginBottom: "0.75rem" }}>
-              Cadastre a última realização e, se quiser, envie ou agende o lembrete por WhatsApp (usa o fuso da empresa).
-            </p>
-            <form onSubmit={(e) => void handleCreateSubmit(e)} className={styles.modalGrid}>
-              <div className={`${styles.modalField} ${styles.modalFieldFull}`}>
-                <span className={styles.modalLabel}>Cliente</span>
-                {selectedClient ? (
-                  <div className={styles.selectedRow}>
-                    <span>
-                      <strong>{selectedClient.name}</strong>
-                      <span style={{ fontSize: "0.85rem", color: "#64748b" }}>
-                        {" "}
-                        · #{selectedClient.id}
-                        {selectedClient.phone ? ` · ${selectedClient.phone}` : ""}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      className={styles.btnTertiary}
-                      onClick={() => {
-                        setSelectedClient(null);
-                        setClientCreateNew(false);
-                        setClientQuery("");
-                        setClientListOpen(true);
-                      }}
-                    >
-                      Trocar
-                    </button>
-                  </div>
-                ) : clientCreateNew ? (
-                  <>
-                    <div className={styles.selectedRow}>
-                      <span style={{ fontWeight: 600 }}>Novo cliente</span>
-                      <button
-                        type="button"
-                        className={styles.btnTertiary}
-                        onClick={() => {
-                          setClientCreateNew(false);
-                          setClientListOpen(true);
-                        }}
-                      >
-                        Voltar à busca
-                      </button>
-                    </div>
-                    <input
-                      className={styles.input}
-                      placeholder="Nome completo"
-                      value={newClientName}
-                      onChange={(ev) => setNewClientName(ev.target.value)}
-                      style={{ marginTop: "0.35rem" }}
-                    />
-                    <input
-                      className={styles.input}
-                      placeholder="Telefone"
-                      value={newClientPhone}
-                      onChange={(ev) => setNewClientPhone(ev.target.value)}
-                      style={{ marginTop: "0.35rem" }}
-                    />
-                    <input
-                      className={styles.input}
-                      placeholder="WhatsApp (se diferente do telefone)"
-                      value={newClientWhatsapp}
-                      onChange={(ev) => setNewClientWhatsapp(ev.target.value)}
-                      style={{ marginTop: "0.35rem" }}
-                    />
-                  </>
-                ) : (
-                  <div className={styles.comboWrap}>
-                    <input
-                      className={styles.input}
-                      placeholder="Digite para buscar nome, telefone ou documento…"
-                      value={clientQuery}
-                      onChange={(ev) => {
-                        setClientQuery(ev.target.value);
-                        setClientListOpen(true);
-                      }}
-                      onFocus={() => setClientListOpen(true)}
-                      onBlur={() => {
-                        window.setTimeout(() => setClientListOpen(false), 180);
-                      }}
-                      autoComplete="off"
-                      aria-autocomplete="list"
-                      aria-expanded={clientListOpen}
-                    />
-                    {clientListOpen ? (
-                      <div className={styles.comboDropdown} role="listbox">
-                        {clientQuery.trim().length < 2 ? (
-                          <>
-                            <div className={styles.comboHint}>Digite pelo menos 2 caracteres para buscar na lista.</div>
-                            <button
-                              type="button"
-                              role="option"
-                              className={styles.comboOptionCreate}
-                              onMouseDown={(ev) => ev.preventDefault()}
-                              onClick={() => {
-                                setClientCreateNew(true);
-                                setClientListOpen(false);
-                                setClientQuery("");
-                              }}
-                            >
-                              + Criar novo cliente
-                            </button>
-                          </>
-                        ) : clientSearchLoading ? (
-                          <div className={styles.comboHint}>Buscando…</div>
-                        ) : (
-                          <>
-                            {clientHits.length === 0 ? (
-                              <div className={styles.comboHint}>Nenhum cliente encontrado.</div>
-                            ) : (
-                              clientHits.map((c) => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  role="option"
-                                  className={styles.comboOption}
-                                  onMouseDown={(ev) => ev.preventDefault()}
-                                  onClick={() => {
-                                    setSelectedClient(c);
-                                    setClientQuery("");
-                                    setClientListOpen(false);
-                                  }}
-                                >
-                                  <span className={styles.comboOptionTitle}>{c.name}</span>
-                                  <span className={styles.comboOptionMeta}>
-                                    #{c.id}
-                                    {c.phone ? ` · ${c.phone}` : ""}
-                                    {c.whatsapp ? ` · WA ${c.whatsapp}` : ""}
-                                  </span>
-                                </button>
-                              ))
-                            )}
-                            <button
-                              type="button"
-                              role="option"
-                              className={styles.comboOptionCreate}
-                              onMouseDown={(ev) => ev.preventDefault()}
-                              onClick={() => {
-                                setClientCreateNew(true);
-                                setClientListOpen(false);
-                                setClientQuery("");
-                              }}
-                            >
-                              + Criar novo cliente
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-
-              <label className={`${styles.modalField} ${styles.modalFieldFull}`}>
-                <span className={styles.modalLabel}>Serviço</span>
-                <select
-                  className={styles.input}
-                  value={serviceId === "" ? "" : String(serviceId)}
-                  onChange={(ev) => setServiceId(ev.target.value ? Number(ev.target.value) : "")}
-                  disabled={servicesLoading}
-                >
-                  <option value="">
-                    {servicesLoading ? "Carregando serviços…" : "Selecione um serviço…"}
-                  </option>
-                  {servicesWithPeriod.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.periodicidade_meses} meses)
-                    </option>
-                  ))}
-                  {servicesWithoutPeriod.length > 0 ? (
-                    <optgroup label="Sem periodicidade no cadastro (configure em Serviços para usar na preventiva)">
-                      {servicesWithoutPeriod.map((s) => (
-                        <option key={s.id} value={`__no_period__${s.id}`} disabled>
-                          {s.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                </select>
-                {servicesLoadErr ? <p className={styles.err}>{servicesLoadErr}</p> : null}
-                {!servicesLoading && !servicesLoadErr && servicesWithPeriod.length === 0 && modalServicesActive.length > 0 ? (
-                  <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "0.35rem 0 0" }}>
-                    Nenhum serviço ativo tem periodicidade (6 ou 12 meses). Edite o cadastro em Serviços.
-                  </p>
-                ) : null}
-                {!servicesLoading && !servicesLoadErr && modalServicesActive.length === 0 ? (
-                  <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "0.35rem 0 0" }}>
-                    Nenhum serviço ativo encontrado.
-                  </p>
-                ) : null}
-              </label>
-
-              <label className={styles.modalField}>
-                <span className={styles.modalLabel}>Data da última realização</span>
-                <input
-                  className={styles.input}
-                  type="date"
-                  value={dataRealizacao}
-                  onChange={(ev) => setDataRealizacao(ev.target.value)}
-                  required
-                />
-              </label>
-
-              <label className={styles.modalField}>
-                <span className={styles.modalLabel}>Lembrete WhatsApp</span>
-                <select
-                  className={styles.input}
-                  value={reminderSend}
-                  onChange={(ev) => setReminderSend(ev.target.value as "none" | "now" | "scheduled")}
-                >
-                  <option value="none">Só registrar (sem WhatsApp)</option>
-                  <option value="now">Enviar agora</option>
-                  <option value="scheduled">Agendar envio</option>
-                </select>
-              </label>
-
-              {reminderSend === "scheduled" ? (
-                <>
-                  <label className={styles.modalField}>
-                    <span className={styles.modalLabel}>Data do envio (empresa)</span>
-                    <input
-                      className={styles.input}
-                      type="date"
-                      value={reminderLocalDate}
-                      onChange={(ev) => setReminderLocalDate(ev.target.value)}
-                      required
-                    />
-                  </label>
-                  <label className={styles.modalField}>
-                    <span className={styles.modalLabel}>Hora (HH:MM)</span>
-                    <input
-                      className={styles.input}
-                      type="time"
-                      value={reminderLocalTime}
-                      onChange={(ev) => setReminderLocalTime(ev.target.value)}
-                    />
-                  </label>
-                </>
-              ) : null}
-
-              <label className={styles.modalFieldFull}>
-                <span className={styles.modalLabel}>Observações (opcional)</span>
-                <textarea
-                  className={`${styles.input} ${styles.textarea}`}
-                  value={createNotes}
-                  onChange={(ev) => setCreateNotes(ev.target.value)}
-                  rows={2}
-                />
-              </label>
-
-              {createErr ? <p className={styles.err}>{createErr}</p> : null}
-
-              <div className={styles.modalActions}>
-                <button type="button" className={`${styles.btn} ${styles.btnGhost}`} onClick={() => setCreateOpen(false)}>
-                  Cancelar
-                </button>
-                <button type="submit" className={styles.btn} disabled={createSubmitting}>
-                  {createSubmitting ? "Salvando…" : "Salvar"}
-                </button>
-              </div>
-            </form>
+      {/* ── Toolbar (search + window pills + status + actions) ────────────── */}
+      <div className={tableStyles.listToolbar}>
+        {/* Search */}
+        <div className={tableStyles.listToolbarSearchCol}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="prev-search">
+            Buscar
+          </label>
+          <div className={tableStyles.listToolbarSearchWrap}>
+            <span className={tableStyles.listToolbarSearchIcon} aria-hidden>
+              <svg viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+            </span>
+            <input
+              id="prev-search"
+              className={tableStyles.listToolbarSearchInput}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Buscar cliente ou equipamento"
+              autoComplete="off"
+            />
           </div>
         </div>
+
+        {/* Window pills + Status + Buttons */}
+        <div className={tableStyles.listToolbarActions}>
+          {/* Janela pills */}
+          <div className={styles.windowCol}>
+            <label className={tableStyles.listToolbarLabel}>Janela</label>
+            <div className={styles.windowPills}>
+              {WINDOW_OPTIONS.map(({ days: d, label }) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={days === d ? styles.windowPillActive : styles.windowPill}
+                  onClick={() => setDays(d)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Status filter */}
+          <div className={tableStyles.listToolbarFilterBlock}>
+            <label className={tableStyles.listToolbarLabel} htmlFor="prev-status">
+              Status
+            </label>
+            <select
+              id="prev-status"
+              className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectShrink}`}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            >
+              <option value="all">Todos os Status</option>
+              <option value="em_dia">Em Dia</option>
+              <option value="vence_este_mes">Vence este Mês</option>
+              <option value="atrasada">Atrasada</option>
+            </select>
+          </div>
+
+          {/* Action buttons */}
+          <button
+            type="button"
+            className={tableStyles.listToolbarBtnGhost}
+            onClick={() => void refreshList()}
+            disabled={loading}
+          >
+            Atualizar
+          </button>
+
+          {canEdit ? (
+            <button
+              type="button"
+              className={tableStyles.listToolbarBtnGhost}
+              disabled={bulkSending || loading || whatsappEligibleCount === 0}
+              onClick={() => void handleBulkSend()}
+            >
+              {bulkSending ? "Enviando lote…" : `Enviar WhatsApp (${whatsappEligibleCount})`}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {/* ── Feedback ──────────────────────────────────────────────────────── */}
+      {loadErr    ? <p className={styles.msgErr}    role="alert">{loadErr}</p>    : null}
+      {sendErr    ? <p className={styles.msgErr}    role="alert">{sendErr}</p>    : null}
+      {bulkNotice ? <p className={styles.msgNotice}            >{bulkNotice}</p>  : null}
+
+      {/* ── Table ─────────────────────────────────────────────────────────── */}
+      <div className={tableStyles.tableWrap}>
+        <table className={tableStyles.table}>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Equipamento / Setor</th>
+              <th>Última Manutenção</th>
+              <th>Próxima Manutenção</th>
+              <th>Status</th>
+              <th className={tableStyles.tailActionsCol} aria-label="Ações" />
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <TableSkeleton rows={5} />
+            ) : filteredItems.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ textAlign: "center", padding: "3rem 1rem", color: "#64748b" }}>
+                  <div>
+                    <svg viewBox="0 0 24 24" style={{ width: "2.5rem", height: "2.5rem", stroke: "#cbd5e1", fill: "none", strokeWidth: 1.5, margin: "0 auto 0.75rem", display: "block" }}>
+                      <rect width="18" height="18" x="3" y="4" rx="2" /><path d="M8 2v4" /><path d="M16 2v4" /><path d="M3 10h18" />
+                    </svg>
+                    <p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>Nenhuma preventiva encontrada</p>
+                    <p style={{ fontSize: "0.875rem" }}>Cadastre uma nova preventiva para começar</p>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              filteredItems.map((row) => {
+                const groupKey = preventiveWhatsAppGroupKey(row);
+                return (
+                <tr key={preventiveItemRowKey(row)}>
+                  <td>
+                    <div className={styles.clientCell}>
+                      <span className={`${styles.avatar} ${avatarClass(row.client_id)}`}>
+                        {initials(row.client_name)}
+                      </span>
+                      <span className={styles.clientName}>{row.client_name}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className={styles.equipCell}>
+                      <span className={styles.equipName}>{equipmentLabel(row)}</span>
+                    </div>
+                  </td>
+                  <td>{formatDate(row.data_ultima_realizacao)}</td>
+                  <td>
+                    <div className={styles.equipCell}>
+                      <span className={styles.equipName}>{formatDueMonthLabel(row.data_proximo_vencimento)}</span>
+                      <span className={styles.equipSector}>{formatDate(row.data_proximo_vencimento)}</span>
+                    </div>
+                  </td>
+                  <td><StatusPill status={getItemStatus(row)} /></td>
+                  <td className={tableStyles.tailActionsCol}>
+                    <div className={tableStyles.rowActions}>
+                      <RowDropdown
+                        row={row}
+                        canEdit={canEdit}
+                        whatsappGroupSize={whatsappGroupSizes.get(groupKey) ?? 1}
+                        sending={
+                          sendingId === row.historico_servico_id ||
+                          (row.historico_servico_id <= 0 && sendingId === (row.rule_id ?? 0))
+                        }
+                        previewOpen={selectedPreviewGroupKey === groupKey}
+                        onGenerateOS={() => navigate("/app/service-orders/new")}
+                        onViewHistory={() => navigate(historyPath(row))}
+                        onPreviewWhatsApp={() => {
+                          setSelectedPreviewGroupKey(selectedPreviewGroupKey === groupKey ? null : groupKey);
+                        }}
+                        onSendWhatsApp={() => void handleSend(row)}
+                      />
+                    </div>
+                  </td>
+                </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Prévia WhatsApp ───────────────────────────────────────────────── */}
+      {selectedPreviewGroupKey != null && selectedPreviewRow ? (
+        <div className={styles.previewPanel}>
+          <h3 className={styles.previewTitle}>Prévia da mensagem</h3>
+          {preview?.is_grouped ? (
+            <p className={styles.previewMeta}>
+              Mensagem agrupada — {preview.equipment_count ?? selectedPreviewGroupItems.length} equipamento(s):{" "}
+              {selectedPreviewGroupItems.map((r) => equipmentLabel(r)).join(" · ")}
+            </p>
+          ) : null}
+          {previewErr ? <p className={styles.err}>{previewErr}</p> : null}
+          {preview ? (
+            <>
+              <div className={styles.previewBox}>{preview.message_text}</div>
+              <p className={styles.previewMeta}>
+                Botões: "{preview.button_more_label}" · "{preview.button_schedule_label}"
+              </p>
+              {preview.image_url ? (
+                <img
+                  className={styles.previewImg}
+                  src={preview.image_url}
+                  alt="Campanha"
+                  onError={(ev) => { ev.currentTarget.style.display = "none"; }}
+                />
+              ) : (
+                <p className={styles.previewMeta}>Nenhuma imagem configurada (opcional).</p>
+              )}
+            </>
+          ) : (
+            !previewErr && <p className={styles.loadingHint}>Carregando prévia…</p>
+          )}
+        </div>
       ) : null}
+
+      {/* ── Modal Nova Preventiva ──────────────────────────────────────────── */}
+      <PreventiveCreateFormView
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        preventiveSettings={settings}
+        onCreated={async (out) => {
+          setCreateOpen(false);
+          await refreshList();
+          if (out.whatsapp_job?.scheduled_for) {
+            window.alert(
+              `Lembrete agendado para ${new Date(out.whatsapp_job.scheduled_for).toLocaleString(
+                "pt-BR", { dateStyle: "short", timeStyle: "short" },
+              )}.`,
+            );
+          }
+        }}
+      />
     </div>
   );
 }

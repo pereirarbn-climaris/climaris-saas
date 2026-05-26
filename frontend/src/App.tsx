@@ -4,6 +4,8 @@ import { SmartHomeRedirect } from "./components/SmartHomeRedirect";
 import { getAccessToken } from "./lib/authStorage";
 import { CompleteRegistrationPage } from "./pages/CompleteRegistrationPage";
 import { AdminPage } from "./pages/admin/AdminPage";
+import { EquipmentCatalogPage } from "./pages/admin/EquipmentCatalogPage";
+import { EquipmentCategoriesPage } from "./pages/admin/EquipmentCategoriesPage";
 import { BudgetFormPage } from "./pages/budgets/BudgetFormPage";
 import { BudgetsListPage } from "./pages/budgets/BudgetsListPage";
 import { ClientFormPage } from "./pages/clients/ClientFormPage";
@@ -24,8 +26,10 @@ import { PlatformTenantsPage } from "./pages/PlatformTenantsPage";
 import { SaasDashboardPage } from "./pages/saas/SaasDashboardPage";
 import { PlatformSaasPlansPage } from "./pages/saas/PlatformSaasPlansPage";
 import { PublicEquipmentPage } from "./pages/public/PublicEquipmentPage";
+import { PublicPmocValidationPage } from "./pages/public/PublicPmocValidationPage";
 import { ServiceOrderFormPage } from "./pages/service-orders/ServiceOrderFormPage";
 import { ServiceOrdersListPage } from "./pages/service-orders/ServiceOrdersListPage";
+import { TechnicianServiceOrderPage } from "./pages/technician/TechnicianServiceOrderPage";
 import { ServiceFormPage } from "./pages/services/ServiceFormPage";
 import { ServicesListPage } from "./pages/services/ServicesListPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
@@ -36,7 +40,6 @@ import { FinanceAccountsPage } from "./pages/finance/FinanceAccountsPage";
 import { FinanceCardsPage } from "./pages/finance/FinanceCardsPage";
 import { FinanceMachinesPage } from "./pages/finance/FinanceMachinesPage";
 import { FinanceSettingsPage } from "./pages/finance/FinanceSettingsPage";
-import { StockPage } from "./pages/inventory/StockPage";
 import { MercadoLivreCallbackPage } from "./pages/integrations/MercadoLivreCallbackPage";
 import { MercadoLivreIntegrationPage } from "./pages/integrations/MercadoLivreIntegrationPage";
 import { WhatsappBotPage } from "./pages/integrations/WhatsappBotPage";
@@ -47,12 +50,15 @@ import { MarketplacePage } from "./pages/marketplace/MarketplacePage";
 import { PlatformMarketplacePage } from "./pages/PlatformMarketplacePage";
 import { PlatformFinanceBanksPage } from "./pages/PlatformFinanceBanksPage";
 import { PlatformPagarmePage } from "./pages/platform/PlatformPagarmePage";
+import PmocConformidadePage from "./app/(dashboard)/pmoc/conformidade/[id]/page";
+import PmocExecucaoPage from "./app/(dashboard)/pmoc/execucao/[id]/page";
 import { PmocDetailPage } from "./pages/pmoc/PmocDetailPage";
 import { PmocListPage } from "./pages/pmoc/PmocListPage";
 import { PmocNewPage } from "./pages/pmoc/PmocNewPage";
 import { TrustedDevicesPage } from "./pages/security/TrustedDevicesPage";
 import { NfsePage } from "./pages/fiscal/NfsePage";
 import { PreventiveMaintenancePage } from "./pages/preventive/PreventiveMaintenancePage";
+import { ManageQrCodesPage } from "./pages/qrcodes/ManageQrCodesPage";
 
 function RootRedirect() {
   if (!getAccessToken()) {
@@ -74,6 +80,8 @@ export default function App() {
       <SessionMaintenance />
       <Routes>
       <Route path="/p/e/:token" element={<PublicEquipmentPage />} />
+      <Route path="/equipment/:codeId" element={<PublicEquipmentPage />} />
+      <Route path="/public/pmoc-validation/:pmocId" element={<PublicPmocValidationPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -89,10 +97,13 @@ export default function App() {
         <Route path="planos" element={<PlatformSaasPlansPage />} />
         <Route path="bancos" element={<PlatformFinanceBanksPage />} />
         <Route path="pagar-me" element={<PlatformPagarmePage />} />
+        <Route path="catalogo" element={<EquipmentCatalogPage />} />
+        <Route path="categorias-equipamentos" element={<EquipmentCategoriesPage />} />
       </Route>
       <Route path="/app" element={<DashboardPage />}>
         <Route index element={<DashboardHomePage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="catalogo" element={<Navigate to="/operacao/catalogo" replace />} />
         <Route path="clients" element={<ClientsListPage />} />
         <Route path="clients/new" element={<ClientFormPage />} />
         <Route path="clients/:clientId" element={<ClientFormPage />} />
@@ -100,13 +111,14 @@ export default function App() {
         <Route path="products" element={<ProductsListPage />} />
         <Route path="products/new" element={<ProductFormPage />} />
         <Route path="products/:productId" element={<ProductFormPage />} />
-        <Route path="inventory" element={<StockPage />} />
+        <Route path="inventory" element={<Navigate to="/app/products" replace />} />
         <Route path="services" element={<ServicesListPage />} />
         <Route path="services/new" element={<ServiceFormPage />} />
         <Route path="services/:serviceId" element={<ServiceFormPage />} />
         <Route path="service-orders" element={<ServiceOrdersListPage />} />
         <Route path="service-orders/new" element={<ServiceOrderFormPage />} />
         <Route path="service-orders/:orderId" element={<ServiceOrderFormPage />} />
+        <Route path="tecnico/os/:orderId" element={<TechnicianServiceOrderPage />} />
         <Route path="budgets" element={<BudgetsListPage />} />
         <Route path="budgets/new" element={<BudgetFormPage />} />
         <Route path="budgets/:budgetId" element={<BudgetFormPage />} />
@@ -121,6 +133,7 @@ export default function App() {
         <Route path="fiscal/nfse" element={<NfsePage />} />
         <Route path="agenda" element={<TechnicianSchedulePage />} />
         <Route path="preventive-maintenance" element={<PreventiveMaintenancePage />} />
+        <Route path="qrcodes" element={<ManageQrCodesPage />} />
         <Route path="marketplace" element={<MarketplacePage />} />
         <Route path="integrations/whatsapp-campanhas" element={<WhatsappBroadcastCampaignsPage />} />
         <Route path="integrations/whatsapp-bot" element={<WhatsappBotPage />} />
@@ -129,6 +142,8 @@ export default function App() {
         <Route path="integrations/mercado-livre/callback" element={<MercadoLivreCallbackPage />} />
         <Route path="integrations/mercado-livre" element={<MercadoLivreIntegrationPage />} />
         <Route path="pmoc/new" element={<PmocNewPage />} />
+        <Route path="pmoc/execucao/:id" element={<PmocExecucaoPage />} />
+        <Route path="pmoc/conformidade/:id" element={<PmocConformidadePage />} />
         <Route path="pmoc/ativos" element={<Navigate to="/app/pmoc?status=active" replace />} />
         <Route path="pmoc/inativos" element={<Navigate to="/app/pmoc?status=inactive" replace />} />
         <Route path="pmoc/rascunhos" element={<Navigate to="/app/pmoc?status=draft" replace />} />

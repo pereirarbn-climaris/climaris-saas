@@ -17,6 +17,7 @@ from app.tenant_logo import (
     _optional_acl,
     _resolve_s3_runtime_config,
     _s3_client_from_config,
+    s3_bucket_for,
 )
 from app.tenant_logo import MAX_UPLOAD_BYTES as LOGO_MAX_BYTES
 
@@ -79,9 +80,9 @@ def process_and_upload_product_image(
         raise ValueError("Arquivo inválido. Envie JPG, PNG ou WEBP.") from exc
 
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "imagens")
     if not bucket:
-        raise RuntimeError("AWS_S3_BUCKET não configurado (env ou credencial SaaS aws-s3).")
+        raise RuntimeError("AWS S3 (imagens) não configurado (bucket_imagens ou credencial aws-s3).")
     region = cfg.region or "us-east-1"
     endpoint_url = cfg.endpoint_url
     prefix = _product_prefix(cfg)
@@ -122,7 +123,7 @@ def delete_product_image_if_exists(s3_key: str | None, db: Session | None = None
     if not s3_key:
         return
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "imagens")
     if not bucket:
         return
     client = _s3_client_from_config(cfg)

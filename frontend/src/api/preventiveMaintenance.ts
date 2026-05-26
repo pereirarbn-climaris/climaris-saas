@@ -1,22 +1,47 @@
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
+import type {
+  EquipmentPreventiveRuleCreate,
+  EquipmentPreventiveRuleOut,
+  EquipmentPreventiveRuleUpdate,
+} from "../types/preventive";
+
+export type {
+  EquipmentPreventiveRuleCreate,
+  EquipmentPreventiveRuleOut,
+  EquipmentPreventiveRuleUpdate,
+  PreventiveIntervalType,
+} from "../types/preventive";
 
 export type PreventiveSettings = {
   preventive_promo_image_url: string | null;
+  preventive_image_url: string | null;
   preventive_promo_image_mimetype: string | null;
   preventive_technical_problem_hint: string | null;
   preventive_button_more_text: string;
   preventive_button_schedule_text: string;
   preventive_message_template: string | null;
   preventive_auto_remind_days_before: number;
+  default_message_template?: string | null;
+};
+
+export type PreventiveTemplatePayload = {
+  preventive_message_template: string | null;
+  preventive_image_url: string | null;
 };
 
 export type PreventiveItem = {
   historico_servico_id: number;
+  rule_id?: number | null;
   client_id: number;
   client_name: string;
   service_id: number;
   service_name: string;
+  equipment_id?: number | null;
+  equipment_identificacao?: string | null;
+  equipment_tipo?: string | null;
+  interval_value?: number | null;
+  interval_type?: "months" | "days" | null;
   periodicidade_meses: number;
   data_ultima_realizacao: string;
   data_proximo_vencimento: string;
@@ -28,12 +53,28 @@ export type PreventiveItem = {
   ultimo_whatsapp_em?: string | null;
 };
 
+export type PreventiveClientGroup = {
+  client_id: number;
+  client_name: string;
+  whatsapp_valido: boolean;
+  whatsapp_destino: string | null;
+  equipments: PreventiveItem[];
+};
+
+export type PreventiveItemsList = {
+  window_days: number;
+  clients: PreventiveClientGroup[];
+  items: PreventiveItem[];
+};
+
 export type PreventivePreview = {
   message_text: string;
   image_url: string | null;
   image_mimetype: string | null;
   button_more_label: string;
   button_schedule_label: string;
+  equipment_count?: number;
+  is_grouped?: boolean;
 };
 
 export type PreventiveLead = {
@@ -84,6 +125,7 @@ export type PreventiveRegisterEntryPayload =
       new_client?: undefined;
       service_id: number;
       data_realizacao: string;
+      equipment_id?: number | null;
       notes?: string | null;
       reminder_send: "none" | "now" | "scheduled";
       reminder_local_date?: string | null;
@@ -96,6 +138,7 @@ export type PreventiveRegisterEntryPayload =
       new_client: { name: string; phone?: string | null; whatsapp?: string | null };
       service_id: number;
       data_realizacao: string;
+      equipment_id?: number | null;
       notes?: string | null;
       reminder_send: "none" | "now" | "scheduled";
       reminder_local_date?: string | null;
@@ -173,6 +216,16 @@ export async function fetchPreventiveSettings(): Promise<PreventiveSettings> {
   return body as PreventiveSettings;
 }
 
+export async function patchPreventiveTemplateSettings(
+  payload: PreventiveTemplatePayload,
+): Promise<PreventiveSettings> {
+  return patchPreventiveSettings({
+    preventive_message_template: payload.preventive_message_template?.trim() || null,
+    preventive_image_url: payload.preventive_image_url?.trim() || null,
+    preventive_promo_image_url: payload.preventive_image_url?.trim() || null,
+  });
+}
+
 export async function patchPreventiveSettings(payload: Partial<PreventiveSettings>): Promise<PreventiveSettings> {
   const response = await fetch(apiUrl("/api/v1/preventive-maintenance/settings"), {
     method: "PATCH",
@@ -185,6 +238,11 @@ export async function patchPreventiveSettings(payload: Partial<PreventiveSetting
 }
 
 export async function listPreventiveItems(days: number): Promise<PreventiveItem[]> {
+  const grouped = await listPreventiveItemsGrouped(days);
+  return grouped.items;
+}
+
+export async function listPreventiveItemsGrouped(days: number): Promise<PreventiveItemsList> {
   const sp = new URLSearchParams();
   sp.set("days", String(days));
   const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/items?${sp.toString()}`), {
@@ -192,12 +250,27 @@ export async function listPreventiveItems(days: number): Promise<PreventiveItem[
   });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar."));
-  return body as PreventiveItem[];
+  if (Array.isArray(body)) {
+    return { window_days: days, clients: [], items: body as PreventiveItem[] };
+  }
+  return body as PreventiveItemsList;
 }
 
-export async function fetchPreventivePreview(historicoServicoId: number): Promise<PreventivePreview> {
+export async function fetchPreventivePreview(payload: {
+  historico_servico_id?: number;
+  rule_id?: number;
+  window_days?: number;
+}): Promise<PreventivePreview> {
   const sp = new URLSearchParams();
-  sp.set("historico_servico_id", String(historicoServicoId));
+  if (payload.historico_servico_id != null && payload.historico_servico_id > 0) {
+    sp.set("historico_servico_id", String(payload.historico_servico_id));
+  }
+  if (payload.rule_id != null && payload.rule_id > 0) {
+    sp.set("rule_id", String(payload.rule_id));
+  }
+  if (payload.window_days != null) {
+    sp.set("window_days", String(payload.window_days));
+  }
   const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/preview?${sp.toString()}`), {
     headers: bearer(),
   });
@@ -249,7 +322,9 @@ export type PreventiveSendReminderResult = {
 };
 
 export async function sendPreventiveReminder(payload: {
-  historico_servico_id: number;
+  historico_servico_id?: number;
+  rule_id?: number;
+  window_days?: number;
   promo_image_url?: string | null;
   promo_image_base64?: string | null;
   promo_image_mimetype?: string | null;
@@ -294,6 +369,72 @@ export async function sendPreventiveRemindersBulk(payload: {
     errors: Array<{ historico_servico_id?: number; detail?: string }>;
     processing_in_background?: boolean;
   };
+}
+
+export async function getPreventiveRuleByEquipment(
+  equipmentId: number,
+): Promise<EquipmentPreventiveRuleOut | null> {
+  const response = await fetch(
+    apiUrl(`/api/v1/preventive-maintenance/rules/equipment/${equipmentId}`),
+    { headers: bearer() },
+  );
+  if (response.status === 404) return null;
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível carregar a regra preventiva."),
+    );
+  }
+  return body as EquipmentPreventiveRuleOut;
+}
+
+export async function upsertPreventiveRule(
+  data: EquipmentPreventiveRuleCreate,
+): Promise<EquipmentPreventiveRuleOut> {
+  const response = await fetch(apiUrl("/api/v1/preventive-maintenance/rules"), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(data),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível salvar a regra preventiva."),
+    );
+  }
+  return body as EquipmentPreventiveRuleOut;
+}
+
+export async function updatePreventiveRule(
+  ruleId: number,
+  data: EquipmentPreventiveRuleUpdate,
+): Promise<EquipmentPreventiveRuleOut> {
+  const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/rules/${ruleId}`), {
+    method: "PUT",
+    headers: jsonHeaders(),
+    body: JSON.stringify(data),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível atualizar a regra preventiva."),
+    );
+  }
+  return body as EquipmentPreventiveRuleOut;
+}
+
+export async function deletePreventiveRule(ruleId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/rules/${ruleId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível remover a regra preventiva."),
+    );
+  }
 }
 
 export async function listPreventiveLeads(limit = 100): Promise<PreventiveLead[]> {

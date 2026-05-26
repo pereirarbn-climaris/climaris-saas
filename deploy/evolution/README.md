@@ -106,4 +106,4 @@ O **`500` vem da própria Evolution API**, não do DNS.
 
 ## Nginx `app.climaris.com.br`: webhook Climaris
 
-Se aparecer `upstream prematurely closed` ou timeout ao postar no webhook, use no site do **app** o bloco com timeouts maiores para `/api/v1/whatsapp/webhook/evolution` (ver `deploy/nginx/app.climaris.com.br.conf.example`).
+Se aparecer `upstream prematurely closed` ou timeout ao postar no webhook, use no site do **app** o bloco com timeouts maiores para `/api/v1/whatsapp/webhook/agenda` (ver `deploy/nginx/app.climaris.com.br.conf.example`).

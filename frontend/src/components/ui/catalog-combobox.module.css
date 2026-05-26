@@ -1,0 +1,166 @@
+.root {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: var(--input-height, 2.5rem);
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-radius, 10px);
+  padding: 0 0.65rem;
+  background: var(--input-bg, var(--color-surface));
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm, 0.875rem);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+}
+
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring, rgba(37, 99, 235, 0.25));
+}
+
+.trigger:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.triggerFilled {
+  color: var(--color-text);
+}
+
+.triggerError {
+  border-color: var(--color-error);
+}
+
+.triggerError:focus-visible {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 25%, transparent);
+}
+
+.triggerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--color-text-muted);
+  transform-origin: center;
+  transition: transform 0.15s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  max-height: min(320px, 50vh);
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-radius, 10px);
+  background: var(--color-surface-elevated);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+.searchWrap {
+  flex-shrink: 0;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+}
+
+.searchInput {
+  width: 100%;
+  height: 2.25rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-radius, 8px);
+  background: var(--input-bg, var(--color-surface));
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-focus-ring, rgba(37, 99, 235, 0.2));
+}
+
+.list {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+}
+
+.optionStack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.optionPrimary {
+  font-weight: 500;
+}
+
+.optionMeta {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.option {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 0.875rem);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option:hover,
+.optionActive {
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-elevated));
+}
+
+.empty {
+  margin: 0;
+  padding: 0.85rem 0.65rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm, 0.875rem);
+}

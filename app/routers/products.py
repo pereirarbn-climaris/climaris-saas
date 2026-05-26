@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
+from app.pagination import clamp_limit
 from app.dependencies import get_current_user, require_roles
 from app.product_media import delete_product_image_if_exists
 from app.schemas import (
@@ -24,6 +25,12 @@ from app.schemas import (
 from models import Product, ProductImage, User, UserRole
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+def _set_physical_stock(product: Product, quantity: float) -> None:
+    """Atualiza estoque físico e mantém stock_quantity legado sincronizado."""
+    product.quantity_physical = quantity
+    product.stock_quantity = quantity
 
 
 def _slugify_sku(value: str) -> str:
@@ -168,8 +175,9 @@ def list_products(
     current_user: Annotated[User, Depends(get_current_user)],
     q: Annotated[str | None, Query(description="Filter by name or SKU")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    limit: Annotated[int, Query(ge=1)] = 20,
 ) -> list[Product]:
+    limit = clamp_limit(limit)
     query = select(Product).where(Product.tenant_id == current_user.tenant_id)
     if q:
         term = f"%{q}%"
@@ -222,6 +230,8 @@ def create_product(
         sale_price=payload.sale_price,
         unit_price=payload.sale_price,
         stock_quantity=payload.stock_quantity,
+        quantity_physical=payload.stock_quantity,
+        quantity_reserved=0,
         compatible_equipment_tags=(payload.compatible_equipment_tags.strip() if payload.compatible_equipment_tags else None),
         btu_min=payload.btu_min,
         btu_max=payload.btu_max,
@@ -324,6 +334,8 @@ def import_products(
             sale_price=row.sale_price,
             unit_price=row.sale_price,
             stock_quantity=row.stock_quantity,
+            quantity_physical=row.stock_quantity,
+            quantity_reserved=0,
             is_active=row.is_active,
         )
         db.add(product)
@@ -480,7 +492,7 @@ def update_product(
     if payload.is_active is not None:
         product.is_active = payload.is_active
     if payload.stock_quantity is not None:
-        product.stock_quantity = payload.stock_quantity
+        _set_physical_stock(product, payload.stock_quantity)
     if "compatible_equipment_tags" in payload.model_fields_set:
         product.compatible_equipment_tags = (payload.compatible_equipment_tags or "").strip() or None
     if "btu_min" in payload.model_fields_set:

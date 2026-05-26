@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   getMercadoLivreProductLink,
@@ -50,6 +50,21 @@ function emptyForm(): FormState {
   };
 }
 
+function serializeProductFormSnapshot(f: FormState): string {
+  return JSON.stringify({
+    name: f.name.trim(),
+    sku: f.sku.trim(),
+    purchase_price: f.purchase_price.trim(),
+    sale_price: f.sale_price.trim(),
+    stock_quantity: f.stock_quantity.trim(),
+    compatible_equipment_tags: f.compatible_equipment_tags.trim(),
+    btu_min: f.btu_min.trim(),
+    btu_max: f.btu_max.trim(),
+    application_scope: f.application_scope.trim(),
+    is_active: f.is_active,
+  });
+}
+
 function normalizeSkuBase(name: string): string {
   const base = name
     .normalize("NFD")
@@ -97,10 +112,16 @@ export function ProductFormPage() {
   const [mlCategoryId, setMlCategoryId] = useState("");
   const [mlListingType, setMlListingType] = useState("gold_special");
   const [mlBusy, setMlBusy] = useState(false);
+  const savedSnapshotRef = useRef("");
 
   const parsedPurchasePrice = useMemo(() => parseBrlInputToNumber(form.purchase_price), [form.purchase_price]);
   const parsedSalePrice = useMemo(() => parseBrlInputToNumber(form.sale_price), [form.sale_price]);
   const parsedStockQty = useMemo(() => Number(String(form.stock_quantity).replace(",", ".")), [form.stock_quantity]);
+
+  const isDirty = useMemo(() => {
+    if (isNew) return false;
+    return serializeProductFormSnapshot(form) !== savedSnapshotRef.current;
+  }, [form, isNew]);
 
   useEffect(() => {
     if (isNew || !productId || !Number.isFinite(idNum) || idNum < 1) return;
@@ -112,6 +133,18 @@ export function ProductFormPage() {
         const p = await getProduct(idNum);
         if (!cancelled) {
           setForm({
+            name: p.name,
+            sku: p.sku,
+            purchase_price: numberToBrlInput(Number(p.purchase_price || 0)),
+            sale_price: numberToBrlInput(Number(p.sale_price || p.unit_price || 0)),
+            stock_quantity: String(p.stock_quantity ?? 0),
+            compatible_equipment_tags: p.compatible_equipment_tags ?? "",
+            btu_min: p.btu_min != null ? String(p.btu_min) : "",
+            btu_max: p.btu_max != null ? String(p.btu_max) : "",
+            application_scope: p.application_scope ?? "",
+            is_active: p.is_active,
+          });
+          savedSnapshotRef.current = serializeProductFormSnapshot({
             name: p.name,
             sku: p.sku,
             purchase_price: numberToBrlInput(Number(p.purchase_price || 0)),
@@ -241,6 +274,7 @@ export function ProductFormPage() {
           is_active: form.is_active,
         };
         await updateProduct(idNum, payload);
+        savedSnapshotRef.current = serializeProductFormSnapshot(form);
         setMsg({ kind: "ok", text: "Produto atualizado." });
       }
     } catch (err) {
@@ -435,7 +469,7 @@ export function ProductFormPage() {
       <h1 className={styles.title}>{isNew ? "Novo produto" : "Editar produto"}</h1>
       <p className={styles.lead}>Cadastre os produtos com valor de compra e valor de venda para cálculo de margem.</p>
 
-      <form className={styles.form} onSubmit={onSubmit}>
+      <form id="product-form-main" className={styles.form} onSubmit={onSubmit}>
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>Dados do produto</h2>
           <div className={formLayout.stack}>
@@ -520,7 +554,7 @@ export function ProductFormPage() {
             </div>
             <div className={formLayout.field}>
               <label className={loginStyles.label} htmlFor="p-stock">
-                Quantidade em estoque
+                Estoque físico
               </label>
               <input
                 id="p-stock"
@@ -530,10 +564,13 @@ export function ProductFormPage() {
                 autoComplete="off"
                 value={form.stock_quantity}
                 onChange={(e) => setForm((prev) => ({ ...prev, stock_quantity: e.target.value }))}
+                title="Estoque físico no almoxarifado"
                 placeholder="0"
                 disabled={readOnly}
               />
-              <p className={styles.fieldHint}>Para ajustes pontuais no dia a dia, use também a tela de Estoque.</p>
+              <p className={styles.fieldHint}>
+                O saldo físico também aparece na listagem de Produtos (Físico, Reservado e Disponível).
+              </p>
             </div>
           </div>
           </div>
@@ -718,36 +755,46 @@ export function ProductFormPage() {
         {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
         {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
 
-        {canEdit ? (
-          <div className={styles.actions}>
-            <Link className={styles.btnBackLink} to="/app/products">
-              ← Voltar à lista
-            </Link>
-            <button type="submit" className={styles.btnPrimary} disabled={saving || deleting || duplicating}>
+      </form>
+
+      <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">
+        <div className={styles.actionBarInner}>
+          <Link className={styles.btnBackLink} to="/app/products">
+            Voltar
+          </Link>
+          {canEdit && !isNew ? (
+            <button
+              type="button"
+              className={styles.btnSecondary}
+              onClick={() => void onDuplicate()}
+              disabled={saving || deleting || duplicating}
+            >
+              {duplicating ? "Duplicando…" : "Duplicar produto"}
+            </button>
+          ) : null}
+          {canDelete && !isNew ? (
+            <button
+              type="button"
+              className={styles.btnDanger}
+              onClick={() => void onDelete()}
+              disabled={saving || deleting || duplicating}
+            >
+              {deleting ? "Excluindo…" : "Excluir produto"}
+            </button>
+          ) : null}
+          {canEdit && (isNew || isDirty) ? (
+            <button
+              type="submit"
+              form="product-form-main"
+              className={styles.btnPrimary}
+              disabled={saving || deleting || duplicating}
+            >
               {saving ? "Salvando…" : isNew ? "Cadastrar" : "Salvar alterações"}
             </button>
-            {!isNew ? (
-              <button type="button" className={styles.btnSecondary} onClick={() => void onDuplicate()} disabled={saving || deleting || duplicating}>
-                {duplicating ? "Duplicando…" : "Duplicar produto"}
-              </button>
-            ) : null}
-            {canDelete && !isNew ? (
-              <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={saving || deleting || duplicating}>
-                {deleting ? "Excluindo…" : "Excluir produto"}
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className={styles.actions}>
-            <Link className={styles.btnBackLink} to="/app/products">
-              ← Voltar à lista
-            </Link>
-            <p className={styles.readOnlyHint}>
-              Você pode visualizar os dados. Para alterar, use um perfil de recepção ou administrador.
-            </p>
-          </div>
-        )}
-      </form>
+          ) : null}
+          {!canEdit ? <p className={styles.readOnlyHint}>Visualização somente leitura.</p> : null}
+        </div>
+      </div>
     </div>
   );
 }

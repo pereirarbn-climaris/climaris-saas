@@ -15,7 +15,41 @@ export type WhatsappAppointmentMessageSettings = {
   template_body: string;
   confirm_keyword: string;
   reschedule_keyword: string;
+  confirm_reply: string;
+  reschedule_reply: string;
+  cancel_reply: string;
   allowed_variables: string[];
+  reply_allowed_variables: Record<string, string[]>;
+};
+
+export type WhatsappWebhookInfo = {
+  webhook_slug: string;
+  webhook_agenda_url: string | null;
+  webhook_agenda_url_with_tenant: string | null;
+  webhook_preventiva_url: string | null;
+  webhook_preventiva_url_with_tenant: string | null;
+  webhook_evolution_router_url: string | null;
+  webhook_evolution_router_url_with_tenant: string | null;
+  api_public_base_url_configured: boolean;
+  webhook_enabled: boolean;
+  tenant_id: number;
+  instance_name: string | null;
+  suggested_events: string[];
+  suggested_events_agenda?: string[];
+  suggested_events_preventiva?: string[];
+  automation_enabled: boolean;
+  automation_allowed_by_plan: boolean;
+  automation_active: boolean;
+  plan_key: string;
+  plan_label: string;
+};
+
+export type WhatsappAutomationSettings = {
+  automation_enabled: boolean;
+  automation_allowed_by_plan: boolean;
+  automation_active: boolean;
+  plan_key: string;
+  plan_label: string;
 };
 
 export type WhatsappReminderRules = {
@@ -164,6 +198,64 @@ export async function disconnectWhatsapp(): Promise<WhatsappTenantConnection> {
   return body as WhatsappTenantConnection;
 }
 
+export async function getWhatsappWebhookInfo(): Promise<WhatsappWebhookInfo> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/webhook-info"), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível carregar informações do webhook."));
+  }
+  return body as WhatsappWebhookInfo;
+}
+
+export async function syncWhatsappWebhookAgenda(): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/webhook-agenda/sync"), {
+    method: "POST",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível sincronizar o webhook na Evolution."));
+  }
+  return body as Record<string, unknown>;
+}
+
+export async function syncWhatsappWebhookPreventiva(): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/webhook-preventiva/sync"), {
+    method: "POST",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível sincronizar o webhook na Evolution."));
+  }
+  return body as Record<string, unknown>;
+}
+
+export async function syncWhatsappWebhookEvolutionRouter(): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/webhook-evolution/sync"), {
+    method: "POST",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível sincronizar o roteador na Evolution."));
+  }
+  return body as Record<string, unknown>;
+}
+
+export async function patchWhatsappAutomationSettings(enabled: boolean): Promise<WhatsappAutomationSettings> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/automation-settings"), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ enabled }),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível atualizar a automação WhatsApp."));
+  }
+  return body as WhatsappAutomationSettings;
+}
+
 export async function getWhatsappMessageSettings(): Promise<WhatsappAppointmentMessageSettings> {
   const response = await fetch(apiUrl("/api/v1/whatsapp/message-settings"), { headers: bearer() });
   const body = await parseBody(response);
@@ -177,6 +269,9 @@ export async function patchWhatsappMessageSettings(patch: {
   template_body?: string;
   confirm_keyword?: string;
   reschedule_keyword?: string;
+  confirm_reply?: string;
+  reschedule_reply?: string;
+  cancel_reply?: string;
 }): Promise<WhatsappAppointmentMessageSettings> {
   const response = await fetch(apiUrl("/api/v1/whatsapp/message-settings"), {
     method: "PATCH",

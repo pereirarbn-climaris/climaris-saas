@@ -1,112 +1,130 @@
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { getPublicEquipmentPage, type PublicEquipmentPagePayload } from "../../api/publicEquipment";
+import { PublicEquipmentProfileView } from "../../components/v0-ui/clients/PublicEquipmentProfileView v2";
+import { mapPublicPayloadToProfile } from "../../lib/equipmentProfileAdapter";
 import { getAccessToken } from "../../lib/authStorage";
+import { PublicEquipmentHistoryOnly } from "./PublicEquipmentHistoryOnly";
+import { PublicEquipmentNotFound } from "./PublicEquipmentNotFound";
 import styles from "./PublicEquipmentPage.module.css";
 
-function formatDt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(d);
-}
-
 export function PublicEquipmentPage() {
-  const { token } = useParams<{ token: string }>();
+  const { token, codeId } = useParams<{ token?: string; codeId?: string }>();
+  const publicKey = (codeId ?? token ?? "").trim();
+  const navigate = useNavigate();
   const [data, setData] = useState<PublicEquipmentPagePayload | null>(null);
-  const [err, setErr] = useState("");
+  const [notFound, setNotFound] = useState(false);
+  const [notFoundMsg, setNotFoundMsg] = useState("");
+  const [loading, setLoading] = useState(true);
   const loggedIn = Boolean(getAccessToken());
 
   useEffect(() => {
-    if (!token?.trim()) {
-      setErr("Link inválido.");
+    if (!publicKey) {
+      setNotFound(true);
+      setNotFoundMsg("Link inválido.");
+      setLoading(false);
       return;
     }
     let cancelled = false;
+    setLoading(true);
+    setNotFound(false);
     void (async () => {
       try {
-        const page = await getPublicEquipmentPage(token.trim());
-        if (!cancelled) setData(page);
+        const page = await getPublicEquipmentPage(publicKey);
+        if (!cancelled) {
+          setData(page);
+          setNotFound(false);
+        }
       } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : "Erro ao carregar.");
+        if (!cancelled) {
+          setData(null);
+          setNotFound(true);
+          setNotFoundMsg(e instanceof Error ? e.message : "Não foi possível carregar esta etiqueta.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [publicKey]);
 
-  if (err) {
+  const equipmentProfile = useMemo(() => {
+    if (!data || !publicKey) return null;
+    return mapPublicPayloadToProfile(data, publicKey);
+  }, [data, publicKey]);
+
+  const statusLabel = data?.equipment_status_label ?? (data?.is_active ? "Operacional" : "Inativo");
+
+  const canOpenOs = Boolean(loggedIn && data?.equipment_id && data?.client_id);
+
+  function openNewServiceOrder() {
+    if (!data?.equipment_id || !data?.client_id) return;
+    navigate(`/app/service-orders/new?client_id=${data.client_id}&equipment_id=${data.equipment_id}`);
+  }
+
+  if (loading) {
     return (
-      <div className={styles.wrap}>
-        <p className={styles.err}>{err}</p>
-        <Link to="/login" className={styles.link}>
-          Entrar no sistema
-        </Link>
+      <div className={styles.page}>
+        <div className={styles.wrap}>
+          <p className={styles.muted}>Carregando…</p>
+        </div>
       </div>
     );
   }
 
-  if (!data) {
+  if (notFound || !data) {
+    return <PublicEquipmentNotFound message={notFoundMsg} codeId={publicKey} />;
+  }
+
+  if (!loggedIn) {
+    return <PublicEquipmentHistoryOnly data={data} statusLabel={statusLabel} />;
+  }
+
+  if (!equipmentProfile) {
     return (
-      <div className={styles.wrap}>
-        <p className={styles.muted}>Carregando…</p>
+      <div className={styles.page}>
+        <div className={styles.wrap}>
+          <p className={styles.muted}>Carregando ficha do equipamento…</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className={styles.wrap}>
-      <header className={styles.header}>
-        <p className={styles.brand}>{data.tenant_name}</p>
-        <h1 className={styles.title}>{data.identificacao}</h1>
-        <p className={styles.meta}>
-          {[data.tipo, data.fabricante, data.modelo].filter(Boolean).join(" · ") || "Equipamento"}
-        </p>
-      </header>
-      <p className={styles.lead}>
-        Histórico público de serviços registrados neste aparelho. Não exibe dados pessoais do cliente.
-      </p>
-      <section className={styles.section}>
-        <h2 className={styles.sectionTitle}>Registros</h2>
-        {data.entries.length === 0 ? (
-          <p className={styles.muted}>Nenhum serviço registrado ainda.</p>
-        ) : (
-          <ul className={styles.list}>
-            {data.entries.map((e, idx) => (
-              <li key={`${e.occurred_at}-${idx}`} className={styles.item}>
-                <span className={styles.when}>{formatDt(e.occurred_at)}</span>
-                <span className={styles.lineTitle}>{e.title}</span>
-                {e.detail ? <span className={styles.detail}>{e.detail}</span> : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      <footer className={styles.footer}>
-        <p className={styles.muted}>É técnico da empresa?</p>
-        <p className={styles.footerActions}>
-          <Link to="/login" className={styles.link}>
-            Entrar
-          </Link>
-          {loggedIn ? (
-            <>
-              {" · "}
-              <Link to="/app/service-orders" className={styles.link}>
-                Abrir ordens de serviço
-              </Link>
-            </>
-          ) : null}
-        </p>
-        <p className={styles.hint}>
-          Após login, abra a OS do cliente e vincule cada serviço ao aparelho correspondente.
-        </p>
-      </footer>
+    <div className={styles.pageWithFab}>
+      <div className={styles.statusBar}>
+        <span
+          className={
+            statusLabel === "Em Manutenção"
+              ? styles.statusMaintenance
+              : statusLabel === "Inativo"
+                ? styles.statusInactive
+                : styles.statusActive
+          }
+        >
+          {statusLabel}
+        </span>
+        {data.qrcode_code_id ? (
+          <span className={styles.codeChip}>
+            <code>{data.qrcode_code_id}</code>
+          </span>
+        ) : null}
+      </div>
+
+      <PublicEquipmentProfileView
+        equipment={equipmentProfile}
+        variant="public"
+        onLoginClick={() => navigate("/login")}
+        showTechnicianActions={false}
+      />
+
+      {canOpenOs ? (
+        <button type="button" className={styles.fabNewOs} onClick={openNewServiceOrder}>
+          Abrir Nova O.S.
+        </button>
+      ) : null}
     </div>
   );
 }

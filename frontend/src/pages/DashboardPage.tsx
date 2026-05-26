@@ -92,7 +92,6 @@ export function DashboardPage() {
   const isAdminRoute = location.pathname.startsWith("/app/admin");
   const isClientsRoute = location.pathname.startsWith("/app/clients");
   const isProductsRoute = location.pathname.startsWith("/app/products");
-  const isInventoryRoute = location.pathname.startsWith("/app/inventory");
   const isServicesRoute = location.pathname.startsWith("/app/services");
   const isServiceOrdersRoute = location.pathname.startsWith("/app/service-orders");
   const isBudgetsRoute = location.pathname.startsWith("/app/budgets");
@@ -113,8 +112,6 @@ export function DashboardPage() {
       ? "Clientes"
       : isProductsRoute
         ? "Produtos"
-        : isInventoryRoute
-          ? "Estoque"
         : isServicesRoute
           ? "Serviços"
           : isServiceOrdersRoute
@@ -348,7 +345,7 @@ export function DashboardPage() {
     const rules: Array<[string, string]> = [
       ["cliente", "/app/clients"],
       ["produto", "/app/products"],
-      ["estoque", "/app/inventory"],
+      ["estoque", "/app/products"],
       ["serviço", "/app/services"],
       ["servico", "/app/services"],
       ["ordem", "/app/service-orders"],

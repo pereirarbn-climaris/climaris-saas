@@ -20,7 +20,8 @@ import type {
 } from "../api/finance";
 import type { PmocPlanOut } from "../api/pmoc";
 import type { ServiceOut } from "../api/services";
-import type { ServiceOrderOut } from "../api/serviceOrders";
+import { normalizeServiceOrderOut } from "./serviceOrderNormalize";
+import type { ServiceOrderOut } from "../types/serviceOrders";
 import type { TenantHoliday, Unavailability } from "../api/technicianCalendar";
 
 const DEMO_TOKEN = "demo_token_climaris_erp_2024";
@@ -190,6 +191,7 @@ export const demoEquipments: EquipmentOut[] = [
     voltagem: "220V",
     tecnologia_ciclo: "inverter",
     local_instalacao: "Quarto principal",
+    installation_reference: "Teto rebaixado - parede da cama",
     ambiente_nome: "Quarto",
     ambiente_tipo: "dormitorio",
     area_m2: 14,
@@ -223,6 +225,7 @@ export const demoEquipments: EquipmentOut[] = [
     voltagem: "220V",
     tecnologia_ciclo: "on_off",
     local_instalacao: "Sala de estar",
+    installation_reference: null,
     ambiente_nome: "Sala",
     ambiente_tipo: "estar",
     area_m2: 22,
@@ -256,6 +259,7 @@ export const demoEquipments: EquipmentOut[] = [
     voltagem: "380V",
     tecnologia_ciclo: "inverter",
     local_instalacao: "Sala de reunioes",
+    installation_reference: null,
     ambiente_nome: "Reunioes",
     ambiente_tipo: "comercial",
     area_m2: 35,
@@ -289,6 +293,7 @@ export const demoEquipments: EquipmentOut[] = [
     voltagem: "220V",
     tecnologia_ciclo: "on_off",
     local_instalacao: "Escritorio administrativo",
+    installation_reference: null,
     ambiente_nome: "Escritorio",
     ambiente_tipo: "comercial",
     area_m2: 28,
@@ -337,6 +342,17 @@ export const demoEquipmentHistoryRows: DemoEquipmentHistoryRow[] = [
     service_name: "Manutencao Preventiva",
     changed_by_user_id: 1,
     changed_by_user_name: "Usuario Demo",
+    service_order_number: "501",
+    order_status: "done",
+    order_status_label: "Concluída",
+    service_type: "Preventiva",
+    order_tipo_servico: "preventiva",
+    technician_name: "Usuario Demo",
+    is_preventive: true,
+    checklist_items: [
+      { descricao: "Limpeza dos filtros de ar", status: "sim" },
+      { descricao: "Verificação do dreno", status: "sim" },
+    ],
   },
 ];
 
@@ -420,10 +436,11 @@ export const demoServiceOrders: ServiceOrderOut[] = [
       {
         id: 901,
         service_id: 1,
-        equipment_id: null,
+        equipment_id: 201,
         quantity: 1,
         unit_price: 350,
         duration_minutes: 180,
+        service_name: "Manutenção preventiva completa",
       },
       {
         id: 902,
@@ -432,9 +449,10 @@ export const demoServiceOrders: ServiceOrderOut[] = [
         quantity: 1,
         unit_price: 150,
         duration_minutes: 60,
+        service_name: "Higienização de Climatizador",
       },
     ],
-    product_items: [],
+    product_items: [{ id: 951, product_id: 1, quantity: 2, unit_price: 45 }],
     schedule: {
       id: 801,
       tenant_id: 1,
@@ -458,6 +476,9 @@ export const demoProducts: ProductOut[] = [
     sale_price: 45.0,
     unit_price: 45.0,
     stock_quantity: 50,
+    quantity_physical: 50,
+    quantity_reserved: 4,
+    quantity_available: 46,
     compatible_equipment_tags: null,
     btu_min: null,
     btu_max: null,
@@ -473,6 +494,9 @@ export const demoProducts: ProductOut[] = [
     sale_price: 280.0,
     unit_price: 280.0,
     stock_quantity: 20,
+    quantity_physical: 20,
+    quantity_reserved: 2,
+    quantity_available: 18,
     compatible_equipment_tags: null,
     btu_min: null,
     btu_max: null,
@@ -488,6 +512,9 @@ export const demoProducts: ProductOut[] = [
     sale_price: 750.0,
     unit_price: 750.0,
     stock_quantity: 8,
+    quantity_physical: 8,
+    quantity_reserved: 0,
+    quantity_available: 8,
     compatible_equipment_tags: "split",
     btu_min: 9000,
     btu_max: 18000,
@@ -503,6 +530,9 @@ export const demoProducts: ProductOut[] = [
     sale_price: 55.0,
     unit_price: 55.0,
     stock_quantity: 100,
+    quantity_physical: 100,
+    quantity_reserved: 0,
+    quantity_available: 100,
     compatible_equipment_tags: null,
     btu_min: null,
     btu_max: null,
@@ -707,10 +737,12 @@ let demoPmocPlansState: PmocPlanOut[] = [
     id: 1,
     tenant_id: 1,
     client_id: 3,
+    client_site_id: 1,
+    establishment_name: "Matriz São Paulo",
     status: "active",
     title: "PMOC Empresa ABC",
     version_label: "v1",
-    establishment_snapshot: {},
+    establishment_snapshot: { site_name: "Matriz São Paulo", address_city: "Sao Paulo", address_state: "SP" },
     law_reference_note: null,
     internal_notes: "Plano demo",
     extras: {},
@@ -799,15 +831,42 @@ export function demoDeleteClient(clientId: number): void {
 export function demoListProducts() {
   return demoProductsState.map((item) => ({ ...item }));
 }
-export function demoCreateProduct(payload: Omit<ProductOut, "id" | "tenant_id" | "unit_price">): ProductOut {
-  const row: ProductOut = { id: nextProductId++, tenant_id: 1, unit_price: payload.sale_price, ...payload };
+export function demoCreateProduct(
+  payload: Omit<ProductOut, "id" | "tenant_id" | "unit_price" | "quantity_physical" | "quantity_reserved" | "quantity_available"> & {
+    quantity_physical?: number;
+    quantity_reserved?: number;
+    quantity_available?: number;
+  },
+): ProductOut {
+  const physical = payload.quantity_physical ?? payload.stock_quantity ?? 0;
+  const reserved = payload.quantity_reserved ?? 0;
+  const row: ProductOut = {
+    id: nextProductId++,
+    tenant_id: 1,
+    unit_price: payload.sale_price,
+    ...payload,
+    stock_quantity: physical,
+    quantity_physical: physical,
+    quantity_reserved: reserved,
+    quantity_available: Math.max(0, physical - reserved),
+  };
   demoProductsState = [row, ...demoProductsState];
   return { ...row };
 }
 export function demoUpdateProduct(productId: number, payload: Partial<ProductOut>): ProductOut {
   const idx = demoProductsState.findIndex((item) => item.id === productId);
   if (idx < 0) throw new Error("Produto não encontrado.");
-  demoProductsState[idx] = { ...demoProductsState[idx], ...payload };
+  const prev = demoProductsState[idx]!;
+  const physical = payload.quantity_physical ?? payload.stock_quantity ?? prev.quantity_physical;
+  const reserved = payload.quantity_reserved ?? prev.quantity_reserved;
+  demoProductsState[idx] = {
+    ...prev,
+    ...payload,
+    stock_quantity: physical,
+    quantity_physical: physical,
+    quantity_reserved: reserved,
+    quantity_available: Math.max(0, physical - reserved),
+  };
   return { ...demoProductsState[idx] };
 }
 export function demoDeleteProduct(productId: number): void {
@@ -838,18 +897,36 @@ export function demoDeleteService(serviceId: number): void {
   demoServicesState = demoServicesState.filter((item) => item.id !== serviceId);
 }
 
+function enrichDemoServiceOrder(row: ServiceOrderOut): ServiceOrderOut {
+  const normalized = normalizeServiceOrderOut({ ...row });
+  const cards = (normalized.equipment_cards ?? []).map((card) => {
+    if (card.equipment_id == null) return card;
+    const eq = demoEquipments.find((e) => e.id === card.equipment_id);
+    if (!eq) return card;
+    return {
+      ...card,
+      equipment_identificacao: eq.identificacao,
+      equipment_tipo: eq.tipo,
+      equipment_modelo: eq.modelo ?? null,
+    };
+  });
+  return { ...normalized, equipment_cards: cards };
+}
+
 export function demoListServiceOrders() {
-  return demoServiceOrdersState.map((item) => ({ ...item }));
+  return demoServiceOrdersState.map((item) => enrichDemoServiceOrder(item));
 }
 export function demoCreateServiceOrder(payload: {
   client_id: number;
   title: string;
   description?: string | null;
-  services: Array<{ service_id: number; quantity: number; equipment_id?: number | null }>;
+  services?: Array<{ service_id: number; quantity: number; equipment_id?: number | null }>;
+  equipment_services?: Array<{ service_id: number; quantity: number; equipment_id?: number | null }>;
   products?: Array<{ product_id: number; quantity: number }>;
   discount_amount?: number;
   technician_ids?: number[];
 }): { id: number; status: "open" } {
+  const lineItems = payload.services ?? payload.equipment_services ?? [];
   const id = nextServiceOrderId++;
   const row: ServiceOrderOut = {
     id,
@@ -860,7 +937,7 @@ export function demoCreateServiceOrder(payload: {
     status: "open",
     discount_amount: payload.discount_amount ?? 0,
     technician_ids: payload.technician_ids ?? [],
-    service_items: payload.services.map((item, idx) => {
+    service_items: lineItems.map((item, idx) => {
       const s = demoServicesState.find((service) => service.id === item.service_id);
       return {
         id: id * 10 + idx + 1,
@@ -896,7 +973,7 @@ let _demoNextSoLineId = 99000;
 
 export function demoPostServiceOrderServiceItem(
   orderId: number,
-  body: { service_id: number; quantity: number },
+  body: { service_id: number; quantity: number; equipment_id?: number | null },
 ): ServiceOrderOut {
   const idx = demoServiceOrdersState.findIndex((item) => item.id === orderId);
   if (idx < 0) throw new Error("OS não encontrada.");
@@ -904,22 +981,30 @@ export function demoPostServiceOrderServiceItem(
   if (order.status === "done" || order.status === "cancelled") {
     throw new Error("Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.");
   }
+  const equipmentId = body.equipment_id ?? null;
+  const duplicate = order.service_items.some(
+    (it) => it.service_id === body.service_id && (it.equipment_id ?? null) === equipmentId,
+  );
+  if (duplicate) {
+    throw new Error("Este serviço já está vinculado a este equipamento nesta OS.");
+  }
   const svc = demoServicesState.find((s) => s.id === body.service_id);
   if (!svc) throw new Error("Serviço não encontrado.");
   _demoNextSoLineId += 1;
   const newItem = {
     id: _demoNextSoLineId,
     service_id: body.service_id,
-    equipment_id: null as number | null,
+    equipment_id: equipmentId,
     quantity: Math.max(body.quantity, 1),
     unit_price: svc.price,
     duration_minutes: svc.duration_minutes,
+    service_name: svc.name,
   };
   demoServiceOrdersState[idx] = {
     ...order,
     service_items: [...order.service_items, newItem],
   };
-  return { ...demoServiceOrdersState[idx] };
+  return enrichDemoServiceOrder(demoServiceOrdersState[idx]!);
 }
 
 export function demoPatchServiceOrderServiceItemQuantity(
@@ -1597,16 +1682,22 @@ export function demoMercadoPagoPreference(
 export function demoListPmocPlans() {
   return demoPmocPlansState.map((item) => ({ ...item }));
 }
-export function demoCreatePmocPlan(payload: { client_id: number; title: string }): PmocPlanOut {
+export function demoCreatePmocPlan(payload: {
+  client_id: number;
+  client_site_id: number;
+  title: string;
+}): PmocPlanOut {
   const client = demoClientsState.find((item) => item.id === payload.client_id);
   const row: PmocPlanOut = {
     id: nextPmocId++,
     tenant_id: 1,
     client_id: payload.client_id,
+    client_site_id: payload.client_site_id,
+    establishment_name: `Obra #${payload.client_site_id}`,
     status: "draft",
     title: payload.title,
     version_label: "v1",
-    establishment_snapshot: {},
+    establishment_snapshot: { site_name: `Obra #${payload.client_site_id}` },
     law_reference_note: null,
     internal_notes: null,
     extras: {},

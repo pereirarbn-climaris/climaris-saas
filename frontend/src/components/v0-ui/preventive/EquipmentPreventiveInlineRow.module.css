@@ -1,0 +1,134 @@
+.rowControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.toggleWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toggleLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.switch {
+  position: relative;
+  display: inline-flex;
+  height: 1.5rem;
+  width: 2.75rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background: #e2e8f0;
+  transition: background 0.2s ease;
+}
+
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.switchOn {
+  background: var(--color-primary, #2563eb);
+}
+
+.switchThumb {
+  pointer-events: none;
+  display: inline-block;
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+}
+
+.switchThumbOn {
+  transform: translateX(1.25rem);
+}
+
+.intervalWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.intervalDisabled {
+  opacity: 0.45;
+}
+
+.numberInput {
+  width: 3.25rem;
+  height: 2.25rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  text-align: center;
+  font-size: 0.88rem;
+  color: #0f172a;
+  background: #fff;
+}
+
+.numberInput:disabled {
+  background: #f8fafc;
+  cursor: not-allowed;
+}
+
+.select {
+  height: 2.25rem;
+  min-width: 5.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0 0.5rem;
+  font-size: 0.88rem;
+  color: #0f172a;
+  background: #fff;
+}
+
+.select:disabled {
+  background: #f8fafc;
+  cursor: not-allowed;
+}
+
+.saveBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: var(--color-primary, #2563eb);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.saveBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.saveIcon {
+  width: 1rem;
+  height: 1rem;
+}
+
+@media (max-width: 900px) {
+  .rowControls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

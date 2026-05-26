@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Navigate, useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import {
   createBreakWindow,
@@ -20,21 +20,33 @@ import {
   type WorkWindow,
 } from "../../api/technicianCalendar";
 import { listTenantUsers, type UserOut } from "../../api/auth";
-
-type WeekdayHourSlice = { start: string; end: string };
 import { listSchedules, type ScheduleOut } from "../../api/serviceOrders";
+import { AgendaBlockTimeModal } from "../../components/agenda/AgendaBlockTimeModal";
+import { PmocAgendaEventModal, type PmocAgendaEventSchedule } from "../../components/agenda/PmocAgendaEventModal";
+import { listPmocMockAgendaEntries, pmocMockAgendaEntryToScheduleShape } from "../../lib/pmocAgendaMock";
+import { resolveTenantWeekdayWorkHours, type WeekdayHourSlice } from "../../lib/tenantWorkHours";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./TechnicianSchedulePage.module.css";
 
 const MOBILE_BREAKPOINT = "(max-width: 768px)";
 
-function countOsPerDay(schedulesByDay: Map<string, ScheduleOut[]>, dayKey: string): number {
+type AgendaVisualSchedule = ScheduleOut & {
+  is_pmoc?: boolean;
+  pmoc_label?: string;
+  technician_id?: string;
+};
+
+function countOsPerDay(schedulesByDay: Map<string, AgendaVisualSchedule[]>, dayKey: string): number {
   const list = schedulesByDay.get(dayKey) ?? [];
   const ids = new Set<number>();
   for (const s of list) {
     if (s.service_order_id != null) ids.add(s.service_order_id);
   }
   return ids.size;
+}
+
+function countBlocksPerDay(blocks: Unavailability[], dayKey: string): number {
+  return blocks.filter((b) => blockOverlapsDayKey(b, dayKey)).length;
 }
 
 const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"] as const;
@@ -170,6 +182,51 @@ const FIXED_NATIONAL_HOLIDAYS_PTBR: Record<string, string> = {
   "12-25": "Natal",
 };
 
+function isPmocScheduleRow(s: ScheduleOut): boolean {
+  return s.service_order_id == null && (s.notes ?? "").startsWith("[PMOC]");
+}
+
+function enrichScheduleRow(s: ScheduleOut): AgendaVisualSchedule {
+  const isPmoc = isPmocScheduleRow(s);
+  return {
+    ...s,
+    is_pmoc: isPmoc || undefined,
+    pmoc_label: isPmoc ? "PMOC" : undefined,
+  };
+}
+
+function unavailabilityDisplayMeta(reason: string | null | undefined): { tag: string; title: string; isFolga: boolean } {
+  const text = (reason ?? "").trim();
+  const lower = text.toLowerCase();
+  if (lower.includes("folga")) {
+    return { tag: "FOLGA", title: text || "Folga", isFolga: true };
+  }
+  return { tag: "BLOQUEIO", title: text || "Horário bloqueado", isFolga: false };
+}
+
+function blockOverlapsDayKey(block: Unavailability, dayKey: string): boolean {
+  const startKey = localDateKey(new Date(block.starts_at));
+  const endKey = localDateKey(new Date(block.ends_at));
+  return startKey <= dayKey && endKey >= dayKey;
+}
+
+function clipUnavailabilityToDay(
+  block: Unavailability,
+  day: Date,
+): { starts: Date; ends: Date } | null {
+  const dayStart = new Date(day);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(day);
+  dayEnd.setHours(23, 59, 59, 999);
+  const start = new Date(block.starts_at);
+  const end = new Date(block.ends_at);
+  if (end < dayStart || start > dayEnd) return null;
+  return {
+    starts: start < dayStart ? dayStart : start,
+    ends: end > dayEnd ? dayEnd : end,
+  };
+}
+
 export function TechnicianSchedulePage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const navigate = useNavigate();
@@ -191,6 +248,7 @@ export function TechnicianSchedulePage() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [focusedDate, setFocusedDate] = useState(() => new Date());
   const [scheduleRows, setScheduleRows] = useState<ScheduleOut[]>([]);
+  const [pmocMockRevision, setPmocMockRevision] = useState(0);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
   const [tenantHolidays, setTenantHolidays] = useState<TenantHoliday[]>([]);
   const [apiNationalHolidays, setApiNationalHolidays] = useState<Map<string, string>>(new Map());
@@ -198,6 +256,26 @@ export function TechnicianSchedulePage() {
   const [workForm, setWorkForm] = useState({ id: "", weekday: "0", start_time: "08:00", end_time: "18:00" });
   const [breakForm, setBreakForm] = useState({ id: "", weekday: "0", start_time: "12:00", end_time: "13:00" });
   const [unForm, setUnForm] = useState({ id: "", starts_at: "", ends_at: "", reason: "" });
+  const [visualBlocks, setVisualBlocks] = useState<Unavailability[]>([]);
+  const [selectedPmoc, setSelectedPmoc] = useState<PmocAgendaEventSchedule | null>(null);
+  const [blockTimeOpen, setBlockTimeOpen] = useState(false);
+  const [blockTimeEdit, setBlockTimeEdit] = useState<Unavailability | null>(null);
+  const [blockDraftTimes, setBlockDraftTimes] = useState<{ startsAt: string; endsAt: string } | null>(null);
+  const [dragSelect, setDragSelect] = useState<{
+    dayKey: string;
+    anchorMinutes: number;
+    currentMinutes: number;
+  } | null>(null);
+  const overlayPointerRef = useRef<{
+    day: Date;
+    overlay: HTMLElement;
+    pointerId: number;
+    startClientY: number;
+    anchorMinutes: number;
+    currentMinutes: number;
+    shiftDrag: boolean;
+    suppressClick: boolean;
+  } | null>(null);
 
   const canManage = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const canView = !!ctx && (canManage || ctx.user.role === "technician");
@@ -268,9 +346,29 @@ export function TechnicianSchedulePage() {
     }
     return Array.from(set);
   }, [calendarView, focusedDate, weekDates]);
+
+  const pmocMockScheduleRows = useMemo((): AgendaVisualSchedule[] => {
+    void pmocMockRevision;
+    const from = scheduleQueryRange.from_day;
+    const to = scheduleQueryRange.to_day;
+    return listPmocMockAgendaEntries()
+      .filter((entry) => !technicianId || entry.technician_id === technicianId)
+      .map(pmocMockAgendaEntryToScheduleShape)
+      .filter((row) => {
+        const dayKey = localDateKey(new Date(row.starts_at));
+        return dayKey >= from && dayKey <= to;
+      });
+  }, [pmocMockRevision, scheduleQueryRange.from_day, scheduleQueryRange.to_day, technicianId]);
+
+  const enrichedScheduleRows = useMemo(
+    () => scheduleRows.map(enrichScheduleRow),
+    [scheduleRows],
+  );
+
   const schedulesByDay = useMemo(() => {
-    const map = new Map<string, ScheduleOut[]>();
-    for (const s of scheduleRows) {
+    const map = new Map<string, AgendaVisualSchedule[]>();
+    const merged: AgendaVisualSchedule[] = [...enrichedScheduleRows, ...pmocMockScheduleRows];
+    for (const s of merged) {
       if (s.status === "cancelled") continue;
       const d = new Date(s.starts_at);
       const key = localDateKey(d);
@@ -280,7 +378,7 @@ export function TechnicianSchedulePage() {
     }
     for (const list of map.values()) list.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
     return map;
-  }, [scheduleRows]);
+  }, [enrichedScheduleRows, pmocMockScheduleRows]);
   const holidayMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const h of tenantHolidays) {
@@ -302,11 +400,10 @@ export function TechnicianSchedulePage() {
     },
     [holidayMap],
   );
-  const weekdayHours = useMemo((): Record<string, WeekdayHourSlice> => {
-    const raw = ctx?.tenant.weekday_work_hours;
-    if (!raw || typeof raw !== "object") return {};
-    return raw as Record<string, WeekdayHourSlice>;
-  }, [ctx?.tenant.weekday_work_hours]);
+  const weekdayHours = useMemo(
+    (): Record<string, WeekdayHourSlice> => resolveTenantWeekdayWorkHours(ctx?.tenant),
+    [ctx?.tenant],
+  );
   const businessDays = useMemo(() => {
     const days = Object.keys(weekdayHours)
       .map((k) => Number(k))
@@ -335,6 +432,11 @@ export function TechnicianSchedulePage() {
     () => Array.from({ length: dayEndHour - dayStartHour }, (_, i) => `${String(dayStartHour + i).padStart(2, "0")}:00`),
     [dayEndHour, dayStartHour],
   );
+  const technicianNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const t of technicians) map.set(t.id, t.full_name?.trim() || `Técnico #${t.id}`);
+    return map;
+  }, [technicians]);
 
   useEffect(() => {
     if (!ctx) return;
@@ -482,6 +584,72 @@ export function TechnicianSchedulePage() {
     };
   }, [technicianId, agendaMode, scheduleQueryRange.from_day, scheduleQueryRange.to_day, ctx?.user.role]);
 
+  useEffect(() => {
+    if (agendaMode !== "visual") return;
+    const refresh = () => setPmocMockRevision((n) => n + 1);
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [agendaMode]);
+
+  const visualBlocksInRange = useMemo(() => {
+    const from = scheduleQueryRange.from_day;
+    const to = scheduleQueryRange.to_day;
+    return visualBlocks.filter((b) => {
+      const startKey = localDateKey(new Date(b.starts_at));
+      const endKey = localDateKey(new Date(b.ends_at));
+      return startKey <= to && endKey >= from;
+    });
+  }, [visualBlocks, scheduleQueryRange.from_day, scheduleQueryRange.to_day]);
+
+  useEffect(() => {
+    if (agendaMode !== "visual") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listUnavailability(technicianId ? Number(technicianId) : undefined, {
+          from_day: scheduleQueryRange.from_day,
+          to_day: scheduleQueryRange.to_day,
+          limit: 100,
+        });
+        if (!cancelled) setVisualBlocks(rows);
+      } catch (e) {
+        if (!cancelled) {
+          setVisualBlocks([]);
+          setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao carregar bloqueios da agenda." });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agendaMode, technicianId, scheduleQueryRange.from_day, scheduleQueryRange.to_day]);
+
+  async function refreshVisualAgenda() {
+    setPmocMockRevision((n) => n + 1);
+    try {
+      const rows = await listSchedules({
+        technician_id: technicianId ? Number(technicianId) : undefined,
+        limit: 500,
+        from_day: scheduleQueryRange.from_day,
+        to_day: scheduleQueryRange.to_day,
+      });
+      setScheduleRows(rows);
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao atualizar agenda." });
+    }
+    try {
+      const blocks = await listUnavailability(technicianId ? Number(technicianId) : undefined, {
+        from_day: scheduleQueryRange.from_day,
+        to_day: scheduleQueryRange.to_day,
+        limit: 100,
+      });
+      setVisualBlocks(blocks);
+      if (technicianId) setUnavailabilityRows(blocks);
+    } catch {
+      setVisualBlocks([]);
+    }
+  }
+
   async function submitWork() {
     if (!canManage) return;
     if (!technicianId) return;
@@ -589,6 +757,133 @@ export function TechnicianSchedulePage() {
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao excluir indisponibilidade." });
     }
+  }
+
+  const DRAG_CLICK_THRESHOLD_PX = 8;
+
+  const resolveOverlayMinutes = useCallback(
+    (clientY: number, overlay: HTMLElement, day: Date): { minutes: number; valid: boolean } => {
+      const holidayLabel = holidayLabelForDay(day);
+      const weekday = toTenantWeekday(day);
+      const isBusinessDay = businessDays.has(weekday);
+      if (holidayLabel || !isBusinessDay) return { minutes: 0, valid: false };
+      const weekdayRule = weekdayHours[String(weekday)];
+      const dayStartMin = weekdayRule
+        ? parseHmToMinutes(weekdayRule.start, companyStartMinutes)
+        : companyStartMinutes;
+      const dayEndMin = weekdayRule
+        ? parseHmToMinutes(weekdayRule.end, companyEndMinutes)
+        : companyEndMinutes;
+      const rect = overlay.getBoundingClientRect();
+      const y = clientY - rect.top;
+      const ratio = Math.min(Math.max(y / rect.height, 0), 1);
+      const rawMinutes = Math.round((ratio * minutesPerDay) / 15) * 15;
+      const absoluteMinute = dayStartHour * 60 + rawMinutes;
+      if (absoluteMinute < dayStartMin || absoluteMinute >= dayEndMin) {
+        return { minutes: absoluteMinute, valid: false };
+      }
+      return { minutes: absoluteMinute, valid: true };
+    },
+    [
+      businessDays,
+      companyEndMinutes,
+      companyStartMinutes,
+      dayStartHour,
+      holidayLabelForDay,
+      minutesPerDay,
+      weekdayHours,
+    ],
+  );
+
+  const dateFromAbsoluteMinutes = useCallback((day: Date, absoluteMinutes: number): Date => {
+    const d = new Date(day);
+    d.setHours(Math.floor(absoluteMinutes / 60), absoluteMinutes % 60, 0, 0);
+    return d;
+  }, []);
+
+  const openBlockModalFromDrag = useCallback(
+    (day: Date, startMin: number, endMin: number) => {
+      const start = Math.min(startMin, endMin);
+      let end = Math.max(startMin, endMin);
+      if (end <= start) end = start + 15;
+      const startsAt = dateFromAbsoluteMinutes(day, start);
+      const endsAt = dateFromAbsoluteMinutes(day, end);
+      setBlockTimeEdit(null);
+      setBlockDraftTimes({
+        startsAt: toLocalInput(startsAt.toISOString()),
+        endsAt: toLocalInput(endsAt.toISOString()),
+      });
+      setBlockTimeOpen(true);
+    },
+    [dateFromAbsoluteMinutes],
+  );
+
+  function openBlockTimeModalManual() {
+    setBlockTimeEdit(null);
+    setBlockDraftTimes(null);
+    setBlockTimeOpen(true);
+  }
+
+  function handleOverlayPointerDown(e: React.PointerEvent<HTMLDivElement>, day: Date) {
+    if (!canManage) return;
+    const holidayLabel = holidayLabelForDay(day);
+    const weekday = toTenantWeekday(day);
+    if (holidayLabel || !businessDays.has(weekday)) return;
+    const overlay = e.currentTarget;
+    const { minutes, valid } = resolveOverlayMinutes(e.clientY, overlay, day);
+    if (!valid) return;
+    overlay.setPointerCapture(e.pointerId);
+    const shiftDrag = e.shiftKey;
+    overlayPointerRef.current = {
+      day,
+      overlay,
+      pointerId: e.pointerId,
+      startClientY: e.clientY,
+      anchorMinutes: minutes,
+      currentMinutes: minutes,
+      shiftDrag,
+      suppressClick: shiftDrag,
+    };
+    if (shiftDrag) {
+      setDragSelect({ dayKey: localDateKey(day), anchorMinutes: minutes, currentMinutes: minutes });
+    }
+  }
+
+  function handleOverlayPointerMove(e: React.PointerEvent<HTMLDivElement>, day: Date) {
+    const session = overlayPointerRef.current;
+    if (!session || session.day.getTime() !== day.getTime()) return;
+    const { minutes, valid } = resolveOverlayMinutes(e.clientY, session.overlay, day);
+    if (!valid) return;
+    if (Math.abs(e.clientY - session.startClientY) >= DRAG_CLICK_THRESHOLD_PX) {
+      session.suppressClick = true;
+    }
+    session.currentMinutes = minutes;
+    if (session.shiftDrag) {
+      setDragSelect({ dayKey: localDateKey(day), anchorMinutes: session.anchorMinutes, currentMinutes: minutes });
+    }
+  }
+
+  function handleOverlayPointerUp(e: React.PointerEvent<HTMLDivElement>, day: Date) {
+    const session = overlayPointerRef.current;
+    if (!session || session.day.getTime() !== day.getTime()) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer may already be released */
+    }
+    if (session.shiftDrag) {
+      openBlockModalFromDrag(day, session.anchorMinutes, session.currentMinutes);
+    } else if (!session.suppressClick) {
+      const offsetFromDayStart = session.anchorMinutes - dayStartHour * 60;
+      openNewOrderFromSlot(day, offsetFromDayStart);
+    }
+    overlayPointerRef.current = null;
+    setDragSelect(null);
+  }
+
+  function handleOverlayPointerCancel() {
+    overlayPointerRef.current = null;
+    setDragSelect(null);
   }
 
   if (!ctx) return <Navigate to="/login" replace />;
@@ -812,6 +1107,15 @@ export function TechnicianSchedulePage() {
               <span className={`${styles.legendSwatch} ${styles.legendSwatchBlocked}`} />
               Sem expediente
             </span>
+            <span className={styles.legendItem}>
+              <span className={`${styles.legendSwatch} ${styles.legendSwatchBlock}`} />
+              Folga / bloqueio
+            </span>
+            {canManage ? (
+              <span className={styles.legendItem}>
+                <span className={styles.legendHint}>Shift + arrastar no calendário para bloquear</span>
+              </span>
+            ) : null}
           </div>
           <div className={styles.calendarToolbar}>
             <div className={styles.calendarToolbarLeft}>
@@ -849,6 +1153,15 @@ export function TechnicianSchedulePage() {
               </button>
             </div>
             <div className={styles.calendarToolbarRight}>
+              {canManage ? (
+                <button
+                  className={styles.btnPrimary}
+                  type="button"
+                  onClick={openBlockTimeModalManual}
+                >
+                  Bloquear horário
+                </button>
+              ) : null}
               <label className={styles.toolbarTechLabel} htmlFor="tech-select-inline">Técnico</label>
               <select
                 id="tech-select-inline"
@@ -901,6 +1214,7 @@ export function TechnicianSchedulePage() {
                   const weekday = toTenantWeekday(cellDate);
                   const isBusinessDay = businessDays.has(weekday);
                   const osCount = countOsPerDay(schedulesByDay, key);
+                  const blockCount = countBlocksPerDay(visualBlocksInRange, key);
                   const blocked = Boolean(holidayLabel) || !isBusinessDay;
                   return (
                     <button
@@ -920,6 +1234,10 @@ export function TechnicianSchedulePage() {
                         <span className={styles.monthCellHint}>{holidayLabel ? "Feriado" : "Sem exped."}</span>
                       ) : osCount > 0 ? (
                         <span className={styles.monthOsBadge}>{osCount}</span>
+                      ) : blockCount > 0 ? (
+                        <span className={styles.monthBlockBadge} title="Folga ou bloqueio">
+                          {blockCount}
+                        </span>
                       ) : (
                         <span className={styles.monthCellEmpty}> </span>
                       )}
@@ -975,33 +1293,93 @@ export function TechnicianSchedulePage() {
                     }
                     return null;
                   })()}
-                  {canManage ? (
-                    <button
-                      type="button"
-                      className={styles.calendarDayOverlay}
-                      title="Clique para abrir nova OS neste dia/horário"
-                      onClick={(e) => {
-                        const holidayLabel = holidayLabelForDay(day);
-                        const weekday = toTenantWeekday(day);
-                        const isBusinessDay = businessDays.has(weekday);
-                        const weekdayRule = weekdayHours[String(weekday)];
-                        const dayStartMinutes = weekdayRule
-                          ? parseHmToMinutes(weekdayRule.start, companyStartMinutes)
-                          : companyStartMinutes;
-                        const dayEndMinutes = weekdayRule
-                          ? parseHmToMinutes(weekdayRule.end, companyEndMinutes)
-                          : companyEndMinutes;
-                        if (holidayLabel || !isBusinessDay) return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const y = e.clientY - rect.top;
-                        const ratio = Math.min(Math.max(y / rect.height, 0), 1);
-                        const rawMinutes = Math.round((ratio * minutesPerDay) / 15) * 15;
-                        const absoluteMinute = dayStartHour * 60 + rawMinutes;
-                        if (absoluteMinute < dayStartMinutes || absoluteMinute >= dayEndMinutes) return;
-                        openNewOrderFromSlot(day, rawMinutes);
-                      }}
-                    />
+                  {canManage &&
+                  !holidayLabelForDay(day) &&
+                  businessDays.has(toTenantWeekday(day)) ? (
+                    <>
+                      <div
+                        className={styles.calendarDayOverlay}
+                        title="Clique: nova OS · Segure Shift e arraste: bloquear horário"
+                        onPointerDown={(e) => handleOverlayPointerDown(e, day)}
+                        onPointerMove={(e) => handleOverlayPointerMove(e, day)}
+                        onPointerUp={(e) => handleOverlayPointerUp(e, day)}
+                        onPointerCancel={handleOverlayPointerCancel}
+                      />
+                      {dragSelect?.dayKey === localDateKey(day) ? (() => {
+                        const startMin = Math.min(dragSelect.anchorMinutes, dragSelect.currentMinutes);
+                        const endMin = Math.max(dragSelect.anchorMinutes, dragSelect.currentMinutes);
+                        const top = ((startMin - dayStartHour * 60) / minutesPerDay) * 100;
+                        const height = (Math.max(endMin - startMin, 15) / minutesPerDay) * 100;
+                        const previewStart = dateFromAbsoluteMinutes(day, startMin);
+                        const previewEnd = dateFromAbsoluteMinutes(day, Math.max(endMin, startMin + 15));
+                        return (
+                          <div
+                            className={styles.calendarDragSelectPreview}
+                            style={{ top: `${Math.max(top, 0)}%`, height: `${Math.max(height, 4)}%` }}
+                          >
+                            <p className={styles.calendarDragSelectPreviewLabel}>
+                              {formatHourRange(previewStart.toISOString(), previewEnd.toISOString())}
+                            </p>
+                          </div>
+                        );
+                      })() : null}
+                    </>
                   ) : null}
+                  {visualBlocksInRange.map((block) => {
+                    const clipped = clipUnavailabilityToDay(block, day);
+                    if (!clipped) return null;
+                    const weekday = toTenantWeekday(day);
+                    const weekdayRule = weekdayHours[String(weekday)];
+                    const visibleStartMin = weekdayRule
+                      ? parseHmToMinutes(weekdayRule.start, companyStartMinutes)
+                      : companyStartMinutes;
+                    const visibleEndMin = weekdayRule
+                      ? parseHmToMinutes(weekdayRule.end, companyEndMinutes)
+                      : companyEndMinutes;
+                    let startMinutes = clipped.starts.getHours() * 60 + clipped.starts.getMinutes();
+                    let endMinutes = clipped.ends.getHours() * 60 + clipped.ends.getMinutes();
+                    startMinutes = Math.max(startMinutes, visibleStartMin);
+                    endMinutes = Math.min(endMinutes, visibleEndMin);
+                    if (endMinutes <= startMinutes) return null;
+                    const top = ((startMinutes - dayStartHour * 60) / minutesPerDay) * 100;
+                    const height = (Math.max(endMinutes - startMinutes, 15) / minutesPerDay) * 100;
+                    const techName = technicianNameById.get(block.technician_id);
+                    const display = unavailabilityDisplayMeta(block.reason);
+                    return (
+                      <div
+                        key={`block-${block.id}-${localDateKey(day)}`}
+                        className={`${styles.calendarEvent} ${styles.calendarEventBlock} ${
+                          display.isFolga ? styles.calendarEventBlockFolga : ""
+                        }`}
+                        style={{ top: `${Math.max(top, 0)}%`, height: `${Math.max(height, 10)}%` }}
+                        title={display.title}
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!canManage) return;
+                          setBlockTimeEdit(block);
+                          setBlockTimeOpen(true);
+                        }}
+                        onKeyDown={(e) => {
+                          if ((e.key === "Enter" || e.key === " ") && canManage) {
+                            e.preventDefault();
+                            setBlockTimeEdit(block);
+                            setBlockTimeOpen(true);
+                          }
+                        }}
+                      >
+                        <p className={styles.scheduleTime}>
+                          {formatHourRange(clipped.starts.toISOString(), clipped.ends.toISOString())}
+                          <span className={styles.blockAgendaTag}> {display.tag}</span>
+                        </p>
+                        <p className={styles.scheduleMeta}>{ellipsis(display.title, 28)}</p>
+                        {!technicianId && techName ? (
+                          <p className={styles.scheduleMeta}>Técnico: {ellipsis(techName, 22)}</p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                   {(schedulesByDay.get(localDateKey(day)) ?? []).map((s) => {
                     const start = new Date(s.starts_at);
                     const end = new Date(s.ends_at);
@@ -1010,28 +1388,56 @@ export function TechnicianSchedulePage() {
                     const top = ((startMinutes - dayStartHour * 60) / minutesPerDay) * 100;
                     const height = (Math.max(endMinutes - startMinutes, 15) / minutesPerDay) * 100;
                     const isConfirmed = String(s.status || "").toLowerCase() === "confirmed";
+                    const isPmoc = Boolean(s.is_pmoc);
                     return (
                       <div
                         key={s.id}
-                        className={`${styles.calendarEvent} ${isConfirmed ? styles.calendarEventConfirmed : ""}`}
+                        className={`${styles.calendarEvent} ${isPmoc ? styles.calendarEventPmoc : ""} ${isConfirmed && !isPmoc ? styles.calendarEventConfirmed : ""}`}
                         style={{ top: `${Math.max(top, 0)}%`, height: `${Math.max(height, 8)}%` }}
-                        onClick={() => {
-                          if (s.service_order_id) navigate(`/app/service-orders/${s.service_order_id}`);
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isPmoc) {
+                            setSelectedPmoc(s);
+                            return;
+                          }
+                          if (s.service_order_id) {
+                            const osPath =
+                              ctx?.user.role === "technician"
+                                ? `/app/tecnico/os/${s.service_order_id}`
+                                : `/app/service-orders/${s.service_order_id}`;
+                            navigate(osPath);
+                          }
                         }}
-                        title={s.service_order_id ? "Abrir OS" : "Agendamento sem OS vinculada"}
+                        title={isPmoc ? "Compromisso PMOC (planejamento)" : s.service_order_id ? "Abrir OS" : "Agendamento sem OS vinculada"}
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => {
+                          if (isPmoc) {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelectedPmoc(s);
+                            }
+                            return;
+                          }
                           if ((e.key === "Enter" || e.key === " ") && s.service_order_id) {
                             e.preventDefault();
-                            navigate(`/app/service-orders/${s.service_order_id}`);
+                            const osPath =
+                              ctx?.user.role === "technician"
+                                ? `/app/tecnico/os/${s.service_order_id}`
+                                : `/app/service-orders/${s.service_order_id}`;
+                            navigate(osPath);
                           }
                         }}
                       >
                         <p className={styles.scheduleTime}>
                           {formatHourRange(s.starts_at, s.ends_at)} {isConfirmed ? "· Confirmado" : ""}
+                          {isPmoc ? (
+                            <span className={styles.pmocAgendaTag}> PMOC</span>
+                          ) : null}
                         </p>
-                        <p className={styles.scheduleMeta}>OS #{s.service_order_id ?? "-"}</p>
+                        <p className={styles.scheduleMeta}>
+                          {isPmoc ? "Visita PMOC planejada" : `OS #${s.service_order_id ?? "-"}`}
+                        </p>
                         <p
                           className={styles.scheduleMeta}
                           title={s.client_name?.trim() ? s.client_name : `Cliente #${s.client_id}`}
@@ -1087,6 +1493,29 @@ export function TechnicianSchedulePage() {
           )}
         </section>
       ) : null}
+
+      <PmocAgendaEventModal
+        open={selectedPmoc != null}
+        schedule={selectedPmoc}
+        onClose={() => setSelectedPmoc(null)}
+        onChanged={() => void refreshVisualAgenda()}
+        canManage={canManage}
+      />
+      <AgendaBlockTimeModal
+        open={blockTimeOpen}
+        onClose={() => {
+          setBlockTimeOpen(false);
+          setBlockTimeEdit(null);
+          setBlockDraftTimes(null);
+        }}
+        onSaved={() => void refreshVisualAgenda()}
+        defaultTechnicianId={technicianId}
+        editBlock={blockTimeEdit}
+        initialStartsAt={blockDraftTimes?.startsAt}
+        initialEndsAt={blockDraftTimes?.endsAt}
+        canManage={canManage}
+      />
+
     </div>
   );
 }

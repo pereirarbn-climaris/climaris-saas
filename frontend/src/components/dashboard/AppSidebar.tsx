@@ -10,9 +10,9 @@ import {
   NavIconContact,
   NavIconFileQuote,
   NavIconHome,
-  NavIconInventory,
   NavIconLogOut,
   NavIconPackage,
+  NavIconPmoc,
   NavIconPuzzle,
   NavIconSettings,
   NavIconWallet,
@@ -71,9 +71,6 @@ export function AppSidebar({
           <Sidebar.Item to="/app/products" title="Produtos" icon={<NavIconBox />}>
             Produtos
           </Sidebar.Item>
-          <Sidebar.Item to="/app/inventory" title="Estoque" icon={<NavIconInventory />}>
-            Estoque
-          </Sidebar.Item>
           <Sidebar.Item to="/app/services" title="Serviços" icon={<NavIconWrench />}>
             Serviços
           </Sidebar.Item>
@@ -89,6 +86,16 @@ export function AppSidebar({
             icon={<NavIconAirCompliance />}
           >
             Gestão preventiva
+          </Sidebar.Item>
+          <Sidebar.Item
+            to="/app/pmoc"
+            title="PMOC — Plano de Manutenção, Operação e Controle (Lei nº 13.589/2018)"
+            icon={<NavIconPmoc />}
+          >
+            PMOC
+          </Sidebar.Item>
+          <Sidebar.Item to="/app/qrcodes" title="Gestão de etiquetas QR" icon={<NavIconClipboard />}>
+            Etiquetas QR
           </Sidebar.Item>
         </Sidebar.Group>
 

@@ -12,7 +12,7 @@ Base multi-tenant ERP backend with:
 
 ### WhatsApp / Evolution webhook
 
-`POST /api/v1/whatsapp/webhook/evolution` aceita **token estático** (`EVOLUTION_WEBHOOK_TOKEN`, igual ao valor na URL) **ou** **JWT HS256** enviado em `?token=`, `Authorization: Bearer`, header `apikey` ou `X-Webhook-Token`. Para JWT, configure `EVOLUTION_WEBHOOK_JWT_SECRET` com o mesmo segredo usado na Evolution (ex.: `jwt_key` do webhook), ou `EVOLUTION_WEBHOOK_JWT_USE_APIKEY=true` se a Evolution assinar com a mesma chave que `EVOLUTION_API_KEY`. Se só chegar JWT da Evolution, não compare com um segredo curto fixo no `.env`: ou esvazie `EVOLUTION_WEBHOOK_TOKEN` e use só validação JWT, ou mantenha ambos coerentes.
+`POST /api/v1/whatsapp/webhook/agenda` (webhook dedicado à agenda; alias legado: `/webhook/evolution`) aceita **token estático** (`EVOLUTION_WEBHOOK_TOKEN`, igual ao valor na URL) **ou** **JWT HS256** enviado em `?token=`, `Authorization: Bearer`, header `apikey` ou `X-Webhook-Token`. Para JWT, configure `EVOLUTION_WEBHOOK_JWT_SECRET` com o mesmo segredo usado na Evolution (ex.: `jwt_key` do webhook), ou `EVOLUTION_WEBHOOK_JWT_USE_APIKEY=true` se a Evolution assinar com a mesma chave que `EVOLUTION_API_KEY`. Se só chegar JWT da Evolution, não compare com um segredo curto fixo no `.env`: ou esvazie `EVOLUTION_WEBHOOK_TOKEN` e use só validação JWT, ou mantenha ambos coerentes.
 
 **Painel Evolution (Manager) e URL correta da API:** o hostname `evolution_api` só existe **entre containers Docker** — não use no navegador. Guia passo a passo: **`deploy/evolution/README.md`** (127.0.0.1:3001 / :8080 ou túnel SSH).
 

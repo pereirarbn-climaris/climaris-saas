@@ -14,16 +14,19 @@ class PreventiveSettingsOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     preventive_promo_image_url: str | None = None
+    preventive_image_url: str | None = None
     preventive_promo_image_mimetype: str | None = Field(default="image/jpeg", max_length=80)
     preventive_technical_problem_hint: str | None = None
     preventive_button_more_text: str = Field(default="Sim, quero saber mais", max_length=80)
     preventive_button_schedule_text: str = Field(default="Agendar agora", max_length=80)
     preventive_message_template: str | None = None
     preventive_auto_remind_days_before: int = Field(default=0, ge=0, le=90)
+    default_message_template: str | None = None
 
 
 class PreventiveSettingsPatch(BaseModel):
     preventive_promo_image_url: str | None = Field(default=None, max_length=500)
+    preventive_image_url: str | None = Field(default=None, max_length=500)
     preventive_promo_image_mimetype: str | None = Field(default=None, max_length=80)
     preventive_technical_problem_hint: str | None = None
     preventive_button_more_text: str | None = Field(default=None, max_length=80)
@@ -61,12 +64,18 @@ class HistoricoServicoOut(BaseModel):
 
 
 class PreventiveItemOut(BaseModel):
-    historico_servico_id: int
+    historico_servico_id: int = 0
+    rule_id: int | None = None
     client_id: int
     client_name: str
-    service_id: int
+    service_id: int = 0
     service_name: str
-    periodicidade_meses: int
+    equipment_id: int | None = None
+    equipment_identificacao: str | None = None
+    equipment_tipo: str | None = None
+    interval_value: int | None = None
+    interval_type: Literal["months", "days"] | None = None
+    periodicidade_meses: int = 0
     data_ultima_realizacao: date
     data_proximo_vencimento: date
     dias_ate_vencimento: int
@@ -77,16 +86,63 @@ class PreventiveItemOut(BaseModel):
     ultimo_whatsapp_em: datetime | None = None
 
 
+class PreventiveClientGroupOut(BaseModel):
+    client_id: int
+    client_name: str
+    whatsapp_valido: bool = False
+    whatsapp_destino: str | None = None
+    equipments: list[PreventiveItemOut] = Field(default_factory=list)
+
+
+class PreventiveItemsListOut(BaseModel):
+    window_days: int
+    clients: list[PreventiveClientGroupOut] = Field(default_factory=list)
+    items: list[PreventiveItemOut] = Field(default_factory=list)
+
+
+class EquipmentPreventiveRuleCreate(BaseModel):
+    equipment_id: int = Field(ge=1)
+    interval_value: int = Field(ge=1, le=120)
+    interval_type: Literal["months", "days"] = "months"
+    is_active: bool = True
+
+
+class EquipmentPreventiveRuleUpdate(BaseModel):
+    interval_value: int | None = Field(default=None, ge=1, le=120)
+    interval_type: Literal["months", "days"] | None = None
+    is_active: bool | None = None
+
+
+class EquipmentPreventiveRuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    equipment_id: int
+    is_active: bool
+    interval_value: int
+    interval_type: Literal["months", "days"]
+    last_performed_date: datetime | None = None
+    next_due_date: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    equipment_identificacao: str | None = None
+    client_id: int | None = None
+
+
 class PreventivePreviewOut(BaseModel):
     message_text: str
     image_url: str | None = None
     image_mimetype: str | None = None
     button_more_label: str
     button_schedule_label: str
+    equipment_count: int = 1
+    is_grouped: bool = False
 
 
 class PreventiveSendRequest(BaseModel):
-    historico_servico_id: int = Field(ge=1)
+    historico_servico_id: int | None = Field(default=None, ge=1)
+    rule_id: int | None = Field(default=None, ge=1)
+    window_days: int | None = Field(default=None, ge=1, le=400)
     promo_image_url: str | None = Field(default=None, max_length=500)
     promo_image_base64: str | None = Field(default=None, max_length=350_000)
     promo_image_mimetype: str | None = Field(default=None, max_length=80)
@@ -99,6 +155,12 @@ class PreventiveSendRequest(BaseModel):
             return None
         s = v.strip()
         return s if s else None
+
+    @model_validator(mode="after")
+    def _require_ref(self) -> PreventiveSendRequest:
+        if (self.historico_servico_id is None) == (self.rule_id is None):
+            raise ValueError("Informe historico_servico_id ou rule_id.")
+        return self
 
 
 class PreventiveSendReminderOut(BaseModel):
@@ -152,6 +214,7 @@ class PreventiveRegisterEntryCreate(BaseModel):
 
     client_id: int | None = Field(default=None, ge=1)
     new_client: PreventiveQuickClientCreate | None = None
+    equipment_id: int | None = Field(default=None, ge=1)
     service_id: int = Field(ge=1)
     data_realizacao: date
     notes: str | None = Field(default=None, max_length=4000)

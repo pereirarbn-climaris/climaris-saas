@@ -25,9 +25,12 @@ from app.schemas_whatsapp import (
     WhatsappAppointmentMessageSettingsOut,
     WhatsappAppointmentMessageSettingsPatch,
     WhatsappAppointmentReminderSendRequest,
+    WhatsappAutomationSettingsOut,
+    WhatsappAutomationSettingsPatch,
     WhatsappModuleStatusOut,
     WhatsappReminderRulesOut,
     WhatsappReminderRulesPatch,
+    WhatsappWebhookInfoOut,
     WhatsappMessageJobOut,
     WhatsappTenantConnectionConfigureRequest,
     WhatsappTenantConnectionOut,
@@ -40,20 +43,27 @@ from app.schemas_whatsapp import (
 from app.whatsapp import (
     TEMPLATES,
     chatbot_reply_for_message,
-    consume_evolution_webhook,
+    consume_whatsapp_webhook_agenda,
+    consume_whatsapp_webhook_evolution_router,
+    consume_whatsapp_webhook_preventiva,
     disconnect_instance,
     dispatch_appointment_reminder,
     dispatch_due_appointment_reminders,
     dispatch_template,
     ensure_tenant_instance,
+    ensure_tenant_webhook_agenda,
+    ensure_tenant_webhook_preventiva,
     evolution_connect_qrcode_fields,
     get_instance_qrcode,
     get_instance_state,
     get_tenant_appointment_message_settings,
     get_tenant_reminder_rules,
+    get_tenant_whatsapp_automation_settings,
+    get_tenant_whatsapp_webhook_info,
     tenant_id_from_webhook_payload,
     update_tenant_appointment_message_settings,
     update_tenant_reminder_rules,
+    update_tenant_whatsapp_automation_settings,
 )
 from models import Tenant, User, UserRole, WhatsappMessageJob
 
@@ -285,6 +295,86 @@ def disconnect_tenant_whatsapp(
 
 
 @router.get(
+    "/webhook-info",
+    response_model=WhatsappWebhookInfoOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_webhook_info(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return get_tenant_whatsapp_webhook_info(db, tenant_id=current_user.tenant_id)
+
+
+@router.post(
+    "/webhook-agenda/sync",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def sync_webhook_agenda(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return ensure_tenant_webhook_agenda(db, tenant_id=current_user.tenant_id)
+
+
+@router.post(
+    "/webhook-preventiva/sync",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def sync_webhook_preventiva(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return ensure_tenant_webhook_preventiva(db, tenant_id=current_user.tenant_id)
+
+
+@router.post(
+    "/webhook-evolution/sync",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def sync_webhook_evolution_router(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return ensure_tenant_webhook_evolution_router(db, tenant_id=current_user.tenant_id)
+
+
+@router.get(
+    "/automation-settings",
+    response_model=WhatsappAutomationSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_automation_settings(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return get_tenant_whatsapp_automation_settings(db, tenant_id=current_user.tenant_id)
+
+
+@router.patch(
+    "/automation-settings",
+    response_model=WhatsappAutomationSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def patch_automation_settings(
+    payload: WhatsappAutomationSettingsPatch,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    return update_tenant_whatsapp_automation_settings(
+        db,
+        tenant_id=current_user.tenant_id,
+        enabled=payload.enabled,
+    )
+
+
+@router.get(
     "/message-settings",
     response_model=WhatsappAppointmentMessageSettingsOut,
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
@@ -312,6 +402,9 @@ def patch_appointment_message_settings(
         payload.template_body is None
         and payload.confirm_keyword is None
         and payload.reschedule_keyword is None
+        and payload.confirm_reply is None
+        and payload.reschedule_reply is None
+        and payload.cancel_reply is None
     ):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nada para atualizar.")
     return update_tenant_appointment_message_settings(
@@ -320,6 +413,9 @@ def patch_appointment_message_settings(
         template_body=payload.template_body,
         confirm_keyword=payload.confirm_keyword,
         reschedule_keyword=payload.reschedule_keyword,
+        confirm_reply=payload.confirm_reply,
+        reschedule_reply=payload.reschedule_reply,
+        cancel_reply=payload.cancel_reply,
     )
 
 
@@ -509,16 +605,89 @@ def _evolution_webhook_token_valid(provided: str | None, *, query_tenant_id: int
     return False
 
 
-@router.post("/webhook/evolution", response_model=WhatsappWebhookAck, include_in_schema=False)
-def evolution_webhook(
+@router.post("/webhook/preventiva", response_model=WhatsappWebhookAck, include_in_schema=False)
+def whatsapp_webhook_preventiva(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     payload: dict = Body(default_factory=dict),
     tenant_id: int | None = Query(default=None, ge=1),
     token: str | None = Query(default=None),
     x_webhook_token: str | None = Header(default=None),
-    # Evolution API v2 envia AUTHENTICATION_API_KEY como header "apikey" no webhook.
     apikey: str | None = Header(default=None, alias="apikey"),
+) -> dict:
+    """Webhook dedicado ao fluxo de gestão preventiva (respostas MAIS / AGENDAR)."""
+    return _handle_whatsapp_webhook(
+        request,
+        db,
+        payload=payload,
+        tenant_id=tenant_id,
+        token=token,
+        x_webhook_token=x_webhook_token,
+        apikey=apikey,
+        handler_label="preventiva",
+        consume_fn=consume_whatsapp_webhook_preventiva,
+    )
+
+
+@router.post("/webhook/agenda", response_model=WhatsappWebhookAck, include_in_schema=False)
+def whatsapp_webhook_agenda(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    payload: dict = Body(default_factory=dict),
+    tenant_id: int | None = Query(default=None, ge=1),
+    token: str | None = Query(default=None),
+    x_webhook_token: str | None = Header(default=None),
+    apikey: str | None = Header(default=None, alias="apikey"),
+) -> dict:
+    """Webhook dedicado ao fluxo de agenda (lembretes, confirmar, reagendar, cancelar)."""
+    return _handle_whatsapp_webhook(
+        request,
+        db,
+        payload=payload,
+        tenant_id=tenant_id,
+        token=token,
+        x_webhook_token=x_webhook_token,
+        apikey=apikey,
+        handler_label="agenda",
+        consume_fn=consume_whatsapp_webhook_agenda,
+    )
+
+
+@router.post("/webhook/evolution", response_model=WhatsappWebhookAck, include_in_schema=False)
+def evolution_webhook_legacy(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    payload: dict = Body(default_factory=dict),
+    tenant_id: int | None = Query(default=None, ge=1),
+    token: str | None = Query(default=None),
+    x_webhook_token: str | None = Header(default=None),
+    apikey: str | None = Header(default=None, alias="apikey"),
+) -> dict:
+    """Roteador Evolution — despacha preventiva OU agenda (nunca os dois na mesma mensagem)."""
+    return _handle_whatsapp_webhook(
+        request,
+        db,
+        payload=payload,
+        tenant_id=tenant_id,
+        token=token,
+        x_webhook_token=x_webhook_token,
+        apikey=apikey,
+        handler_label="evolution",
+        consume_fn=consume_whatsapp_webhook_evolution_router,
+    )
+
+
+def _handle_whatsapp_webhook(
+    request: Request,
+    db: Session,
+    *,
+    payload: dict,
+    tenant_id: int | None,
+    token: str | None,
+    x_webhook_token: str | None,
+    apikey: str | None,
+    handler_label: str,
+    consume_fn,
 ) -> dict:
     auth_hdr = (request.headers.get("authorization") or request.headers.get("Authorization") or "").strip()
     bearer: str | None = None
@@ -539,16 +708,16 @@ def evolution_webhook(
     if not resolved_tenant_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant do webhook não identificado.")
     try:
-        consume_evolution_webhook(db, tenant_id=resolved_tenant_id, payload=payload if isinstance(payload, dict) else {})
+        consume_fn(db, tenant_id=resolved_tenant_id, payload=payload if isinstance(payload, dict) else {})
     except Exception:
         logger.exception(
-            "Falha ao processar webhook Evolution (tenant_id=%s); rollback e ACK 200 para não derrubar o worker.",
+            "Falha ao processar webhook %s WhatsApp (tenant_id=%s); rollback e ACK 200 para não derrubar o worker.",
+            handler_label,
             resolved_tenant_id,
         )
         try:
             db.rollback()
         except Exception:
-            logger.exception("Rollback após falha no webhook Evolution.")
-        # ACK para a Evolution parar retry agressivo; evento pode ser reprocessado manualmente ou via logs.
+            logger.exception("Rollback após falha no webhook %s WhatsApp.", handler_label)
         return {"status": "ok", "handler_error": True}
     return {"status": "ok"}

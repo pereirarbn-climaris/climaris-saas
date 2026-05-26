@@ -1,6 +1,8 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
 import { demoCreateProduct, demoDeleteProduct, demoListProducts, demoUpdateProduct, isDemoMode } from "../lib/demoMode";
+import { normalizeProductStock } from "../lib/productStock";
 
 export type ProductOut = {
   id: number;
@@ -11,6 +13,9 @@ export type ProductOut = {
   sale_price: number;
   unit_price: number;
   stock_quantity: number;
+  quantity_physical: number;
+  quantity_reserved: number;
+  quantity_available: number;
   compatible_equipment_tags: string | null;
   btu_min: number | null;
   btu_max: number | null;
@@ -121,11 +126,11 @@ export async function listProducts(params?: { q?: string; skip?: number; limit?:
     if (q) {
       filtered = filtered.filter((p: ProductOut) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
     }
-    return Promise.resolve(filtered);
+    return Promise.resolve(filtered.map(normalizeProductStock));
   }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
-  const limit = params?.limit ?? 50;
+  const limit = clampApiLimit(params?.limit, 50);
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
@@ -135,7 +140,7 @@ export async function listProducts(params?: { q?: string; skip?: number; limit?:
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível listar produtos.", response.status));
   }
-  return body as ProductOut[];
+  return (body as ProductOut[]).map(normalizeProductStock);
 }
 
 export async function getProduct(productId: number): Promise<ProductDetailOut> {

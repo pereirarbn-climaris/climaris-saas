@@ -14,7 +14,7 @@ tenant, sem IA. A IA fica reservada para a V2.
 - Backend: `app/main.py` não monta rotas `/api/v1/ai`.
 - Config: `AI_ASSISTANT_V2_ENABLED` nasce `False`.
 - Frontend: `AiAssistantPage` permanece como código reservado, mas retorna uma tela de recurso desativado e não chama API de IA.
-- Webhook WhatsApp: `consume_evolution_webhook` não chama `generate_ai_response` nem provedor LLM.
+- Webhook WhatsApp: `consume_whatsapp_webhook_agenda` não chama `generate_ai_response` nem provedor LLM.
 
 Observação: os arquivos `app/ai_assistant.py`, `app/routers/ai_settings.py`, `app/schemas_ai.py`,
 `frontend/src/api/ai.ts` e `frontend/src/pages/integrations/AiAssistantPage.tsx` devem ser tratados como material de V2.
@@ -52,7 +52,7 @@ Observação: os arquivos `app/ai_assistant.py`, `app/routers/ai_settings.py`, `
 - Envio de mensagens por template via `dispatch_template`.
 - Envio de lembrete de agendamento via `dispatch_appointment_reminder`.
 - Worker de lembretes em `app/whatsapp_scheduler.py`.
-- Webhook Evolution em `POST /api/v1/whatsapp/webhook/evolution`.
+- Webhook agenda em `POST /api/v1/whatsapp/webhook/agenda` (alias legado: `/webhook/evolution`).
 - O webhook já:
   - ignora grupos e mensagens `fromMe` em ações de agenda;
   - evita reprocessamento por `incoming_message_processed`;
@@ -317,7 +317,7 @@ Reusar o padrão visual de `WhatsappIntegrationPage.module.css`.
    - gerenciamento de sessão;
    - handoff/pause.
 4. Criar router `app/routers/whatsapp_bot.py`.
-5. Integrar o roteador determinístico no final de `consume_evolution_webhook`, depois da lógica de agenda.
+5. Integrar o roteador determinístico no final de `consume_whatsapp_webhook_agenda`, depois da lógica de agenda.
 6. Criar gatilho no fechamento de OS.
 7. Criar página frontend de Bot WhatsApp.
 8. Adicionar testes backend para roteamento, sessão, fallback, handoff e template.

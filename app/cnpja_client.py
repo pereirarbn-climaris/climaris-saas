@@ -117,9 +117,11 @@ def fetch_office_commercial(tax_id: str, api_key: str) -> dict[str, Any]:
     return data
 
 
-def get_cnpja_api_key() -> str | None:
-    key = os.getenv("CNPJA_API_KEY", "").strip()
-    return key or None
+def get_cnpja_api_key(db=None) -> str | None:
+    """Compat: env primeiro; com `db`, tenta credencial `cnpja` da plataforma."""
+    from app.platform_credentials import resolve_cnpja_api_key
+
+    return resolve_cnpja_api_key(db)
 
 
 def fetch_brasilapi_cnpj(digits_14: str) -> dict[str, Any]:

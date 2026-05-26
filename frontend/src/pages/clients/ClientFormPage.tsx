@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Link,
   Navigate,
@@ -9,28 +9,50 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import {
+  cnpjCommercialCooldownDaysRemaining,
   createClient,
-  deactivateClientEquipment,
   deleteClient,
   getClient,
   listClientAudit,
-  listClientEquipments,
+  listClientSites,
+  refreshClientCnpjCommercial,
   updateClient,
-  type EquipmentOut,
+  type ClientSiteOut,
 } from "../../api/clients";
+import {
+  createClientCatalogEquipment,
+  deleteClientCatalogEquipment,
+  listClientCatalogEquipments,
+  listAllEquipmentCatalog,
+  listCatalogCategories,
+  updateClientCatalogEquipmentStatus,
+} from "../../api/equipmentCatalog";
 import { fetchCepLookup } from "../../api/cep";
 import { fetchCnpjCommercial, fetchCnpjOpen } from "../../api/cnpj";
 import { listBudgets } from "../../api/budgets";
 import { listPmocPlans } from "../../api/pmoc";
 import { listServiceOrders } from "../../api/serviceOrders";
+import { ClientPreventiveTab } from "../../components/clients/ClientPreventiveTab";
+import { ClientSitesPanel } from "../../components/v0-ui/clients/ClientSitesPanel";
 import {
+  ClientEquipmentManager,
   ClientFormView,
   type Budget,
   type ClientData,
-  type Equipment,
+  type EquipmentCatalog,
+  type EquipmentCategoryPickerOption,
+  type EquipmentItem,
+  type NewEquipmentData,
   type ServiceOrder,
   type TabId,
 } from "../../components/v0-ui/clients";
+import {
+  buildEquipmentCatalogView,
+  firstManualUrlFromInstallation,
+  mapClientEquipmentToView,
+  newEquipmentDataToCreatePayload,
+} from "../../lib/clientEquipmentAdapter";
+import { mapApiCategoryToOption } from "../../lib/equipmentCatalogAdminAdapter";
 import { digitsOnly, formatCepInput } from "../../lib/brMask";
 import {
   clientHasPersistedAddressFromView,
@@ -38,16 +60,30 @@ import {
   emptyViewData,
   mapAuditToHistory,
   mapBudgetsToView,
-  mapEquipmentsToView,
   mapOrdersToView,
   mapPmocPlansToView,
   mergeCnpjLookupToViewData,
   mergeViewData,
+  serializeClientFormSnapshot,
   viewDataToCreatePayload,
   viewDataToUpdatePayload,
 } from "../../lib/clientFormViewAdapter";
+import { ToastHost } from "../../components/ToastHost";
+import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./ClientFormPage.module.css";
+
+function fiscalLookupErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (error && typeof error === "object") {
+    const o = error as { message?: unknown; detail?: unknown };
+    if (typeof o.message === "string" && o.message.trim()) return o.message.trim();
+    if (typeof o.detail === "string" && o.detail.trim()) return o.detail.trim();
+  }
+  return fallback;
+}
 
 export function ClientFormPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -62,6 +98,7 @@ export function ClientFormPage() {
   const readOnly = !canEdit;
 
   const [clientData, setClientData] = useState<ClientData>(emptyViewData);
+  const savedClientSnapshotRef = useRef("");
   const [isLoading, setIsLoading] = useState(!isNew);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -71,19 +108,31 @@ export function ClientFormPage() {
   const [cepErr, setCepErr] = useState("");
   const [cnpjLookupLoading, setCnpjLookupLoading] = useState(false);
   const [cnpjCommercialLoading, setCnpjCommercialLoading] = useState(false);
+  const [cnpjCommercialRefreshLoading, setCnpjCommercialRefreshLoading] = useState(false);
   const [cnpjLookupErr, setCnpjLookupErr] = useState("");
   const [cnpjIncludeAddress, setCnpjIncludeAddress] = useState(true);
   const [addressPersisted, setAddressPersisted] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("cadastro");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  const [equipments, setEquipments] = useState<Equipment[]>([]);
+  const [clientSites, setClientSites] = useState<ClientSiteOut[]>([]);
+  const [catalogEquipments, setCatalogEquipments] = useState<EquipmentItem[]>([]);
+  const [equipmentCatalog, setEquipmentCatalog] = useState<EquipmentCatalog>({ brands: [], models: [] });
+  const [equipmentCategoryOptions, setEquipmentCategoryOptions] = useState<EquipmentCategoryPickerOption[]>(
+    [],
+  );
+  const [catalogEquipmentsLoading, setCatalogEquipmentsLoading] = useState(false);
+  const [catalogSaving, setCatalogSaving] = useState(false);
+  const [manualUrlByEquipmentId, setManualUrlByEquipmentId] = useState<Record<string, string>>({});
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [history, setHistory] = useState<ReturnType<typeof mapAuditToHistory>>([]);
   const [pmocData, setPmocData] = useState<ReturnType<typeof mapPmocPlansToView>>(undefined);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedErr, setRelatedErr] = useState("");
+  const [equipmentModalRequest, setEquipmentModalRequest] = useState<{ clientSiteId: number } | null>(
+    null,
+  );
 
   const docDigits = useMemo(() => digitsOnly(clientData.documento).slice(0, 14), [clientData.documento]);
   const cepDigits = useMemo(
@@ -91,10 +140,21 @@ export function ClientFormPage() {
     [clientData.endereco?.cep],
   );
 
+  const isDirty = useMemo(() => {
+    if (isNew) {
+      return serializeClientFormSnapshot(clientData) !== serializeClientFormSnapshot(emptyViewData());
+    }
+    return serializeClientFormSnapshot(clientData) !== savedClientSnapshotRef.current;
+  }, [clientData, isNew]);
+
   const showPmocTab = !isNew && clientData.type === "pj";
   const canConsultCnpjCommercial = ctx?.user.role === "admin";
   const fiscalFieldsLocked =
     !readOnly && clientData.type === "pj" && Boolean(clientData.isVerifiedCnpj);
+  const cnpjCommercialCooldownDays = useMemo(
+    () => cnpjCommercialCooldownDaysRemaining(clientData.lastCnpjCommercialUpdate),
+    [clientData.lastCnpjCommercialUpdate],
+  );
 
   useEffect(() => {
     if (clientData.type !== "pj" && activeTab === "pmoc") {
@@ -120,6 +180,7 @@ export function ClientFormPage() {
         if (!cancelled) {
           const view = clientOutToViewData(c);
           setClientData(view);
+          savedClientSnapshotRef.current = serializeClientFormSnapshot(view);
           setAddressPersisted(clientHasPersistedAddressFromView(view));
         }
       } catch (e) {
@@ -144,6 +205,8 @@ export function ClientFormPage() {
     const tab = searchParams.get("tab");
     if (tab === "pmoc" && showPmocTab) {
       setActiveTab("pmoc");
+    } else if (tab === "preventiva") {
+      setActiveTab("preventiva");
     }
     setSearchParams(
       (prev) => {
@@ -163,15 +226,15 @@ export function ClientFormPage() {
       setRelatedLoading(true);
       setRelatedErr("");
       try {
-        const [equipmentRows, budgetRows, orderRows] = await Promise.all([
-          listClientEquipments(idNum),
+        const [budgetRows, orderRows] = await Promise.all([
           listBudgets({ limit: 100 }),
           listServiceOrders({ limit: 100 }),
         ]);
         if (cancelled) return;
-        setEquipments(mapEquipmentsToView(equipmentRows));
-        setBudgets(mapBudgetsToView(budgetRows.filter((b) => b.client_id === idNum)));
-        setOrders(mapOrdersToView(orderRows.filter((o) => o.client_id === idNum)));
+        const budgets = Array.isArray(budgetRows) ? budgetRows : [];
+        const orders = Array.isArray(orderRows) ? orderRows : [];
+        setBudgets(mapBudgetsToView(budgets.filter((b) => b.client_id === idNum)));
+        setOrders(mapOrdersToView(orders.filter((o) => o.client_id === idNum)));
       } catch (e) {
         if (!cancelled) {
           setRelatedErr(e instanceof Error ? e.message : "Não foi possível carregar dados relacionados.");
@@ -184,6 +247,83 @@ export function ClientFormPage() {
       cancelled = true;
     };
   }, [isNew, idNum]);
+
+  const reloadCatalogEquipments = useCallback(async () => {
+    if (!Number.isFinite(idNum) || idNum < 1) return;
+    setCatalogEquipmentsLoading(true);
+    try {
+      const [rows, sites] = await Promise.all([
+        listClientCatalogEquipments(idNum),
+        listClientSites(idNum).catch(() => [] as ClientSiteOut[]),
+      ]);
+      setClientSites(sites);
+      const manuals: Record<string, string> = {};
+      const items = rows.map((row) => {
+        const manualUrl = firstManualUrlFromInstallation(row);
+        if (manualUrl) {
+          manuals[row.id] = manualUrl;
+        }
+        return mapClientEquipmentToView(row, sites);
+      });
+      setCatalogEquipments(items);
+      setManualUrlByEquipmentId(manuals);
+    } catch (e) {
+      setRelatedErr(e instanceof Error ? e.message : "Não foi possível carregar equipamentos do cliente.");
+    } finally {
+      setCatalogEquipmentsLoading(false);
+    }
+  }, [idNum]);
+
+  const reloadEquipmentCatalog = useCallback(async () => {
+    if (isNew || !Number.isFinite(idNum) || idNum < 1) return;
+    setRelatedErr("");
+    const [catalogResult, categoriesResult] = await Promise.allSettled([
+      listAllEquipmentCatalog(),
+      listCatalogCategories(),
+    ]);
+
+    if (categoriesResult.status === "fulfilled") {
+      setEquipmentCategoryOptions(
+        categoriesResult.value.items.map((c) => {
+          const opt = mapApiCategoryToOption(c);
+          return { id: opt.id, name: opt.name, iconKey: opt.iconKey };
+        }),
+      );
+    } else {
+      setEquipmentCategoryOptions([]);
+      setRelatedErr(
+        categoriesResult.reason instanceof Error
+          ? categoriesResult.reason.message
+          : "Não foi possível carregar as categorias de equipamento.",
+      );
+    }
+
+    if (catalogResult.status === "fulfilled") {
+      setEquipmentCatalog(buildEquipmentCatalogView(catalogResult.value));
+    } else {
+      setEquipmentCatalog({ brands: [], models: [] });
+      const catalogMsg =
+        catalogResult.reason instanceof Error
+          ? catalogResult.reason.message
+          : "Não foi possível carregar o catálogo de equipamentos.";
+      setRelatedErr((prev) => (prev ? `${prev} ${catalogMsg}` : catalogMsg));
+    }
+  }, [isNew, idNum]);
+
+  useEffect(() => {
+    void reloadEquipmentCatalog();
+  }, [reloadEquipmentCatalog]);
+
+  useEffect(() => {
+    if (activeTab === "equipamentos") {
+      void reloadEquipmentCatalog();
+    }
+  }, [activeTab, reloadEquipmentCatalog]);
+
+  useEffect(() => {
+    if (isNew || !Number.isFinite(idNum) || idNum < 1) return;
+    void reloadCatalogEquipments();
+  }, [isNew, idNum, reloadCatalogEquipments]);
 
   useEffect(() => {
     if (isNew || !Number.isFinite(idNum) || idNum < 1 || activeTab !== "historico") {
@@ -303,8 +443,11 @@ export function ClientFormPage() {
       try {
         const lu = await fetchCnpjOpen(docDigits);
         applyCnpjLookupResult(lu, "open");
-      } catch (e) {
-        setCnpjLookupErr(e instanceof Error ? e.message : "Não foi possível consultar o CNPJ.");
+      } catch (error) {
+        console.error("Erro detalhado da consulta fiscal:", error);
+        setCnpjLookupErr(
+          fiscalLookupErrorMessage(error, "Não foi possível consultar o CNPJ na Receita (CNPJA Open)."),
+        );
       } finally {
         setCnpjLookupLoading(false);
       }
@@ -324,9 +467,13 @@ export function ClientFormPage() {
       try {
         const lu = await fetchCnpjCommercial(docDigits, true);
         applyCnpjLookupResult(lu, "commercial");
-      } catch (e) {
+      } catch (error) {
+        console.error("Erro detalhado da consulta fiscal:", error);
         setCnpjLookupErr(
-          e instanceof Error ? e.message : "Consulta comercial indisponível. Verifique CNPJA_API_KEY no servidor.",
+          fiscalLookupErrorMessage(
+            error,
+            "Consulta comercial indisponível. Verifique CNPJA_API_KEY no servidor.",
+          ),
         );
       } finally {
         setCnpjCommercialLoading(false);
@@ -335,38 +482,131 @@ export function ClientFormPage() {
     [applyCnpjLookupResult, canConsultCnpjCommercial, clientData.type, docDigits, readOnly],
   );
 
-  const reloadEquipments = useCallback(async () => {
-    if (!Number.isFinite(idNum) || idNum < 1) return;
-    const rows = await listClientEquipments(idNum);
-    setEquipments(mapEquipmentsToView(rows));
-  }, [idNum]);
+  const onRefreshCnpjCommercial = useCallback(async () => {
+    if (readOnly || isNew || !Number.isFinite(idNum) || idNum < 1 || clientData.type !== "pj") return;
+    setCnpjCommercialRefreshLoading(true);
+    setCnpjLookupErr("");
+    setMsg(null);
+    try {
+      const result = await refreshClientCnpjCommercial(idNum, cnpjIncludeAddress);
+      setClientData(
+        mergeCnpjLookupToViewData(clientOutToViewData(result.client), result.lookup, cnpjIncludeAddress),
+      );
+      setMsg({
+        kind: "ok",
+        text: cnpjIncludeAddress
+          ? "Cadastro atualizado via Receita (Comercial), incluindo endereço."
+          : "Dados fiscais atualizados via Receita (Comercial).",
+      });
+    } catch (error) {
+      console.error("Erro detalhado da atualização comercial:", error);
+      setCnpjLookupErr(
+        fiscalLookupErrorMessage(
+          error,
+          "Não foi possível atualizar via Receita (Comercial). Verifique a chave CNPJá nas credenciais da plataforma.",
+        ),
+      );
+    } finally {
+      setCnpjCommercialRefreshLoading(false);
+    }
+  }, [cnpjIncludeAddress, clientData.type, idNum, isNew, readOnly]);
 
-  const onEquipmentAction = useCallback(
-    async (action: "view" | "edit" | "delete", equipment: Equipment) => {
-      const eqId = Number(equipment.id);
-      if (!Number.isFinite(eqId) || eqId < 1) return;
-
-      if (action === "view" || action === "edit") {
-        const row = (await listClientEquipments(idNum)).find((e) => e.id === eqId) as EquipmentOut | undefined;
-        if (row?.public_token) {
-          window.open(`${window.location.origin}/p/e/${row.public_token}`, "_blank", "noopener,noreferrer");
-        } else {
-          setMsg({ kind: "err", text: "Ficha pública do equipamento indisponível." });
-        }
-        return;
-      }
-
-      if (!canEdit || readOnly) return;
-      if (!window.confirm(`Inativar o equipamento ${equipment.marca} ${equipment.modelo}?`)) return;
+  const onAddCatalogEquipment = useCallback(
+    async (data: NewEquipmentData) => {
+      if (!canEdit || readOnly || !Number.isFinite(idNum) || idNum < 1) return;
+      setCatalogSaving(true);
+      setMsg(null);
       try {
-        await deactivateClientEquipment(idNum, eqId);
-        await reloadEquipments();
-        setMsg({ kind: "ok", text: "Equipamento inativado." });
+        const created = await createClientCatalogEquipment(idNum, newEquipmentDataToCreatePayload(data));
+        const manualUrl = firstManualUrlFromInstallation(created);
+        if (manualUrl) {
+          setManualUrlByEquipmentId((prev) => ({ ...prev, [created.id]: manualUrl }));
+        }
+        await reloadCatalogEquipments();
+        await reloadEquipmentCatalog();
+        const n = data.components?.length ?? 1;
+        setMsg({
+          kind: "ok",
+          text:
+            data.isMultiSplit && n > 1
+              ? `Conjunto Multi-Split cadastrado (${n} componentes em uma instalação).`
+              : "Equipamento cadastrado com sucesso.",
+        });
       } catch (e) {
-        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao inativar equipamento." });
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao cadastrar equipamento." });
+        throw e;
+      } finally {
+        setCatalogSaving(false);
       }
     },
-    [canEdit, idNum, readOnly, reloadEquipments],
+    [canEdit, idNum, readOnly, reloadCatalogEquipments, reloadEquipmentCatalog],
+  );
+
+  const onDeactivateCatalogEquipment = useCallback(
+    async (equipmentId: string) => {
+      if (!canEdit || readOnly) return;
+      const item = catalogEquipments.find((e) => e.id === equipmentId);
+      const label = item ? `${item.brandName} ${item.modelName}` : "este equipamento";
+      if (!window.confirm(`Desativar ${label}?`)) return;
+      setCatalogSaving(true);
+      setMsg(null);
+      try {
+        await updateClientCatalogEquipmentStatus(equipmentId, false);
+        await reloadCatalogEquipments();
+        setMsg({ kind: "ok", text: "Equipamento desativado." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao desativar equipamento." });
+      } finally {
+        setCatalogSaving(false);
+      }
+    },
+    [canEdit, catalogEquipments, readOnly, reloadCatalogEquipments],
+  );
+
+  const onDeleteCatalogEquipment = useCallback(
+    async (equipmentId: string) => {
+      if (!canEdit || readOnly) return;
+      const item = catalogEquipments.find((e) => e.id === equipmentId);
+      if (item && !item.canDelete) {
+        setMsg({
+          kind: "err",
+          text: item.deleteBlockReason ?? "Este equipamento não pode ser excluído.",
+        });
+        return;
+      }
+      const label = item?.tag?.trim() || (item ? `${item.brandName} ${item.modelName}` : "este equipamento");
+      if (
+        !window.confirm(
+          `Excluir permanentemente "${label}"?\n\nEsta ação não pode ser desfeita. Só é possível quando não há OS, PMOC ou documentos vinculados.`,
+        )
+      ) {
+        return;
+      }
+      setCatalogSaving(true);
+      setMsg(null);
+      try {
+        await deleteClientCatalogEquipment(equipmentId);
+        await reloadCatalogEquipments();
+        setMsg({ kind: "ok", text: "Equipamento excluído." });
+      } catch (e) {
+        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao excluir equipamento." });
+      } finally {
+        setCatalogSaving(false);
+      }
+    },
+    [canEdit, catalogEquipments, readOnly, reloadCatalogEquipments],
+  );
+
+  const onDownloadEquipmentManual = useCallback(
+    (equipmentId: string, directUrl?: string | null) => {
+      const url = directUrl ?? manualUrlByEquipmentId[equipmentId];
+      if (!url) {
+        setMsg({ kind: "err", text: "Manual não disponível para este equipamento." });
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [manualUrlByEquipmentId],
   );
 
   const onOrderAction = useCallback(
@@ -406,8 +646,9 @@ export function ClientFormPage() {
         const updated = await updateClient(idNum, viewDataToUpdatePayload(clientData));
         const view = clientOutToViewData(updated);
         setClientData(view);
+        savedClientSnapshotRef.current = serializeClientFormSnapshot(view);
         setAddressPersisted(clientHasPersistedAddressFromView(view));
-        setMsg({ kind: "ok", text: "Cliente atualizado." });
+        toast.success("Alterações salvas com sucesso!");
       }
     } catch (err) {
       setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao salvar." });
@@ -500,10 +741,35 @@ export function ClientFormPage() {
         </p>
       ) : null}
 
-      <form className={styles.form} onSubmit={onSubmit}>
+      <ToastHost />
+
+      <form id="client-form-main" className={styles.form} onSubmit={onSubmit}>
         <ClientFormView
           client={clientData}
-          equipments={isNew ? [] : equipments}
+          equipments={[]}
+          equipamentosCount={isNew ? 0 : catalogEquipments.filter((e) => e.status === "ativo").length}
+          equipamentosPanel={
+            isNew ? (
+              <p className={styles.readOnlyHint}>Salve o cliente para cadastrar equipamentos.</p>
+            ) : (
+              <ClientEquipmentManager
+                clientId={idNum}
+                clientSites={clientSites}
+                equipments={catalogEquipments}
+                catalog={equipmentCatalog}
+                categoryOptions={equipmentCategoryOptions}
+                isLoading={catalogEquipmentsLoading || catalogSaving}
+                readOnly={readOnly}
+                modalOpenRequest={equipmentModalRequest}
+                onModalOpenRequestHandled={() => setEquipmentModalRequest(null)}
+                onEquipmentsChanged={() => void reloadCatalogEquipments()}
+                onAddEquipment={readOnly ? undefined : onAddCatalogEquipment}
+                onDeactivate={readOnly ? undefined : (id) => void onDeactivateCatalogEquipment(id)}
+                onDelete={readOnly ? undefined : (id) => void onDeleteCatalogEquipment(id)}
+                onDownloadManual={(id) => onDownloadEquipmentManual(id)}
+              />
+            )
+          }
           history={history}
           orders={isNew ? [] : orders}
           budgets={isNew ? [] : budgets}
@@ -513,33 +779,55 @@ export function ClientFormPage() {
           onClientChange={handleClientChange}
           onConsultCNPJ={onConsultCNPJ}
           onConsultCNPJCommercial={canConsultCnpjCommercial ? onConsultCNPJCommercial : undefined}
+          onRefreshCnpjCommercial={
+            !isNew && fiscalFieldsLocked && canConsultCnpjCommercial ? () => void onRefreshCnpjCommercial() : undefined
+          }
           onBuscarCep={() => void onBuscarCep()}
           loadingCNPJ={cnpjLookupLoading}
           loadingCNPJCommercial={cnpjCommercialLoading}
+          loadingCnpjCommercialRefresh={cnpjCommercialRefreshLoading}
+          cnpjCommercialCooldownDays={cnpjCommercialCooldownDays}
           fiscalFieldsLocked={fiscalFieldsLocked}
+          sitesPanel={
+            !isNew && Number.isFinite(idNum) ? (
+              <ClientSitesPanel
+                clientId={idNum}
+                readOnly={readOnly}
+                onSitesChanged={() => void reloadCatalogEquipments()}
+                onAddEquipmentForSite={
+                  readOnly
+                    ? undefined
+                    : (siteId) => {
+                        setActiveTab("equipamentos");
+                        setEquipmentModalRequest({ clientSiteId: siteId });
+                      }
+                }
+              />
+            ) : undefined
+          }
           cepLoading={cepLoading}
           readOnly={readOnly}
-          onEquipmentAction={(action, eq) => void onEquipmentAction(action, eq)}
           onOrderAction={onOrderAction}
           onBudgetAction={onBudgetAction}
+          preventivaPanel={
+            isNew ? undefined : (
+              <ClientPreventiveTab
+                clientId={idNum}
+                equipments={catalogEquipments}
+                readOnly={readOnly}
+              />
+            )
+          }
         />
 
-        {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
         {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
+      </form>
 
-        <div className={styles.actions}>
+      <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">
+        <div className={styles.actionBarInner}>
           <Link className={styles.btnBackLink} to="/app/clients">
-            ← Voltar à lista
+            Voltar
           </Link>
-          {canEdit ? (
-            <button type="submit" className={styles.btnPrimary} disabled={saving || deleting}>
-              {saving ? "Salvando…" : isNew ? "Cadastrar" : "Salvar alterações"}
-            </button>
-          ) : (
-            <p className={styles.readOnlyHint}>
-              Você pode visualizar os dados. Para alterar, use um perfil de recepção ou administrador.
-            </p>
-          )}
           {canDelete && !isNew ? (
             <button
               type="button"
@@ -550,8 +838,19 @@ export function ClientFormPage() {
               {deleting ? "Excluindo…" : "Excluir cliente"}
             </button>
           ) : null}
+          {canEdit && isDirty ? (
+            <button
+              type="submit"
+              form="client-form-main"
+              className={styles.btnPrimary}
+              disabled={saving || deleting}
+            >
+              {saving ? "Salvando…" : isNew ? "Cadastrar cliente" : "Salvar alterações"}
+            </button>
+          ) : null}
+          {!canEdit ? <p className={styles.readOnlyHint}>Visualização somente leitura.</p> : null}
         </div>
-      </form>
+      </div>
 
       {showDeleteModal ? (
         <div className={styles.modalRoot} role="presentation">

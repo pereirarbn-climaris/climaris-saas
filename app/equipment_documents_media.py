@@ -9,7 +9,13 @@ from uuid import uuid4
 from botocore.exceptions import ClientError
 from sqlalchemy.orm import Session
 
-from app.tenant_logo import _build_public_url, _optional_acl, _resolve_s3_runtime_config, _s3_client_from_config
+from app.tenant_logo import (
+    _build_public_url,
+    _optional_acl,
+    _resolve_s3_runtime_config,
+    _s3_client_from_config,
+    s3_bucket_for,
+)
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
@@ -49,9 +55,9 @@ def upload_equipment_document_attachment(
     ext = os.path.splitext(file_name)[1].lower().strip(".") or "bin"
 
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "imagens")
     if not bucket:
-        raise RuntimeError("AWS_S3_BUCKET não configurado (env ou credencial SaaS aws-s3).")
+        raise RuntimeError("AWS S3 (imagens) não configurado (bucket_imagens ou credencial aws-s3).")
 
     region = cfg.region or "us-east-1"
     endpoint_url = cfg.endpoint_url
@@ -99,7 +105,7 @@ def delete_equipment_document_attachment_if_exists(s3_key: str | None, db: Sessi
     if not s3_key:
         return
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "imagens")
     if not bucket:
         return
     client = _s3_client_from_config(cfg)

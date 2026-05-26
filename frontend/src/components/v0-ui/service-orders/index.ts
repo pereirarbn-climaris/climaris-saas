@@ -31,4 +31,8 @@ export type {
   Cliente,
   Tecnico,
   Equipamento,
+  ServiceLineDraft,
+  ProductLineDraft,
 } from "./ServiceOrderFormView";
+
+export { ServiceOrderLineSections } from "./ServiceOrderLineSections";

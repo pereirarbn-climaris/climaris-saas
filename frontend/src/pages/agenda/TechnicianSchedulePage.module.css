@@ -327,6 +327,12 @@
   color: var(--color-text-muted);
 }
 
+.legendHint {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 .legendSwatch {
   width: 1rem;
   height: 1rem;
@@ -581,6 +587,33 @@
   background: rgba(14, 165, 233, 0.06);
 }
 
+.calendarDayOverlayBlockMode {
+  cursor: crosshair;
+}
+
+.calendarDayOverlayBlockMode:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.calendarDragSelectPreview {
+  position: absolute;
+  left: 0.25rem;
+  right: 0.25rem;
+  z-index: 3;
+  pointer-events: none;
+  border: 2px dashed rgba(239, 68, 68, 0.75);
+  background: rgba(239, 68, 68, 0.22);
+  border-radius: 0.5rem;
+  box-sizing: border-box;
+}
+
+.calendarDragSelectPreviewLabel {
+  margin: 0.25rem 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
 .calendarEvent {
   position: absolute;
   left: 0.25rem;
@@ -612,6 +645,28 @@
   box-shadow: 0 4px 12px rgba(34, 197, 94, 0.22);
 }
 
+.calendarEventPmoc {
+  border: 1px solid color-mix(in srgb, #f59e0b 45%, var(--color-border));
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(245, 158, 11, 0.08) 100%);
+  border-left: 3px solid #f59e0b;
+}
+
+.calendarEventPmoc:hover {
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.22);
+}
+
+.pmocAgendaTag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #9a3412;
+  background: color-mix(in srgb, #f59e0b 28%, transparent);
+}
+
 .calendarBlockedEvent {
   border: 1px solid rgba(239, 68, 68, 0.4);
   border-left: 3px solid #ef4444;
@@ -622,6 +677,50 @@
 .calendarBlockedEvent:hover {
   box-shadow: none;
   transform: none;
+}
+
+.calendarEventBlock {
+  border: 1px solid color-mix(in srgb, #64748b 45%, var(--color-border));
+  background: linear-gradient(135deg, rgba(100, 116, 139, 0.2) 0%, rgba(100, 116, 139, 0.1) 100%);
+  border-left: 3px solid #64748b;
+  z-index: 3;
+}
+
+.calendarEventBlock:hover {
+  box-shadow: 0 4px 12px rgba(100, 116, 139, 0.22);
+  transform: translateY(-1px);
+}
+
+.calendarEventBlockFolga {
+  border: 1px solid color-mix(in srgb, #8b5cf6 45%, var(--color-border));
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.22) 0%, rgba(139, 92, 246, 0.1) 100%);
+  border-left: 3px solid #8b5cf6;
+}
+
+.calendarEventBlockFolga:hover {
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.24);
+}
+
+.blockAgendaTag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #5b21b6;
+  background: color-mix(in srgb, #8b5cf6 28%, transparent);
+}
+
+.calendarEventBlock:not(.calendarEventBlockFolga) .blockAgendaTag {
+  color: #334155;
+  background: color-mix(in srgb, #64748b 28%, transparent);
+}
+
+.legendSwatchBlock {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.35) 0%, rgba(139, 92, 246, 0.15) 100%);
+  border: 1px solid rgba(139, 92, 246, 0.45);
 }
 
 .calendarBlockedHours {
@@ -890,6 +989,23 @@
   background: linear-gradient(135deg, rgba(14, 165, 233, 0.2) 0%, rgba(14, 165, 233, 0.12) 100%);
   border: 1px solid rgba(14, 165, 233, 0.4);
   color: #0284c7;
+}
+
+.monthBlockBadge {
+  align-self: flex-end;
+  margin-top: auto;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.25) 0%, rgba(139, 92, 246, 0.12) 100%);
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  color: #6d28d9;
 }
 
 /* ===== Responsive ===== */

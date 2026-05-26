@@ -42,7 +42,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 
 export type ClientType = 'pf' | 'pj';
 export type ClientRegime = 'regular' | 'mei' | 'simples' | 'lucro_presumido' | 'lucro_real';
-export type TabId = 'cadastro' | 'historico' | 'equipamentos' | 'pmoc' | 'orcamentos';
+export type TabId = 'cadastro' | 'historico' | 'equipamentos' | 'pmoc' | 'orcamentos' | 'preventiva';
 
 export interface ClientData {
   id?: string;
@@ -63,6 +63,14 @@ export interface ClientData {
   isActive?: boolean;
   /** CNPJ validado na Receita (consulta CNPJA ou flag do banco). */
   isVerifiedCnpj?: boolean;
+  /** ISO datetime da última atualização comercial persistida. */
+  lastCnpjCommercialUpdate?: string | null;
+  /** CNAE principal (código), preenchido via consulta CNPJA. */
+  mainActivityCode?: string;
+  /** CNAE principal (descrição), preenchido via consulta CNPJA. */
+  mainActivityDescription?: string;
+  /** Natureza jurídica, preenchida via consulta CNPJA. */
+  legalNature?: string;
   endereco?: {
     cep?: string;
     logradouro?: string;
@@ -161,18 +169,30 @@ export interface ClientFormViewProps {
   loadingCNPJ?: boolean;
   /** Estado de loading da consulta CNPJ Comercial */
   loadingCNPJCommercial?: boolean;
-  /** Trava CNPJ, razão social e tipo após validação na Receita */
+  /** Trava tipo, CNPJ e razão social após validação na Receita */
   fiscalFieldsLocked?: boolean;
+  /** Atualização comercial persistida (cliente já salvo) — respeita trava de 60 dias */
+  onRefreshCnpjCommercial?: () => void;
+  loadingCnpjCommercialRefresh?: boolean;
+  cnpjCommercialCooldownDays?: number | null;
+  /** Filiais / obras do cliente */
+  sitesPanel?: React.ReactNode;
   /** Estado de loading da busca de CEP */
   cepLoading?: boolean;
   /** Modo somente leitura */
   readOnly?: boolean;
   /** Callback para ações em equipamentos */
   onEquipmentAction?: (action: 'view' | 'edit' | 'delete', equipment: Equipment) => void;
+  /** Painel customizado da aba Equipamentos (ex.: ClientEquipmentManager) */
+  equipamentosPanel?: React.ReactNode;
+  /** Contagem exibida na aba Equipamentos quando usa painel customizado */
+  equipamentosCount?: number;
   /** Callback para ações em OS */
   onOrderAction?: (action: 'view' | 'edit', order: ServiceOrder) => void;
   /** Callback para ações em orçamentos */
   onBudgetAction?: (action: 'view' | 'edit' | 'send', budget: Budget) => void;
+  /** Painel customizado da aba Preventiva */
+  preventivaPanel?: React.ReactNode;
 }
 
 // ============================================================================
@@ -361,6 +381,26 @@ const styles = {
   inputWithButton: {
     display: 'flex',
     gap: 'var(--space-2)',
+  },
+  /** Grid responsivo CPF/CNPJ + consultas (equivalente a grid-cols-1 md:grid-cols-4). */
+  documentFieldGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: '0.5rem',
+    alignItems: 'end',
+    width: '100%',
+  },
+  documentFieldInput: {
+    minWidth: 0,
+    width: '100%',
+  },
+  documentFieldButton: {
+    width: '100%',
+    whiteSpace: 'normal' as const,
+    textAlign: 'center' as const,
+    minWidth: 0,
+    lineHeight: 1.25,
+    padding: '0 0.65rem',
   },
   select: {
     height: 'var(--input-height)',
@@ -772,23 +812,31 @@ function TabCadastro({
   onChange,
   onConsultCNPJ,
   onConsultCNPJCommercial,
+  onRefreshCnpjCommercial,
   onBuscarCep,
   loadingCNPJ,
   loadingCNPJCommercial,
+  loadingCnpjCommercialRefresh,
+  cnpjCommercialCooldownDays,
   fiscalFieldsLocked,
   cepLoading,
   readOnly,
+  sitesPanel,
 }: {
   client?: ClientData;
   onChange?: (data: Partial<ClientData>) => void;
   onConsultCNPJ?: (cnpj: string) => void;
   onConsultCNPJCommercial?: (cnpj: string) => void;
+  onRefreshCnpjCommercial?: () => void;
   onBuscarCep?: () => void;
   loadingCNPJ?: boolean;
   loadingCNPJCommercial?: boolean;
+  loadingCnpjCommercialRefresh?: boolean;
+  cnpjCommercialCooldownDays?: number | null;
   fiscalFieldsLocked?: boolean;
   cepLoading?: boolean;
   readOnly?: boolean;
+  sitesPanel?: React.ReactNode;
 }) {
   const [localClient, setLocalClient] = useState<Partial<ClientData>>(client || { type: 'pj', isActive: true });
 
@@ -822,8 +870,9 @@ function TabCadastro({
 
   const canConsultCNPJ = localClient.type === 'pj' && localClient.documento && localClient.documento.replace(/\D/g, '').length === 14;
   const cnpjBusy = Boolean(loadingCNPJ || loadingCNPJCommercial);
-  const identLocked = Boolean(readOnly || fiscalFieldsLocked);
-  const lockedInputStyle = identLocked ? { ...styles.input, ...styles.inputLocked } : styles.input;
+  /** Após CNPJ verificado: trava somente tipo, documento, razão social e nome fantasia. */
+  const identCoreLocked = Boolean(readOnly || fiscalFieldsLocked);
+  const lockedInputStyle = identCoreLocked ? { ...styles.input, ...styles.inputLocked } : styles.input;
 
   const isAddressFieldEditable = (field: keyof NonNullable<ClientData['endereco']>) =>
     !readOnly && (!fiscalFieldsLocked || EDITABLE_ADDRESS_FIELDS.has(field));
@@ -834,10 +883,63 @@ function TabCadastro({
         <div style={styles.fiscalLockBanner} role="status">
           <span aria-hidden>🔒</span>
           <span>
-            Dados fiscais validados na Receita Federal. <strong>CNPJ</strong>, <strong>razão social</strong> e{' '}
-            <strong>tipo de pessoa</strong> estão protegidos. Você pode ajustar endereço (logradouro, número, complemento,
-            CEP) e contato (WhatsApp, telefone, e-mail).
+            Dados fiscais validados na Receita Federal. <strong>Tipo de pessoa</strong>, <strong>CNPJ</strong> e{' '}
+            <strong>razão social</strong> estão protegidos. Nome fantasia, inscrições, contato, endereço e demais campos
+            continuam editáveis.
           </span>
+        </div>
+      ) : null}
+
+      {fiscalFieldsLocked && onRefreshCnpjCommercial && localClient.type === 'pj' ? (
+        <div style={{ marginBottom: 'var(--space-4)' }}>
+          <button
+            type="button"
+            style={{
+              ...styles.button,
+              ...styles.buttonOutline,
+              opacity:
+                readOnly ||
+                loadingCnpjCommercialRefresh ||
+                (cnpjCommercialCooldownDays != null && cnpjCommercialCooldownDays > 0)
+                  ? 0.55
+                  : 1,
+              cursor:
+                readOnly ||
+                loadingCnpjCommercialRefresh ||
+                (cnpjCommercialCooldownDays != null && cnpjCommercialCooldownDays > 0)
+                  ? 'not-allowed'
+                  : 'pointer',
+            }}
+            onClick={() => {
+              if (
+                readOnly ||
+                loadingCnpjCommercialRefresh ||
+                (cnpjCommercialCooldownDays != null && cnpjCommercialCooldownDays > 0)
+              ) {
+                return;
+              }
+              onRefreshCnpjCommercial();
+            }}
+            disabled={
+              readOnly ||
+              loadingCnpjCommercialRefresh ||
+              (cnpjCommercialCooldownDays != null && cnpjCommercialCooldownDays > 0)
+            }
+            title={
+              cnpjCommercialCooldownDays != null && cnpjCommercialCooldownDays > 0
+                ? `Aguarde ~${cnpjCommercialCooldownDays} dia(s) para nova consulta comercial`
+                : 'Atualiza nome fantasia, endereço e regime via API comercial CNPJá (consome créditos)'
+            }
+          >
+            {loadingCnpjCommercialRefresh ? <LoaderIcon size={16} /> : <SearchIcon size={16} />}
+            Atualizar via Receita (Comercial)
+          </button>
+          {cnpjCommercialCooldownDays != null && cnpjCommercialCooldownDays > 0 ? (
+            <p style={{ margin: '0.5rem 0 0', fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+              Última atualização comercial há menos de 60 dias. Próxima consulta em aproximadamente{' '}
+              {cnpjCommercialCooldownDays} dia(s).
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -846,10 +948,10 @@ function TabCadastro({
         <div style={styles.formGroup}>
           <label style={styles.label}>Tipo de Pessoa</label>
           <select
-            style={identLocked ? { ...styles.select, ...styles.inputLocked } : styles.select}
+            style={identCoreLocked ? { ...styles.select, ...styles.inputLocked } : styles.select}
             value={localClient.type || 'pj'}
             onChange={(e) => handleChange('type', e.target.value as ClientType)}
-            disabled={identLocked}
+            disabled={identCoreLocked}
             title={fiscalFieldsLocked ? 'Tipo protegido após validação do CNPJ' : undefined}
           >
             <option value="pf">Pessoa Fisica (CPF)</option>
@@ -861,10 +963,10 @@ function TabCadastro({
           <div style={styles.formGroup}>
             <label style={styles.label}>Regime</label>
             <select
-              style={readOnly || fiscalFieldsLocked ? { ...styles.select, ...styles.inputLocked } : styles.select}
+              style={readOnly ? { ...styles.select, ...styles.inputLocked } : styles.select}
               value={localClient.regime || 'regular'}
               onChange={(e) => handleChange('regime', e.target.value as ClientRegime)}
-              disabled={readOnly || fiscalFieldsLocked}
+              disabled={readOnly}
             >
               {Object.entries(regimeConfig).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
@@ -873,31 +975,57 @@ function TabCadastro({
           </div>
         )}
 
-        <div style={{ ...styles.formGroup, ...(localClient.type === 'pf' ? {} : {}) }}>
+        <div style={{ ...styles.formGroup, ...styles.formGridFull }}>
           <label style={styles.label}>{localClient.type === 'pf' ? 'CPF' : 'CNPJ'}</label>
-          <div style={styles.inputWithButton}>
-            <input
-              type="text"
-              style={{ ...(identLocked ? lockedInputStyle : styles.input), flex: 1 }}
-              placeholder={localClient.type === 'pf' ? '000.000.000-00' : '00.000.000/0000-00'}
-              value={localClient.documento || ''}
-              onChange={(e) => handleDocumentoChange(e.target.value)}
-              disabled={identLocked}
-              readOnly={fiscalFieldsLocked}
-              title={fiscalFieldsLocked ? 'CNPJ protegido após validação na Receita' : undefined}
-            />
-            {localClient.type === 'pj' && !fiscalFieldsLocked ? (
-              <>
+          {localClient.type === 'pj' && !fiscalFieldsLocked ? (
+            <>
+              <style>{`
+                .client-cnpj-doc-grid {
+                  display: grid;
+                  grid-template-columns: 1fr;
+                  gap: 0.5rem;
+                  align-items: end;
+                  width: 100%;
+                }
+                @media (min-width: 768px) {
+                  .client-cnpj-doc-grid {
+                    grid-template-columns: repeat(4, minmax(0, 1fr));
+                  }
+                  .client-cnpj-doc-grid .client-cnpj-doc-input {
+                    grid-column: span 2;
+                  }
+                  .client-cnpj-doc-grid .client-cnpj-doc-btn {
+                    grid-column: span 1;
+                  }
+                }
+              `}</style>
+              <div className="client-cnpj-doc-grid" style={styles.documentFieldGrid}>
+                <input
+                  type="text"
+                  className="client-cnpj-doc-input"
+                  style={{
+                    ...(identCoreLocked ? lockedInputStyle : styles.input),
+                    ...styles.documentFieldInput,
+                  }}
+                  placeholder="00.000.000/0000-00"
+                  value={localClient.documento || ''}
+                  onChange={(e) => handleDocumentoChange(e.target.value)}
+                  disabled={identCoreLocked}
+                  readOnly={fiscalFieldsLocked}
+                  title={fiscalFieldsLocked ? 'CNPJ protegido após validação na Receita' : undefined}
+                />
                 <button
                   type="button"
+                  className="client-cnpj-doc-btn"
                   style={{
                     ...styles.button,
                     ...styles.buttonOutline,
+                    ...styles.documentFieldButton,
                     opacity: canConsultCNPJ && !cnpjBusy ? 1 : 0.5,
                     cursor: canConsultCNPJ && !cnpjBusy ? 'pointer' : 'not-allowed',
                   }}
                   onClick={() => canConsultCNPJ && !cnpjBusy && onConsultCNPJ?.(localClient.documento!)}
-                  disabled={!canConsultCNPJ || cnpjBusy || readOnly}
+                  disabled={!canConsultCNPJ || cnpjBusy || identCoreLocked}
                   title="Consulta rápida CNPJA Open (sem créditos)"
                 >
                   {loadingCNPJ ? <LoaderIcon size={16} /> : <SearchIcon size={16} />}
@@ -906,34 +1034,50 @@ function TabCadastro({
                 {onConsultCNPJCommercial ? (
                   <button
                     type="button"
+                    className="client-cnpj-doc-btn"
                     style={{
                       ...styles.button,
                       ...styles.buttonOutline,
+                      ...styles.documentFieldButton,
                       opacity: canConsultCNPJ && !cnpjBusy ? 1 : 0.5,
                       cursor: canConsultCNPJ && !cnpjBusy ? 'pointer' : 'not-allowed',
                     }}
                     onClick={() => canConsultCNPJ && !cnpjBusy && onConsultCNPJCommercial(localClient.documento!)}
-                    disabled={!canConsultCNPJ || cnpjBusy || readOnly}
+                    disabled={!canConsultCNPJ || cnpjBusy || identCoreLocked}
                     title="Validação fiscal CNPJA Comercial (NFS-e)"
                   >
                     {loadingCNPJCommercial ? <LoaderIcon size={16} /> : <SearchIcon size={16} />}
-                    Comercial
+                    Consultar CNPJ na Receita
                   </button>
                 ) : null}
-              </>
-            ) : null}
-          </div>
+              </div>
+            </>
+          ) : (
+            <input
+              type="text"
+              style={{
+                ...(identCoreLocked ? lockedInputStyle : styles.input),
+                ...styles.documentFieldInput,
+              }}
+              placeholder={localClient.type === 'pf' ? '000.000.000-00' : '00.000.000/0000-00'}
+              value={localClient.documento || ''}
+              onChange={(e) => handleDocumentoChange(e.target.value)}
+              disabled={identCoreLocked}
+              readOnly={fiscalFieldsLocked}
+              title={fiscalFieldsLocked ? 'CNPJ protegido após validação na Receita' : undefined}
+            />
+          )}
         </div>
 
         <div style={{ ...styles.formGroup, ...styles.formGridFull }}>
           <label style={styles.label}>{localClient.type === 'pf' ? 'Nome Completo' : 'Razao Social'}</label>
           <input
             type="text"
-            style={identLocked ? lockedInputStyle : styles.input}
+            style={identCoreLocked ? lockedInputStyle : styles.input}
             placeholder={localClient.type === 'pf' ? 'Nome completo' : 'Razao Social da empresa'}
             value={localClient.razaoSocial || ''}
             onChange={(e) => handleChange('razaoSocial', e.target.value)}
-            disabled={identLocked}
+            disabled={identCoreLocked}
             readOnly={fiscalFieldsLocked}
             title={fiscalFieldsLocked ? 'Razão social protegida após validação na Receita' : undefined}
           />
@@ -944,13 +1088,97 @@ function TabCadastro({
             <label style={styles.label}>Nome Fantasia</label>
             <input
               type="text"
-              style={readOnly || fiscalFieldsLocked ? lockedInputStyle : styles.input}
+              style={readOnly ? lockedInputStyle : styles.input}
               placeholder="Nome fantasia"
               value={localClient.nomeFantasia || ''}
               onChange={(e) => handleChange('nomeFantasia', e.target.value)}
-              disabled={readOnly || fiscalFieldsLocked}
+              disabled={readOnly}
             />
           </div>
+        )}
+
+        {localClient.type === 'pj' && (
+          <>
+            <div style={{ ...styles.formGroup, ...styles.formGridFull, marginTop: 'var(--space-2)' }}>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 'var(--font-size-sm)',
+                  fontWeight: 600,
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                Dados fiscais complementares
+              </p>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Inscrição estadual</label>
+              <input
+                type="text"
+                style={styles.input}
+                value={localClient.stateRegistration || ''}
+                onChange={(e) => handleChange('stateRegistration', e.target.value)}
+                disabled={readOnly}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Indicador IE</label>
+              <select
+                style={readOnly ? { ...styles.select, ...styles.inputLocked } : styles.select}
+                value={localClient.ieIndicator || ''}
+                onChange={(e) => handleChange('ieIndicator', e.target.value)}
+                disabled={readOnly}
+              >
+                <option value="">—</option>
+                <option value="1">Contribuinte</option>
+                <option value="2">Isento</option>
+                <option value="9">Não contribuinte</option>
+              </select>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Inscrição municipal</label>
+              <input
+                type="text"
+                style={styles.input}
+                value={localClient.municipalRegistration || ''}
+                onChange={(e) => handleChange('municipalRegistration', e.target.value)}
+                disabled={readOnly}
+              />
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>CNAE principal (código)</label>
+              <input
+                type="text"
+                style={styles.input}
+                placeholder="Ex.: 4322-3/01"
+                value={localClient.mainActivityCode || ''}
+                onChange={(e) => handleChange('mainActivityCode', e.target.value)}
+                disabled={readOnly}
+              />
+            </div>
+            <div style={{ ...styles.formGroup, ...styles.formGridFull }}>
+              <label style={styles.label}>CNAE principal (descrição)</label>
+              <input
+                type="text"
+                style={styles.input}
+                placeholder="Atividade econômica principal"
+                value={localClient.mainActivityDescription || ''}
+                onChange={(e) => handleChange('mainActivityDescription', e.target.value)}
+                disabled={readOnly}
+              />
+            </div>
+            <div style={{ ...styles.formGroup, ...styles.formGridFull }}>
+              <label style={styles.label}>Natureza jurídica</label>
+              <input
+                type="text"
+                style={styles.input}
+                placeholder="Ex.: Sociedade Empresária Limitada"
+                value={localClient.legalNature || ''}
+                onChange={(e) => handleChange('legalNature', e.target.value)}
+                disabled={readOnly}
+              />
+            </div>
+          </>
         )}
       </div>
 
@@ -995,55 +1223,18 @@ function TabCadastro({
         </div>
 
         {localClient.type === 'pj' && (
-          <>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Responsável / contato</label>
-              <input
-                type="text"
-                style={readOnly || fiscalFieldsLocked ? lockedInputStyle : styles.input}
-                value={localClient.contactPersonName || ''}
-                onChange={(e) => handleChange('contactPersonName', e.target.value)}
-                disabled={readOnly || fiscalFieldsLocked}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Inscrição estadual</label>
-              <input
-                type="text"
-                style={readOnly || fiscalFieldsLocked ? lockedInputStyle : styles.input}
-                value={localClient.stateRegistration || ''}
-                onChange={(e) => handleChange('stateRegistration', e.target.value)}
-                disabled={readOnly || fiscalFieldsLocked}
-              />
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Indicador IE</label>
-              <select
-                style={readOnly || fiscalFieldsLocked ? { ...styles.select, ...styles.inputLocked } : styles.select}
-                value={localClient.ieIndicator || ''}
-                onChange={(e) => handleChange('ieIndicator', e.target.value)}
-                disabled={readOnly || fiscalFieldsLocked}
-              >
-                <option value="">—</option>
-                <option value="1">Contribuinte</option>
-                <option value="2">Isento</option>
-                <option value="9">Não contribuinte</option>
-              </select>
-            </div>
-            <div style={styles.formGroup}>
-              <label style={styles.label}>Inscrição municipal</label>
-              <input
-                type="text"
-                style={readOnly || fiscalFieldsLocked ? lockedInputStyle : styles.input}
-                value={localClient.municipalRegistration || ''}
-                onChange={(e) => handleChange('municipalRegistration', e.target.value)}
-                disabled={readOnly || fiscalFieldsLocked}
-              />
-            </div>
-          </>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Responsável / contato</label>
+            <input
+              type="text"
+              style={styles.input}
+              value={localClient.contactPersonName || ''}
+              onChange={(e) => handleChange('contactPersonName', e.target.value)}
+              disabled={readOnly}
+            />
+          </div>
         )}
       </div>
-
       <div style={styles.sectionDivider} />
 
       <h3 style={styles.sectionTitle}>Endereco</h3>
@@ -1138,8 +1329,8 @@ function TabCadastro({
             type="text"
             value={localClient.addressIbgeCode || ''}
             onChange={(e) => handleChange('addressIbgeCode', e.target.value.replace(/\D/g, '').slice(0, 7))}
-            disabled={readOnly || fiscalFieldsLocked}
-            style={readOnly || fiscalFieldsLocked ? lockedInputStyle : styles.input}
+            disabled={readOnly}
+            style={styles.input}
           />
         </div>
       </div>
@@ -1167,6 +1358,13 @@ function TabCadastro({
           <span style={styles.label}>Não participar de campanhas preventivas</span>
         </label>
       </div>
+
+      {sitesPanel ? (
+        <>
+          <div style={styles.sectionDivider} />
+          {sitesPanel}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1393,6 +1591,25 @@ function TabPMOC({ pmocData }: { pmocData?: PMOCData }) {
             </div>
           )}
         </div>
+
+        {pmocData.id ? (
+          <a
+            href={`/app/pmoc/conformidade/${pmocData.id}`}
+            style={{
+              display: 'inline-flex',
+              marginTop: 'var(--space-4)',
+              padding: '10px 14px',
+              borderRadius: 'var(--input-radius)',
+              background: 'var(--color-primary, #006FEE)',
+              color: '#fff',
+              fontSize: 'var(--font-size-sm)',
+              fontWeight: 'var(--font-weight-semibold)' as unknown as number,
+              textDecoration: 'none',
+            }}
+          >
+            Abrir Painel de Conformidade
+          </a>
+        ) : null}
       </div>
 
       {pmocData.relatorios && pmocData.relatorios.length > 0 && (
@@ -1625,12 +1842,19 @@ export function ClientFormView({
   onBuscarCep,
   loadingCNPJ = false,
   loadingCNPJCommercial = false,
+  onRefreshCnpjCommercial,
+  loadingCnpjCommercialRefresh = false,
+  cnpjCommercialCooldownDays = null,
   fiscalFieldsLocked = false,
   cepLoading = false,
   readOnly = false,
   onEquipmentAction,
+  equipamentosPanel,
+  sitesPanel,
+  equipamentosCount,
   onOrderAction,
   onBudgetAction,
+  preventivaPanel,
 }: ClientFormViewProps) {
   const [internalActiveTab, setInternalActiveTab] = useState<TabId>('cadastro');
   
@@ -1647,9 +1871,10 @@ export function ClientFormView({
   const tabs: Array<{ id: TabId; label: string; count?: number }> = [
     { id: 'cadastro', label: 'Cadastro' },
     { id: 'historico', label: 'Historico' },
-    { id: 'equipamentos', label: 'Equipamentos', count: equipments.length },
+    { id: 'equipamentos', label: 'Equipamentos', count: equipamentosCount ?? equipments.length },
     { id: 'pmoc', label: 'PMOC' },
     { id: 'orcamentos', label: 'Orcamentos e OS', count: (orders.length || 0) + (budgets.length || 0) },
+    { id: 'preventiva', label: 'Preventiva' },
   ];
 
   return (
@@ -1692,22 +1917,28 @@ export function ClientFormView({
             onChange={onClientChange}
             onConsultCNPJ={onConsultCNPJ}
             onConsultCNPJCommercial={onConsultCNPJCommercial}
+            onRefreshCnpjCommercial={onRefreshCnpjCommercial}
             onBuscarCep={onBuscarCep}
             loadingCNPJ={loadingCNPJ}
             loadingCNPJCommercial={loadingCNPJCommercial}
+            loadingCnpjCommercialRefresh={loadingCnpjCommercialRefresh}
+            cnpjCommercialCooldownDays={cnpjCommercialCooldownDays}
             fiscalFieldsLocked={fiscalFieldsLocked}
             cepLoading={cepLoading}
             readOnly={readOnly}
+            sitesPanel={sitesPanel}
           />
         )}
         {activeTab === 'historico' && (
           <TabHistorico history={history} />
         )}
         {activeTab === 'equipamentos' && (
-          <TabEquipamentos 
-            equipments={equipments} 
-            onAction={onEquipmentAction}
-          />
+          equipamentosPanel ?? (
+            <TabEquipamentos
+              equipments={equipments}
+              onAction={onEquipmentAction}
+            />
+          )
         )}
         {activeTab === 'pmoc' && (
           <TabPMOC pmocData={pmocData} />
@@ -1719,6 +1950,11 @@ export function ClientFormView({
             onOrderAction={onOrderAction}
             onBudgetAction={onBudgetAction}
           />
+        )}
+        {activeTab === 'preventiva' && (
+          preventivaPanel ?? (
+            <EmptyState message="Salve o cliente para configurar a gestão preventiva por equipamento." />
+          )
         )}
       </div>
 

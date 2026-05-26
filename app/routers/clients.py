@@ -1,38 +1,60 @@
 import csv
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.pagination import clamp_limit
 from app.dependencies import get_current_user, require_roles
 from app.routers.equipment_documents import serialize_equipment_document_out
+from app.client_cnpj import (
+    CNPJ_COMMERCIAL_COOLDOWN_DAYS,
+    apply_cnpj_lookup_to_client,
+    cnpj_commercial_cooldown_remaining,
+)
+from app.cnpja_client import CnpjaHttpError, fetch_office_commercial, office_payload_to_lookup
+from app.platform_credentials import resolve_cnpja_api_key
+from app.routers.cnpj import _http_error_from_cnpja
 from app.schemas import (
     ClientAuditEntryOut,
+    ClientCnpjCommercialRefreshOut,
     ClientCountOut,
     ClientCreate,
     ClientImportSummaryOut,
     ClientOut,
     ClientServiceItemLinkRowOut,
+    ClientSiteCreate,
+    ClientSiteOut,
+    ClientSiteUpdate,
     ClientUpdate,
+    CnpjCommercialLookupOut,
     EquipmentCreate,
     EquipmentDocumentWithEquipmentOut,
     EquipmentHistoryRowOut,
     EquipmentOut,
     EquipmentUpdate,
 )
+from app.services.client_sites import (
+    get_client_for_tenant as _get_client_for_tenant,
+    get_client_site_for_client as _get_client_site_for_client,
+    validate_equipment_client_site as _validate_equipment_client_site,
+)
+from app.equipment_history import list_equipment_preventive_visits, list_equipment_service_visits
 from app.tax_id import digits_only, normalize_and_validate_tax_document
 from models import (
     Budget,
     Client,
     ClientAuditLog,
+    ClientEquipment,
+    ClientSite,
     Equipment,
     EquipmentDocument,
     NfseInvoice,
@@ -211,11 +233,12 @@ def list_clients(
     current_user: Annotated[User, Depends(get_current_user)],
     q: Annotated[str | None, Query(description="Filter by name, document or email")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    limit: Annotated[int, Query(ge=1)] = 20,
     status_filter: Annotated[
         Literal["active", "inactive", "all"], Query(alias="status", description="Cadastro ativo/inativo")
     ] = "active",
 ) -> list[Client]:
+    limit = clamp_limit(limit)
     query = select(Client).where(Client.tenant_id == current_user.tenant_id)
     query = _apply_status_filter(query, status_filter)
     if q:
@@ -488,8 +511,9 @@ def list_client_audit(
     client_id: int,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    limit: Annotated[int, Query(ge=1)] = 200,
 ) -> list[ClientAuditEntryOut]:
+    limit = clamp_limit(limit)
     client = db.execute(
         select(Client).where(Client.id == client_id, Client.tenant_id == current_user.tenant_id)
     ).scalar_one_or_none()
@@ -849,12 +873,13 @@ def delete_client(
     return None
 
 
-@router.get("/{client_id}/equipments", response_model=list[EquipmentOut])
+@router.get("/{client_id}/hvac-equipments", response_model=list[EquipmentOut])
 def list_client_equipments(
     client_id: int,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     only_active: Annotated[bool, Query()] = False,
+    client_site_id: Annotated[int | None, Query(ge=1)] = None,
 ) -> list[Equipment]:
     client = db.execute(
         select(Client).where(Client.id == client_id, Client.tenant_id == current_user.tenant_id)
@@ -864,6 +889,22 @@ def list_client_equipments(
     query = select(Equipment).where(Equipment.client_id == client.id)
     if only_active:
         query = query.where(Equipment.ativo.is_(True))
+    if client_site_id is not None:
+        _get_client_site_for_client(
+            db, site_id=client_site_id, client_id=client_id, tenant_id=current_user.tenant_id
+        )
+        catalog_legacy_ids = select(ClientEquipment.legacy_equipment_id).where(
+            ClientEquipment.client_id == client.id,
+            ClientEquipment.client_site_id == client_site_id,
+            ClientEquipment.is_active.is_(True),
+            ClientEquipment.legacy_equipment_id.isnot(None),
+        )
+        query = query.where(
+            or_(
+                Equipment.client_site_id == client_site_id,
+                Equipment.id.in_(catalog_legacy_ids),
+            )
+        )
     return db.execute(query.order_by(Equipment.id.desc())).scalars().all()
 
 
@@ -883,8 +924,9 @@ def list_client_equipment_documents(
     next_due_from: Annotated[datetime | None, Query()] = None,
     next_due_to: Annotated[datetime | None, Query()] = None,
     only_overdue: Annotated[bool, Query()] = False,
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    limit: Annotated[int, Query(ge=1)] = 100,
 ) -> list[EquipmentDocumentWithEquipmentOut]:
+    limit = clamp_limit(limit)
     client = db.execute(
         select(Client).where(Client.id == client_id, Client.tenant_id == current_user.tenant_id)
     ).scalar_one_or_none()
@@ -932,7 +974,7 @@ def list_client_equipment_documents(
 
 
 @router.post(
-    "/{client_id}/equipments",
+    "/{client_id}/hvac-equipments",
     response_model=EquipmentOut,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
@@ -948,8 +990,15 @@ def create_client_equipment(
     ).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+    _validate_equipment_client_site(
+        db,
+        client_site_id=payload.client_site_id,
+        client_id=client.id,
+        tenant_id=current_user.tenant_id,
+    )
     equipment = Equipment(
         client_id=client.id,
+        client_site_id=payload.client_site_id,
         public_token=str(uuid4()),
         tipo=payload.tipo,
         identificacao=payload.identificacao.strip(),
@@ -965,6 +1014,7 @@ def create_client_equipment(
         voltagem=payload.voltagem,
         tecnologia_ciclo=payload.tecnologia_ciclo,
         local_instalacao=payload.local_instalacao,
+        installation_reference=payload.installation_reference,
         ambiente_nome=payload.ambiente_nome,
         ambiente_tipo=payload.ambiente_tipo,
         area_m2=payload.area_m2,
@@ -986,7 +1036,7 @@ def create_client_equipment(
 
 
 @router.put(
-    "/{client_id}/equipments/{equipment_id}",
+    "/{client_id}/hvac-equipments/{equipment_id}",
     response_model=EquipmentOut,
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
 )
@@ -1028,6 +1078,8 @@ def update_client_equipment(
         equipment.tecnologia_ciclo = payload.tecnologia_ciclo
     if payload.local_instalacao is not None:
         equipment.local_instalacao = payload.local_instalacao
+    if payload.installation_reference is not None:
+        equipment.installation_reference = payload.installation_reference
     if payload.capacidade_tr is not None:
         equipment.capacidade_tr = payload.capacidade_tr
     if payload.categoria_instalacao is not None:
@@ -1062,13 +1114,22 @@ def update_client_equipment(
         equipment.filtro_periodicidade_limpeza = payload.filtro_periodicidade_limpeza
     if payload.ativo is not None:
         equipment.ativo = payload.ativo
+    if "client_site_id" in payload.model_fields_set:
+        if payload.client_site_id is not None:
+            _validate_equipment_client_site(
+                db,
+                client_site_id=payload.client_site_id,
+                client_id=client_id,
+                tenant_id=current_user.tenant_id,
+            )
+        equipment.client_site_id = payload.client_site_id
     db.commit()
     db.refresh(equipment)
     return equipment
 
 
 @router.delete(
-    "/{client_id}/equipments/{equipment_id}",
+    "/{client_id}/hvac-equipments/{equipment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
 )
@@ -1095,7 +1156,7 @@ def deactivate_client_equipment(
 
 
 @router.get(
-    "/{client_id}/equipments/{equipment_id}/history",
+    "/{client_id}/hvac-equipments/{equipment_id}/history",
     response_model=list[EquipmentHistoryRowOut],
 )
 def equipment_history(
@@ -1156,41 +1217,41 @@ def equipment_history(
         )
         for row in rows
     ]
-    visit_rows = db.execute(
-        select(
-            ServiceOrder.closed_at,
-            ServiceOrder.opened_at,
-            ServiceOrder.id,
-            ServiceOrderServiceItem.id,
-            Service.name,
-        )
-        .select_from(ServiceOrderServiceItem)
-        .join(ServiceOrder, ServiceOrder.id == ServiceOrderServiceItem.service_order_id)
-        .join(Service, Service.id == ServiceOrderServiceItem.service_id)
-        .where(
-            ServiceOrder.tenant_id == current_user.tenant_id,
-            ServiceOrder.client_id == client_id,
-            ServiceOrderServiceItem.equipment_id == equipment_id,
-            ServiceOrder.status == OrderStatus.DONE,
-        )
-    ).all()
-    visit_out = [
-        EquipmentHistoryRowOut(
-            changed_at=row[0] or row[1],
-            source="ordem_concluida",
-            previous_equipment_id=None,
-            new_equipment_id=equipment_id,
-            service_order_id=row[2],
-            service_item_id=row[3],
-            service_name=row[4],
-            changed_by_user_id=None,
-            changed_by_user_name=None,
-        )
-        for row in visit_rows
-    ]
+    visit_out = list_equipment_service_visits(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        client_id=client_id,
+        preventive_only=False,
+    )
     combined = audit_out + visit_out
     combined.sort(key=lambda r: r.changed_at, reverse=True)
     return combined
+
+
+@router.get(
+    "/{client_id}/hvac-equipments/{equipment_id}/history/preventives",
+    response_model=list[EquipmentHistoryRowOut],
+)
+def equipment_preventive_history(
+    client_id: int,
+    equipment_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[EquipmentHistoryRowOut]:
+    equipment = db.execute(
+        select(Equipment)
+        .join(Client, Client.id == Equipment.client_id)
+        .where(Equipment.id == equipment_id, Equipment.client_id == client_id, Client.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if equipment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipment not found.")
+    return list_equipment_preventive_visits(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        client_id=client_id,
+    )
 
 
 @router.get(
@@ -1235,3 +1296,189 @@ def list_client_service_items_links(
         )
         for row in rows
     ]
+
+
+@router.post(
+    "/{client_id}/cnpj-commercial-refresh",
+    response_model=ClientCnpjCommercialRefreshOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def refresh_client_cnpj_commercial(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    merge_address: Annotated[bool, Query(description="Atualizar endereço com dados da Receita")] = True,
+) -> ClientCnpjCommercialRefreshOut:
+    """Atualiza cadastro via CNPJá comercial (máximo 1x a cada 60 dias por cliente)."""
+    client = _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    if client.tax_id_kind != "cnpj":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Consulta comercial disponível apenas para clientes com CNPJ.",
+        )
+    digits = digits_only(client.document or "")
+    if len(digits) != 14:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cliente sem CNPJ válido para consulta na Receita.",
+        )
+
+    days_left = cnpj_commercial_cooldown_remaining(client)
+    if days_left is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"A última atualização comercial foi há menos de {CNPJ_COMMERCIAL_COOLDOWN_DAYS} dias. "
+                f"Tente novamente em aproximadamente {days_left} dia(s) para economizar créditos da API."
+            ),
+        )
+
+    api_key = resolve_cnpja_api_key(db)
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API CNPJá comercial não configurada. Cadastre a chave em Credenciais da plataforma (CNPJá).",
+        )
+
+    before = _client_snapshot(client)
+    try:
+        raw = fetch_office_commercial(digits, api_key)
+    except CnpjaHttpError as exc:
+        raise _http_error_from_cnpja(exc) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível contatar o serviço CNPJá.",
+        ) from exc
+
+    lookup = office_payload_to_lookup(raw, "commercial")
+    if not lookup.company_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CNPJ sem razão social na resposta da CNPJá.",
+        )
+    if lookup.tax_id != digits:
+        lookup = lookup.model_copy(update={"tax_id": digits})
+
+    apply_cnpj_lookup_to_client(client, lookup, merge_address=merge_address)
+    client.last_cnpj_commercial_update = datetime.now(timezone.utc)
+
+    after = _client_snapshot(client)
+    diff = _audit_field_diff(before, after)
+    if diff:
+        _append_client_audit(
+            db,
+            tenant_id=current_user.tenant_id,
+            client_id=client.id,
+            user_id=current_user.id,
+            action="cnpj_commercial_refresh",
+            changes=diff,
+        )
+    db.commit()
+    db.refresh(client)
+    commercial_out = CnpjCommercialLookupOut(**lookup.model_dump(), full=raw)
+    return ClientCnpjCommercialRefreshOut(client=client, lookup=commercial_out)
+
+
+@router.get("/{client_id}/sites", response_model=list[ClientSiteOut])
+def list_client_sites(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ClientSite]:
+    _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    return list(
+        db.execute(
+            select(ClientSite)
+            .where(ClientSite.client_id == client_id, ClientSite.tenant_id == current_user.tenant_id)
+            .order_by(ClientSite.name.asc())
+        ).scalars().all()
+    )
+
+
+@router.post(
+    "/{client_id}/sites",
+    response_model=ClientSiteOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_client_site(
+    client_id: int,
+    payload: ClientSiteCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientSite:
+    client = _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    site = ClientSite(
+        tenant_id=client.tenant_id,
+        client_id=client.id,
+        name=payload.name.strip(),
+        street=(payload.street or "").strip() or None,
+        number=(payload.number or "").strip() or None,
+        neighborhood=(payload.neighborhood or "").strip() or None,
+        city=(payload.city or "").strip() or None,
+        state=payload.state,
+        cep=payload.cep,
+    )
+    db.add(site)
+    db.commit()
+    db.refresh(site)
+    return site
+
+
+@router.get("/{client_id}/sites/{site_id}", response_model=ClientSiteOut)
+def get_client_site(
+    client_id: int,
+    site_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientSite:
+    return _get_client_site_for_client(db, site_id=site_id, client_id=client_id, tenant_id=current_user.tenant_id)
+
+
+@router.put(
+    "/{client_id}/sites/{site_id}",
+    response_model=ClientSiteOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_client_site(
+    client_id: int,
+    site_id: int,
+    payload: ClientSiteUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientSite:
+    site = _get_client_site_for_client(db, site_id=site_id, client_id=client_id, tenant_id=current_user.tenant_id)
+    if payload.name is not None:
+        site.name = payload.name.strip()
+    if payload.street is not None:
+        site.street = payload.street.strip() or None
+    if payload.number is not None:
+        site.number = payload.number.strip() or None
+    if payload.neighborhood is not None:
+        site.neighborhood = payload.neighborhood.strip() or None
+    if payload.city is not None:
+        site.city = payload.city.strip() or None
+    if payload.state is not None:
+        site.state = payload.state
+    if payload.cep is not None:
+        site.cep = payload.cep
+    db.commit()
+    db.refresh(site)
+    return site
+
+
+@router.delete(
+    "/{client_id}/sites/{site_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_client_site(
+    client_id: int,
+    site_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    site = _get_client_site_for_client(db, site_id=site_id, client_id=client_id, tenant_id=current_user.tenant_id)
+    db.delete(site)
+    db.commit()

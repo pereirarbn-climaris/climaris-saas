@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 import unicodedata
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import re
 from string import Formatter
 from typing import Any
@@ -18,12 +18,14 @@ from sqlalchemy import delete, desc, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import SessionLocal
+from app.plan_rules import get_plan_definition
 from app.routers.service_orders import (
     _check_technician_conflict,
     _check_technician_work_rules,
     _ensure_inside_workday,
     _tenant_tz,
     _with_buffer,
+    suggest_booking_slots,
 )
 from app.ai_assistant import generate_ai_response
 from app.config import (
@@ -32,8 +34,11 @@ from app.config import (
     EVOLUTION_API_KEY,
     EVOLUTION_CORS_REQUEST_ORIGIN,
     EVOLUTION_INSTANCE,
+    EVOLUTION_WEBHOOK_TOKEN,
     WHATSAPP_AI_INCOMING_ENABLED,
     WHATSAPP_INTERACTIVE_BUTTONS_ENABLED,
+    WHATSAPP_WEBHOOK_ENABLED,
+    public_api_base_url,
 )
 from models import (
     Client,
@@ -43,7 +48,6 @@ from models import (
     Tenant,
     TenantHoliday,
     User,
-    UserRole,
     WhatsappMessageEvent,
     WhatsappMessageJob,
     WhatsappMessageStatus,
@@ -51,6 +55,25 @@ from models import (
 )
 
 logger = logging.getLogger("erp.whatsapp")
+
+# URL dedicada ao fluxo de lembretes/agenda (confirmar, reagendar, cancelar).
+# Outros webhooks WhatsApp (bot, campanhas, etc.) devem usar rotas separadas.
+WHATSAPP_WEBHOOK_AGENDA_PATH = "/api/v1/whatsapp/webhook/agenda"
+WHATSAPP_WEBHOOK_PREVENTIVA_PATH = "/api/v1/whatsapp/webhook/preventiva"
+# Alias legado — roteador agenda + preventiva (Evolution suporta uma URL por instância).
+WHATSAPP_WEBHOOK_EVOLUTION_LEGACY_PATH = "/api/v1/whatsapp/webhook/evolution"
+WHATSAPP_WEBHOOK_AGENDA_EVENTS: tuple[str, ...] = (
+    "CONNECTION_UPDATE",
+    "MESSAGES_UPSERT",
+    "MESSAGES_UPDATE",
+    "SEND_MESSAGE",
+)
+WHATSAPP_WEBHOOK_PREVENTIVA_EVENTS: tuple[str, ...] = (
+    "CONNECTION_UPDATE",
+    "MESSAGES_UPSERT",
+    "MESSAGES_UPDATE",
+    "SEND_MESSAGE",
+)
 
 # --- Evolution API v2.3.x (ex.: 2.3.7) — mensagens com botões ---
 # 1) Preferir POST /message/sendButtons/{instance} (SendButtonsDto): a Evolution monta o envelope
@@ -86,6 +109,20 @@ APPOINTMENT_TEMPLATE_ALLOWED_VARIABLES = [
 ]
 DEFAULT_APPOINTMENT_CONFIRM_KEYWORD = "CONFIRMAR"
 DEFAULT_APPOINTMENT_RESCHEDULE_KEYWORD = "REMARCAR"
+APPOINTMENT_CONFIRMED_REPLY = "Obrigado! Seu agendamento foi confirmado com sucesso."
+APPOINTMENT_CANCELLED_REPLY = "Agendamento cancelado conforme solicitado."
+DEFAULT_APPOINTMENT_RESCHEDULE_REPLY = (
+    "Agendamento reagendado para {data_hora}. Em breve enviaremos o lembrete."
+)
+APPOINTMENT_REPLY_ALLOWED_VARIABLES: dict[str, list[str]] = {
+    "confirm_reply": [],
+    "reschedule_reply": ["data_hora"],
+    "cancel_reply": [],
+}
+_CONFIRM_INTENT_SYNONYMS: frozenset[str] = frozenset({"SIM", "OK", "OKAY", "OKE", "CONFIRMO", "CONFIRMA"})
+_RESCHEDULE_INTENT_SYNONYMS: frozenset[str] = frozenset(
+    {"REMARCAR", "REAGENDAR", "REMANDAR", "REAGENDA", "REMARCA", "REMAR"}
+)
 DEFAULT_APPOINTMENT_TEMPLATE_BODY = (
     "Oi {nome_cliente}! Lembrete do seu agendamento em {data_hora}.\n"
     "Responda *{confirmar_acao}* para confirmar ou *{remarcar_acao}* para remarcar.\n"
@@ -108,6 +145,7 @@ DEFAULT_REMINDER_RULES = {
     "custom_minutes": None,
 }
 RESCHEDULE_OPTIONS_TTL_MINUTES = 30
+RESCHEDULE_AUTO_SLOT_COUNT = 4
 HUMAN_HANDOFF_ON_KEYWORDS: tuple[str, ...] = (
     "atendente",
     "humano",
@@ -218,8 +256,35 @@ def get_tenant_appointment_message_settings(db: Session, *, tenant_id: int) -> d
         "reschedule_keyword": (
             (tenant.whatsapp_appointment_reschedule_keyword or DEFAULT_APPOINTMENT_RESCHEDULE_KEYWORD).strip().upper()
         ),
+        "confirm_reply": (tenant.whatsapp_appointment_confirm_reply or APPOINTMENT_CONFIRMED_REPLY).strip(),
+        "reschedule_reply": (tenant.whatsapp_appointment_reschedule_reply or DEFAULT_APPOINTMENT_RESCHEDULE_REPLY).strip(),
+        "cancel_reply": (tenant.whatsapp_appointment_cancel_reply or APPOINTMENT_CANCELLED_REPLY).strip(),
         "allowed_variables": APPOINTMENT_TEMPLATE_ALLOWED_VARIABLES,
+        "reply_allowed_variables": APPOINTMENT_REPLY_ALLOWED_VARIABLES,
     }
+
+
+def render_appointment_reply_message(
+    db: Session,
+    *,
+    tenant_id: int,
+    reply_key: str,
+    data_hora: str | None = None,
+) -> str:
+    settings = get_tenant_appointment_message_settings(db, tenant_id=tenant_id)
+    if reply_key not in APPOINTMENT_REPLY_ALLOWED_VARIABLES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Tipo de resposta inválido.")
+    body = str(settings[reply_key]).strip()
+    allowed = APPOINTMENT_REPLY_ALLOWED_VARIABLES[reply_key]
+    vars_payload = {"data_hora": data_hora or ""} if "data_hora" in allowed else {}
+    template_vars = _extract_template_variables(body)
+    invalid = sorted(v for v in template_vars if v not in allowed)
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Template de resposta contém variáveis não permitidas: {', '.join(invalid)}.",
+        )
+    return _render_raw_template(body, vars_payload, detail_label="Template de resposta inválido")
 
 
 def update_tenant_appointment_message_settings(
@@ -229,10 +294,26 @@ def update_tenant_appointment_message_settings(
     template_body: str | None,
     confirm_keyword: str | None,
     reschedule_keyword: str | None,
+    confirm_reply: str | None = None,
+    reschedule_reply: str | None = None,
+    cancel_reply: str | None = None,
 ) -> dict[str, Any]:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+
+    def _validate_reply(body: str, reply_key: str) -> None:
+        allowed = APPOINTMENT_REPLY_ALLOWED_VARIABLES[reply_key]
+        template_vars = _extract_template_variables(body)
+        invalid = sorted(v for v in template_vars if v not in allowed)
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Resposta '{reply_key}' contém variáveis não permitidas: "
+                    f"{', '.join(invalid)}. Permitidas: {', '.join(allowed) or 'nenhuma'}."
+                ),
+            )
 
     if template_body is not None:
         template_vars = _extract_template_variables(template_body)
@@ -250,6 +331,15 @@ def update_tenant_appointment_message_settings(
         tenant.whatsapp_appointment_confirm_keyword = confirm_keyword
     if reschedule_keyword is not None:
         tenant.whatsapp_appointment_reschedule_keyword = reschedule_keyword
+    if confirm_reply is not None:
+        _validate_reply(confirm_reply, "confirm_reply")
+        tenant.whatsapp_appointment_confirm_reply = confirm_reply
+    if reschedule_reply is not None:
+        _validate_reply(reschedule_reply, "reschedule_reply")
+        tenant.whatsapp_appointment_reschedule_reply = reschedule_reply
+    if cancel_reply is not None:
+        _validate_reply(cancel_reply, "cancel_reply")
+        tenant.whatsapp_appointment_cancel_reply = cancel_reply
 
     db.add(tenant)
     db.commit()
@@ -364,6 +454,218 @@ def update_tenant_reminder_rules(
     db.commit()
     return get_tenant_reminder_rules(db, tenant_id=tenant_id)
 
+
+def _webhook_auth_token() -> str | None:
+    token = (EVOLUTION_WEBHOOK_TOKEN or EVOLUTION_API_KEY or "").strip()
+    return token or None
+
+
+def build_webhook_agenda_url(*, tenant_id: int, include_auth_token: bool = True) -> str | None:
+    base = public_api_base_url()
+    if not base:
+        return None
+    url = f"{base}{WHATSAPP_WEBHOOK_AGENDA_PATH}?tenant_id={tenant_id}"
+    if include_auth_token:
+        token = _webhook_auth_token()
+        if token:
+            url = f"{url}&token={token}"
+    return url
+
+
+def build_webhook_preventiva_url(*, tenant_id: int, include_auth_token: bool = True) -> str | None:
+    base = public_api_base_url()
+    if not base:
+        return None
+    url = f"{base}{WHATSAPP_WEBHOOK_PREVENTIVA_PATH}?tenant_id={tenant_id}"
+    if include_auth_token:
+        token = _webhook_auth_token()
+        if token:
+            url = f"{url}&token={token}"
+    return url
+
+
+def build_webhook_evolution_router_url(*, tenant_id: int, include_auth_token: bool = True) -> str | None:
+    base = public_api_base_url()
+    if not base:
+        return None
+    url = f"{base}{WHATSAPP_WEBHOOK_EVOLUTION_LEGACY_PATH}?tenant_id={tenant_id}"
+    if include_auth_token:
+        token = _webhook_auth_token()
+        if token:
+            url = f"{url}&token={token}"
+    return url
+
+
+def _webhook_agenda_auth_token() -> str | None:
+    return _webhook_auth_token()
+
+
+def ensure_tenant_webhook_evolution_router(
+    db: Session,
+    *,
+    tenant_id: int,
+    instance_name: str | None = None,
+) -> dict[str, Any]:
+    """Registra na Evolution o roteador (/webhook/evolution) — uma URL por instância."""
+    events = sorted(set(WHATSAPP_WEBHOOK_AGENDA_EVENTS) | set(WHATSAPP_WEBHOOK_PREVENTIVA_EVENTS))
+    return _ensure_tenant_webhook_on_evolution(
+        db,
+        tenant_id=tenant_id,
+        instance_name=instance_name,
+        webhook_url=build_webhook_evolution_router_url(tenant_id=tenant_id),
+        events=events,
+        slug="evolution",
+    )
+
+
+def _ensure_tenant_webhook_on_evolution(
+    db: Session,
+    *,
+    tenant_id: int,
+    webhook_url: str | None,
+    events: list[str],
+    instance_name: str | None = None,
+    slug: str,
+) -> dict[str, Any]:
+    resolved_instance = instance_name or _resolve_tenant_instance(db, tenant_id)
+    if not webhook_url:
+        return {"skipped": True, "reason": "API_PUBLIC_BASE_URL não configurada", "slug": slug}
+    payload = {
+        "webhook": {
+            "enabled": True,
+            "url": webhook_url,
+            "webhookByEvents": False,
+            "webhookBase64": False,
+            "events": events,
+        }
+    }
+    result = _evolution_request("POST", f"/webhook/set/{resolved_instance}", payload)
+    return {
+        "skipped": False,
+        "slug": slug,
+        "instance_name": resolved_instance,
+        "webhook_url": webhook_url,
+        "raw": result,
+    }
+
+
+def ensure_tenant_webhook_agenda(
+    db: Session,
+    *,
+    tenant_id: int,
+    instance_name: str | None = None,
+) -> dict[str, Any]:
+    """Registra na Evolution somente o webhook de agenda (confirmar / remarcar / lembretes)."""
+    return _ensure_tenant_webhook_on_evolution(
+        db,
+        tenant_id=tenant_id,
+        instance_name=instance_name,
+        webhook_url=build_webhook_agenda_url(tenant_id=tenant_id),
+        events=list(WHATSAPP_WEBHOOK_AGENDA_EVENTS),
+        slug="agenda",
+    )
+
+
+def ensure_tenant_webhook_preventiva(
+    db: Session,
+    *,
+    tenant_id: int,
+    instance_name: str | None = None,
+) -> dict[str, Any]:
+    """Registra na Evolution somente o webhook de gestão preventiva (MAIS / AGENDAR)."""
+    return _ensure_tenant_webhook_on_evolution(
+        db,
+        tenant_id=tenant_id,
+        instance_name=instance_name,
+        webhook_url=build_webhook_preventiva_url(tenant_id=tenant_id),
+        events=list(WHATSAPP_WEBHOOK_PREVENTIVA_EVENTS),
+        slug="preventiva",
+    )
+
+
+def tenant_whatsapp_automation_allowed_by_plan(tenant: Tenant) -> bool:
+    return get_plan_definition(tenant.active_plan).whatsapp_automation_allowed
+
+
+def tenant_whatsapp_automation_active(tenant: Tenant) -> bool:
+    return bool(tenant.whatsapp_automation_enabled) and tenant_whatsapp_automation_allowed_by_plan(tenant)
+
+
+def get_tenant_whatsapp_automation_settings(db: Session, *, tenant_id: int) -> dict[str, Any]:
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    plan = get_plan_definition(tenant.active_plan)
+    allowed = tenant_whatsapp_automation_allowed_by_plan(tenant)
+    enabled = bool(tenant.whatsapp_automation_enabled)
+    return {
+        "automation_enabled": enabled,
+        "automation_allowed_by_plan": allowed,
+        "automation_active": allowed and enabled,
+        "plan_key": plan.key,
+        "plan_label": plan.label,
+    }
+
+
+def update_tenant_whatsapp_automation_settings(
+    db: Session,
+    *,
+    tenant_id: int,
+    enabled: bool,
+) -> dict[str, Any]:
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    if enabled and not tenant_whatsapp_automation_allowed_by_plan(tenant):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Automação WhatsApp não disponível no seu plano. Envios manuais continuam disponíveis.",
+        )
+    tenant.whatsapp_automation_enabled = enabled
+    db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
+    result = get_tenant_whatsapp_automation_settings(db, tenant_id=tenant_id)
+    if enabled:
+        try:
+            ensure_tenant_webhook_evolution_router(db, tenant_id=tenant_id)
+        except HTTPException:
+            logger.warning("Falha ao sincronizar webhook ao ativar automação (tenant_id=%s)", tenant_id, exc_info=True)
+    return result
+
+
+def get_tenant_whatsapp_webhook_info(db: Session, *, tenant_id: int) -> dict[str, Any]:
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    webhook_agenda_url = build_webhook_agenda_url(tenant_id=tenant_id, include_auth_token=False)
+    webhook_agenda_url_with_tenant = build_webhook_agenda_url(tenant_id=tenant_id, include_auth_token=True)
+    webhook_preventiva_url = build_webhook_preventiva_url(tenant_id=tenant_id, include_auth_token=False)
+    webhook_preventiva_url_with_tenant = build_webhook_preventiva_url(tenant_id=tenant_id, include_auth_token=True)
+    webhook_evolution_router_url = build_webhook_evolution_router_url(tenant_id=tenant_id, include_auth_token=False)
+    webhook_evolution_router_url_with_tenant = build_webhook_evolution_router_url(
+        tenant_id=tenant_id, include_auth_token=True
+    )
+    automation = get_tenant_whatsapp_automation_settings(db, tenant_id=tenant_id)
+    return {
+        "webhook_slug": "agenda",
+        "webhook_agenda_url": webhook_agenda_url,
+        "webhook_agenda_url_with_tenant": webhook_agenda_url_with_tenant,
+        "webhook_preventiva_url": webhook_preventiva_url,
+        "webhook_preventiva_url_with_tenant": webhook_preventiva_url_with_tenant,
+        "webhook_evolution_router_url": webhook_evolution_router_url,
+        "webhook_evolution_router_url_with_tenant": webhook_evolution_router_url_with_tenant,
+        "api_public_base_url_configured": bool(public_api_base_url()),
+        "webhook_enabled": WHATSAPP_WEBHOOK_ENABLED,
+        "tenant_id": tenant_id,
+        "instance_name": tenant.whatsapp_instance_name,
+        "suggested_events": list(
+            sorted(set(WHATSAPP_WEBHOOK_AGENDA_EVENTS) | set(WHATSAPP_WEBHOOK_PREVENTIVA_EVENTS))
+        ),
+        "suggested_events_agenda": list(WHATSAPP_WEBHOOK_AGENDA_EVENTS),
+        "suggested_events_preventiva": list(WHATSAPP_WEBHOOK_PREVENTIVA_EVENTS),
+        **automation,
+    }
 
 
 def _resolve_tenant_instance(db: Session, tenant_id: int) -> str:
@@ -871,6 +1173,12 @@ def dispatch_appointment_reminder(
 ) -> WhatsappMessageJob:
     instance_name = _resolve_tenant_instance(db, tenant_id)
     recipient = normalize_whatsapp_number(recipient_whatsapp)
+    finalize_pending_client_whatsapp_flows(
+        db,
+        tenant_id=tenant_id,
+        jid_digits=recipient,
+        source="appointment_reminder_send",
+    )
     message = render_appointment_reminder_message(
         db,
         tenant_id=tenant_id,
@@ -1047,6 +1355,10 @@ def ensure_tenant_instance(db: Session, *, tenant_id: int, requested_instance_na
     db.add(tenant)
     db.commit()
     db.refresh(tenant)
+    try:
+        ensure_tenant_webhook_evolution_router(db, tenant_id=tenant_id, instance_name=instance_name)
+    except HTTPException:
+        logger.warning("Falha ao sincronizar webhook Evolution para tenant_id=%s", tenant_id, exc_info=True)
     return instance_name
 
 
@@ -1159,6 +1471,8 @@ def dispatch_due_appointment_reminders(*, now_utc: datetime | None = None) -> di
     with SessionLocal() as db:
         tenants = db.execute(select(Tenant)).scalars().all()
         for tenant in tenants:
+            if not tenant_whatsapp_automation_active(tenant):
+                continue
             rules = get_tenant_reminder_rules(db, tenant_id=tenant.id)
             offsets = _collect_active_reminder_offsets(rules)
             if not offsets:
@@ -1217,20 +1531,401 @@ def dispatch_due_appointment_reminders(*, now_utc: datetime | None = None) -> di
     return {"checked": checked, "sent": sent}
 
 
-def _build_reschedule_options_message(*, schedule: Schedule, options: list[WhatsappRescheduleOption], tenant_tz: ZoneInfo) -> str:
-    lines = ["Recebemos seu pedido de remarcacao. Escolha uma opcao:", ""]
-    for idx, item in enumerate(options, start=1):
+def _build_reschedule_options_message(
+    *,
+    schedule: Schedule,
+    options: list[WhatsappRescheduleOption],
+    tenant_tz: ZoneInfo,
+    intro: str | None = None,
+) -> str:
+    lines = [intro or "Escolha um novo horário:", ""]
+    sorted_options = sorted(options, key=lambda o: o.starts_at)
+    for idx, item in enumerate(sorted_options, start=1):
         starts = _format_local_datetime(item.starts_at, tenant_tz)
-        lines.append(f"{idx}) {starts} - responda {idx}")
+        lines.append(f"{idx}- {starts}")
+    lines.append(f"{RESCHEDULE_AUTO_SLOT_COUNT + 1}- Outra data (envie DD/MM, ex.: 25/05)")
     lines.append("")
-    lines.append("Responda somente com o numero da opcao (ex.: 1).")
+    lines.append(
+        f"Responda com 1, 2, 3, 4 ou informe uma data (ex.: 25/05)."
+    )
     return "\n".join(lines)
 
 
-def _period_bucket(dt: datetime, tenant_tz: ZoneInfo) -> tuple[str, str]:
-    local = dt.astimezone(tenant_tz)
-    period = "manha" if local.hour < 13 else "tarde"
-    return (local.date().isoformat(), period)
+def _parse_client_preferred_date(raw: str, tenant_tz: ZoneInfo) -> date | None:
+    cleaned = (raw or "").strip()
+    match = re.search(r"\b(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?\b", cleaned)
+    if not match:
+        return None
+    day, month = int(match.group(1)), int(match.group(2))
+    year_raw = match.group(3)
+    if year_raw:
+        year = int(year_raw)
+        if year < 100:
+            year += 2000
+    else:
+        year = datetime.now(tenant_tz).year
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _schedule_duration_and_technician(schedule: Schedule) -> tuple[int, int | None]:
+    duration_minutes = max(1, int((schedule.ends_at - schedule.starts_at).total_seconds() // 60))
+    technician_ids = [item.technician_id for item in schedule.technicians]
+    technician_id = technician_ids[0] if len(technician_ids) == 1 else None
+    return duration_minutes, technician_id
+
+
+def _collect_slots_for_preferred_date(
+    db: Session,
+    *,
+    tenant: Tenant,
+    tenant_id: int,
+    schedule: Schedule,
+    preferred_date: date,
+    max_options: int = RESCHEDULE_AUTO_SLOT_COUNT,
+) -> tuple[list[Any], bool]:
+    """Até 2 horários no dia escolhido + complemento nos dias seguintes; ou só dias à frente se indisponível."""
+    tenant_tz = _tenant_tz(tenant)
+    now = datetime.now(timezone.utc)
+    duration_minutes, technician_id = _schedule_duration_and_technician(schedule)
+
+    local_day = datetime.combine(preferred_date, datetime.min.time()).replace(tzinfo=tenant_tz)
+    from_day = max(local_day.astimezone(timezone.utc), now)
+
+    probe = suggest_booking_slots(
+        db,
+        tenant=tenant,
+        tenant_id=tenant_id,
+        duration_minutes=duration_minutes,
+        from_at=from_day,
+        technician_id=technician_id,
+        limit=12,
+    )
+    on_preferred = sorted(
+        [s for s in probe if s.starts_at.astimezone(tenant_tz).date() == preferred_date],
+        key=lambda s: s.starts_at,
+    )
+    if on_preferred:
+        picked = list(on_preferred[:2])
+        picked_starts = {s.starts_at for s in picked}
+        for slot in sorted(probe, key=lambda s: s.starts_at):
+            if slot.starts_at in picked_starts:
+                continue
+            picked.append(slot)
+            if len(picked) >= max_options:
+                break
+        return sorted(picked[:max_options], key=lambda s: s.starts_at), True
+
+    next_local = local_day + timedelta(days=1)
+    from_next = max(next_local.astimezone(timezone.utc), now)
+    forward = sorted(
+        suggest_booking_slots(
+            db,
+            tenant=tenant,
+            tenant_id=tenant_id,
+            duration_minutes=duration_minutes,
+            from_at=from_next,
+            technician_id=technician_id,
+            limit=max_options,
+        ),
+        key=lambda s: s.starts_at,
+    )
+    return forward[:max_options], False
+
+
+def _reschedule_option_batch_token(now: datetime | None = None) -> str:
+    moment = now or datetime.now(timezone.utc)
+    return str(int(moment.timestamp() * 1000))
+
+
+def _pick_number_from_option_code(option_code: str) -> int | None:
+    parts = (option_code or "").strip().split("-")
+    if len(parts) < 2:
+        return None
+    pick_raw = parts[-1]
+    return int(pick_raw) if pick_raw.isdigit() else None
+
+
+def _resolve_reschedule_pick_option(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule_id: int,
+    pick_number: int,
+    now_utc: datetime | None = None,
+) -> WhatsappRescheduleOption | None:
+    """Resolve opção 1-4 da lista mais recente enviada ao cliente."""
+    if pick_number < 1 or pick_number > RESCHEDULE_AUTO_SLOT_COUNT:
+        return None
+    now = now_utc or datetime.now(timezone.utc)
+    options = db.execute(
+        select(WhatsappRescheduleOption)
+        .where(
+            WhatsappRescheduleOption.tenant_id == tenant_id,
+            WhatsappRescheduleOption.schedule_id == schedule_id,
+            WhatsappRescheduleOption.selected_at.is_(None),
+            WhatsappRescheduleOption.expires_at >= now,
+        )
+        .order_by(WhatsappRescheduleOption.id.desc())
+    ).scalars().all()
+    if not options:
+        return None
+    latest_created = max(option.created_at for option in options)
+    batch = [option for option in options if option.created_at == latest_created]
+    if len(batch) < 1:
+        batch = options[:RESCHEDULE_AUTO_SLOT_COUNT]
+    batch = sorted(batch, key=lambda option: option.starts_at)
+    if pick_number > len(batch):
+        return None
+    return batch[pick_number - 1]
+
+
+def _whatsapp_jid_digits(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def expire_reschedule_options_for_jid(
+    db: Session,
+    *,
+    tenant_id: int,
+    jid_digits: str,
+) -> int:
+    """Remove opções de remarcação ainda abertas para o cliente (evita conflito com outro fluxo)."""
+    suffix11 = jid_digits[-11:] if jid_digits else ""
+    suffix10 = jid_digits[-10:] if jid_digits else ""
+    if not suffix10:
+        return 0
+    now = datetime.now(timezone.utc)
+    option_ids = list(
+        db.execute(
+            select(WhatsappRescheduleOption.id)
+            .join(Schedule, Schedule.id == WhatsappRescheduleOption.schedule_id)
+            .join(Client, Client.id == Schedule.client_id)
+            .where(
+                WhatsappRescheduleOption.tenant_id == tenant_id,
+                WhatsappRescheduleOption.selected_at.is_(None),
+                WhatsappRescheduleOption.expires_at >= now,
+                Schedule.tenant_id == tenant_id,
+                (
+                    Client.whatsapp.like(f"%{suffix11}%")
+                    | Client.phone.like(f"%{suffix11}%")
+                    | Client.whatsapp.like(f"%{suffix10}%")
+                    | Client.phone.like(f"%{suffix10}%")
+                ),
+            )
+        ).scalars().all()
+    )
+    if not option_ids:
+        return 0
+    db.execute(delete(WhatsappRescheduleOption).where(WhatsappRescheduleOption.id.in_(option_ids)))
+    db.flush()
+    return len(option_ids)
+
+
+def finalize_pending_client_whatsapp_flows(
+    db: Session,
+    *,
+    tenant_id: int,
+    jid_digits: str,
+    source: str,
+) -> dict[str, int | str]:
+    """Encerra fluxos preventivos e opções de remarcação abertas antes de um novo envio/intenção."""
+    digits = _whatsapp_jid_digits(jid_digits)
+    if len(digits) < 8:
+        return {"preventive_flows_closed": 0, "reschedule_options_expired": 0, "source": source}
+
+    from app.preventive_schedule_whatsapp import _complete_active_flows_for_jid, has_active_preventive_schedule_flow
+
+    had_preventive = has_active_preventive_schedule_flow(db, tenant_id=tenant_id, jid_digits=digits)
+    _complete_active_flows_for_jid(db, tenant_id=tenant_id, jid_digits=digits)
+    expired = expire_reschedule_options_for_jid(db, tenant_id=tenant_id, jid_digits=digits)
+    if had_preventive or expired > 0:
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="whatsapp_pending_flows_finalized",
+            payload={
+                "source": source,
+                "preventive_flows_closed": int(had_preventive),
+                "reschedule_options_expired": expired,
+                "jid_suffix": digits[-4:],
+            },
+            job_id=None,
+        )
+    return {
+        "preventive_flows_closed": int(had_preventive),
+        "reschedule_options_expired": expired,
+        "source": source,
+    }
+
+
+def _persist_reschedule_options_and_notify(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule: Schedule,
+    recipient_whatsapp: str,
+    slots: list[Any],
+    event_type: str,
+    event_payload_extra: dict[str, Any] | None = None,
+    intro: str | None = None,
+) -> None:
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        return
+    now = datetime.now(timezone.utc)
+    sorted_slots = sorted(slots, key=lambda s: s.starts_at)[:RESCHEDULE_AUTO_SLOT_COUNT]
+    if not sorted_slots:
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="schedule_action_reschedule_no_slots",
+            payload={"schedule_id": schedule.id, **(event_payload_extra or {})},
+            job_id=None,
+        )
+        try:
+            _evolution_send_text(
+                _resolve_tenant_instance(db, tenant_id),
+                normalize_whatsapp_number(recipient_whatsapp),
+                "Não encontramos horários livres automáticos para remarcar agora. "
+                "Um atendente pode ajudar ou tente novamente em alguns minutos.",
+            )
+        except HTTPException:
+            pass
+        return
+
+    db.execute(
+        delete(WhatsappRescheduleOption).where(
+            WhatsappRescheduleOption.tenant_id == tenant_id,
+            WhatsappRescheduleOption.schedule_id == schedule.id,
+        )
+    )
+    batch_token = _reschedule_option_batch_token(now)
+    created: list[WhatsappRescheduleOption] = []
+    for idx, slot in enumerate(sorted_slots, start=1):
+        option = WhatsappRescheduleOption(
+            tenant_id=tenant_id,
+            schedule_id=schedule.id,
+            option_code=f"R{schedule.id}-{batch_token}-{idx}",
+            starts_at=slot.starts_at,
+            ends_at=slot.ends_at,
+            technician_id=slot.technician_id,
+            expires_at=now + timedelta(minutes=RESCHEDULE_OPTIONS_TTL_MINUTES),
+        )
+        db.add(option)
+        created.append(option)
+    db.flush()
+    db.commit()
+    body = _build_reschedule_options_message(
+        schedule=schedule,
+        options=created,
+        tenant_tz=_tenant_tz(tenant),
+        intro=intro,
+    )
+    try:
+        send_result = _evolution_send_text(
+            _resolve_tenant_instance(db, tenant_id),
+            normalize_whatsapp_number(recipient_whatsapp),
+            body,
+        )
+    except HTTPException:
+        return
+    append_event(
+        db,
+        tenant_id=tenant_id,
+        event_type=event_type,
+        payload={
+            "schedule_id": schedule.id,
+            "message_id": send_result.get("message_id"),
+            "options": [o.option_code for o in created],
+            "batch_token": batch_token,
+            **(event_payload_extra or {}),
+        },
+        job_id=None,
+    )
+    db.commit()
+
+
+def _clear_schedule_reminder_jobs(db: Session, *, tenant_id: int, schedule_id: int) -> int:
+    return (
+        db.execute(
+            delete(WhatsappMessageJob).where(
+                WhatsappMessageJob.tenant_id == tenant_id,
+                WhatsappMessageJob.reference_type == "schedule_reminder",
+                WhatsappMessageJob.reference_id == schedule_id,
+            )
+        ).rowcount
+        or 0
+    )
+
+
+def _dispatch_reminders_for_schedule_after_reschedule(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule: Schedule,
+) -> int:
+    """Após remarcação, envia lembretes devidos — inclusive se a janela do offset já passou."""
+    if schedule.status not in (ScheduleStatus.PENDING, ScheduleStatus.CONFIRMED):
+        return 0
+    client = schedule.client
+    recipient = (client.whatsapp if client else None) or (client.phone if client else None)
+    if not recipient:
+        return 0
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        return 0
+    now = datetime.now(timezone.utc)
+    if schedule.starts_at <= now:
+        return 0
+
+    rules = get_tenant_reminder_rules(db, tenant_id=tenant_id)
+    offsets = _collect_active_reminder_offsets(rules)
+    if not offsets:
+        return 0
+
+    sent = 0
+    tenant_tz = _tenant_tz(tenant)
+    for offset in offsets:
+        reminder_at = schedule.starts_at - timedelta(minutes=offset)
+        existing = db.execute(
+            select(WhatsappMessageJob).where(
+                WhatsappMessageJob.tenant_id == tenant_id,
+                WhatsappMessageJob.reference_type == "schedule_reminder",
+                WhatsappMessageJob.reference_id == schedule.id,
+                WhatsappMessageJob.template_key == f"appointment_reminder_{offset}m",
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            continue
+
+        delta_seconds = int((reminder_at - now).total_seconds())
+        in_window = abs(delta_seconds) <= 70
+        missed_but_still_ahead = reminder_at < now < schedule.starts_at
+        if not in_window and not missed_but_still_ahead:
+            continue
+
+        try:
+            job = dispatch_appointment_reminder(
+                db,
+                tenant_id=tenant_id,
+                created_by_user=None,
+                recipient_whatsapp=recipient,
+                nome_cliente=(client.name if client else "Cliente"),
+                data_hora=_format_local_datetime(schedule.starts_at, tenant_tz),
+                empresa=tenant.name,
+                reference_id=schedule.id,
+            )
+            job.reference_type = "schedule_reminder"
+            job.template_key = f"appointment_reminder_{offset}m"
+            db.add(job)
+            db.flush()
+            sent += 1
+        except Exception:
+            continue
+    return sent
 
 
 def _jump_to_end_of_conflicting_schedule(
@@ -1270,164 +1965,74 @@ def _create_reschedule_options_for_schedule(
     schedule: Schedule,
     recipient_whatsapp: str,
 ) -> None:
-    now = datetime.now(timezone.utc)
     if schedule.service_order_id is None:
         return
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         return
-    holidays = set(db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == tenant_id)).scalars().all())
-    duration_minutes = max(1, int((schedule.ends_at - schedule.starts_at).total_seconds() // 60))
-    technician_ids = [item.technician_id for item in schedule.technicians]
-    multi_tech = len(technician_ids) > 0
-    if not technician_ids:
-        technician_ids = [
-            row.id
-            for row in db.execute(
-                select(User)
-                .where(
-                    User.tenant_id == tenant_id,
-                    User.role == UserRole.TECHNICIAN,
-                    User.is_active.is_(True),
-                )
-                .order_by(User.id.asc())
-            ).scalars().all()
-        ]
-    probe = _with_buffer(schedule.ends_at)
-    suggestions: list[dict[str, Any]] = []
-    used_periods: set[tuple[str, str]] = set()
-    tenant_tz = _tenant_tz(tenant)
-    attempts = 0
-    while len(suggestions) < 4 and attempts < 1200:
-        attempts += 1
-        candidate_end = probe + timedelta(minutes=duration_minutes)
-        try:
-            _ensure_inside_workday(probe, candidate_end, tenant=tenant, holidays=holidays)
-            chosen_tid: int | None = None
-            if multi_tech:
-                for technician_id in technician_ids:
-                    _check_technician_conflict(
-                        db=db,
-                        tenant_id=tenant_id,
-                        technician_id=technician_id,
-                        starts_at=probe,
-                        ends_at=candidate_end,
-                        ignore_schedule_id=schedule.id,
-                    )
-                    _check_technician_work_rules(
-                        db=db,
-                        tenant_id=tenant_id,
-                        technician_id=technician_id,
-                        starts_at=probe,
-                        ends_at=candidate_end,
-                        tenant_tz=tenant_tz,
-                    )
-                chosen_tid = technician_ids[0]
-            else:
-                for technician_id in technician_ids:
-                    try:
-                        _check_technician_conflict(
-                            db=db,
-                            tenant_id=tenant_id,
-                            technician_id=technician_id,
-                            starts_at=probe,
-                            ends_at=candidate_end,
-                            ignore_schedule_id=schedule.id,
-                        )
-                        _check_technician_work_rules(
-                            db=db,
-                            tenant_id=tenant_id,
-                            technician_id=technician_id,
-                            starts_at=probe,
-                            ends_at=candidate_end,
-                            tenant_tz=tenant_tz,
-                        )
-                        chosen_tid = technician_id
-                        break
-                    except HTTPException:
-                        continue
-            if chosen_tid is None:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no slot")
-            period_key = _period_bucket(probe, tenant_tz)
-            if period_key in used_periods:
-                probe = probe + timedelta(minutes=15)
-                continue
-            used_periods.add(period_key)
-            suggestions.append(
-                {
-                    "starts_at": probe,
-                    "ends_at": candidate_end,
-                    "technician_id": chosen_tid,
-                }
-            )
-            # Pega o primeiro horario de cada periodo (manha/tarde), evitando blocos muito proximos.
-            local_probe = probe.astimezone(tenant_tz)
-            if local_probe.hour < 13:
-                next_local = local_probe.replace(hour=13, minute=0, second=0, microsecond=0)
-            else:
-                next_day = local_probe + timedelta(days=1)
-                next_local = next_day.replace(hour=8, minute=0, second=0, microsecond=0)
-            probe = next_local.astimezone(timezone.utc)
-        except HTTPException:
-            jump_probe = _jump_to_end_of_conflicting_schedule(
-                db,
-                tenant_id=tenant_id,
-                technician_ids=technician_ids,
-                starts_at=probe,
-                ends_at=candidate_end,
-                ignore_schedule_id=schedule.id,
-            )
-            probe = jump_probe if jump_probe is not None and jump_probe > probe else (probe + timedelta(minutes=15))
-            continue
-    if not suggestions:
-        append_event(
+    now = datetime.now(timezone.utc)
+    duration_minutes, technician_id = _schedule_duration_and_technician(schedule)
+    from_at = max(now, _with_buffer(schedule.ends_at))
+
+    slots = sorted(
+        suggest_booking_slots(
             db,
+            tenant=tenant,
             tenant_id=tenant_id,
-            event_type="schedule_action_reschedule_no_slots",
-            payload={"schedule_id": schedule.id},
-            job_id=None,
-        )
-        try:
-            _evolution_send_text(
-                _resolve_tenant_instance(db, tenant_id),
-                normalize_whatsapp_number(recipient_whatsapp),
-                "Não encontramos horários livres automáticos para remarcar agora. "
-                "Um atendente pode ajudar ou tente novamente em alguns minutos.",
-            )
-        except HTTPException:
-            pass
-        return
-    db.execute(
-        delete(WhatsappRescheduleOption).where(
-            WhatsappRescheduleOption.tenant_id == tenant_id,
-            WhatsappRescheduleOption.schedule_id == schedule.id,
-            WhatsappRescheduleOption.selected_at.is_(None),
-            WhatsappRescheduleOption.expires_at > now,
-        )
+            duration_minutes=duration_minutes,
+            from_at=from_at,
+            technician_id=technician_id,
+            limit=RESCHEDULE_AUTO_SLOT_COUNT,
+        ),
+        key=lambda s: s.starts_at,
     )
-    created: list[WhatsappRescheduleOption] = []
-    for idx, slot in enumerate(suggestions[:4], start=1):
-        option = WhatsappRescheduleOption(
-            tenant_id=tenant_id,
-            schedule_id=schedule.id,
-            option_code=f"R{schedule.id}-{idx}",
-            starts_at=slot["starts_at"],
-            ends_at=slot["ends_at"],
-            technician_id=slot["technician_id"],
-            # Opções de remarcação devem expirar rápido para evitar escolha de horário antigo.
-            expires_at=now + timedelta(minutes=RESCHEDULE_OPTIONS_TTL_MINUTES),
-        )
-        db.add(option)
-        created.append(option)
-    db.flush()
-    body = _build_reschedule_options_message(schedule=schedule, options=created, tenant_tz=_tenant_tz(tenant))
-    send_result = _evolution_send_text(_resolve_tenant_instance(db, tenant_id), normalize_whatsapp_number(recipient_whatsapp), body)
-    append_event(
+    _persist_reschedule_options_and_notify(
         db,
         tenant_id=tenant_id,
+        schedule=schedule,
+        recipient_whatsapp=recipient_whatsapp,
+        slots=slots,
         event_type="schedule_reschedule_options_sent",
-        payload={"schedule_id": schedule.id, "message_id": send_result.get("message_id"), "options": [o.option_code for o in created]},
-        job_id=None,
+    )
+
+
+def _create_reschedule_options_for_client_date(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule: Schedule,
+    recipient_whatsapp: str,
+    preferred_date: date,
+) -> None:
+    if schedule.service_order_id is None:
+        return
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        return
+    tenant_tz = _tenant_tz(tenant)
+    slots, found_on_day = _collect_slots_for_preferred_date(
+        db,
+        tenant=tenant,
+        tenant_id=tenant_id,
+        schedule=schedule,
+        preferred_date=preferred_date,
+    )
+    if found_on_day:
+        intro = f"Horários em {preferred_date.strftime('%d/%m/%Y')} e próximos dias:"
+    else:
+        intro = (
+            f"Data não disponível em {preferred_date.strftime('%d/%m/%Y')}. "
+            "Veja opções a partir dessa data:"
+        )
+    _persist_reschedule_options_and_notify(
+        db,
+        tenant_id=tenant_id,
+        schedule=schedule,
+        recipient_whatsapp=recipient_whatsapp,
+        slots=slots,
+        event_type="schedule_reschedule_client_date_options_sent",
+        event_payload_extra={"preferred_date": preferred_date.isoformat(), "found_on_day": found_on_day},
+        intro=intro,
     )
 
 
@@ -1442,121 +2047,13 @@ def _create_reschedule_options_for_specific_date(
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         return
-    now = datetime.now(timezone.utc)
-    tenant_tz = _tenant_tz(tenant)
-    duration_minutes = max(1, int((schedule.ends_at - schedule.starts_at).total_seconds() // 60))
-    holidays = set(db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == tenant_id)).scalars().all())
-    technician_ids = [item.technician_id for item in schedule.technicians]
-
-    local_base = target_date_local.astimezone(tenant_tz).replace(hour=8, minute=0, second=0, microsecond=0)
-    local_limit = local_base.replace(hour=18, minute=0, second=0, microsecond=0)
-    probe_local = local_base
-
-    morning: list[dict[str, Any]] = []
-    afternoon: list[dict[str, Any]] = []
-
-    while probe_local < local_limit and (len(morning) < 2 or len(afternoon) < 2):
-        period = "morning" if probe_local.hour < 12 else "afternoon"
-        if (period == "morning" and len(morning) >= 2) or (period == "afternoon" and len(afternoon) >= 2):
-            probe_local += timedelta(minutes=15)
-            continue
-        start_utc = probe_local.astimezone(timezone.utc)
-        end_utc = (probe_local + timedelta(minutes=duration_minutes)).astimezone(timezone.utc)
-        try:
-            _ensure_inside_workday(start_utc, end_utc, tenant=tenant, holidays=holidays)
-            for technician_id in technician_ids:
-                _check_technician_conflict(
-                    db=db,
-                    tenant_id=tenant_id,
-                    technician_id=technician_id,
-                    starts_at=start_utc,
-                    ends_at=end_utc,
-                    ignore_schedule_id=schedule.id,
-                )
-                _check_technician_work_rules(
-                    db=db,
-                    tenant_id=tenant_id,
-                    technician_id=technician_id,
-                    starts_at=start_utc,
-                    ends_at=end_utc,
-                    tenant_tz=tenant_tz,
-                )
-            item = {
-                "starts_at": start_utc,
-                "ends_at": end_utc,
-                "technician_id": technician_ids[0] if technician_ids else None,
-            }
-            if period == "morning":
-                morning.append(item)
-            else:
-                afternoon.append(item)
-        except HTTPException:
-            jump_probe = _jump_to_end_of_conflicting_schedule(
-                db,
-                tenant_id=tenant_id,
-                technician_ids=technician_ids,
-                starts_at=start_utc,
-                ends_at=end_utc,
-                ignore_schedule_id=schedule.id,
-            )
-            if jump_probe is not None and jump_probe > start_utc:
-                probe_local = jump_probe.astimezone(tenant_tz)
-            else:
-                probe_local += timedelta(minutes=15)
-            continue
-        probe_local += timedelta(minutes=15)
-
-    suggestions = morning + afternoon
-    if not suggestions:
-        body = (
-            f"Nao encontramos horarios disponiveis em {target_date_local.astimezone(tenant_tz).strftime('%d/%m/%Y')}. "
-            "Responda outra data no formato DD/MM/AAAA."
-        )
-        _evolution_send_text(_resolve_tenant_instance(db, tenant_id), normalize_whatsapp_number(recipient_whatsapp), body)
-        append_event(
-            db,
-            tenant_id=tenant_id,
-            event_type="schedule_reschedule_specific_date_no_slots",
-            payload={"schedule_id": schedule.id, "target_date": target_date_local.date().isoformat()},
-            job_id=None,
-        )
-        return
-
-    db.execute(
-        delete(WhatsappRescheduleOption).where(
-            WhatsappRescheduleOption.tenant_id == tenant_id,
-            WhatsappRescheduleOption.schedule_id == schedule.id,
-            WhatsappRescheduleOption.selected_at.is_(None),
-            WhatsappRescheduleOption.expires_at > now,
-        )
-    )
-    created: list[WhatsappRescheduleOption] = []
-    for idx, slot in enumerate(suggestions[:4], start=1):
-        option = WhatsappRescheduleOption(
-            tenant_id=tenant_id,
-            schedule_id=schedule.id,
-            option_code=f"R{schedule.id}-{idx}",
-            starts_at=slot["starts_at"],
-            ends_at=slot["ends_at"],
-            technician_id=slot["technician_id"],
-            expires_at=now + timedelta(minutes=RESCHEDULE_OPTIONS_TTL_MINUTES),
-        )
-        db.add(option)
-        created.append(option)
-    db.flush()
-    body = _build_reschedule_options_message(schedule=schedule, options=created, tenant_tz=tenant_tz)
-    send_result = _evolution_send_text(_resolve_tenant_instance(db, tenant_id), normalize_whatsapp_number(recipient_whatsapp), body)
-    append_event(
+    preferred = target_date_local.astimezone(_tenant_tz(tenant)).date()
+    _create_reschedule_options_for_client_date(
         db,
         tenant_id=tenant_id,
-        event_type="schedule_reschedule_specific_date_options_sent",
-        payload={
-            "schedule_id": schedule.id,
-            "target_date": target_date_local.date().isoformat(),
-            "message_id": send_result.get("message_id"),
-            "options": [o.option_code for o in created],
-        },
-        job_id=None,
+        schedule=schedule,
+        recipient_whatsapp=recipient_whatsapp,
+        preferred_date=preferred,
     )
 
 
@@ -1668,11 +2165,21 @@ def _is_human_handoff_active(db: Session, *, tenant_id: int, whatsapp_digits: st
     return False
 
 
-def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> None:
+def consume_whatsapp_webhook_agenda(
+    db: Session,
+    *,
+    tenant_id: int,
+    payload: dict[str, Any],
+    preventive_already_handled: bool = False,
+) -> None:
     # Webhooks atrasados podem chegar depois que o tenant foi removido.
     # Ignoramos silenciosamente para evitar erro de FK em whatsapp_message_events.
     if db.get(Tenant, tenant_id) is None:
         return
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        return
+    automation_active = tenant_whatsapp_automation_active(tenant)
     data = payload if isinstance(payload, dict) else {}
     event_name = str(data.get("event") or data.get("type") or "unknown")
     provider_message_id = None
@@ -1731,12 +2238,28 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             already_processed = _incoming_message_already_processed(
                 db, tenant_id=tenant_id, message_id=incoming_message_id
             )
-        if not already_processed:
+        preventive_flow_active = False
+        data_block = data.get("data") if isinstance(data, dict) else {}
+        key_block = data_block.get("key") if isinstance(data_block, dict) else {}
+        remote_jid = str(key_block.get("remoteJid") or "").strip() if isinstance(key_block, dict) else ""
+        jid_digits = "".join(ch for ch in remote_jid if ch.isdigit())
+        if len(jid_digits) >= 8:
+            from app.preventive_schedule_whatsapp import has_open_preventive_schedule_prompt
+
+            preventive_flow_active = has_open_preventive_schedule_prompt(
+                db, tenant_id=tenant_id, jid_digits=jid_digits
+            )
+        if (
+            not already_processed
+            and automation_active
+            and not preventive_already_handled
+            and not preventive_flow_active
+        ):
             action_type, action_schedule_id, action_option_code = _extract_incoming_schedule_action(
                 db, tenant_id=tenant_id, payload=data
             )
     append_event(db, tenant_id=tenant_id, event_type=event_name, payload=data, job_id=job.id if job else None)
-    if action_type:
+    if action_type and automation_active:
         _apply_schedule_action_from_whatsapp(
             db,
             tenant_id=tenant_id,
@@ -1745,26 +2268,9 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             option_code=action_option_code,
             payload=data,
         )
-    preventive_handled = False
-    if (
-        event_name.lower() == "messages.upsert"
-        and incoming_message_id
-        and not already_processed
-        and not action_type
-    ):
-        from app.preventive_maintenance import try_consume_preventive_reply
-
-        preventive_handled = try_consume_preventive_reply(db, tenant_id=tenant_id, payload=data)
-    if event_name.lower() == "messages.upsert" and incoming_message_id and not already_processed:
-        append_event(
-            db,
-            tenant_id=tenant_id,
-            event_type="incoming_message_processed",
-            payload={"message_id": incoming_message_id},
-            job_id=None,
-        )
+    preventive_handled = preventive_already_handled
     bot_handled = False
-    if event_name.lower() == "messages.upsert" and incoming_sender and incoming_text:
+    if event_name.lower() == "messages.upsert" and incoming_sender and incoming_text and automation_active:
         data_block = data.get("data") if isinstance(data, dict) else {}
         key_block = data_block.get("key") if isinstance(data_block, dict) else {}
         from_me = bool(key_block.get("fromMe")) if isinstance(key_block, dict) else False
@@ -1803,9 +2309,18 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
             payload={"sender": incoming_sender, "text": incoming_text},
             job_id=None,
         )
+    if event_name.lower() == "messages.upsert" and incoming_message_id and not already_processed:
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="incoming_message_processed",
+            payload={"message_id": incoming_message_id},
+            job_id=None,
+        )
     if (
         AI_ASSISTANT_V2_ENABLED
         and WHATSAPP_AI_INCOMING_ENABLED
+        and automation_active
         and event_name.lower() == "messages.upsert"
         and incoming_message_id
         and not already_processed
@@ -1916,6 +2431,124 @@ def consume_evolution_webhook(db: Session, *, tenant_id: int, payload: dict[str,
                         tenant_id,
                     )
     db.commit()
+
+
+def _process_preventive_incoming_webhook(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> bool:
+    """Retorna True se a mensagem foi tratada pelo fluxo preventiva (botões MAIS/AGENDAR)."""
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None or not tenant_whatsapp_automation_active(tenant):
+        return False
+    data = payload if isinstance(payload, dict) else {}
+    event_name = str(data.get("event") or data.get("type") or "").lower()
+    if event_name != "messages.upsert":
+        return False
+    from app.preventive_maintenance import try_consume_preventive_reply
+
+    return try_consume_preventive_reply(db, tenant_id=tenant_id, payload=data)
+
+
+def consume_whatsapp_webhook_preventiva(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> None:
+    """Webhook dedicado à gestão preventiva (respostas MAIS / AGENDAR)."""
+    handled = _process_preventive_incoming_webhook(db, tenant_id=tenant_id, payload=payload)
+    if handled:
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="preventive_reply_handled",
+            payload={"handler": "preventiva"},
+            job_id=None,
+        )
+    db.commit()
+
+
+def _should_route_to_preventive_first(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> bool:
+    """Decide se a preventiva deve rodar antes da agenda no roteador Evolution."""
+    data = payload if isinstance(payload, dict) else {}
+    event_name = str(data.get("event") or data.get("type") or "").lower()
+    if event_name != "messages.upsert":
+        return False
+
+    inner = data.get("data")
+    if not isinstance(inner, dict):
+        inner = data
+    key = inner.get("key") if isinstance(inner.get("key"), dict) else {}
+    if isinstance(key, dict) and bool(key.get("fromMe")):
+        return False
+
+    from app.preventive_maintenance import (
+        PREVENTIVE_MORE_PREFIX,
+        PREVENTIVE_SCHEDULE_PREFIX,
+        _extract_button_id_from_payload,
+        _plain_text_from_evolution_upsert,
+        _preventive_text_intent,
+    )
+    from app.preventive_schedule_whatsapp import (
+        has_active_preventive_schedule_flow,
+        has_open_preventive_schedule_prompt,
+        is_preventive_schedule_intent,
+    )
+
+    remote_jid = str(key.get("remoteJid") or "") if isinstance(key, dict) else ""
+    jid_digits = "".join(ch for ch in remote_jid if ch.isdigit())
+    if len(jid_digits) < 8:
+        return False
+
+    plain = _plain_text_from_evolution_upsert(data)
+    normalized = _normalize_user_text(plain)
+
+    btn_id = _extract_button_id_from_payload(data)
+    if btn_id and (
+        btn_id.startswith(PREVENTIVE_MORE_PREFIX) or btn_id.startswith(PREVENTIVE_SCHEDULE_PREFIX)
+    ):
+        return True
+
+    if has_open_preventive_schedule_prompt(db, tenant_id=tenant_id, jid_digits=jid_digits):
+        return True
+
+    if re.fullmatch(r"[1-5]", normalized):
+        if _infer_schedule_id_from_active_reschedule_options(
+            db, tenant_id=tenant_id, sender_number=jid_digits
+        ):
+            return False
+
+    if is_preventive_schedule_intent(plain) or _preventive_text_intent(plain) is not None:
+        return True
+
+    return False
+
+
+def consume_whatsapp_webhook_evolution_router(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> None:
+    """Roteador Evolution — preventiva OU agenda por mensagem (código separado, sem misturar handlers)."""
+    if not _should_route_to_preventive_first(db, tenant_id=tenant_id, payload=payload):
+        consume_whatsapp_webhook_agenda(
+            db,
+            tenant_id=tenant_id,
+            payload=payload,
+            preventive_already_handled=False,
+        )
+        return
+
+    preventive_handled = _process_preventive_incoming_webhook(db, tenant_id=tenant_id, payload=payload)
+    if preventive_handled:
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="preventive_reply_handled",
+            payload={"handler": "evolution_router"},
+            job_id=None,
+        )
+        db.commit()
+        return
+    consume_whatsapp_webhook_agenda(
+        db,
+        tenant_id=tenant_id,
+        payload=payload,
+        preventive_already_handled=False,
+    )
+
+
+# Alias legado — preferir consume_whatsapp_webhook_evolution_router ou handlers dedicados.
+consume_evolution_webhook = consume_whatsapp_webhook_evolution_router
 
 
 def tenant_id_from_webhook_payload(db: Session, payload: dict[str, Any]) -> int | None:
@@ -2038,13 +2671,20 @@ def _extract_incoming_schedule_action(
             sender_raw = str(data.get("from") or "").strip()
             if sender_raw:
                 sender_number = "".join(ch for ch in sender_raw if ch.isdigit())
+    if sender_number and len(sender_number) >= 8:
+        from app.preventive_schedule_whatsapp import has_open_preventive_schedule_prompt
+
+        if has_open_preventive_schedule_prompt(db, tenant_id=tenant_id, jid_digits=sender_number):
+            return None, None, None
     settings = get_tenant_appointment_message_settings(db, tenant_id=tenant_id)
+    active_reschedule_sid: int | None = None
     inferred_schedule_id: int | None = None
     if sender_number:
-        # Prioriza contexto de opcoes ativas (resposta 1/2/3/4 e Rxx-x).
-        inferred_schedule_id = _infer_schedule_id_from_active_reschedule_options(
+        # Resposta numérica 1-5 só vale com opções de remarcação ainda abertas.
+        active_reschedule_sid = _infer_schedule_id_from_active_reschedule_options(
             db, tenant_id=tenant_id, sender_number=sender_number
         )
+        inferred_schedule_id = active_reschedule_sid
         if inferred_schedule_id is None:
             candidate_job = db.execute(
                 select(WhatsappMessageJob)
@@ -2058,38 +2698,180 @@ def _extract_incoming_schedule_action(
             ).scalar_one_or_none()
             if candidate_job is not None and candidate_job.reference_id:
                 inferred_schedule_id = int(candidate_job.reference_id)
+        if inferred_schedule_id is None:
+            inferred_schedule_id = _infer_schedule_id_from_recent_agenda_interaction(
+                db, tenant_id=tenant_id, sender_number=sender_number
+            )
     option_match = re.search(r"(R\d+-\d+)", normalized)
     if option_match:
         code = option_match.group(1)
         sid_part = code.split("-")[0].replace("R", "")
         return "reschedule_pick", int(sid_part) if sid_part.isdigit() else inferred_schedule_id, code
-    simple_pick_match = re.search(r"\b([1-4])\b", normalized_simple)
-    if simple_pick_match and inferred_schedule_id is not None:
-        return "reschedule_pick", inferred_schedule_id, f"R{inferred_schedule_id}-{simple_pick_match.group(1)}"
+    if active_reschedule_sid is not None and re.fullmatch(r"[1-4]", normalized_simple):
+        return "reschedule_pick", active_reschedule_sid, f"R{active_reschedule_sid}-{normalized_simple}"
+    if active_reschedule_sid is not None and normalized_simple == "5":
+        return "reschedule_date_prompt", active_reschedule_sid, None
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is not None:
+        tenant_tz = _tenant_tz(tenant)
+        preferred_date = _parse_client_preferred_date(raw_text, tenant_tz)
+        if preferred_date is not None:
+            date_context_sid = inferred_schedule_id
+            if date_context_sid is None and sender_number:
+                date_context_sid = _infer_schedule_id_awaiting_client_date(
+                    db, tenant_id=tenant_id, sender_number=sender_number
+                )
+            if date_context_sid is not None:
+                return "reschedule_date", date_context_sid, preferred_date.isoformat()
     confirm_kw = _normalize_user_text(str(settings["confirm_keyword"]))
     reschedule_kw = _normalize_user_text(str(settings["reschedule_keyword"]))
 
     def _with_next_visit_fallback(sid: int | None) -> int | None:
         if sid is not None or not sender_number:
             return sid
+        sid = _infer_schedule_id_from_recent_agenda_interaction(
+            db, tenant_id=tenant_id, sender_number=sender_number
+        )
+        if sid is not None:
+            return sid
         return _infer_schedule_id_from_client_next_visit(db, tenant_id=tenant_id, sender_number=sender_number)
 
-    if normalized_simple == confirm_kw or normalized_simple.startswith(confirm_kw):
+    if _matches_confirm_intent(normalized_simple, confirm_kw):
         sid = _with_next_visit_fallback(inferred_schedule_id)
         if sid is None:
             return None, None, None
         return "confirm", sid, None
-    if normalized_simple == reschedule_kw or normalized_simple.startswith(reschedule_kw):
+    if _matches_reschedule_intent(normalized_simple, reschedule_kw):
         sid = _with_next_visit_fallback(inferred_schedule_id)
         if sid is None:
             return None, None, None
         return "reschedule", sid, None
-    if normalized_simple.startswith("CANCEL"):
+    if _matches_cancel_intent(normalized_simple):
         sid = _with_next_visit_fallback(inferred_schedule_id)
         if sid is None:
             return None, None, None
         return "cancel", sid, None
     return None, None, None
+
+
+def _infer_schedule_id_from_recent_agenda_interaction(
+    db: Session,
+    *,
+    tenant_id: int,
+    sender_number: str,
+) -> int | None:
+    """Último agendamento com interação recente de agenda (remarcar/confirmar/lembrete)."""
+    suffix11 = sender_number[-11:] if sender_number else ""
+    suffix10 = sender_number[-10:] if sender_number else ""
+    if not suffix10:
+        return None
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
+    rows = db.execute(
+        select(WhatsappMessageEvent)
+        .where(
+            WhatsappMessageEvent.tenant_id == tenant_id,
+            WhatsappMessageEvent.event_type.in_(
+                (
+                    "schedule_reschedule_options_sent",
+                    "schedule_reschedule_client_date_options_sent",
+                    "schedule_action_reschedule_applied",
+                    "schedule_action_reschedule_pick_applied",
+                    "schedule_action_confirm_applied",
+                    "schedule_reminder_cycle_reset",
+                )
+            ),
+            WhatsappMessageEvent.created_at >= cutoff,
+        )
+        .order_by(desc(WhatsappMessageEvent.id))
+        .limit(80)
+    ).scalars().all()
+    for row in rows:
+        raw = (row.payload_json or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        schedule_id = payload.get("schedule_id")
+        if schedule_id is None:
+            continue
+        match = db.execute(
+            select(Schedule.id)
+            .join(Client, Client.id == Schedule.client_id)
+            .where(
+                Schedule.id == int(schedule_id),
+                Schedule.tenant_id == tenant_id,
+                Schedule.status.in_(
+                    [ScheduleStatus.PENDING, ScheduleStatus.CONFIRMED, ScheduleStatus.IN_PROGRESS]
+                ),
+                (
+                    Client.whatsapp.like(f"%{suffix11}%")
+                    | Client.phone.like(f"%{suffix11}%")
+                    | Client.whatsapp.like(f"%{suffix10}%")
+                    | Client.phone.like(f"%{suffix10}%")
+                ),
+            )
+        ).scalar_one_or_none()
+        if match is not None:
+            return int(schedule_id)
+    return None
+
+
+def _infer_schedule_id_awaiting_client_date(
+    db: Session,
+    *,
+    tenant_id: int,
+    sender_number: str,
+) -> int | None:
+    """Agendamento aguardando data informada pelo cliente (após opção 5)."""
+    suffix11 = sender_number[-11:] if sender_number else ""
+    suffix10 = sender_number[-10:] if sender_number else ""
+    if not suffix10:
+        return None
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=RESCHEDULE_OPTIONS_TTL_MINUTES)
+    rows = db.execute(
+        select(WhatsappMessageEvent)
+        .where(
+            WhatsappMessageEvent.tenant_id == tenant_id,
+            WhatsappMessageEvent.event_type == "schedule_reschedule_date_prompt_sent",
+            WhatsappMessageEvent.created_at >= cutoff,
+        )
+        .order_by(desc(WhatsappMessageEvent.id))
+        .limit(50)
+    ).scalars().all()
+    for row in rows:
+        raw = (row.payload_json or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        schedule_id = payload.get("schedule_id")
+        if schedule_id is None:
+            continue
+        schedule = db.execute(
+            select(Schedule)
+            .join(Client, Client.id == Schedule.client_id)
+            .where(
+                Schedule.id == int(schedule_id),
+                Schedule.tenant_id == tenant_id,
+                (
+                    Client.whatsapp.like(f"%{suffix11}%")
+                    | Client.phone.like(f"%{suffix11}%")
+                    | Client.whatsapp.like(f"%{suffix10}%")
+                    | Client.phone.like(f"%{suffix10}%")
+                ),
+            )
+        ).scalar_one_or_none()
+        if schedule is not None:
+            return int(schedule_id)
+    return None
 
 
 def _infer_schedule_id_from_active_reschedule_options(
@@ -2168,6 +2950,43 @@ def _normalize_user_text(value: str) -> str:
     )
     cleaned = re.sub(r"[^A-Z0-9/ ]+", " ", no_accent)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _first_token(normalized_simple: str) -> str:
+    parts = normalized_simple.split()
+    return parts[0] if parts else ""
+
+
+def _matches_confirm_intent(normalized_simple: str, confirm_kw: str) -> bool:
+    if not normalized_simple:
+        return False
+    if normalized_simple == confirm_kw or normalized_simple.startswith(confirm_kw):
+        return True
+    if normalized_simple in _CONFIRM_INTENT_SYNONYMS:
+        return True
+    first = _first_token(normalized_simple)
+    return first in _CONFIRM_INTENT_SYNONYMS or first == confirm_kw
+
+
+def _matches_reschedule_intent(normalized_simple: str, reschedule_kw: str) -> bool:
+    if not normalized_simple:
+        return False
+    if normalized_simple == reschedule_kw or normalized_simple.startswith(reschedule_kw):
+        return True
+    if len(normalized_simple) >= 4 and reschedule_kw.startswith(normalized_simple):
+        return True
+    if normalized_simple in _RESCHEDULE_INTENT_SYNONYMS:
+        return True
+    first = _first_token(normalized_simple)
+    if first in _RESCHEDULE_INTENT_SYNONYMS:
+        return True
+    return any(normalized_simple.startswith(syn) for syn in _RESCHEDULE_INTENT_SYNONYMS)
+
+
+def _matches_cancel_intent(normalized_simple: str) -> bool:
+    if not normalized_simple:
+        return False
+    return normalized_simple == "CANCELAR" or normalized_simple.startswith("CANCELAR")
 
 
 def _incoming_message_id(payload: dict[str, Any]) -> str | None:
@@ -2284,25 +3103,46 @@ def _apply_schedule_action_from_whatsapp(
         return
 
     now_iso = datetime.now(timezone.utc).isoformat()
+    recipient = (schedule.client.whatsapp if schedule.client else None) or (schedule.client.phone if schedule.client else None)
+    if recipient:
+        finalize_pending_client_whatsapp_flows(
+            db,
+            tenant_id=tenant_id,
+            jid_digits=recipient,
+            source=f"schedule_action_{action_type}",
+        )
     if action_type == "confirm":
         if schedule.status not in (ScheduleStatus.CANCELLED, ScheduleStatus.COMPLETED):
             schedule.status = ScheduleStatus.CONFIRMED
             note = f"[WhatsApp] Cliente confirmou em {now_iso}."
             schedule.notes = f"{schedule.notes or ''}\n{note}".strip()
+            if recipient:
+                try:
+                    _evolution_send_text(
+                        _resolve_tenant_instance(db, tenant_id),
+                        normalize_whatsapp_number(recipient),
+                        render_appointment_reply_message(db, tenant_id=tenant_id, reply_key="confirm_reply"),
+                    )
+                except HTTPException:
+                    pass
     elif action_type == "cancel":
-        note = f"[WhatsApp] Cliente cancelou o fluxo de remarcacao em {now_iso}."
-        schedule.notes = f"{schedule.notes or ''}\n{note}".strip()
-        recipient = (schedule.client.whatsapp if schedule.client else None) or (schedule.client.phone if schedule.client else None)
-        if recipient:
-            _evolution_send_text(
-                _resolve_tenant_instance(db, tenant_id),
-                normalize_whatsapp_number(recipient),
-                "Tudo bem, cancelamos a remarcacao por agora. Quando quiser, envie REMARCAR novamente.",
-            )
+        if schedule.status not in (ScheduleStatus.CANCELLED, ScheduleStatus.COMPLETED):
+            schedule.status = ScheduleStatus.CANCELLED
+            note = f"[WhatsApp] Cliente cancelou agendamento em {now_iso}."
+            schedule.notes = f"{schedule.notes or ''}\n{note}".strip()
+            _clear_schedule_reminder_jobs(db, tenant_id=tenant_id, schedule_id=schedule.id)
+            if recipient:
+                try:
+                    _evolution_send_text(
+                        _resolve_tenant_instance(db, tenant_id),
+                        normalize_whatsapp_number(recipient),
+                        render_appointment_reply_message(db, tenant_id=tenant_id, reply_key="cancel_reply"),
+                    )
+                except HTTPException:
+                    pass
     elif action_type == "reschedule":
         note = f"[WhatsApp] Cliente solicitou remarcacao em {now_iso}."
         schedule.notes = f"{schedule.notes or ''}\n{note}".strip()
-        recipient = (schedule.client.whatsapp if schedule.client else None) or (schedule.client.phone if schedule.client else None)
         if recipient:
             _create_reschedule_options_for_schedule(
                 db,
@@ -2310,17 +3150,73 @@ def _apply_schedule_action_from_whatsapp(
                 schedule=schedule,
                 recipient_whatsapp=recipient,
             )
+    elif action_type == "reschedule_date_prompt":
+        note = f"[WhatsApp] Cliente escolheu informar data para remarcacao em {now_iso}."
+        schedule.notes = f"{schedule.notes or ''}\n{note}".strip()
+        if recipient:
+            try:
+                _evolution_send_text(
+                    _resolve_tenant_instance(db, tenant_id),
+                    normalize_whatsapp_number(recipient),
+                    "Informe a data desejada (DD/MM, ex.: 25/05).",
+                )
+            except HTTPException:
+                pass
+            append_event(
+                db,
+                tenant_id=tenant_id,
+                event_type="schedule_reschedule_date_prompt_sent",
+                payload={"schedule_id": schedule.id},
+                job_id=None,
+            )
+    elif action_type == "reschedule_date" and option_code:
+        try:
+            preferred_date = date.fromisoformat(option_code)
+        except ValueError:
+            if recipient:
+                try:
+                    _evolution_send_text(
+                        _resolve_tenant_instance(db, tenant_id),
+                        normalize_whatsapp_number(recipient),
+                        "Data inválida. Informe no formato DD/MM (ex.: 25/05).",
+                    )
+                except HTTPException:
+                    pass
+            return
+        note = f"[WhatsApp] Cliente informou data {preferred_date.strftime('%d/%m/%Y')} para remarcacao em {now_iso}."
+        schedule.notes = f"{schedule.notes or ''}\n{note}".strip()
+        if recipient:
+            _create_reschedule_options_for_client_date(
+                db,
+                tenant_id=tenant_id,
+                schedule=schedule,
+                recipient_whatsapp=recipient,
+                preferred_date=preferred_date,
+            )
     elif action_type == "reschedule_pick" and option_code:
         now_utc = datetime.now(timezone.utc)
-        selected = db.execute(
-            select(WhatsappRescheduleOption).where(
-                WhatsappRescheduleOption.tenant_id == tenant_id,
-                WhatsappRescheduleOption.schedule_id == schedule.id,
-                WhatsappRescheduleOption.option_code == option_code,
-                WhatsappRescheduleOption.selected_at.is_(None),
-                WhatsappRescheduleOption.expires_at >= now_utc,
+        pick_number = _pick_number_from_option_code(option_code)
+        selected = (
+            _resolve_reschedule_pick_option(
+                db,
+                tenant_id=tenant_id,
+                schedule_id=schedule.id,
+                pick_number=pick_number,
+                now_utc=now_utc,
             )
-        ).scalar_one_or_none()
+            if pick_number is not None
+            else None
+        )
+        if selected is None and pick_number is not None:
+            selected = db.execute(
+                select(WhatsappRescheduleOption).where(
+                    WhatsappRescheduleOption.tenant_id == tenant_id,
+                    WhatsappRescheduleOption.schedule_id == schedule.id,
+                    WhatsappRescheduleOption.option_code == option_code,
+                    WhatsappRescheduleOption.selected_at.is_(None),
+                    WhatsappRescheduleOption.expires_at >= now_utc,
+                )
+            ).scalar_one_or_none()
         if selected:
             tenant = db.get(Tenant, tenant_id)
             if tenant is None:
@@ -2371,27 +3267,28 @@ def _apply_schedule_action_from_whatsapp(
                     )
                 schedule.starts_at = selected.starts_at
                 schedule.ends_at = selected.ends_at
-                schedule.status = ScheduleStatus.CONFIRMED
+                schedule.status = ScheduleStatus.PENDING
                 if not schedule.technicians and selected.technician_id is not None:
                     db.add(ScheduleTechnician(schedule_id=schedule.id, technician_id=int(selected.technician_id)))
-                pick_note = (
-                    f"[WhatsApp] Horário atualizado para {_format_local_datetime(selected.starts_at, _tenant_tz(tenant))}."
-                )
+                tenant_tz = _tenant_tz(tenant)
+                new_local = _format_local_datetime(selected.starts_at, tenant_tz)
+                pick_note = f"[WhatsApp] Reagendado para {new_local}."
                 schedule.notes = f"{schedule.notes or ''}\n{pick_note}".strip()
                 selected.selected_at = datetime.now(timezone.utc)
                 db.add(selected)
-                # Ao remarcar, limpa lembretes antigos desse agendamento para permitir novo ciclo automatico.
-                removed_jobs = db.execute(
-                    delete(WhatsappMessageJob).where(
-                        WhatsappMessageJob.tenant_id == tenant_id,
-                        WhatsappMessageJob.reference_type == "schedule_reminder",
-                        WhatsappMessageJob.reference_id == schedule.id,
-                    )
-                ).rowcount or 0
-                response = (
-                    f"Remarcado com sucesso para {_format_local_datetime(selected.starts_at, _tenant_tz(tenant))}. Obrigado!"
+                removed_jobs = _clear_schedule_reminder_jobs(db, tenant_id=tenant_id, schedule_id=schedule.id)
+                _dispatch_reminders_for_schedule_after_reschedule(
+                    db,
+                    tenant_id=tenant_id,
+                    schedule=schedule,
                 )
-                recipient = (schedule.client.whatsapp if schedule.client else None) or (schedule.client.phone if schedule.client else None)
+                db.commit()
+                response = render_appointment_reply_message(
+                    db,
+                    tenant_id=tenant_id,
+                    reply_key="reschedule_reply",
+                    data_hora=new_local,
+                )
                 if recipient:
                     recipient_norm = normalize_whatsapp_number(recipient)
                     _evolution_send_text(_resolve_tenant_instance(db, tenant_id), recipient_norm, response)

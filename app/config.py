@@ -100,6 +100,15 @@ def public_api_base_url() -> str:
     return ""
 
 
+def public_app_base_url() -> str:
+    """Base pública do SPA (links de QR, confirmação de e-mail, validação PMOC)."""
+    app = APP_PUBLIC_URL.strip().rstrip("/")
+    low = app.lower()
+    if app and "127.0.0.1" not in low and "localhost" not in low:
+        return app
+    return "https://app.climaris.com.br"
+
+
 # Quando true, webhooks Mercado Pago de contas **não sandbox** exigem segredo de assinatura
 # (x-signature) configurado no tenant; caso contrário o endpoint responde 503.
 # Em produção defina MERCADOPAGO_WEBHOOK_REQUIRE_SIGNATURE=true e configure o segredo no painel MP + Contas e carteiras.
@@ -162,8 +171,11 @@ AI_ASSISTANT_V2_ENABLED: bool = _env_bool("AI_ASSISTANT_V2_ENABLED", False)
 WHATSAPP_AI_INCOMING_ENABLED: bool = AI_ASSISTANT_V2_ENABLED and _env_bool("WHATSAPP_AI_INCOMING_ENABLED", False)
 CLAUDE_API_KEY: str = os.getenv("CLAUDE_API_KEY", "").strip()
 # Haiku 4.5 (economia); sobrescreva com CLAUDE_MODEL no .env se precisar de outro ID da Anthropic.
-HAUKU_ECONOMY_MODEL: str = "claude-haiku-4-5-20251201"
+HAUKU_ECONOMY_MODEL: str = "claude-haiku-4-5-20251001"
 CLAUDE_MODEL: str = (os.getenv("CLAUDE_MODEL", "").strip() or HAUKU_ECONOMY_MODEL)
+# Visão computacional (etiquetas de equipamento): Gemini ou OpenAI como fallback.
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
 
 # 2FA por e-mail no login de administradores. Só é aplicado se houver SMTP configurado (.env ou credencial `smtp` no painel com SMTP_ALLOW_DB_OVERRIDE).
 LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED", True)

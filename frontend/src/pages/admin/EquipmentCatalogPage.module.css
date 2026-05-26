@@ -1,0 +1,23 @@
+.page {
+  min-height: 100%;
+}
+
+.bannerErr,
+.bannerOk {
+  margin: 0 1rem 0.75rem;
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-md, 8px);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.bannerErr {
+  background: color-mix(in srgb, var(--color-danger, #dc2626) 12%, transparent);
+  color: var(--color-danger, #dc2626);
+  border: 1px solid color-mix(in srgb, var(--color-danger, #dc2626) 35%, transparent);
+}
+
+.bannerOk {
+  background: color-mix(in srgb, var(--color-success, #16a34a) 12%, transparent);
+  color: var(--color-success, #16a34a);
+  border: 1px solid color-mix(in srgb, var(--color-success, #16a34a) 35%, transparent);
+}

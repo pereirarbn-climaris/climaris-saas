@@ -9,6 +9,8 @@ import {
   type DashboardHomeKpisOut,
   type DashboardRevenueChartOut,
 } from "../../api/dashboard";
+import { listPmocOccurrenceAlerts, type PmocOccurrenceAlertOut } from "../../api/pmoc";
+import { PmocOccurrencesPanel } from "../../components/pmoc/PmocOccurrencesPanel";
 import type { DashboardOutletContext } from "../dashboardContext";
 import {
   MetricCard,
@@ -92,6 +94,10 @@ export function DashboardHomePage() {
   const [error, setError] = useState<string | null>(null);
   const [chartError, setChartError] = useState<string | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [incidentAlerts, setIncidentAlerts] = useState<PmocOccurrenceAlertOut[]>([]);
+
+  const canSeePmocIncidents =
+    ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
 
   const revenueData = useMemo(
     () => (revenueChart ? mapRevenueChartToDataPoints(revenueChart) : []),
@@ -128,10 +134,11 @@ export function DashboardHomePage() {
     setOrdersError(null);
 
     void (async () => {
-      const [kpisResult, chartResult, ordersResult] = await Promise.allSettled([
+      const [kpisResult, chartResult, ordersResult, alertsResult] = await Promise.allSettled([
         fetchDashboardHomeKpis(),
         fetchDashboardRevenueChart(6),
         fetchRecentOrders(5),
+        canSeePmocIncidents ? listPmocOccurrenceAlerts(8) : Promise.resolve([] as PmocOccurrenceAlertOut[]),
       ]);
 
       if (cancelled) return;
@@ -173,12 +180,18 @@ export function DashboardHomePage() {
         );
       }
       setOrdersLoading(false);
+
+      if (canSeePmocIncidents && alertsResult.status === "fulfilled") {
+        setIncidentAlerts(alertsResult.value);
+      } else {
+        setIncidentAlerts([]);
+      }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canSeePmocIncidents]);
 
   return (
     <div className={styles.panel}>
@@ -199,6 +212,13 @@ export function DashboardHomePage() {
           Ver relatórios
         </button>
       </section>
+
+      {canSeePmocIncidents && incidentAlerts.length > 0 ? (
+        <section className={styles.incidentsStrip} aria-label="Incidentes PMOC abertos">
+          <h3 className={styles.incidentsTitle}>Incidentes PMOC — ação necessária</h3>
+          <PmocOccurrencesPanel alerts={incidentAlerts} />
+        </section>
+      ) : null}
 
       {error ? (
         <p className={styles.kpiError} role="alert">

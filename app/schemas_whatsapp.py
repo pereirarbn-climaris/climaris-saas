@@ -37,6 +37,9 @@ class WhatsappAppointmentMessageSettingsPatch(BaseModel):
     template_body: str | None = Field(default=None, min_length=20, max_length=2000)
     confirm_keyword: str | None = Field(default=None, min_length=2, max_length=20)
     reschedule_keyword: str | None = Field(default=None, min_length=2, max_length=20)
+    confirm_reply: str | None = Field(default=None, min_length=5, max_length=500)
+    reschedule_reply: str | None = Field(default=None, min_length=5, max_length=500)
+    cancel_reply: str | None = Field(default=None, min_length=5, max_length=500)
 
     @field_validator("template_body")
     @classmethod
@@ -54,12 +57,58 @@ class WhatsappAppointmentMessageSettingsPatch(BaseModel):
         cleaned = value.strip().upper()
         return cleaned or None
 
+    @field_validator("confirm_reply", "reschedule_reply", "cancel_reply")
+    @classmethod
+    def _strip_reply(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
 
 class WhatsappAppointmentMessageSettingsOut(BaseModel):
     template_body: str
     confirm_keyword: str
     reschedule_keyword: str
+    confirm_reply: str
+    reschedule_reply: str
+    cancel_reply: str
     allowed_variables: list[str]
+    reply_allowed_variables: dict[str, list[str]]
+
+
+class WhatsappWebhookInfoOut(BaseModel):
+    webhook_slug: str = "agenda"
+    webhook_agenda_url: str | None = None
+    webhook_agenda_url_with_tenant: str | None = None
+    webhook_preventiva_url: str | None = None
+    webhook_preventiva_url_with_tenant: str | None = None
+    webhook_evolution_router_url: str | None = None
+    webhook_evolution_router_url_with_tenant: str | None = None
+    api_public_base_url_configured: bool
+    webhook_enabled: bool
+    tenant_id: int
+    instance_name: str | None = None
+    suggested_events: list[str] = Field(default_factory=lambda: ["MESSAGES_UPSERT"])
+    suggested_events_agenda: list[str] = Field(default_factory=lambda: ["MESSAGES_UPSERT"])
+    suggested_events_preventiva: list[str] = Field(default_factory=lambda: ["MESSAGES_UPSERT"])
+    automation_enabled: bool = False
+    automation_allowed_by_plan: bool = False
+    automation_active: bool = False
+    plan_key: str = "free_30d"
+    plan_label: str = "Free 30 dias"
+
+
+class WhatsappAutomationSettingsPatch(BaseModel):
+    enabled: bool
+
+
+class WhatsappAutomationSettingsOut(BaseModel):
+    automation_enabled: bool
+    automation_allowed_by_plan: bool
+    automation_active: bool
+    plan_key: str
+    plan_label: str
 
 
 class WhatsappAppointmentReminderSendRequest(BaseModel):

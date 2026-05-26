@@ -11,7 +11,7 @@ import type { ClientAuditEntryOut, ClientCreatePayload, ClientOut, ClientUpdateP
 import type { BudgetOut } from "../api/budgets";
 import type { PmocPlanOut } from "../api/pmoc";
 import type { ServiceOrderOut } from "../api/serviceOrders";
-import type { CnpjLookupResult } from "../api/cnpj";
+import type { CnpjCommercialResult, CnpjLookupResult } from "../api/cnpj";
 import { digitsOnly, formatCepInput, formatPhoneBrInput, formatTaxDocumentInput } from "./brMask";
 
 function mapOrderStatus(status: string): ServiceOrder["status"] {
@@ -75,6 +75,7 @@ export function clientOutToViewData(c: ClientOut): ClientData {
     preventiveCampaignOptOut: Boolean(c.preventive_campaign_opt_out),
     isActive: c.is_active !== false,
     isVerifiedCnpj: Boolean(c.is_verified_cnpj),
+    lastCnpjCommercialUpdate: c.last_cnpj_commercial_update ?? null,
     endereco: {
       cep: formatCepInput(c.address_postal_code ?? ""),
       logradouro: c.address_street ?? "",
@@ -85,6 +86,37 @@ export function clientOutToViewData(c: ClientOut): ClientData {
       estado: c.address_state ?? "",
     },
   };
+}
+
+/** Snapshot para detectar alterações não salvas no cadastro do cliente. */
+export function serializeClientFormSnapshot(data: ClientData): string {
+  const end = data.endereco ?? {};
+  return JSON.stringify({
+    type: data.type,
+    razaoSocial: (data.razaoSocial ?? "").trim(),
+    nomeFantasia: (data.nomeFantasia ?? "").trim(),
+    documento: digitsOnly(data.documento ?? ""),
+    regime: data.regime ?? "regular",
+    whatsapp: digitsOnly(data.whatsapp ?? ""),
+    telefone: digitsOnly(data.telefone ?? ""),
+    email: (data.email ?? "").trim(),
+    contactPersonName: (data.contactPersonName ?? "").trim(),
+    stateRegistration: (data.stateRegistration ?? "").trim(),
+    ieIndicator: data.ieIndicator ?? "",
+    municipalRegistration: (data.municipalRegistration ?? "").trim(),
+    addressIbgeCode: digitsOnly(data.addressIbgeCode ?? ""),
+    preventiveCampaignOptOut: Boolean(data.preventiveCampaignOptOut),
+    isActive: data.isActive !== false,
+    endereco: {
+      cep: digitsOnly(end.cep ?? ""),
+      logradouro: (end.logradouro ?? "").trim(),
+      numero: (end.numero ?? "").trim(),
+      complemento: (end.complemento ?? "").trim(),
+      bairro: (end.bairro ?? "").trim(),
+      cidade: (end.cidade ?? "").trim(),
+      estado: (end.estado ?? "").trim().toUpperCase(),
+    },
+  });
 }
 
 export function emptyViewData(): ClientData {
@@ -117,11 +149,65 @@ export function clientHasPersistedAddressFromView(data: ClientData): boolean {
   return cepOk || hasStreet || hasCity;
 }
 
+function formatCnaeCodeFromId(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 7) {
+    return `${digits.slice(0, 4)}-${digits[4]}/${digits.slice(5, 7)}`;
+  }
+  return raw.trim();
+}
+
+function extractCnpjEnrichment(lu: CnpjLookupResult & { full?: Record<string, unknown> | null }): {
+  mainActivityCode?: string;
+  mainActivityDescription?: string;
+  legalNature?: string;
+} {
+  let mainActivityCode: string | undefined;
+  let mainActivityDescription: string | undefined;
+  let legalNature: string | undefined;
+
+  const full = (lu as CnpjCommercialResult).full;
+  if (full && typeof full === "object") {
+    const main = full.mainActivity;
+    if (main && typeof main === "object") {
+      const row = main as Record<string, unknown>;
+      if (row.id != null) mainActivityCode = formatCnaeCodeFromId(String(row.id));
+      if (typeof row.text === "string" && row.text.trim()) {
+        mainActivityDescription = row.text.trim();
+      }
+    }
+    const company = full.company;
+    if (company && typeof company === "object") {
+      const nature = (company as Record<string, unknown>).nature;
+      if (nature && typeof nature === "object") {
+        const text = (nature as Record<string, unknown>).text;
+        if (typeof text === "string" && text.trim()) legalNature = text.trim();
+      }
+    }
+  }
+
+  const rawActivity = lu.main_activity?.trim();
+  if (rawActivity) {
+    const paired = rawActivity.match(/^([\d./-]+)\s*[-–—:]\s*(.+)$/);
+    if (paired) {
+      mainActivityCode = mainActivityCode ?? formatCnaeCodeFromId(paired[1]!);
+      mainActivityDescription = mainActivityDescription ?? paired[2]!.trim();
+    } else if (/^\d[\d./-]*$/.test(rawActivity)) {
+      mainActivityCode = mainActivityCode ?? formatCnaeCodeFromId(rawActivity);
+    } else if (!mainActivityDescription) {
+      mainActivityDescription = rawActivity;
+    }
+  }
+
+  return { mainActivityCode, mainActivityDescription, legalNature };
+}
+
 export function mergeCnpjLookupToViewData(
   prev: ClientData,
   lu: CnpjLookupResult,
   mergeAddress = true,
 ): ClientData {
+  const enrichment = extractCnpjEnrichment(lu);
   const nextRegime: ClientRegime =
     typeof lu.optante_mei === "boolean" ? (lu.optante_mei ? "mei" : "regular") : (prev.regime ?? "regular");
   const docFormatted =
@@ -136,6 +222,7 @@ export function mergeCnpjLookupToViewData(
       razaoSocial: lu.company_name.trim() || prev.razaoSocial,
       nomeFantasia: (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.nomeFantasia,
       regime: nextRegime,
+      ...enrichment,
     };
   }
   const a = lu.address;
@@ -146,6 +233,7 @@ export function mergeCnpjLookupToViewData(
     razaoSocial: lu.company_name.trim() || prev.razaoSocial,
     nomeFantasia: (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.nomeFantasia,
     regime: nextRegime,
+    ...enrichment,
     endereco: {
       ...prev.endereco,
       logradouro: a?.street ?? prev.endereco?.logradouro,

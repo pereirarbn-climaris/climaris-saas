@@ -1,5 +1,7 @@
 # Dependências da API (além do ambiente Docker existente).
 # Instale com: pip install -r requirements.txt
+boto3>=1.34.0
+python-multipart>=0.0.9
 # NFS-e nacional (assinatura XML): em Linux, se o pip não trouxer wheel do lxml,
 # instale antes: sudo apt-get install libxml2-dev libxslt1-dev python3-dev
 signxml>=3.2.0
@@ -9,3 +11,5 @@ cryptography>=41.0.0
 # Testes automatizados
 pytest>=8.0.0
 httpx>=0.27.0
+qrcode[pil]>=7.4.2
+Pillow>=10.0.0

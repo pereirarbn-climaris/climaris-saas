@@ -1,0 +1,186 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(15 23 42 / 45%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.dialog {
+  width: min(560px, 100%);
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
+  background: var(--color-surface-elevated);
+  border-radius: var(--card-radius);
+  padding: 1.25rem;
+  box-shadow: var(--card-shadow);
+}
+
+.title {
+  margin: 0 0 0.35rem;
+  font-size: 1.125rem;
+}
+
+.lead {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.fieldFull {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.label {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.input {
+  height: 2.5rem;
+  padding: 0 0.5rem;
+  border-radius: var(--input-radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.equipList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 10rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-radius);
+}
+
+.equipRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.equipRow:hover {
+  background: var(--color-surface);
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.estimateBanner {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--input-radius);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  font-size: 0.875rem;
+}
+
+.splitAlert {
+  padding: 0.75rem;
+  border-radius: var(--input-radius);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #d97706) 35%, transparent);
+  background: color-mix(in srgb, var(--color-warning, #d97706) 8%, transparent);
+  font-size: 0.8125rem;
+}
+
+.splitAlert p {
+  margin: 0 0 0.5rem;
+}
+
+.splitCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.summaryBox {
+  padding: 0.75rem;
+  border-radius: var(--input-radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.summaryList {
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.summaryList li + li {
+  margin-top: 0.35rem;
+}
+
+.error {
+  margin: 0.75rem 0 0;
+  color: var(--color-error);
+  font-size: 0.875rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.btnPrimary,
+.btnSecondary {
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--btn-radius);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.btnPrimary {
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btnSecondary {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}

@@ -1,4 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
 import {
   demoCreateUnavailability,
@@ -165,16 +166,21 @@ export async function deleteBreakWindow(id: number): Promise<void> {
 }
 
 export async function listUnavailability(
-  technician_id: number,
-  params?: { from_at?: string; to_at?: string; limit?: number },
+  technician_id?: number,
+  params?: { from_at?: string; to_at?: string; from_day?: string; to_day?: string; limit?: number },
 ): Promise<Unavailability[]> {
   if (isDemoMode()) {
-    return Promise.resolve(demoListUnavailability().filter((item: Unavailability) => item.technician_id === technician_id));
+    const rows = demoListUnavailability();
+    return Promise.resolve(
+      technician_id == null ? rows : rows.filter((item: Unavailability) => item.technician_id === technician_id),
+    );
   }
   const sp = new URLSearchParams({
-    technician_id: String(technician_id),
-    limit: String(params?.limit ?? 100),
+    limit: String(clampApiLimit(params?.limit, 100)),
   });
+  if (technician_id != null) sp.set("technician_id", String(technician_id));
+  if (params?.from_day) sp.set("from_day", params.from_day);
+  if (params?.to_day) sp.set("to_day", params.to_day);
   if (params?.from_at) sp.set("from_at", params.from_at);
   if (params?.to_at) sp.set("to_at", params.to_at);
   const response = await fetch(apiUrl(`/api/v1/technicians/unavailability?${sp.toString()}`), { headers: bearer() });
@@ -230,7 +236,7 @@ export async function listTenantHolidays(params?: { skip?: number; limit?: numbe
   if (isDemoMode()) return Promise.resolve(demoListTenantHolidays());
   const sp = new URLSearchParams({
     skip: String(params?.skip ?? 0),
-    limit: String(params?.limit ?? 100),
+    limit: String(clampApiLimit(params?.limit, 100)),
   });
   const response = await fetch(apiUrl(`/api/v1/tenant-holidays?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);

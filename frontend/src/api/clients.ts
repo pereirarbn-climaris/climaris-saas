@@ -1,4 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
 import {
   demoClientServiceItemLinksAll,
@@ -46,6 +47,35 @@ export type ClientOut = {
   preventive_campaign_opt_out: boolean;
   is_active: boolean;
   is_verified_cnpj?: boolean;
+  last_cnpj_commercial_update?: string | null;
+};
+
+export type ClientSiteOut = {
+  id: number;
+  client_id: number;
+  name: string;
+  street: string | null;
+  number: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  cep: string | null;
+  created_at: string;
+};
+
+export type ClientSitePayload = {
+  name: string;
+  street?: string;
+  number?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  cep?: string;
+};
+
+export type ClientCnpjCommercialRefreshResult = {
+  client: ClientOut;
+  lookup: import("./cnpj").CnpjCommercialResult;
 };
 
 export type ClientCreatePayload = {
@@ -78,6 +108,7 @@ export type ClientCreatePayload = {
 export type EquipmentOut = {
   id: number;
   client_id: number;
+  client_site_id?: number | null;
   public_token?: string;
   tipo: EquipmentType;
   identificacao: string;
@@ -93,6 +124,7 @@ export type EquipmentOut = {
   voltagem: string | null;
   tecnologia_ciclo: "on_off" | "inverter" | null;
   local_instalacao: string | null;
+  installation_reference: string | null;
   ambiente_nome: string | null;
   ambiente_tipo: string | null;
   area_m2: number | null;
@@ -125,6 +157,7 @@ export type EquipmentCreatePayload = {
   voltagem?: string;
   tecnologia_ciclo?: "on_off" | "inverter";
   local_instalacao?: string;
+  installation_reference?: string;
   ambiente_nome?: string;
   ambiente_tipo?: string;
   area_m2?: number;
@@ -151,6 +184,20 @@ export type EquipmentHistoryRowOut = {
   service_name: string | null;
   changed_by_user_id: number | null;
   changed_by_user_name: string | null;
+  service_order_number?: string | null;
+  order_status?: string | null;
+  order_status_label?: string | null;
+  service_type?: string | null;
+  order_tipo_servico?: string | null;
+  technician_name?: string | null;
+  checklist_items?: EquipmentChecklistItemOut[];
+  is_preventive?: boolean;
+};
+
+export type EquipmentChecklistItemOut = {
+  id?: string | null;
+  descricao: string;
+  status: string;
 };
 export type ClientServiceItemLinkRowOut = {
   service_order_id: number;
@@ -324,7 +371,7 @@ export async function listClients(params?: {
   }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
-  const limit = params?.limit ?? 50;
+  const limit = clampApiLimit(params?.limit, 50);
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
@@ -428,11 +475,12 @@ export async function importClientsCsv(file: File): Promise<ClientImportSummaryO
   return body as ClientImportSummaryOut;
 }
 
-export async function listClientAudit(clientId: number, limit = 200): Promise<ClientAuditEntryOut[]> {
+export async function listClientAudit(clientId: number, limit?: number): Promise<ClientAuditEntryOut[]> {
+  const safeLimit = clampApiLimit(limit, 200);
   if (isDemoMode()) {
     return Promise.resolve([]);
   }
-  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/audit?limit=${limit}`), { headers: bearer() });
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/audit?limit=${safeLimit}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar histórico.", response.status));
   return body as ClientAuditEntryOut[];
@@ -484,25 +532,91 @@ export async function deleteClient(clientId: number): Promise<void> {
   throw new Error(errorMessage(body, "Não foi possível excluir o cliente.", response.status));
 }
 
-export async function listClientEquipments(clientId: number, params?: { only_active?: boolean }): Promise<EquipmentOut[]> {
+/** Segmento da API para equipamentos HVAC legados (OS, PMOC, checklists). */
+export const CLIENT_HVAC_EQUIPMENTS_SEGMENT = "hvac-equipments";
+
+/**
+ * Monta URL `/api/v1/clients/{id}/hvac-equipments` (não confundir com `/equipments` do catálogo v2).
+ */
+export function clientHvacEquipmentsApiPath(
+  clientId: number,
+  equipmentId?: number,
+  trailing = "",
+): string {
+  const base = `/api/v1/clients/${clientId}/${CLIENT_HVAC_EQUIPMENTS_SEGMENT}`;
+  if (equipmentId == null) return `${base}${trailing}`;
+  return `${base}/${equipmentId}${trailing}`;
+}
+
+function isCatalogEquipmentRow(row: unknown): boolean {
+  return (
+    row != null &&
+    typeof row === "object" &&
+    "catalog_id" in row &&
+    typeof (row as { catalog_id?: unknown }).catalog_id === "string"
+  );
+}
+
+function parseHvacEquipmentOut(body: unknown): EquipmentOut {
+  if (isCatalogEquipmentRow(body)) {
+    throw new Error(
+      "Resposta do catálogo multi-equipamentos recebida em vez do modelo HVAC legado. " +
+        "Use o endpoint /hvac-equipments para OS e PMOC.",
+    );
+  }
+  if (!body || typeof body !== "object" || typeof (body as EquipmentOut).id !== "number") {
+    throw new Error("Formato de equipamento HVAC inválido na resposta da API.");
+  }
+  return body as EquipmentOut;
+}
+
+function parseHvacEquipmentList(body: unknown): EquipmentOut[] {
+  if (!Array.isArray(body)) {
+    throw new Error("Lista de equipamentos HVAC inválida na resposta da API.");
+  }
+  if (body.length > 0 && isCatalogEquipmentRow(body[0])) {
+    throw new Error(
+      "A API retornou itens do catálogo v2 (/equipments). Para OS e PMOC, use /hvac-equipments.",
+    );
+  }
+  return body.map((row) => parseHvacEquipmentOut(row));
+}
+
+/** Lista equipamentos HVAC do cliente (modelo legado `EquipmentOut`). */
+export async function listClientHvacEquipments(
+  clientId: number,
+  params?: { only_active?: boolean; client_site_id?: number },
+): Promise<EquipmentOut[]> {
   if (isDemoMode()) {
     let rows = demoEquipments.filter((e) => e.client_id === clientId);
     if (params?.only_active) rows = rows.filter((e) => e.ativo);
+    if (params?.client_site_id != null) {
+      rows = rows.filter((e) => e.client_site_id === params.client_site_id);
+    }
     return Promise.resolve(rows.map((e) => ({ ...e })));
   }
   const sp = new URLSearchParams();
   if (params?.only_active) sp.set("only_active", "true");
+  if (params?.client_site_id != null) sp.set("client_site_id", String(params.client_site_id));
   const suffix = sp.toString() ? `?${sp.toString()}` : "";
-  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipments${suffix}`), { headers: bearer() });
+  const response = await fetch(apiUrl(clientHvacEquipmentsApiPath(clientId, undefined, suffix)), {
+    headers: bearer(),
+  });
   const body = await parseBody(response);
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível listar equipamentos.", response.status));
   }
-  return body as EquipmentOut[];
+  return parseHvacEquipmentList(body);
 }
 
-export async function createClientEquipment(clientId: number, payload: EquipmentCreatePayload): Promise<EquipmentOut> {
-  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipments`), {
+/** @deprecated Alias — prefira `listClientHvacEquipments`. */
+export const listClientEquipments = listClientHvacEquipments;
+
+export async function createClientHvacEquipment(
+  clientId: number,
+  payload: EquipmentCreatePayload,
+): Promise<EquipmentOut> {
+  const response = await fetch(apiUrl(clientHvacEquipmentsApiPath(clientId)), {
     method: "POST",
     headers: jsonHeaders(),
     body: JSON.stringify(payload),
@@ -511,15 +625,18 @@ export async function createClientEquipment(clientId: number, payload: Equipment
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível criar equipamento.", response.status));
   }
-  return body as EquipmentOut;
+  return parseHvacEquipmentOut(body);
 }
 
-export async function updateClientEquipment(
+/** @deprecated Alias — prefira `createClientHvacEquipment`. */
+export const createClientEquipment = createClientHvacEquipment;
+
+export async function updateClientHvacEquipment(
   clientId: number,
   equipmentId: number,
   payload: EquipmentUpdatePayload,
 ): Promise<EquipmentOut> {
-  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipments/${equipmentId}`), {
+  const response = await fetch(apiUrl(clientHvacEquipmentsApiPath(clientId, equipmentId)), {
     method: "PUT",
     headers: jsonHeaders(),
     body: JSON.stringify(payload),
@@ -528,11 +645,14 @@ export async function updateClientEquipment(
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível atualizar equipamento.", response.status));
   }
-  return body as EquipmentOut;
+  return parseHvacEquipmentOut(body);
 }
 
-export async function deactivateClientEquipment(clientId: number, equipmentId: number): Promise<void> {
-  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipments/${equipmentId}`), {
+/** @deprecated Alias — prefira `updateClientHvacEquipment`. */
+export const updateClientEquipment = updateClientHvacEquipment;
+
+export async function deactivateClientHvacEquipment(clientId: number, equipmentId: number): Promise<void> {
+  const response = await fetch(apiUrl(clientHvacEquipmentsApiPath(clientId, equipmentId)), {
     method: "DELETE",
     headers: bearer(),
   });
@@ -541,7 +661,13 @@ export async function deactivateClientEquipment(clientId: number, equipmentId: n
   throw new Error(errorMessage(body, "Não foi possível inativar equipamento.", response.status));
 }
 
-export async function listEquipmentHistory(clientId: number, equipmentId: number): Promise<EquipmentHistoryRowOut[]> {
+/** @deprecated Alias — prefira `deactivateClientHvacEquipment`. */
+export const deactivateClientEquipment = deactivateClientHvacEquipment;
+
+export async function listHvacEquipmentHistory(
+  clientId: number,
+  equipmentId: number,
+): Promise<EquipmentHistoryRowOut[]> {
   if (isDemoMode()) {
     const rows = demoEquipmentHistoryRows.filter((r) => r.client_id === clientId && r.equipment_id === equipmentId);
     return Promise.resolve(
@@ -551,9 +677,40 @@ export async function listEquipmentHistory(clientId: number, equipmentId: number
       }),
     );
   }
-  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipments/${equipmentId}/history`), { headers: bearer() });
+  const response = await fetch(apiUrl(clientHvacEquipmentsApiPath(clientId, equipmentId, "/history")), {
+    headers: bearer(),
+  });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar histórico do equipamento.", response.status));
+  return body as EquipmentHistoryRowOut[];
+}
+
+/** @deprecated Alias — prefira `listHvacEquipmentHistory`. */
+export const listEquipmentHistory = listHvacEquipmentHistory;
+
+export async function listHvacEquipmentPreventiveHistory(
+  clientId: number,
+  equipmentId: number,
+): Promise<EquipmentHistoryRowOut[]> {
+  if (isDemoMode()) {
+    const rows = demoEquipmentHistoryRows.filter(
+      (r) => r.client_id === clientId && r.equipment_id === equipmentId && r.is_preventive === true,
+    );
+    return Promise.resolve(
+      rows.map((row: DemoEquipmentHistoryRow): EquipmentHistoryRowOut => {
+        const { client_id: _c, equipment_id: _e, ...rest } = row;
+        return rest;
+      }),
+    );
+  }
+  const response = await fetch(
+    apiUrl(clientHvacEquipmentsApiPath(clientId, equipmentId, "/history/preventives")),
+    { headers: bearer() },
+  );
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível carregar o histórico preventivo do equipamento.", response.status));
+  }
   return body as EquipmentHistoryRowOut[];
 }
 
@@ -603,7 +760,7 @@ export async function listEquipmentDocuments(
   if (params?.next_due_from) sp.set("next_due_from", params.next_due_from);
   if (params?.next_due_to) sp.set("next_due_to", params.next_due_to);
   if (params?.only_overdue) sp.set("only_overdue", "true");
-  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.limit != null) sp.set("limit", String(clampApiLimit(params.limit)));
   const suffix = sp.toString() ? `?${sp.toString()}` : "";
   const response = await fetch(apiUrl(`/api/v1/equipments/${equipmentId}/documents${suffix}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -669,7 +826,7 @@ export async function listClientEquipmentDocuments(
   if (params?.next_due_from) sp.set("next_due_from", params.next_due_from);
   if (params?.next_due_to) sp.set("next_due_to", params.next_due_to);
   if (params?.only_overdue) sp.set("only_overdue", "true");
-  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.limit != null) sp.set("limit", String(clampApiLimit(params.limit)));
   const suffix = sp.toString() ? `?${sp.toString()}` : "";
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/equipment-documents${suffix}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -759,4 +916,59 @@ export async function listEquipmentDocumentEvents(
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar histórico do documento.", response.status));
   return body as EquipmentDocumentEventOut[];
+}
+
+export const CNPJ_COMMERCIAL_COOLDOWN_DAYS = 60;
+
+export function cnpjCommercialCooldownDaysRemaining(lastUpdate: string | null | undefined): number | null {
+  if (!lastUpdate) return null;
+  const last = new Date(lastUpdate);
+  if (Number.isNaN(last.getTime())) return null;
+  const daysSince = Math.floor((Date.now() - last.getTime()) / 86_400_000);
+  if (daysSince >= CNPJ_COMMERCIAL_COOLDOWN_DAYS) return null;
+  return Math.max(1, CNPJ_COMMERCIAL_COOLDOWN_DAYS - daysSince);
+}
+
+export async function refreshClientCnpjCommercial(
+  clientId: number,
+  mergeAddress = true,
+): Promise<ClientCnpjCommercialRefreshResult> {
+  const q = mergeAddress ? "" : "?merge_address=false";
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/cnpj-commercial-refresh${q}`), {
+    method: "POST",
+    headers: jsonHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível atualizar via Receita (Comercial).", response.status));
+  }
+  return body as ClientCnpjCommercialRefreshResult;
+}
+
+export async function listClientSites(clientId: number): Promise<ClientSiteOut[]> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/sites`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar filiais/obras.", response.status));
+  return body as ClientSiteOut[];
+}
+
+export async function createClientSite(clientId: number, payload: ClientSitePayload): Promise<ClientSiteOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/sites`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível cadastrar filial/obra.", response.status));
+  return body as ClientSiteOut;
+}
+
+export async function deleteClientSite(clientId: number, siteId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/sites/${siteId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  throw new Error(errorMessage(body, "Não foi possível excluir filial/obra.", response.status));
 }

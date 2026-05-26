@@ -19,6 +19,15 @@ export {
 } from "./client-form";
 
 export {
+  ClientEquipmentManager,
+  type ClientEquipmentManagerProps,
+  type EquipmentCatalog,
+  type EquipmentItem,
+  type NewEquipmentData,
+  type EquipmentCategoryPickerOption,
+} from "./ClientEquipmentManager";
+
+export {
   ClientsListView,
   ClientsStatsGrid,
   ClientsListTable,

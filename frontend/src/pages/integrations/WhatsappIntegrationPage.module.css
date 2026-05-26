@@ -71,6 +71,73 @@
   background: rgba(255, 255, 255, 0.12);
 }
 
+.tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  padding: 0.2rem;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-surface-elevated, #fff);
+  border: 1px solid var(--color-border, #e4e6eb);
+}
+
+.tab {
+  flex: 1;
+  min-width: 8rem;
+  min-height: 2.5rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-text-muted, #5c6470);
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text, #1a1d24);
+}
+
+.tabActive {
+  background: color-mix(in srgb, #0d9488 14%, var(--color-surface-elevated, #fff));
+  color: #0f766e;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #0d9488 28%, transparent);
+}
+
+.historyBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.webhookBox {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--color-border, #e4e6eb);
+  background: var(--color-surface, #f8fafc);
+}
+
+.sectionDivider {
+  margin: 1.25rem 0 0.85rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border, #e4e6eb);
+}
+
+.badgeWarn {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #b45309;
+}
+
+.badgeErr {
+  background: color-mix(in srgb, #ef4444 18%, transparent);
+  color: #b91c1c;
+}
+
 .grid {
   display: grid;
   gap: 1rem;

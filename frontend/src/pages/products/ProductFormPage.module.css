@@ -29,6 +29,7 @@
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  padding-bottom: 5.5rem;
 }
 
 .section {
@@ -68,20 +69,27 @@
   color: var(--color-text);
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  position: sticky;
-  bottom: 0.5rem;
-  z-index: 5;
-  margin-top: 0.25rem;
-  padding: 0.65rem 0.7rem;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
+.actionBar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
   background: var(--color-surface-elevated);
-  box-shadow: 0 -8px 20px -18px rgba(15, 23, 42, 0.45);
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-4, 1rem) var(--space-6, 1.5rem);
+  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.06);
+}
+
+.actionBarInner {
+  max-width: 44rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 .readOnlyHint {

@@ -1,0 +1,31 @@
+.headerRowTop th {
+  vertical-align: bottom;
+}
+
+.headerRowSub th {
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.65rem !important;
+  border-top: none !important;
+}
+
+.stockGroupHead {
+  text-align: center !important;
+  color: var(--color-primary) !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+.stockSubHead {
+  text-align: right !important;
+  font-size: 0.625rem !important;
+  letter-spacing: 0.05em !important;
+  color: #64748b !important;
+  background: #f1f5f9 !important;
+}
+
+.stockCell {
+  text-align: right !important;
+  vertical-align: middle !important;
+  white-space: nowrap;
+  padding-top: 0.65rem !important;
+  padding-bottom: 0.65rem !important;
+}

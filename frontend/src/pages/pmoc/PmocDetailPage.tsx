@@ -1,39 +1,56 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Building2, Calendar, ClipboardCheck, ClipboardList, LayoutDashboard, Shield, Snowflake, User } from "lucide-react";
 import { Link, Navigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import {
   activatePmocPlan,
   archivePmocPlan,
   createPmocActivity,
-  createPmocAirAnalysis,
-  createPmocExecution,
   deactivatePmocPlan,
   deletePmocActivity,
   deletePmocArt,
   getPmocPlan,
   listPmocActivities,
-  listPmocAirAnalyses,
   listPmocEquipments,
-  listPmocExecutions,
   replacePmocEquipments,
   updatePmocActivity,
   updatePmocPlan,
-  uploadPmocAirAnalysisFile,
   uploadPmocArt,
   type PmocAirQualityAnalysisOut,
-  type PmocExecutionOut,
   type PmocFrequency,
   type PmocPlanEquipmentOut,
   type PmocPlanOut,
   type PmocScheduledActivityOut,
 } from "../../api/pmoc";
-import { listClientEquipments, type EquipmentOut } from "../../api/clients";
+import { listClientHvacEquipments, type EquipmentOut } from "../../api/clients";
+import { listServices, type ServiceOut } from "../../api/services";
+import { PmocAirAnalysisSection } from "../../components/pmoc/PmocAirAnalysisSection";
+import { PmocCreateStatusBanner, type PmocCreateTab } from "../../components/pmoc/PmocCreateStatusBanner";
+import { PmocFormCard } from "../../components/pmoc/PmocFormCard";
+import { PmocPlanningTab } from "../../components/pmoc/PmocPlanningTab";
+import { PmocScheduleActivitiesModal } from "../../components/pmoc/PmocScheduleActivitiesModal";
+import { Button } from "../../components/ui/button";
+import { ToastHost } from "../../components/ToastHost";
+import { formatDurationMinutes } from "../../lib/formatDuration";
+import { pmocEstablishmentLabel, pmocIdentificationFields } from "../../lib/pmocEstablishment";
+import { importOfficialPmocTemplateActivities } from "../../lib/pmocOfficialTemplate";
+import { parsePlanningScheduledRowKeys } from "../../lib/pmocPlanningExtras";
+import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
-import listUi from "../../components/pmoc/PmocListUi.module.css";
 import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
-import styles from "./PmocPages.module.css";
+import pmocStyles from "./PmocPages.module.css";
+import createStyles from "./PmocCreatePage.module.css";
 
-type Tab = "overview" | "equipments" | "schedule" | "executions" | "air";
+type Tab = PmocCreateTab;
+
+const VALID_TABS: Tab[] = ["identification", "schedule", "air", "planning"];
+
+function tabFromSearch(raw: string | null): Tab {
+  if (raw === "overview" || raw === "equipments") return "identification";
+  if (raw === "executions" || raw === "occurrences") return "planning";
+  if (raw && (VALID_TABS as string[]).includes(raw)) return raw as Tab;
+  return "identification";
+}
 
 const FREQ_OPTIONS: { value: PmocFrequency; label: string }[] = [
   { value: "monthly", label: "Mensal" },
@@ -41,12 +58,6 @@ const FREQ_OPTIONS: { value: PmocFrequency; label: string }[] = [
   { value: "semiannual", label: "Semestral" },
   { value: "annual", label: "Anual" },
   { value: "custom", label: "Personalizado" },
-];
-
-const EXEC_OPTIONS: { value: "done" | "partial" | "skipped"; label: string }[] = [
-  { value: "done", label: "Concluído" },
-  { value: "partial", label: "Parcial" },
-  { value: "skipped", label: "Não realizado" },
 ];
 
 function statusLabel(s: PmocPlanOut["status"]): string {
@@ -73,7 +84,7 @@ function toInputDate(iso: string | null | undefined): string {
 export function PmocDetailPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const { pmocId: pmocIdParam } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const pmocId = pmocIdParam ? Number.parseInt(pmocIdParam, 10) : NaN;
 
   const fromClientNum = useMemo(() => {
@@ -83,13 +94,11 @@ export function PmocDetailPage() {
     return Number.isFinite(n) && n >= 1 ? n : NaN;
   }, [searchParams]);
 
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(() => tabFromSearch(searchParams.get("tab")));
   const [plan, setPlan] = useState<PmocPlanOut | null>(null);
   const [pmocEquipments, setPmocEquipments] = useState<PmocPlanEquipmentOut[]>([]);
   const [clientEquipments, setClientEquipments] = useState<EquipmentOut[]>([]);
   const [activities, setActivities] = useState<PmocScheduledActivityOut[]>([]);
-  const [executions, setExecutions] = useState<PmocExecutionOut[]>([]);
-  const [airRows, setAirRows] = useState<PmocAirQualityAnalysisOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [msgOk, setMsgOk] = useState("");
@@ -107,37 +116,57 @@ export function PmocDetailPage() {
     next_air_analysis_due: "",
   });
   const [savingPlan, setSavingPlan] = useState(false);
+  const [savingArtFields, setSavingArtFields] = useState(false);
+  const [isUploadingArt, setIsUploadingArt] = useState(false);
 
   const [selectedEquipIds, setSelectedEquipIds] = useState<number[]>([]);
-  const [savingEquip, setSavingEquip] = useState(false);
 
   const [newAct, setNewAct] = useState({
     title: "",
     frequency: "monthly" as PmocFrequency,
     equipment_id: "" as "" | number,
+    service_id: "" as "" | number,
     description: "",
     task_code: "",
   });
 
   const [editAct, setEditAct] = useState<PmocScheduledActivityOut | null>(null);
+  const [newActEquipmentOpen, setNewActEquipmentOpen] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleFocus, setScheduleFocus] = useState<{ equipmentId: number; activityId: number } | null>(null);
+  const [importingTemplate, setImportingTemplate] = useState(false);
+  const [catalogServices, setCatalogServices] = useState<ServiceOut[]>([]);
 
-  const [newEx, setNewEx] = useState({
-    scheduled_activity_id: "" as "" | number,
-    equipment_id: "" as "" | number,
-    executed_at: "",
-    completion_status: "done" as "done" | "partial" | "skipped",
-    notes: "",
-  });
+  const sortedCatalogServices = useMemo(
+    () =>
+      [...catalogServices].sort((a, b) =>
+        a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }),
+      ),
+    [catalogServices],
+  );
 
-  const [newAir, setNewAir] = useState({
-    analysis_date: "",
-    lab_name: "",
-    summary: "",
-    next_due_date: "",
-  });
 
   const canEdit =
     ctx?.user.role === "admin" || ctx?.user.role === "receptionist" || ctx?.user.role === "technician";
+
+  const canScheduleOs = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+
+  function selectTab(next: Tab) {
+    setTab(next);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", next);
+    setSearchParams(nextParams, { replace: true });
+  }
+
+  function openScheduleModal() {
+    setScheduleFocus(null);
+    setScheduleModalOpen(true);
+  }
+
+  function closeScheduleModal() {
+    setScheduleModalOpen(false);
+    setScheduleFocus(null);
+  }
 
   const load = useCallback(async () => {
     if (!Number.isFinite(pmocId)) return;
@@ -159,27 +188,18 @@ export function PmocDetailPage() {
         art_issued_at: toInputDate(p.art_issued_at),
         next_air_analysis_due: toInputDate(p.next_air_analysis_due),
       });
-      const [eq, acts, ex, air, ce] = await Promise.all([
+      const [eq, acts, ce] = await Promise.all([
         listPmocEquipments(pmocId),
         listPmocActivities(pmocId),
-        listPmocExecutions(pmocId),
-        listPmocAirAnalyses(pmocId),
-        listClientEquipments(p.client_id, { only_active: true }),
+        listClientHvacEquipments(p.client_id, {
+          only_active: true,
+          client_site_id: p.client_site_id ?? undefined,
+        }),
       ]);
       setPmocEquipments(eq);
       setSelectedEquipIds(eq.map((e) => e.equipment_id));
       setActivities(acts);
-      setExecutions(ex);
-      setAirRows(air);
       setClientEquipments(ce);
-      const today = new Date();
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const localIso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}T${pad(today.getHours())}:${pad(today.getMinutes())}`;
-      setNewEx((prev) => ({ ...prev, executed_at: localIso }));
-      setNewAir((prev) => ({
-        ...prev,
-        analysis_date: toInputDate(new Date().toISOString()),
-      }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar PMOC.");
       setPlan(null);
@@ -189,51 +209,57 @@ export function PmocDetailPage() {
   }, [pmocId]);
 
   useEffect(() => {
+    setTab(tabFromSearch(searchParams.get("tab")));
+  }, [searchParams]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
-  async function savePlanFields() {
-    if (!plan) return;
-    setSavingPlan(true);
-    setErr("");
-    setMsgOk("");
-    try {
-      const updated = await updatePmocPlan(plan.id, {
-        title: draft.title.trim(),
-        version_label: draft.version_label.trim(),
-        law_reference_note: draft.law_reference_note.trim() || null,
-        internal_notes: draft.internal_notes.trim() || null,
-        responsible_name: draft.responsible_name.trim() || null,
-        responsible_council: draft.responsible_council.trim() || null,
-        responsible_registration: draft.responsible_registration.trim() || null,
-        art_number: draft.art_number.trim() || null,
-        art_issued_at: draft.art_issued_at ? draft.art_issued_at : null,
-        next_air_analysis_due: draft.next_air_analysis_due ? draft.next_air_analysis_due : null,
-      });
-      setPlan(updated);
-      setMsgOk("Alterações salvas.");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Não foi possível salvar.");
-    } finally {
-      setSavingPlan(false);
-    }
-  }
+  useEffect(() => {
+    if (loading || !plan || searchParams.get("openSchedule") !== "1") return;
+    selectTab("planning");
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", "planning");
+    next.delete("openSchedule");
+    setSearchParams(next, { replace: true });
+  }, [loading, plan, searchParams, setSearchParams]);
 
-  async function onReplaceEquipments() {
+  useEffect(() => {
+    if (tab !== "schedule" && tab !== "planning") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listServices({ limit: 200 });
+        if (!cancelled) {
+          setCatalogServices(rows.filter((s) => s.is_active));
+        }
+      } catch {
+        if (!cancelled) setCatalogServices([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
+
+  async function onImportOfficialTemplate() {
     if (!plan) return;
-    setSavingEquip(true);
+    setImportingTemplate(true);
     setErr("");
     setMsgOk("");
     try {
-      const list = await replacePmocEquipments(plan.id, selectedEquipIds);
-      setPmocEquipments(list);
-      const p = await getPmocPlan(plan.id);
-      setPlan(p);
-      setMsgOk("Equipamentos atualizados. BTUs e obrigatoriedade de análise foram recalculados.");
+      const created = await importOfficialPmocTemplateActivities(plan.id, activities);
+      setActivities(await listPmocActivities(plan.id));
+      setMsgOk(
+        created > 0
+          ? `${created} atividade(s) do modelo oficial importada(s).`
+          : "O cronograma já contém todas as atividades do modelo oficial.",
+      );
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Erro ao salvar equipamentos.");
+      setErr(e instanceof Error ? e.message : "Não foi possível importar o modelo oficial.");
     } finally {
-      setSavingEquip(false);
+      setImportingTemplate(false);
     }
   }
 
@@ -246,10 +272,19 @@ export function PmocDetailPage() {
         title: newAct.title.trim(),
         frequency: newAct.frequency,
         equipment_id: newAct.equipment_id === "" ? null : newAct.equipment_id,
+        service_id: newAct.service_id === "" ? null : newAct.service_id,
         description: newAct.description.trim() || null,
         task_code: newAct.task_code.trim() || null,
       });
-      setNewAct({ title: "", frequency: "monthly", equipment_id: "", description: "", task_code: "" });
+      setNewAct({
+        title: "",
+        frequency: "monthly",
+        equipment_id: "",
+        service_id: "",
+        description: "",
+        task_code: "",
+      });
+      setNewActEquipmentOpen(false);
       setActivities(await listPmocActivities(plan.id));
       setMsgOk("Atividade incluída.");
     } catch (e2) {
@@ -266,6 +301,7 @@ export function PmocDetailPage() {
         title: editAct.title.trim(),
         frequency: editAct.frequency,
         equipment_id: editAct.equipment_id,
+        service_id: editAct.service_id,
         description: editAct.description?.trim() || null,
         task_code: editAct.task_code?.trim() || null,
         sort_order: editAct.sort_order,
@@ -291,56 +327,45 @@ export function PmocDetailPage() {
     }
   }
 
-  async function onCreateExecution(e: React.FormEvent) {
-    e.preventDefault();
+  async function saveArtFields() {
     if (!plan) return;
+    setSavingArtFields(true);
     setErr("");
+    setMsgOk("");
     try {
-      const executedAt = newEx.executed_at ? new Date(newEx.executed_at).toISOString() : new Date().toISOString();
-      await createPmocExecution(plan.id, {
-        executed_at: executedAt,
-        completion_status: newEx.completion_status,
-        notes: newEx.notes.trim() || null,
-        scheduled_activity_id: newEx.scheduled_activity_id === "" ? null : newEx.scheduled_activity_id,
-        equipment_id: newEx.equipment_id === "" ? null : newEx.equipment_id,
+      const updated = await updatePmocPlan(plan.id, {
+        responsible_name: draft.responsible_name.trim() || null,
+        responsible_council: draft.responsible_council.trim() || null,
+        responsible_registration: draft.responsible_registration.trim() || null,
+        art_number: draft.art_number.trim() || null,
+        art_issued_at: draft.art_issued_at ? draft.art_issued_at : null,
+        next_air_analysis_due: draft.next_air_analysis_due ? draft.next_air_analysis_due : null,
       });
-      setExecutions(await listPmocExecutions(plan.id));
-      setMsgOk("Execução registrada.");
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : "Erro ao registrar execução.");
-    }
-  }
-
-  async function onCreateAir(e: React.FormEvent) {
-    e.preventDefault();
-    if (!plan || !newAir.analysis_date) return;
-    setErr("");
-    try {
-      await createPmocAirAnalysis(plan.id, {
-        analysis_date: newAir.analysis_date,
-        lab_name: newAir.lab_name.trim() || null,
-        summary: newAir.summary.trim() || null,
-        next_due_date: newAir.next_due_date ? newAir.next_due_date : null,
-      });
-      setAirRows(await listPmocAirAnalyses(plan.id));
-      const p = await getPmocPlan(plan.id);
-      setPlan(p);
-      setMsgOk("Análise registrada.");
-      setNewAir((prev) => ({ ...prev, lab_name: "", summary: "", next_due_date: "" }));
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : "Erro ao criar análise.");
+      setPlan(updated);
+      toast.success("Dados da ART e responsável técnico salvos.");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Não foi possível salvar.";
+      setErr(message);
+      toast.error(message);
+    } finally {
+      setSavingArtFields(false);
     }
   }
 
   async function onUploadArt(file: File | null) {
     if (!plan || !file) return;
+    setIsUploadingArt(true);
     setErr("");
     try {
       const p = await uploadPmocArt(plan.id, file);
       setPlan(p);
-      setMsgOk("ART enviada.");
+      toast.success("PDF da ART enviado e arquivado com sucesso.");
     } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : "Falha no upload.");
+      const message = e2 instanceof Error ? e2.message : "Falha no upload.";
+      setErr(message);
+      toast.error(message);
+    } finally {
+      setIsUploadingArt(false);
     }
   }
 
@@ -357,23 +382,35 @@ export function PmocDetailPage() {
     }
   }
 
-  async function onUploadAirFile(analysisId: number, file: File | null) {
-    if (!plan || !file) return;
-    setErr("");
+  async function refreshPlanAfterAirUpload() {
+    if (!plan) return;
     try {
-      const row = await uploadPmocAirAnalysisFile(plan.id, analysisId, file);
-      setAirRows((prev) => prev.map((r) => (r.id === row.id ? row : r)));
-      setMsgOk("Arquivo da análise anexado.");
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : "Falha no upload.");
+      const p = await getPmocPlan(plan.id);
+      setPlan(p);
+      setDraft((d) => ({ ...d, next_air_analysis_due: toInputDate(p.next_air_analysis_due) }));
+    } catch {
+      /* falha silenciosa no detalhe */
     }
   }
 
-  const snapshotEntries = useMemo(() => {
-    const snap = plan?.establishment_snapshot;
-    if (!snap || typeof snap !== "object") return [];
-    return Object.entries(snap as Record<string, unknown>).filter(([k]) => k !== "captured_at");
-  }, [plan]);
+  async function refreshPlanAfterPlanningSchedule() {
+    if (!plan) return;
+    try {
+      const p = await getPmocPlan(plan.id);
+      setPlan(p);
+    } catch {
+      /* falha silenciosa no detalhe */
+    }
+  }
+
+  const handleAirAnalysesChange = useCallback((_rows: PmocAirQualityAnalysisOut[]) => {
+    void refreshPlanAfterAirUpload();
+  }, [plan?.id]);
+
+  const identificationFields = useMemo(
+    () => (plan ? pmocIdentificationFields(plan) : []),
+    [plan],
+  );
 
   const backToClientPath = useMemo(() => {
     if (!Number.isFinite(fromClientNum) || !plan) return null;
@@ -381,32 +418,117 @@ export function PmocDetailPage() {
     return `/app/clients/${plan.client_id}?tab=pmoc`;
   }, [fromClientNum, plan]);
 
+  const backHref = backToClientPath ?? "/app/pmoc";
+
+  const planningEquipments = useMemo(
+    () =>
+      clientEquipments.map((eq) => ({
+        id: String(eq.id),
+        siteId: String(plan?.client_site_id ?? ""),
+        identificacao: eq.identificacao,
+        fabricante: eq.fabricante ?? "—",
+        modelo: eq.modelo ?? "—",
+        capacidadeBtu: eq.capacidade_btu ?? 0,
+        localInstalacao: eq.local_instalacao ?? eq.identificacao,
+      })),
+    [clientEquipments, plan?.client_site_id],
+  );
+
+  const planningActivities = useMemo(
+    () =>
+      activities.map((row) => {
+        const catalogSvc =
+          row.service_id != null ? catalogServices.find((s) => s.id === row.service_id) : undefined;
+        const durationMinutes =
+          Number(catalogSvc?.duration_minutes ?? row.service?.duration_minutes) || undefined;
+        return {
+          id: String(row.id),
+          service: row.title,
+          serviceId: row.service_id ?? undefined,
+          durationMinutes,
+          frequency: row.frequency,
+          frequencyLabel: FREQ_OPTIONS.find((f) => f.value === row.frequency)?.label ?? row.frequency,
+          equipment:
+            row.equipment_id == null
+              ? null
+              : pmocEquipments.find((e) => e.equipment_id === row.equipment_id)?.identificacao ?? null,
+          scheduledDate: new Date().toISOString().slice(0, 10),
+        };
+      }),
+    [activities, pmocEquipments, catalogServices],
+  );
+
+  async function handleFooterSave() {
+    if (!plan || !canEdit) return;
+    if (tab === "air") {
+      await saveArtFields();
+      return;
+    }
+    if (tab === "identification") {
+      setSavingPlan(true);
+      setErr("");
+      try {
+        const updated = await updatePmocPlan(plan.id, {
+          title: draft.title.trim(),
+          version_label: draft.version_label.trim(),
+          law_reference_note: draft.law_reference_note.trim() || null,
+          internal_notes: draft.internal_notes.trim() || null,
+        });
+        setPlan(updated);
+        const orderedSelected = clientEquipments
+          .filter((eq) => selectedEquipIds.includes(eq.id))
+          .map((eq) => eq.id);
+        const list = await replacePmocEquipments(plan.id, orderedSelected);
+        setPmocEquipments(list);
+        const refreshed = await getPmocPlan(plan.id);
+        setPlan(refreshed);
+        toast.success("Identificação e equipamentos salvos.");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Não foi possível salvar.";
+        setErr(message);
+        toast.error(message);
+      } finally {
+        setSavingPlan(false);
+      }
+      return;
+    }
+  }
+
   function toggleEquip(id: number) {
     setSelectedEquipIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
+
+  /** Live BTU sum — recalculated on every checkbox toggle */
+  const selectedBtuSum = useMemo(
+    () =>
+      clientEquipments
+        .filter((eq) => selectedEquipIds.includes(eq.id))
+        .reduce((acc, eq) => acc + (eq.capacidade_btu ?? 0), 0),
+    [clientEquipments, selectedEquipIds],
+  );
 
   if (!ctx) return <Navigate to="/login" replace />;
   if (!Number.isFinite(pmocId)) return <Navigate to="/app/pmoc" replace />;
 
   if (loading && !plan) {
     return (
-      <div className={styles.wrap}>
-        <p className={styles.loading}>Carregando PMOC…</p>
+      <div className={pmocStyles.wrap}>
+        <p className={pmocStyles.loading}>Carregando PMOC…</p>
       </div>
     );
   }
 
   if (!plan) {
     return (
-      <div className={styles.wrap}>
-        <p className={styles.msgErr}>{err || "PMOC não encontrado."}</p>
+      <div className={pmocStyles.wrap}>
+        <p className={pmocStyles.msgErr}>{err || "PMOC não encontrado."}</p>
         <p style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
           {Number.isFinite(fromClientNum) ? (
-            <Link to={`/app/clients/${fromClientNum}?tab=pmoc`} className={styles.btnBackLink}>
+            <Link to={`/app/clients/${fromClientNum}?tab=pmoc`} className={pmocStyles.btnBackLink}>
               ← Voltar ao cliente
             </Link>
           ) : null}
-          <Link to="/app/pmoc" className={styles.rowLink}>
+          <Link to="/app/pmoc" className={pmocStyles.rowLink}>
             Lista PMOC
           </Link>
         </p>
@@ -414,106 +536,199 @@ export function PmocDetailPage() {
     );
   }
 
-  return (
-    <div className={styles.wrap}>
-      <p style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center", margin: "0 0 0.75rem" }}>
-        {backToClientPath ? (
-          <Link to={backToClientPath} className={styles.btnBackLink}>
-            ← Voltar ao cliente
-          </Link>
-        ) : null}
-        <Link to="/app/pmoc" className={backToClientPath ? styles.rowLink : styles.btnBackLink}>
-          {backToClientPath ? "Lista PMOC (todos)" : "← Lista PMOC"}
-        </Link>
-      </p>
+  const detailTabs: { id: Tab; label: string }[] = [
+    { id: "identification", label: "Identificação do Cliente" },
+    { id: "schedule", label: "Cronograma" },
+    { id: "air", label: "Ar & ART" },
+    { id: "planning", label: "Planejamento" },
+  ];
 
-      <header className={styles.hero}>
-        <h1 className={styles.title}>{plan.title}</h1>
-        <p className={styles.lead}>
-          Cliente:{" "}
-          <Link className={styles.rowLink} to={`/app/clients/${plan.client_id}`}>
-            {plan.client?.name ?? `#${plan.client_id}`}
-          </Link>
-          {" · "}
-          Versão {plan.version_label} · {statusLabel(plan.status)}
-        </p>
+  const statusBadgeClass =
+    plan.status === "draft"
+      ? createStyles.badgeDraft
+      : plan.status === "archived"
+        ? createStyles.badgeDraft
+        : createStyles.badgeType;
+
+  return (
+    <div className={createStyles.pageShell}>
+      <header className={createStyles.pageHeader}>
+        <div className={createStyles.pageHeaderInner}>
+          <h1 className={createStyles.title}>{plan.title}</h1>
+          <div className={createStyles.badges}>
+            <span className={statusBadgeClass}>{statusLabel(plan.status)}</span>
+            <span className={createStyles.badgeType}>PMOC</span>
+          </div>
+          <p className={createStyles.lead}>
+            Cliente:{" "}
+            <Link className={pmocStyles.rowLink} to={`/app/clients/${plan.client_id}`}>
+              {plan.client?.name ?? `#${plan.client_id}`}
+            </Link>
+            {" · "}
+            Obra: {pmocEstablishmentLabel(plan)} · Versão {plan.version_label}
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.65rem", marginTop: "0.65rem" }}>
+            <Link to={`/app/pmoc/conformidade/${plan.id}`} className={pmocStyles.rowLink}>
+              <LayoutDashboard size={14} style={{ verticalAlign: "middle", marginRight: "0.25rem" }} aria-hidden />
+              Painel de conformidade
+            </Link>
+            {canEdit ? (
+              <Link to={`/app/pmoc/execucao/${plan.id}`} className={pmocStyles.rowLink}>
+                <ClipboardCheck size={14} style={{ verticalAlign: "middle", marginRight: "0.25rem" }} aria-hidden />
+                Iniciar vistoria
+              </Link>
+            ) : null}
+            {canScheduleOs && (plan.status === "active" || plan.status === "draft") ? (
+              <button
+                type="button"
+                className={pmocStyles.rowLink}
+                style={{ border: "none", background: "none", padding: 0, cursor: "pointer", font: "inherit" }}
+                disabled={pmocEquipments.length === 0}
+                onClick={() => openScheduleModal()}
+              >
+                Gerar ordem de serviço (OS)
+              </button>
+            ) : null}
+          </div>
+        </div>
       </header>
 
-      {plan.air_analysis_required ? (
-        <div className={`${styles.alertLaw} ${styles.alertDanger}`}>
-          Soma de capacidades acima de 60.000 BTUs: é obrigatório manter análise laboratorial periódica da qualidade do ar e
-          responsável técnico habilitado, conforme legislação aplicável.
-        </div>
-      ) : (
-        <div className={styles.alertLaw}>
-          Referência legal: Lei Federal nº 13.589/2018. Mantenha o cronograma e os registros de execução atualizados para
-          fiscalização (ANVISA/órgãos competentes).
-        </div>
-      )}
+      <div className={createStyles.content}>
+        <PmocCreateStatusBanner
+          selectedBtuSum={selectedBtuSum}
+          equipmentCount={pmocEquipments.length}
+          activityCount={activities.length}
+          hasResponsibleTech={Boolean(draft.responsible_name.trim())}
+          onNavigateTab={selectTab}
+        />
 
-      <div className={listUi.subTabs} role="tablist">
-        {(
-          [
-            ["overview", "Dados e conformidade"],
-            ["equipments", "Equipamentos"],
-            ["schedule", "Cronograma"],
-            ["executions", "Execuções"],
-            ["air", "Ar & ART"],
-          ] as const
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            role="tab"
-            className={`${listUi.subTab} ${tab === k ? listUi.subTabActive : ""}`}
-            onClick={() => setTab(k)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+        <nav className={createStyles.tabNav} role="tablist" aria-label="Seções do PMOC">
+          {detailTabs.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              className={`${createStyles.tabNavBtn} ${tab === item.id ? createStyles.tabNavBtnActive : ""}`}
+              onClick={() => selectTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-      {err ? <p className={styles.msgErr}>{err}</p> : null}
-      {msgOk ? <p className={styles.msgOk}>{msgOk}</p> : null}
+        <div className={createStyles.tabStack}>
+          {err ? <p className={pmocStyles.msgErr}>{err}</p> : null}
+          {msgOk ? <p className={pmocStyles.msgOk}>{msgOk}</p> : null}
 
-      {tab === "overview" ? (
+      {tab === "identification" ? (
         <>
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Identificação do estabelecimento (snapshot)</h2>
-            {snapshotEntries.length === 0 ? (
-              <p className={styles.metaMuted}>Snapshot preenchido na criação do plano. Edite o cadastro do cliente se precisar atualizar.</p>
-            ) : (
-              <dl className={styles.grid2} style={{ margin: 0 }}>
-                {snapshotEntries.map(([key, val]) => (
-                  <div key={key}>
-                    <dt className={styles.metaMuted}>{key}</dt>
-                    <dd style={{ margin: "0.15rem 0 0", fontSize: "0.82rem" }}>{String(val ?? "—")}</dd>
+          <PmocFormCard icon={<User size={20} />} title="Cliente e obra" subtitle="Dados vinculados ao plano PMOC">
+            <div className={createStyles.selectedPill}>
+              <div className={createStyles.selectedPillLabel}>Cliente</div>
+              <div className={createStyles.selectedPillValue}>{plan.client?.name ?? `#${plan.client_id}`}</div>
+            </div>
+            <div className={createStyles.selectedPill} style={{ marginTop: "0.65rem" }}>
+              <div className={createStyles.selectedPillLabel}>Obra / filial</div>
+              <div className={createStyles.selectedPillValue}>{pmocEstablishmentLabel(plan)}</div>
+            </div>
+            {identificationFields.length > 0 ? (
+              <dl className={pmocStyles.grid2} style={{ margin: "0.85rem 0 0" }}>
+                {identificationFields.map((field) => (
+                  <div key={field.label}>
+                    <dt className={pmocStyles.metaMuted}>{field.label}</dt>
+                    <dd style={{ margin: "0.15rem 0 0", fontSize: "0.82rem" }}>{field.value}</dd>
                   </div>
                 ))}
               </dl>
+            ) : null}
+          </PmocFormCard>
+
+          <PmocFormCard
+            icon={<Snowflake size={20} />}
+            title="Equipamentos da unidade"
+            subtitle="Selecione os equipamentos que compõem este PMOC"
+          >
+            <div className={pmocStyles.btuSummaryCard}>
+              <div className={pmocStyles.btuSummaryRow}>
+                <span className={pmocStyles.btuSummaryLabel}>Capacidade total selecionada</span>
+                <span className={pmocStyles.btuSummaryValue}>{formatBtu(selectedBtuSum)}</span>
+              </div>
+              <div className={pmocStyles.btuSummaryRow} style={{ marginTop: "0.35rem" }}>
+                <span className={pmocStyles.btuSummaryLabel}>
+                  {selectedEquipIds.length} de {clientEquipments.length} equipamento
+                  {clientEquipments.length !== 1 ? "s" : ""} selecionado{selectedEquipIds.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            </div>
+
+            {clientEquipments.length === 0 ? (
+              <p className={pmocStyles.metaMuted} style={{ padding: "1rem 0" }}>
+                Nenhum equipamento ativo cadastrado para este cliente. Acesse o cadastro do cliente para adicionar
+                equipamentos de ar-condicionado.
+              </p>
+            ) : (
+              <div className={pmocStyles.tableWrap} style={{ marginTop: "1rem" }}>
+                <table className={pmocStyles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: "2.5rem" }} />
+                      <th>Identificação</th>
+                      <th>Modelo</th>
+                      <th>Capacidade BTU</th>
+                      <th>Local de instalação</th>
+                      <th>Fabricante</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientEquipments.map((eq) => {
+                      const checked = selectedEquipIds.includes(eq.id);
+                      return (
+                        <tr
+                          key={eq.id}
+                          className={checked ? pmocStyles.equipRowSelected : ""}
+                          onClick={() => canEdit && toggleEquip(eq.id)}
+                          style={{ cursor: canEdit ? "pointer" : "default" }}
+                          aria-label={`${checked ? "Remover" : "Adicionar"} ${eq.identificacao}`}
+                        >
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              className={pmocStyles.equipCheckbox}
+                              checked={checked}
+                              onChange={() => toggleEquip(eq.id)}
+                              disabled={!canEdit}
+                              aria-label={`Selecionar ${eq.identificacao}`}
+                            />
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: checked ? 600 : 400, color: checked ? "var(--color-primary)" : "inherit" }}>
+                              {eq.identificacao}
+                            </span>
+                          </td>
+                          <td className={pmocStyles.metaMuted}>{eq.modelo ?? "—"}</td>
+                          <td>
+                            {eq.capacidade_btu ? (
+                              <span className={pmocStyles.btuPill}>{formatBtu(eq.capacidade_btu)}</span>
+                            ) : (
+                              <span className={pmocStyles.metaMuted}>—</span>
+                            )}
+                          </td>
+                          <td className={pmocStyles.metaMuted}>{eq.local_instalacao ?? "—"}</td>
+                          <td className={pmocStyles.metaMuted}>{eq.fabricante ?? "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
+          </PmocFormCard>
 
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Resumo</h2>
-            <p style={{ margin: "0 0 0.5rem", fontSize: "0.85rem" }}>
-              Soma BTU (equipamentos ativos no plano): <strong>{formatBtu(plan.total_btu_sum)}</strong>
-              {" · "}
-              Análise de ar obrigatória: <strong>{plan.air_analysis_required ? "Sim" : "Não"}</strong>
-              {plan.next_air_analysis_due ? (
-                <>
-                  {" · "}
-                  Próximo vencimento sugerido: <strong>{new Date(plan.next_air_analysis_due).toLocaleDateString("pt-BR")}</strong>
-                </>
-              ) : null}
-            </p>
-          </div>
-
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Plano e responsável técnico</h2>
-            <div className={styles.grid2}>
+          <PmocFormCard icon={<ClipboardList size={20} />} title="Identificação do plano" subtitle="Título e metadados exibidos nos relatórios">
+            <div className={pmocStyles.grid2}>
               <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Título</span>
+                <span className={pmocStyles.metaMuted}>Título</span>
                 <input
                   className={loginStyles.input}
                   value={draft.title}
@@ -522,7 +737,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Versão / revisão</span>
+                <span className={pmocStyles.metaMuted}>Versão / revisão</span>
                 <input
                   className={loginStyles.input}
                   value={draft.version_label}
@@ -531,7 +746,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                <span className={styles.metaMuted}>Nota de referência legal (editável)</span>
+                <span className={pmocStyles.metaMuted}>Nota de referência legal</span>
                 <textarea
                   className={loginStyles.input}
                   rows={3}
@@ -541,7 +756,7 @@ export function PmocDetailPage() {
                 />
               </label>
               <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                <span className={styles.metaMuted}>Notas internas</span>
+                <span className={pmocStyles.metaMuted}>Notas internas</span>
                 <textarea
                   className={loginStyles.input}
                   rows={2}
@@ -550,79 +765,14 @@ export function PmocDetailPage() {
                   disabled={!canEdit}
                 />
               </label>
-              <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Responsável técnico (nome)</span>
-                <input
-                  className={loginStyles.input}
-                  value={draft.responsible_name}
-                  onChange={(e) => setDraft((d) => ({ ...d, responsible_name: e.target.value }))}
-                  disabled={!canEdit}
-                />
-              </label>
-              <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Conselho (CREA/CFT)</span>
-                <input
-                  className={loginStyles.input}
-                  value={draft.responsible_council}
-                  onChange={(e) => setDraft((d) => ({ ...d, responsible_council: e.target.value }))}
-                  disabled={!canEdit}
-                />
-              </label>
-              <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Registro profissional</span>
-                <input
-                  className={loginStyles.input}
-                  value={draft.responsible_registration}
-                  onChange={(e) => setDraft((d) => ({ ...d, responsible_registration: e.target.value }))}
-                  disabled={!canEdit}
-                />
-              </label>
-              <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Número da ART</span>
-                <input
-                  className={loginStyles.input}
-                  value={draft.art_number}
-                  onChange={(e) => setDraft((d) => ({ ...d, art_number: e.target.value }))}
-                  disabled={!canEdit}
-                />
-              </label>
-              <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Emissão ART</span>
-                <input
-                  type="date"
-                  className={loginStyles.input}
-                  value={draft.art_issued_at}
-                  onChange={(e) => setDraft((d) => ({ ...d, art_issued_at: e.target.value }))}
-                  disabled={!canEdit}
-                />
-              </label>
-              <label className={formLayout.field}>
-                <span className={styles.metaMuted}>Próxima análise de ar (planejamento)</span>
-                <input
-                  type="date"
-                  className={loginStyles.input}
-                  value={draft.next_air_analysis_due}
-                  onChange={(e) => setDraft((d) => ({ ...d, next_air_analysis_due: e.target.value }))}
-                  disabled={!canEdit}
-                />
-              </label>
             </div>
-            {canEdit ? (
-              <div className={styles.actions}>
-                <button type="button" className={styles.btnPrimary} onClick={() => void savePlanFields()} disabled={savingPlan}>
-                  {savingPlan ? "Salvando…" : "Salvar dados do plano"}
-                </button>
-              </div>
-            ) : null}
-          </div>
+          </PmocFormCard>
 
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Status do plano</h2>
-            <div className={styles.actions}>
+          <PmocFormCard icon={<Building2 size={20} />} title="Status do plano" subtitle="Ativação e ciclo de vida do PMOC">
+            <div className={pmocStyles.actions}>
               {canEdit && plan.status === "draft" ? (
-                <button
+                <Button
                   type="button"
-                  className={styles.btnPrimary}
                   onClick={async () => {
                     setErr("");
                     try {
@@ -636,12 +786,12 @@ export function PmocDetailPage() {
                   }}
                 >
                   Ativar PMOC
-                </button>
+                </Button>
               ) : null}
               {canEdit && plan.status === "active" ? (
-                <button
+                <Button
                   type="button"
-                  className={styles.btnSecondary}
+                  variant="outline"
                   onClick={async () => {
                     setErr("");
                     try {
@@ -654,12 +804,12 @@ export function PmocDetailPage() {
                   }}
                 >
                   Inativar
-                </button>
+                </Button>
               ) : null}
               {canEdit && plan.status !== "archived" ? (
-                <button
+                <Button
                   type="button"
-                  className={styles.btnDanger}
+                  variant="destructive"
                   onClick={async () => {
                     if (!window.confirm("Arquivar este PMOC?")) return;
                     setErr("");
@@ -673,76 +823,40 @@ export function PmocDetailPage() {
                   }}
                 >
                   Arquivar
-                </button>
+                </Button>
               ) : null}
             </div>
-            <p className={styles.metaMuted}>
-              Só é possível ativar com ao menos um equipamento vinculado. Ao ativar, outras PMOC ativas do mesmo cliente são
-              inativadas automaticamente.
+            <p className={createStyles.metaHint}>
+              Só é possível ativar com ao menos um equipamento vinculado. Indicadores completos ficam no painel de conformidade.
             </p>
-          </div>
+          </PmocFormCard>
         </>
       ) : null}
 
-      {tab === "equipments" ? (
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Fichas de equipamento neste PMOC</h2>
-          <p className={styles.metaMuted}>
-            Selecione os equipamentos do cliente que integram este endereço. Cada máquina pode ter atividades específicas no
-            cronograma.
-          </p>
-          <div className={styles.checkboxGrid}>
-            {clientEquipments.map((eq) => (
-              <label key={eq.id} className={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={selectedEquipIds.includes(eq.id)}
-                  onChange={() => toggleEquip(eq.id)}
-                  disabled={!canEdit}
-                />
-                <span>
-                  {eq.identificacao}
-                  {eq.capacidade_btu ? ` · ${formatBtu(eq.capacidade_btu)}` : ""}
-                  {eq.local_instalacao ? ` · ${eq.local_instalacao}` : ""}
-                </span>
-              </label>
-            ))}
-          </div>
-          {clientEquipments.length === 0 ? <p className={styles.metaMuted}>Nenhum equipamento ativo cadastrado para este cliente.</p> : null}
-          {canEdit ? (
-            <div className={styles.actions}>
-              <button type="button" className={styles.btnPrimary} onClick={() => void onReplaceEquipments()} disabled={savingEquip}>
-                {savingEquip ? "Salvando…" : "Salvar equipamentos"}
-              </button>
-            </div>
-          ) : null}
-
-          {pmocEquipments.length > 0 ? (
-            <div style={{ marginTop: "1rem" }}>
-              <h3 className={styles.sectionTitle}>Ordem no documento</h3>
-              <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.82rem" }}>
-                {pmocEquipments.map((row) => (
-                  <li key={row.id}>
-                    {row.identificacao ?? `Equipamento #${row.equipment_id}`}
-                    {row.capacidade_btu ? ` · ${formatBtu(row.capacidade_btu)}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {tab === "schedule" ? (
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Plano de atividades</h2>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
+        <PmocFormCard
+          icon={<Calendar size={20} />}
+          title="Cronograma de atividades"
+          subtitle="Plano de manutenção preventiva vinculado aos serviços"
+        >
+          <div className={createStyles.sectionHeadRow}>
+            <p className={pmocStyles.metaMuted} style={{ margin: 0 }}>
+              {activities.length} atividade(s) no cronograma
+            </p>
+            {canEdit ? (
+              <Button type="button" variant="outline" disabled={importingTemplate} onClick={() => void onImportOfficialTemplate()}>
+                {importingTemplate ? "Importando…" : "Importar modelo oficial"}
+              </Button>
+            ) : null}
+          </div>
+          <div className={pmocStyles.tableWrap}>
+            <table className={pmocStyles.table}>
               <thead>
                 <tr>
                   <th>Título</th>
                   <th>Periodicidade</th>
                   <th>Equipamento</th>
+                  <th>Tempo est. (individual)</th>
                   <th />
                 </tr>
               </thead>
@@ -752,7 +866,7 @@ export function PmocDetailPage() {
                     <td>
                       {a.title}
                       {a.is_system_seed ? (
-                        <span className={styles.metaMuted} style={{ marginLeft: "0.35rem" }}>
+                        <span className={pmocStyles.metaMuted} style={{ marginLeft: "0.35rem" }}>
                           (modelo)
                         </span>
                       ) : null}
@@ -763,16 +877,21 @@ export function PmocDetailPage() {
                         ? "Todo o sistema / plano"
                         : pmocEquipments.find((e) => e.equipment_id === a.equipment_id)?.identificacao ?? `#${a.equipment_id}`}
                     </td>
+                    <td className={pmocStyles.metaMuted}>
+                      {a.service?.duration_minutes != null
+                        ? formatDurationMinutes(a.service.duration_minutes)
+                        : "—"}
+                    </td>
                     <td>
                       {canEdit ? (
                         <>
-                          <button type="button" className={styles.rowLink} style={{ border: "none", background: "none", cursor: "pointer", padding: 0 }} onClick={() => setEditAct({ ...a })}>
+                          <button type="button" className={pmocStyles.rowLink} style={{ border: "none", background: "none", cursor: "pointer", padding: 0 }} onClick={() => setEditAct({ ...a })}>
                             Editar
                           </button>
                           {" · "}
                           <button
                             type="button"
-                            className={styles.rowLink}
+                            className={pmocStyles.rowLink}
                             style={{ border: "none", background: "none", cursor: "pointer", padding: 0, color: "var(--color-error)" }}
                             onClick={() => void onDeleteActivity(a.id)}
                           >
@@ -788,11 +907,41 @@ export function PmocDetailPage() {
           </div>
 
           {editAct && canEdit ? (
-            <form onSubmit={onSaveEditActivity} className={styles.section} style={{ marginTop: "0.75rem" }}>
-              <h3 className={styles.sectionTitle}>Editar atividade</h3>
-              <div className={styles.grid2}>
+            <form onSubmit={onSaveEditActivity} className={pmocStyles.section} style={{ marginTop: "0.75rem" }}>
+              <h3 className={pmocStyles.sectionTitle}>Editar atividade</h3>
+              <div className={pmocStyles.grid2}>
                 <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Título</span>
+                  <span className={pmocStyles.metaMuted}>Serviço relacionado (catálogo)</span>
+                  <select
+                    className={loginStyles.input}
+                    value={editAct.service_id ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const svc = raw === "" ? undefined : catalogServices.find((s) => s.id === Number(raw));
+                      setEditAct((x) =>
+                        x
+                          ? {
+                              ...x,
+                              service_id: raw === "" ? null : Number(raw),
+                              title: svc ? svc.name : x.title,
+                              service: svc
+                                ? { id: svc.id, name: svc.name, duration_minutes: svc.duration_minutes }
+                                : null,
+                            }
+                          : x,
+                      );
+                    }}
+                  >
+                    <option value="">— Sem vínculo —</option>
+                    {sortedCatalogServices.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({formatDurationMinutes(s.duration_minutes)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={formLayout.field}>
+                  <span className={pmocStyles.metaMuted}>Título</span>
                   <input
                     className={loginStyles.input}
                     value={editAct.title}
@@ -800,7 +949,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Periodicidade</span>
+                  <span className={pmocStyles.metaMuted}>Periodicidade</span>
                   <select
                     className={loginStyles.input}
                     value={editAct.frequency}
@@ -816,7 +965,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                  <span className={styles.metaMuted}>Descrição / procedimento</span>
+                  <span className={pmocStyles.metaMuted}>Descrição / procedimento</span>
                   <textarea
                     className={loginStyles.input}
                     rows={2}
@@ -825,43 +974,52 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Equipamento (vazio = plano inteiro)</span>
-                  <select
-                    className={loginStyles.input}
-                    value={editAct.equipment_id ?? ""}
-                    onChange={(e) =>
-                      setEditAct((x) =>
-                        x
-                          ? {
-                              ...x,
-                              equipment_id: e.target.value === "" ? null : Number(e.target.value),
-                            }
-                          : x,
-                      )
-                    }
-                  >
-                    <option value="">— Plano / todas as fichas —</option>
-                    {pmocEquipments.map((pe) => (
-                      <option key={pe.equipment_id} value={pe.equipment_id}>
-                        {pe.identificacao ?? `#${pe.equipment_id}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Código interno</span>
+                  <span className={pmocStyles.metaMuted}>Código interno</span>
                   <input
                     className={loginStyles.input}
                     value={editAct.task_code ?? ""}
                     onChange={(e) => setEditAct((x) => (x ? { ...x, task_code: e.target.value } : x))}
                   />
                 </label>
+                <details
+                  className={formLayout.field}
+                  style={{ gridColumn: "1 / -1" }}
+                  open={editAct.equipment_id != null}
+                >
+                  <summary className={pmocStyles.metaMuted} style={{ cursor: "pointer", marginBottom: "0.5rem" }}>
+                    Aplicar apenas a um equipamento específico (opcional)
+                  </summary>
+                  <label className={formLayout.field}>
+                    <span className={pmocStyles.metaMuted}>Equipamento</span>
+                    <select
+                      className={loginStyles.input}
+                      value={editAct.equipment_id ?? ""}
+                      onChange={(e) =>
+                        setEditAct((x) =>
+                          x
+                            ? {
+                                ...x,
+                                equipment_id: e.target.value === "" ? null : Number(e.target.value),
+                              }
+                            : x,
+                        )
+                      }
+                    >
+                      <option value="">— Todo o sistema / plano —</option>
+                      {pmocEquipments.map((pe) => (
+                        <option key={pe.equipment_id} value={pe.equipment_id}>
+                          {pe.identificacao ?? `#${pe.equipment_id}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </details>
               </div>
-              <div className={styles.actions}>
-                <button type="submit" className={styles.btnPrimary}>
+              <div className={pmocStyles.actions}>
+                <button type="submit" className={pmocStyles.btnPrimary}>
                   Salvar atividade
                 </button>
-                <button type="button" className={styles.btnSecondary} onClick={() => setEditAct(null)}>
+                <button type="button" className={pmocStyles.btnSecondary} onClick={() => setEditAct(null)}>
                   Cancelar
                 </button>
               </div>
@@ -870,10 +1028,33 @@ export function PmocDetailPage() {
 
           {canEdit ? (
             <form onSubmit={onCreateActivity} style={{ marginTop: "1rem" }}>
-              <h3 className={styles.sectionTitle}>Nova atividade</h3>
-              <div className={styles.grid2}>
+              <h3 className={pmocStyles.sectionTitle}>Nova atividade</h3>
+              <div className={pmocStyles.grid2}>
                 <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Título</span>
+                  <span className={pmocStyles.metaMuted}>Serviço relacionado (catálogo)</span>
+                  <select
+                    className={loginStyles.input}
+                    value={newAct.service_id === "" ? "" : String(newAct.service_id)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const svc = raw === "" ? undefined : catalogServices.find((s) => s.id === Number(raw));
+                      setNewAct((x) => ({
+                        ...x,
+                        service_id: raw === "" ? "" : Number(raw),
+                        title: svc ? svc.name : x.title,
+                      }));
+                    }}
+                  >
+                    <option value="">— Selecione um serviço —</option>
+                    {sortedCatalogServices.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({formatDurationMinutes(s.duration_minutes)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={formLayout.field}>
+                  <span className={pmocStyles.metaMuted}>Título</span>
                   <input
                     className={loginStyles.input}
                     value={newAct.title}
@@ -882,7 +1063,7 @@ export function PmocDetailPage() {
                   />
                 </label>
                 <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Periodicidade</span>
+                  <span className={pmocStyles.metaMuted}>Periodicidade</span>
                   <select
                     className={loginStyles.input}
                     value={newAct.frequency}
@@ -896,7 +1077,7 @@ export function PmocDetailPage() {
                   </select>
                 </label>
                 <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                  <span className={styles.metaMuted}>Descrição</span>
+                  <span className={pmocStyles.metaMuted}>Descrição</span>
                   <textarea
                     className={loginStyles.input}
                     rows={2}
@@ -904,28 +1085,49 @@ export function PmocDetailPage() {
                     onChange={(e) => setNewAct((x) => ({ ...x, description: e.target.value }))}
                   />
                 </label>
+                <p className={pmocStyles.metaMuted} style={{ gridColumn: "1 / -1", margin: 0 }}>
+                  Por padrão, a atividade aplica-se a{" "}
+                  <strong>todo o sistema / plano</strong>
+                  {pmocEquipments.length > 0
+                    ? ` (${pmocEquipments.length} equipamento${pmocEquipments.length !== 1 ? "s" : ""} vinculado${pmocEquipments.length !== 1 ? "s" : ""} em Dados e conformidade).`
+                    : " — vincule equipamentos em Dados e conformidade."}
+                </p>
+                <details
+                  className={formLayout.field}
+                  style={{ gridColumn: "1 / -1" }}
+                  open={newActEquipmentOpen}
+                  onToggle={(e) => {
+                    const open = (e.target as HTMLDetailsElement).open;
+                    setNewActEquipmentOpen(open);
+                    if (!open) setNewAct((x) => ({ ...x, equipment_id: "" }));
+                  }}
+                >
+                  <summary className={pmocStyles.metaMuted} style={{ cursor: "pointer", marginBottom: "0.5rem" }}>
+                    Aplicar apenas a um equipamento específico (opcional)
+                  </summary>
+                  <label className={formLayout.field}>
+                    <span className={pmocStyles.metaMuted}>Equipamento</span>
+                    <select
+                      className={loginStyles.input}
+                      value={newAct.equipment_id === "" ? "" : String(newAct.equipment_id)}
+                      onChange={(e) =>
+                        setNewAct((x) => ({
+                          ...x,
+                          equipment_id: e.target.value === "" ? "" : Number(e.target.value),
+                        }))
+                      }
+                    >
+                      <option value="">— Todo o sistema / plano —</option>
+                      {pmocEquipments.map((pe) => (
+                        <option key={pe.equipment_id} value={pe.equipment_id}>
+                          {pe.identificacao ?? `#${pe.equipment_id}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </details>
                 <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Equipamento</span>
-                  <select
-                    className={loginStyles.input}
-                    value={newAct.equipment_id === "" ? "" : String(newAct.equipment_id)}
-                    onChange={(e) =>
-                      setNewAct((x) => ({
-                        ...x,
-                        equipment_id: e.target.value === "" ? "" : Number(e.target.value),
-                      }))
-                    }
-                  >
-                    <option value="">— Plano inteiro —</option>
-                    {pmocEquipments.map((pe) => (
-                      <option key={pe.equipment_id} value={pe.equipment_id}>
-                        {pe.identificacao ?? `#${pe.equipment_id}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Código</span>
+                  <span className={pmocStyles.metaMuted}>Código</span>
                   <input
                     className={loginStyles.input}
                     value={newAct.task_code}
@@ -933,286 +1135,181 @@ export function PmocDetailPage() {
                   />
                 </label>
               </div>
-              <div className={styles.actions}>
-                <button type="submit" className={styles.btnSecondary}>
+              <div className={pmocStyles.actions}>
+                <button type="submit" className={pmocStyles.btnSecondary}>
                   Adicionar ao cronograma
                 </button>
               </div>
             </form>
           ) : null}
-        </div>
+        </PmocFormCard>
       ) : null}
 
-      {tab === "executions" ? (
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>Registro de execução</h2>
-          <p className={styles.metaMuted}>Comprove que as manutenções planejadas foram realizadas (evidências podem ser anexadas em OS ou fotos em notas internas).</p>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Data</th>
-                  <th>Situação</th>
-                  <th>Atividade</th>
-                  <th>Obs.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {executions.map((r) => (
-                  <tr key={r.id}>
-                    <td>{new Date(r.executed_at).toLocaleString("pt-BR")}</td>
-                    <td>{EXEC_OPTIONS.find((o) => o.value === r.completion_status)?.label ?? r.completion_status}</td>
-                    <td>
-                      {r.scheduled_activity_id
-                        ? activities.find((a) => a.id === r.scheduled_activity_id)?.title ?? `#${r.scheduled_activity_id}`
-                        : "—"}
-                    </td>
-                    <td>{r.notes ?? "—"}</td>
-                  </tr>
-                ))}
-                {executions.length === 0 ? (
-                  <tr>
-                    <td colSpan={4}>
-                      <span className={styles.metaMuted}>Nenhuma execução registrada.</span>
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-
-          {canEdit ? (
-            <form onSubmit={onCreateExecution} style={{ marginTop: "1rem" }}>
-              <h3 className={styles.sectionTitle}>Registrar execução</h3>
-              <div className={styles.grid2}>
-                <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Data e hora</span>
-                  <input
-                    type="datetime-local"
-                    className={loginStyles.input}
-                    value={newEx.executed_at}
-                    onChange={(e) => setNewEx((x) => ({ ...x, executed_at: e.target.value }))}
-                    required
-                  />
-                </label>
-                <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Situação</span>
-                  <select
-                    className={loginStyles.input}
-                    value={newEx.completion_status}
-                    onChange={(e) =>
-                      setNewEx((x) => ({
-                        ...x,
-                        completion_status: e.target.value as "done" | "partial" | "skipped",
-                      }))
-                    }
-                  >
-                    {EXEC_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Atividade (opcional)</span>
-                  <select
-                    className={loginStyles.input}
-                    value={newEx.scheduled_activity_id === "" ? "" : String(newEx.scheduled_activity_id)}
-                    onChange={(e) =>
-                      setNewEx((x) => ({
-                        ...x,
-                        scheduled_activity_id: e.target.value === "" ? "" : Number(e.target.value),
-                      }))
-                    }
-                  >
-                    <option value="">—</option>
-                    {activities.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={formLayout.field}>
-                  <span className={styles.metaMuted}>Equipamento (opcional)</span>
-                  <select
-                    className={loginStyles.input}
-                    value={newEx.equipment_id === "" ? "" : String(newEx.equipment_id)}
-                    onChange={(e) =>
-                      setNewEx((x) => ({
-                        ...x,
-                        equipment_id: e.target.value === "" ? "" : Number(e.target.value),
-                      }))
-                    }
-                  >
-                    <option value="">—</option>
-                    {pmocEquipments.map((pe) => (
-                      <option key={pe.equipment_id} value={pe.equipment_id}>
-                        {pe.identificacao ?? `#${pe.equipment_id}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                  <span className={styles.metaMuted}>Observações / evidências</span>
-                  <textarea
-                    className={loginStyles.input}
-                    rows={2}
-                    value={newEx.notes}
-                    onChange={(e) => setNewEx((x) => ({ ...x, notes: e.target.value }))}
-                  />
-                </label>
-              </div>
-              <div className={styles.actions}>
-                <button type="submit" className={styles.btnPrimary}>
-                  Registrar
-                </button>
-              </div>
-            </form>
-          ) : null}
-        </div>
+      {tab === "planning" ? (
+        <PmocPlanningTab
+          pmocId={plan.id}
+          clientName={plan.client?.name ?? "Cliente"}
+          planTitle={plan.title}
+          activities={planningActivities}
+          equipments={planningEquipments}
+          selectedEquipmentIds={pmocEquipments.map((e) => String(e.equipment_id))}
+          artIssuedAt={draft.art_issued_at}
+          nextAirAnalysisDue={draft.next_air_analysis_due}
+          planningScheduledRowKeys={parsePlanningScheduledRowKeys(plan.extras)}
+          onScheduleSuccess={() => void refreshPlanAfterPlanningSchedule()}
+        />
       ) : null}
 
       {tab === "air" ? (
         <>
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>ART (arquivo)</h2>
-            <p className={styles.metaMuted}>
-              Anexe o PDF da ART emitida pelo conselho. Os metadados (número, data) podem ser preenchidos na aba “Dados e
-              conformidade”.
+          <ToastHost />
+          <PmocFormCard icon={<Shield size={20} />} title="Central de conformidade legal" subtitle="RT, ART e análise de ar (Lei 13.589/2018)">
+            <p className={pmocStyles.metaMuted} style={{ margin: 0 }}>
+              Informe responsável técnico, ART e laudos laboratoriais exigidos para o plano.
             </p>
+          </PmocFormCard>
+
+          <PmocFormCard icon={<User size={20} />} title="Responsável técnico" subtitle="Profissional habilitado">
+            <div className={pmocStyles.grid2}>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Nome</span>
+                <input
+                  className={loginStyles.input}
+                  value={draft.responsible_name}
+                  onChange={(e) => setDraft((d) => ({ ...d, responsible_name: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Conselho (CREA/CFT)</span>
+                <input
+                  className={loginStyles.input}
+                  value={draft.responsible_council}
+                  onChange={(e) => setDraft((d) => ({ ...d, responsible_council: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Registro profissional</span>
+                <input
+                  className={loginStyles.input}
+                  value={draft.responsible_registration}
+                  onChange={(e) => setDraft((d) => ({ ...d, responsible_registration: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+            </div>
+          </PmocFormCard>
+
+          <PmocFormCard icon={<ClipboardList size={20} />} title="Dados da ART" subtitle="Número, emissão e planejamento de análise de ar">
+            <div className={pmocStyles.grid2}>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Número da ART</span>
+                <input
+                  className={loginStyles.input}
+                  value={draft.art_number}
+                  onChange={(e) => setDraft((d) => ({ ...d, art_number: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Emissão ART</span>
+                <input
+                  type="date"
+                  className={loginStyles.input}
+                  value={draft.art_issued_at}
+                  onChange={(e) => setDraft((d) => ({ ...d, art_issued_at: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Próxima análise de ar</span>
+                <input
+                  type="date"
+                  className={loginStyles.input}
+                  value={draft.next_air_analysis_due}
+                  onChange={(e) => setDraft((d) => ({ ...d, next_air_analysis_due: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+            </div>
+          </PmocFormCard>
+
+          <PmocFormCard icon={<Shield size={20} />} title="Documento ART (PDF)" subtitle="Anexo oficial emitido pelo conselho">
             {plan.art_file_url ? (
               <p>
-                <a href={plan.art_file_url} target="_blank" rel="noreferrer" className={styles.rowLink}>
+                <a href={plan.art_file_url} target="_blank" rel="noreferrer" className={pmocStyles.rowLink}>
                   Abrir ART anexada
                 </a>
               </p>
             ) : (
-              <p className={styles.metaMuted}>Nenhum arquivo de ART.</p>
+              <p className={pmocStyles.metaMuted}>Nenhum arquivo de ART.</p>
             )}
             {canEdit ? (
-              <div className={styles.actions}>
-                <label className={styles.btnSecondary} style={{ cursor: "pointer" }}>
-                  Enviar PDF
+              <div className={pmocStyles.actions}>
+                <label
+                  className={pmocStyles.btnSecondary}
+                  style={{ cursor: isUploadingArt ? "wait" : "pointer", opacity: isUploadingArt ? 0.7 : 1 }}
+                >
+                  {isUploadingArt ? "Enviando PDF…" : "Enviar PDF"}
                   <input
                     type="file"
                     accept="application/pdf,.pdf"
                     style={{ display: "none" }}
-                    onChange={(e) => void onUploadArt(e.target.files?.[0] ?? null)}
+                    disabled={isUploadingArt}
+                    onChange={(e) => {
+                      void onUploadArt(e.target.files?.[0] ?? null);
+                      e.target.value = "";
+                    }}
                   />
                 </label>
                 {plan.art_file_url ? (
-                  <button type="button" className={styles.btnDanger} onClick={() => void onRemoveArt()}>
+                  <Button type="button" variant="destructive" disabled={isUploadingArt} onClick={() => void onRemoveArt()}>
                     Remover arquivo
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             ) : null}
-          </div>
+          </PmocFormCard>
 
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Análises de qualidade do ar</h2>
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Laboratório</th>
-                    <th>Resumo</th>
-                    <th>Próximo</th>
-                    <th>Arquivo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {airRows.map((r) => (
-                    <tr key={r.id}>
-                      <td>{new Date(r.analysis_date).toLocaleDateString("pt-BR")}</td>
-                      <td>{r.lab_name ?? "—"}</td>
-                      <td>{r.summary ?? "—"}</td>
-                      <td>{r.next_due_date ? new Date(r.next_due_date).toLocaleDateString("pt-BR") : "—"}</td>
-                      <td>
-                        {r.file_url ? (
-                          <a href={r.file_url} className={styles.rowLink} target="_blank" rel="noreferrer">
-                            Abrir
-                          </a>
-                        ) : (
-                          <span className={styles.metaMuted}>—</span>
-                        )}
-                        {canEdit ? (
-                          <label style={{ marginLeft: "0.5rem", cursor: "pointer", fontSize: "0.72rem" }}>
-                            Anexar
-                            <input
-                              type="file"
-                              style={{ display: "none" }}
-                              onChange={(e) => void onUploadAirFile(r.id, e.target.files?.[0] ?? null)}
-                            />
-                          </label>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                  {airRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={5}>
-                        <span className={styles.metaMuted}>Nenhuma análise cadastrada.</span>
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-
-            {canEdit ? (
-              <form onSubmit={onCreateAir} style={{ marginTop: "1rem" }}>
-                <h3 className={styles.sectionTitle}>Nova análise</h3>
-                <div className={styles.grid2}>
-                  <label className={formLayout.field}>
-                    <span className={styles.metaMuted}>Data da coleta / laudo</span>
-                    <input
-                      type="date"
-                      className={loginStyles.input}
-                      value={newAir.analysis_date}
-                      onChange={(e) => setNewAir((x) => ({ ...x, analysis_date: e.target.value }))}
-                      required
-                    />
-                  </label>
-                  <label className={formLayout.field}>
-                    <span className={styles.metaMuted}>Laboratório</span>
-                    <input
-                      className={loginStyles.input}
-                      value={newAir.lab_name}
-                      onChange={(e) => setNewAir((x) => ({ ...x, lab_name: e.target.value }))}
-                    />
-                  </label>
-                  <label className={formLayout.field} style={{ gridColumn: "1 / -1" }}>
-                    <span className={styles.metaMuted}>Resumo / resultados principais</span>
-                    <textarea
-                      className={loginStyles.input}
-                      rows={2}
-                      value={newAir.summary}
-                      onChange={(e) => setNewAir((x) => ({ ...x, summary: e.target.value }))}
-                    />
-                  </label>
-                  <label className={formLayout.field}>
-                    <span className={styles.metaMuted}>Próximo vencimento</span>
-                    <input
-                      type="date"
-                      className={loginStyles.input}
-                      value={newAir.next_due_date}
-                      onChange={(e) => setNewAir((x) => ({ ...x, next_due_date: e.target.value }))}
-                    />
-                  </label>
-                </div>
-                <div className={styles.actions}>
-                  <button type="submit" className={styles.btnPrimary}>
-                    Registrar análise
-                  </button>
-                </div>
-              </form>
-            ) : null}
-          </div>
+          <PmocFormCard icon={<Shield size={20} />} title="Análises de qualidade do ar" subtitle="Laudos e histórico laboratorial">
+            <PmocAirAnalysisSection pmocId={plan.id} canUpload={canEdit} onAnalysesChange={handleAirAnalysesChange} />
+          </PmocFormCard>
         </>
+      ) : null}
+        </div>
+      </div>
+
+      <div className={createStyles.footerBar} role="toolbar" aria-label="Ações do PMOC">
+        <div className={createStyles.footerInner}>
+          <Link to={backHref}>
+            <Button type="button" variant="ghost">
+              Voltar
+            </Button>
+          </Link>
+          {canEdit && (tab === "identification" || tab === "air") ? (
+            <Button
+              type="button"
+              disabled={savingPlan || savingArtFields}
+              onClick={() => void handleFooterSave()}
+            >
+              {savingPlan || savingArtFields ? "Salvando…" : "Salvar"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {plan && scheduleModalOpen ? (
+        <PmocScheduleActivitiesModal
+          open={scheduleModalOpen}
+          plan={plan}
+          equipments={pmocEquipments}
+          focus={scheduleFocus}
+          onClose={closeScheduleModal}
+          onScheduled={() => {
+            void load();
+          }}
+        />
       ) : null}
     </div>
   );

@@ -38,7 +38,20 @@
 .heroLead {
   margin: 0.5rem 0 0;
   color: var(--color-text-muted);
-  font-size: 0.9375rem;
+}
+
+.incidentsStrip {
+  padding: 1rem 1.1rem;
+  border-radius: 0.85rem;
+  border: 1px solid #fecaca;
+  background: linear-gradient(180deg, #fff5f5 0%, #fff 100%);
+}
+
+.incidentsTitle {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #991b1b;
 }
 
 .kpiError {

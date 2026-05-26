@@ -9,7 +9,10 @@ from app.config import (
     WHATSAPP_REMINDER_WORKER_ENABLED,
     WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS,
 )
-from app.preventive_maintenance import dispatch_preventive_due_today, flush_scheduled_preventive_whatsapp_jobs
+from app.preventive_maintenance import (
+    dispatch_preventive_due_today,
+    process_pending_preventive_notifications,
+)
 from app.whatsapp import dispatch_due_appointment_reminders
 
 _worker_thread: threading.Thread | None = None
@@ -26,7 +29,7 @@ def _worker_loop() -> None:
         except Exception:
             logger.exception("whatsapp reminder worker failed")
         try:
-            flush_prev = flush_scheduled_preventive_whatsapp_jobs()
+            flush_prev = process_pending_preventive_notifications()
             logger.info(
                 "preventive scheduled whatsapp flush: processed=%s failed=%s",
                 flush_prev.get("processed"),

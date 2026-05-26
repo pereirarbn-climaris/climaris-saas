@@ -28,8 +28,10 @@ from app.config import (
     TRUST_DEVICE_DAYS,
 )
 from app.database import get_db
+from app.pagination import clamp_limit
 from app.dependencies import get_current_user, require_roles
 from app.emailer import send_email, smtp_is_configured
+from app.tenant_work_hours import sync_tenant_weekday_work_hours_from_expediente, tenant_weekday_schedule_rows
 from app.schemas import (
     BootstrapAdminRequest,
     BootstrapTenantAdminRequest,
@@ -63,6 +65,7 @@ from app.security import (
 )
 from app.tenant_logo import (
     delete_tenant_logo_if_exists,
+    fetch_s3_image_bytes,
     generate_tenant_logo_presigned_url,
     process_and_upload_tenant_logo,
 )
@@ -710,45 +713,10 @@ def _remove_auto_national_holidays(db: Session, tenant_id: int) -> None:
 
 
 def _tenant_weekday_schedule_for_technician(tenant: Tenant) -> list[tuple[int, str, str]]:
-    if tenant.weekday_work_hours:
-        try:
-            mapping = json.loads(tenant.weekday_work_hours)
-        except json.JSONDecodeError:
-            mapping = None
-        if isinstance(mapping, dict):
-            rows: list[tuple[int, str, str]] = []
-            for k, v in mapping.items():
-                try:
-                    weekday = int(str(k))
-                except ValueError:
-                    continue
-                if weekday < 0 or weekday > 6 or not isinstance(v, dict):
-                    continue
-                start = v.get("start")
-                end = v.get("end")
-                if isinstance(start, str) and isinstance(end, str) and len(start) == 5 and len(end) == 5 and end > start:
-                    rows.append((weekday, start, end))
-            if rows:
-                rows.sort(key=lambda item: item[0])
-                return rows
+    return tenant_weekday_schedule_rows(tenant)
 
-    business_days: list[int] = []
-    for p in (tenant.business_days or "0,1,2,3,4").split(","):
-        p = p.strip()
-        if not p:
-            continue
-        try:
-            d = int(p)
-        except ValueError:
-            continue
-        if 0 <= d <= 6:
-            business_days.append(d)
-    business_days = sorted(set(business_days)) or [0, 1, 2, 3, 4]
-    start = tenant.workday_start or "08:00"
-    end = tenant.workday_end or "18:00"
-    if end <= start:
-        start, end = "08:00", "18:00"
-    return [(d, start, end) for d in business_days]
+
+_TENANT_EXPEDIENTE_FIELDS = frozenset({"business_days", "workday_start", "workday_end"})
 
 
 def _sync_tenant_national_holidays_count(db: Session, tenant_id: int) -> int:
@@ -837,6 +805,7 @@ def bootstrap_tenant_admin(
         block_national_holidays=True,
         status=TenantStatus.ACTIVE,
     )
+    sync_tenant_weekday_work_hours_from_expediente(tenant)
     db.add(tenant)
     db.flush()
 
@@ -905,6 +874,7 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
             block_national_holidays=True,
             status=TenantStatus.ACTIVE,
         )
+        sync_tenant_weekday_work_hours_from_expediente(tenant)
         db.add(tenant)
         db.flush()
 
@@ -969,6 +939,7 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
         block_national_holidays=True,
         status=TenantStatus.ACTIVE,
     )
+    sync_tenant_weekday_work_hours_from_expediente(tenant)
     db.add(tenant)
     db.flush()
 
@@ -1070,6 +1041,7 @@ def admin_patch_my_tenant(
 
     tax_kind_in = raw.pop("tax_id_kind", None)
     tax_doc_in = raw.pop("tax_document", None)
+    expediente_touched = bool(_TENANT_EXPEDIENTE_FIELDS.intersection(raw.keys()))
     if "active_plan" in raw and raw["active_plan"] is not None:
         raw["active_plan"] = normalize_plan_key(str(raw["active_plan"]))
 
@@ -1082,6 +1054,8 @@ def admin_patch_my_tenant(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Horário final deve ser maior que o horário inicial.",
         )
+    if expediente_touched:
+        sync_tenant_weekday_work_hours_from_expediente(tenant)
 
     if tax_kind_in is not None or tax_doc_in is not None:
         if tax_doc_in is None:
@@ -1162,6 +1136,26 @@ async def admin_upload_tenant_logo(
     if previous_key and previous_key != uploaded.s3_key:
         delete_tenant_logo_if_exists(previous_key, db=db)
     return tenant
+
+
+@router.get("/me/tenant/logo/file")
+@limiter.limit("120/minute")
+def get_tenant_logo_file(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Proxy same-origin do logo da empresa (etiquetas QR / PDF)."""
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    if not tenant.logo_s3_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo não cadastrada.")
+    try:
+        data, content_type = fetch_s3_image_bytes(tenant.logo_s3_key, db=db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(content=data, media_type=content_type, headers={"Cache-Control": "private, max-age=300"})
 
 
 @router.get("/me/tenant/logo-url")
@@ -1879,8 +1873,9 @@ def list_tenant_users(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    limit: Annotated[int, Query(ge=1)] = 100,
 ) -> list[User]:
+    limit = clamp_limit(limit)
     rows = db.execute(
         select(User)
         .where(User.tenant_id == current_user.tenant_id)

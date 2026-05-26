@@ -1,4 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
 import {
   demoCreateServiceOrder,
@@ -12,57 +13,20 @@ import {
   demoUpdateServiceOrder,
   isDemoMode,
 } from "../lib/demoMode";
+import { normalizeServiceOrderOut } from "../lib/serviceOrderNormalize";
+import type { OrderStatus, ServiceOrderCreatePayload, ServiceOrderOut } from "../types/serviceOrders";
 
-export type OrderStatus = "open" | "approved" | "scheduled" | "in_progress" | "done" | "cancelled";
+export type {
+  OrderStatus,
+  ServiceOrderCreatePayload,
+  ServiceOrderEquipmentCardOut,
+  ServiceOrderEquipmentServiceOut,
+  ServiceOrderOut,
+  ServiceOrderProductItemOut,
+  ServiceOrderScheduleOut,
+} from "../types/serviceOrders";
 
-export type ServiceOrderOut = {
-  id: number;
-  tenant_id: number;
-  client_id: number;
-  title: string;
-  description: string | null;
-  discount_amount?: number;
-  status: OrderStatus;
-  stock_consumed_at?: string | null;
-  assigned_technician_name?: string | null;
-  technician_ids?: number[];
-  service_items: Array<{
-    id: number;
-    service_id: number;
-    equipment_id?: number | null;
-    quantity: number;
-    unit_price: number;
-    duration_minutes: number;
-    service_name?: string | null;
-    periodicidade_meses?: number | null;
-  }>;
-  product_items: Array<{
-    id: number;
-    product_id: number;
-    quantity: number;
-    unit_price: number;
-  }>;
-  schedule: {
-    id: number;
-    tenant_id: number;
-    client_id: number;
-    service_order_id: number | null;
-    starts_at: string;
-    ends_at: string;
-    status: string;
-    notes: string | null;
-  } | null;
-};
-
-export type ServiceOrderCreatePayload = {
-  client_id: number;
-  title: string;
-  description?: string | null;
-  technician_ids?: number[];
-  services: Array<{ service_id: number; quantity: number; equipment_id?: number | null }>;
-  products?: Array<{ product_id: number; quantity: number }>;
-  discount_amount?: number;
-};
+export { normalizeServiceOrderOut } from "../lib/serviceOrderNormalize";
 
 export type EquipmentUsageReportRowOut = {
   equipment_id: number;
@@ -85,6 +49,7 @@ export type TechnicianDayAvailabilityOut = {
 
 export type SuggestedSlotOut = {
   technician_id: number;
+  technician_name?: string | null;
   starts_at: string;
   ends_at: string;
   shift?: "morning" | "afternoon" | null;
@@ -127,8 +92,25 @@ async function parseBody(response: Response): Promise<unknown> {
 
 function errorMessage(body: unknown, fallback: string, status: number): string {
   if (body && typeof body === "object") {
-    const o = body as { error?: { message?: string }; detail?: unknown };
-    if (typeof o.error?.message === "string" && o.error.message) return o.error.message;
+    const o = body as { error?: { message?: string; details?: unknown }; detail?: unknown };
+    const detailsList = o.error?.details;
+    if (Array.isArray(detailsList) && detailsList.length > 0) {
+      const parts = detailsList.map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg: unknown }).msg);
+        }
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      });
+      const joined = parts.filter(Boolean).join("; ");
+      if (joined) return joined;
+    }
+    if (typeof o.error?.message === "string" && o.error.message && o.error.message !== "Validation error.") {
+      return o.error.message;
+    }
     if (typeof o.detail === "string" && o.detail) return o.detail;
     if (Array.isArray(o.detail)) {
       const parts = o.detail.map((item) => {
@@ -176,13 +158,40 @@ export async function getServiceOrder(
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível carregar a OS.", response.status));
   }
-  return body as ServiceOrderOut;
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
+}
+
+export async function fetchServiceOrderPdf(orderId: number): Promise<Blob> {
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/pdf`), { headers: bearer() });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível gerar o PDF da OS.", response.status));
+  }
+  return response.blob();
+}
+
+export async function cancelServiceOrderSchedule(orderId: number): Promise<ServiceOrderOut> {
+  if (isDemoMode()) {
+    return Promise.resolve(
+      demoUpdateServiceOrder(orderId, { status: "approved", schedule: null }),
+    );
+  }
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/cancel-schedule`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({}),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível cancelar o agendamento.", response.status));
+  }
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
 export async function patchServiceOrderStatus(
   orderId: number,
   status: "in_progress" | "done" | "cancelled",
-  opts?: { schedule_notes?: string | null },
+  opts?: { schedule_notes?: string | null; cancel_reason?: string | null },
 ) {
   if (isDemoMode()) {
     return Promise.resolve(demoUpdateServiceOrder(orderId, { status, schedule: null }));
@@ -190,18 +199,22 @@ export async function patchServiceOrderStatus(
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
-    body: JSON.stringify({ status, schedule_notes: opts?.schedule_notes ?? undefined }),
+    body: JSON.stringify({
+      status,
+      schedule_notes: opts?.schedule_notes ?? undefined,
+      cancel_reason: opts?.cancel_reason?.trim() || undefined,
+    }),
   });
   const body = await parseBody(response);
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível atualizar o status da OS.", response.status));
   }
-  return body as ServiceOrderOut;
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
 export async function listServiceOrders(params?: { status?: OrderStatus; skip?: number; limit?: number }): Promise<ServiceOrderOut[]> {
   const skip = params?.skip ?? 0;
-  const limit = params?.limit ?? 100;
+  const limit = clampApiLimit(params?.limit, 100);
   if (isDemoMode()) {
     let rows = demoListServiceOrders();
     if (params?.status) rows = rows.filter((o) => o.status === params.status);
@@ -217,7 +230,39 @@ export async function listServiceOrders(params?: { status?: OrderStatus; skip?: 
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível listar as OS.", response.status));
   }
-  return body as ServiceOrderOut[];
+  return (body as ServiceOrderOut[]).map(normalizeServiceOrderOut);
+}
+
+/** Lista todas as OS do tenant (várias requisições se necessário; máx. 200 por página na API). */
+export async function listServiceOrdersAll(params?: { status?: OrderStatus }): Promise<ServiceOrderOut[]> {
+  if (isDemoMode()) {
+    return listServiceOrders({ ...params, skip: 0, limit: 200 });
+  }
+  const PAGE = 200;
+  const MAX_PAGES = 500;
+  const all: ServiceOrderOut[] = [];
+  for (let skip = 0, i = 0; i < MAX_PAGES; skip += PAGE, i += 1) {
+    const page = await listServiceOrders({ ...params, skip, limit: PAGE });
+    all.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return all;
+}
+
+export async function patchServiceOrderDetails(
+  orderId: number,
+  payload: { title?: string; description?: string | null },
+): Promise<ServiceOrderOut> {
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/details`), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível salvar os dados da OS.", response.status));
+  }
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
 export async function patchServiceOrderDiscount(orderId: number, discount_amount: number): Promise<ServiceOrderOut> {
@@ -231,11 +276,24 @@ export async function patchServiceOrderDiscount(orderId: number, discount_amount
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível salvar o desconto.", response.status));
   }
-  return body as ServiceOrderOut;
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
 export async function createServiceOrder(payload: ServiceOrderCreatePayload) {
-  if (isDemoMode()) return Promise.resolve(demoCreateServiceOrder(payload));
+  if (isDemoMode()) {
+    const { equipment_services, services, ...rest } = payload;
+    const lines = services ?? equipment_services ?? [];
+    return Promise.resolve(
+      demoCreateServiceOrder({
+        ...rest,
+        services: lines.map((line) => ({
+          service_id: line.service_id,
+          quantity: line.quantity ?? 1,
+          equipment_id: line.equipment_id,
+        })),
+      }),
+    );
+  }
   const response = await fetch(apiUrl("/api/v1/service-orders"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -251,18 +309,18 @@ export async function createServiceOrder(payload: ServiceOrderCreatePayload) {
 export async function updateServiceOrderItemEquipment(
   orderId: number,
   serviceItemId: number,
-  equipmentId: number | null,
+  equipmentIds: number[],
 ): Promise<ServiceOrderOut> {
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items/${serviceItemId}/equipment`), {
     method: "PUT",
     headers: jsonHeaders(),
-    body: JSON.stringify({ equipment_id: equipmentId }),
+    body: JSON.stringify({ equipment_ids: equipmentIds }),
   });
   const body = await parseBody(response);
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível atualizar o equipamento do serviço.", response.status));
   }
-  return body as ServiceOrderOut;
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
 /** Divide um item com quantidade > 1 em várias linhas com quantidade 1 (um equipamento por linha). */
@@ -279,12 +337,17 @@ export async function splitServiceOrderServiceItem(
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível fracionar o serviço na OS.", response.status));
   }
-  return body as ServiceOrderOut;
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
 export async function postServiceOrderServiceItem(
   orderId: number,
-  body: { service_id: number; quantity?: number; equipment_id?: number | null },
+  body: {
+    service_id: number;
+    quantity?: number;
+    equipment_id?: number | null;
+    unit_price?: number;
+  },
 ): Promise<ServiceOrderOut> {
   if (isDemoMode()) {
     return Promise.resolve(demoPostServiceOrderServiceItem(orderId, { service_id: body.service_id, quantity: body.quantity ?? 1 }));
@@ -296,19 +359,21 @@ export async function postServiceOrderServiceItem(
       service_id: body.service_id,
       quantity: body.quantity ?? 1,
       equipment_id: body.equipment_id,
+      unit_price: body.unit_price,
     }),
   });
   const parsed = await parseBody(response);
   if (!response.ok) {
     throw new Error(errorMessage(parsed, "Não foi possível adicionar o serviço à OS.", response.status));
   }
-  return parsed as ServiceOrderOut;
+  return normalizeServiceOrderOut(parsed as ServiceOrderOut);
 }
 
 export async function patchServiceOrderServiceItemQuantity(
   orderId: number,
   serviceItemId: number,
   quantity: number,
+  unit_price?: number,
 ): Promise<ServiceOrderOut> {
   if (isDemoMode()) {
     return Promise.resolve(demoPatchServiceOrderServiceItemQuantity(orderId, serviceItemId, quantity));
@@ -316,13 +381,13 @@ export async function patchServiceOrderServiceItemQuantity(
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items/${serviceItemId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
-    body: JSON.stringify({ quantity }),
+    body: JSON.stringify({ quantity, unit_price }),
   });
   const parsed = await parseBody(response);
   if (!response.ok) {
-    throw new Error(errorMessage(parsed, "Não foi possível atualizar a quantidade do serviço.", response.status));
+    throw new Error(errorMessage(parsed, "Não foi possível atualizar o serviço na OS.", response.status));
   }
-  return parsed as ServiceOrderOut;
+  return normalizeServiceOrderOut(parsed as ServiceOrderOut);
 }
 
 export async function deleteServiceOrderServiceItem(orderId: number, serviceItemId: number): Promise<ServiceOrderOut> {
@@ -337,12 +402,12 @@ export async function deleteServiceOrderServiceItem(orderId: number, serviceItem
   if (!response.ok) {
     throw new Error(errorMessage(parsed, "Não foi possível remover o serviço da OS.", response.status));
   }
-  return parsed as ServiceOrderOut;
+  return normalizeServiceOrderOut(parsed as ServiceOrderOut);
 }
 
 export async function postServiceOrderProductItem(
   orderId: number,
-  body: { product_id: number; quantity?: number },
+  body: { product_id: number; quantity?: number; unit_price?: number },
 ): Promise<ServiceOrderOut> {
   if (isDemoMode()) {
     return Promise.resolve(demoPostServiceOrderProductItem(orderId, { product_id: body.product_id, quantity: body.quantity ?? 1 }));
@@ -350,19 +415,24 @@ export async function postServiceOrderProductItem(
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items`), {
     method: "POST",
     headers: jsonHeaders(),
-    body: JSON.stringify({ product_id: body.product_id, quantity: body.quantity ?? 1 }),
+    body: JSON.stringify({
+      product_id: body.product_id,
+      quantity: body.quantity ?? 1,
+      unit_price: body.unit_price,
+    }),
   });
   const parsed = await parseBody(response);
   if (!response.ok) {
     throw new Error(errorMessage(parsed, "Não foi possível adicionar o produto à OS.", response.status));
   }
-  return parsed as ServiceOrderOut;
+  return normalizeServiceOrderOut(parsed as ServiceOrderOut);
 }
 
 export async function patchServiceOrderProductItemQuantity(
   orderId: number,
   productItemId: number,
   quantity: number,
+  unit_price?: number,
 ): Promise<ServiceOrderOut> {
   if (isDemoMode()) {
     return Promise.resolve(demoPatchServiceOrderProductItemQuantity(orderId, productItemId, quantity));
@@ -370,13 +440,13 @@ export async function patchServiceOrderProductItemQuantity(
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items/${productItemId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
-    body: JSON.stringify({ quantity }),
+    body: JSON.stringify({ quantity, unit_price }),
   });
   const parsed = await parseBody(response);
   if (!response.ok) {
-    throw new Error(errorMessage(parsed, "Não foi possível atualizar a quantidade do produto.", response.status));
+    throw new Error(errorMessage(parsed, "Não foi possível atualizar o produto na OS.", response.status));
   }
-  return parsed as ServiceOrderOut;
+  return normalizeServiceOrderOut(parsed as ServiceOrderOut);
 }
 
 export async function deleteServiceOrderProductItem(orderId: number, productItemId: number): Promise<ServiceOrderOut> {
@@ -391,7 +461,7 @@ export async function deleteServiceOrderProductItem(orderId: number, productItem
   if (!response.ok) {
     throw new Error(errorMessage(parsed, "Não foi possível remover o produto da OS.", response.status));
   }
-  return parsed as ServiceOrderOut;
+  return normalizeServiceOrderOut(parsed as ServiceOrderOut);
 }
 
 export async function getEquipmentUsageReport(clientId?: number): Promise<EquipmentUsageReportRowOut[]> {
@@ -454,7 +524,8 @@ export async function getTechniciansAvailability(day: string): Promise<Technicia
 }
 
 export async function getTechnicianNextSlots(params: {
-  service_order_id: number;
+  service_order_id?: number;
+  duration_minutes?: number;
   from_at: string;
   technician_id?: number;
   limit?: number;
@@ -462,9 +533,14 @@ export async function getTechnicianNextSlots(params: {
   split_days?: number;
 }): Promise<SuggestedSlotOut[]> {
   const sp = new URLSearchParams();
-  sp.set("service_order_id", String(params.service_order_id));
   sp.set("from_at", params.from_at);
   sp.set("limit", String(params.limit ?? 4));
+  if (params.service_order_id != null && params.service_order_id > 0) {
+    sp.set("service_order_id", String(params.service_order_id));
+  }
+  if (params.duration_minutes != null && params.duration_minutes > 0) {
+    sp.set("duration_minutes", String(params.duration_minutes));
+  }
   if (params.technician_id) sp.set("technician_id", String(params.technician_id));
   if (params.allow_overtime) sp.set("allow_overtime", "true");
   if (params.split_days && params.split_days > 1) sp.set("split_days", String(params.split_days));
@@ -496,7 +572,7 @@ export async function listSchedules(params?: {
   }
   const sp = new URLSearchParams();
   sp.set("skip", String(params?.skip ?? 0));
-  sp.set("limit", String(params?.limit ?? 100));
+  sp.set("limit", String(clampApiLimit(params?.limit, 100)));
   if (params?.status) sp.set("status", params.status);
   if (params?.technician_id) sp.set("technician_id", String(params.technician_id));
   if (params?.from_day) sp.set("from_day", params.from_day);

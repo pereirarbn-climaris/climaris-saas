@@ -1,0 +1,127 @@
+================================================================================
+  Climaris — Upload de PDF grande (manual do catálogo) — Nginx + timeouts
+================================================================================
+
+Erros comuns em PDFs de ~40–100 MB:
+  • HTTP 413 — corpo da requisição maior que client_max_body_size no Nginx
+  • HTTP 503 / 504 / 502 — proxy ou app encerrando por TIMEOUT antes do fim
+    do upload + envio ao S3 (padrão Nginx costuma ser 60s no location /api/)
+
+A API (FastAPI) lê o arquivo em chunks de 1 MB e envia ao S3 em paralelo
+(upload_fileobj com multipart), sem carregar o PDF inteiro na RAM.
+
+--------------------------------------------------------------------------------
+1) Conectar na VPS via SSH
+--------------------------------------------------------------------------------
+
+  ssh usuario@SEU_SERVIDOR
+
+--------------------------------------------------------------------------------
+2) Limite de tamanho do corpo (evitar HTTP 413)
+--------------------------------------------------------------------------------
+
+  sudo nano /etc/nginx/nginx.conf
+
+Dentro do bloco http { ... }:
+
+  client_max_body_size 100M;
+  client_body_timeout 120s;
+
+No site da aplicação (recomendado), ex.: app.climaris.com.br:
+
+  sudo nano /etc/nginx/sites-available/app.climaris.com.br
+
+Dentro do server { ... }:
+
+  client_max_body_size 100M;
+  client_body_timeout 120s;
+
+--------------------------------------------------------------------------------
+3) Timeouts do proxy para a API (evitar 503/504 em uploads longos)
+--------------------------------------------------------------------------------
+
+No bloco location que faz proxy para a API (ex.: location /api/ { ... }),
+adicione ou altere:
+
+  proxy_connect_timeout 120s;
+  proxy_send_timeout 120s;
+  proxy_read_timeout 120s;
+  send_timeout 120s;
+
+Exemplo completo:
+
+  location /api/ {
+      proxy_pass http://127.0.0.1:8000;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+
+      client_max_body_size 100M;
+      client_body_timeout 120s;
+      proxy_connect_timeout 120s;
+      proxy_send_timeout 120s;
+      proxy_read_timeout 120s;
+      send_timeout 120s;
+  }
+
+Referência no repositório: deploy/nginx/app.climaris.com.br.conf.example
+
+--------------------------------------------------------------------------------
+4) Testar e reiniciar o Nginx
+--------------------------------------------------------------------------------
+
+  sudo nginx -t
+
+Se OK:
+
+  sudo systemctl restart nginx
+
+Ou apenas recarregar:
+
+  sudo systemctl reload nginx
+
+  sudo systemctl status nginx
+
+--------------------------------------------------------------------------------
+5) Timeout do Uvicorn / Gunicorn (processo Python)
+--------------------------------------------------------------------------------
+
+Docker (desenvolvimento / compose na raiz do projeto):
+  O serviço api já usa Uvicorn com --timeout-keep-alive 120.
+  Após alterar docker-compose.yml:
+
+    docker compose up -d --force-recreate api
+
+Produção com Gunicorn + Uvicorn workers (systemd ou manual):
+
+  gunicorn app.main:app \
+    -k uvicorn.workers.UvicornWorker \
+    -b 127.0.0.1:8000 \
+    --workers 2 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --keep-alive 120
+
+O parâmetro --timeout 120 evita que o master mate o worker após 30s (padrão)
+enquanto um PDF grande ainda está sendo processado.
+
+Somente Uvicorn (sem Gunicorn):
+
+  uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 120
+
+Nota: Uvicorn não tem limite de 30s por requisição como o Gunicorn; o gargalo
+em produção costuma ser o Nginx (proxy_read_timeout 60s).
+
+--------------------------------------------------------------------------------
+6) Reiniciar a API após deploy do código
+--------------------------------------------------------------------------------
+
+  cd /caminho/do/projeto
+  docker compose up -d --force-recreate api
+
+Variáveis opcionais no .env:
+  MAX_HTTP_BODY_BYTES=104857600   # 100 MB (middleware da API)
+
+================================================================================

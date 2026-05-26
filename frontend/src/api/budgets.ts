@@ -1,4 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
 import { demoCreateBudget, demoListBudgets, demoUpdateBudget, isDemoMode } from "../lib/demoMode";
 export type BudgetStatus = "draft" | "sent" | "approved" | "rejected" | "expired";
@@ -17,6 +18,9 @@ export type BudgetOut = {
   approved_at: string | null;
   created_at: string;
   generated_service_order_id: number | null;
+  tracking_url?: string | null;
+  pdf_file_missing?: boolean;
+  storage_alert?: string | null;
   service_items: Array<{
     id: number;
     service_id: number;
@@ -81,6 +85,16 @@ function jsonHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
+/** Aceita resposta legada (array) ou envelope `{ items, storage_alerts }`. */
+export function parseBudgetListBody(body: unknown): BudgetOut[] {
+  if (Array.isArray(body)) return body as BudgetOut[];
+  if (body && typeof body === "object") {
+    const items = (body as { items?: unknown }).items;
+    if (Array.isArray(items)) return items as BudgetOut[];
+  }
+  return [];
+}
+
 export async function listBudgets(params?: { status?: BudgetStatus; skip?: number; limit?: number }): Promise<BudgetOut[]> {
   if (isDemoMode()) {
     let rows = demoListBudgets();
@@ -91,12 +105,42 @@ export async function listBudgets(params?: { status?: BudgetStatus; skip?: numbe
   }
   const sp = new URLSearchParams();
   sp.set("skip", String(params?.skip ?? 0));
-  sp.set("limit", String(params?.limit ?? 100));
+  sp.set("limit", String(clampApiLimit(params?.limit, 100, 100)));
   if (params?.status) sp.set("status", params.status);
   const response = await fetch(apiUrl(`/api/v1/budgets?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar os orçamentos."));
-  return body as BudgetOut[];
+  return parseBudgetListBody(body);
+}
+
+export type BudgetListResult = {
+  items: BudgetOut[];
+  storage_alerts: string[];
+};
+
+export async function listBudgetsWithAlerts(params?: {
+  status?: BudgetStatus;
+  skip?: number;
+  limit?: number;
+}): Promise<BudgetListResult> {
+  if (isDemoMode()) {
+    const items = await listBudgets(params);
+    return { items, storage_alerts: [] };
+  }
+  const sp = new URLSearchParams();
+  sp.set("skip", String(params?.skip ?? 0));
+  sp.set("limit", String(clampApiLimit(params?.limit, 100, 100)));
+  sp.set("include_storage_alerts", "true");
+  if (params?.status) sp.set("status", params.status);
+  const response = await fetch(apiUrl(`/api/v1/budgets?${sp.toString()}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar os orçamentos."));
+  if (Array.isArray(body)) return { items: body as BudgetOut[], storage_alerts: [] };
+  const wrapped = body as { items?: BudgetOut[]; storage_alerts?: string[] };
+  return {
+    items: parseBudgetListBody(body),
+    storage_alerts: Array.isArray(wrapped.storage_alerts) ? wrapped.storage_alerts : [],
+  };
 }
 
 export async function createBudget(payload: BudgetCreatePayload): Promise<{ id: number; status: BudgetStatus }> {

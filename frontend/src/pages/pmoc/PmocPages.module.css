@@ -25,8 +25,74 @@
 .heroActions {
   flex-shrink: 0;
   display: flex;
-  gap: 0.5rem;
+  gap: 0.625rem;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── PMOC 2.0 — Painel de Conformidade (outline blue) ── */
+.btnOutlineBlue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  min-width: 8rem;
+  padding: 0 1.125rem;
+  border: 1px solid #006fee;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, #006fee 7%, #fff);
+  color: #006fee;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: "Poppins", Inter, system-ui, sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btnOutlineBlue svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+}
+
+.btnOutlineBlue:hover {
+  background: color-mix(in srgb, #006fee 14%, #fff);
+  border-color: #0056c7;
+  box-shadow: 0 2px 8px color-mix(in srgb, #006fee 18%, transparent);
+}
+
+/* ── PMOC 2.0 — Vistoria de campo (solid blue) ── */
+.btnVistoriaPrimary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  min-width: 8rem;
+  padding: 0 1.25rem;
+  border: none;
+  border-radius: 0.75rem;
+  background: #006fee;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: "Poppins", Inter, system-ui, sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.btnVistoriaPrimary svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+}
+
+.btnVistoriaPrimary:hover {
+  background: #0056c7;
+  box-shadow: 0 4px 14px color-mix(in srgb, #006fee 35%, transparent);
 }
 
 .title {
@@ -101,74 +167,155 @@
   margin-top: 0.75rem;
 }
 
+/* ── Primary action — igual ao ClientFormPage ── */
 .btnPrimary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2rem;
-  padding: 0.42rem 0.85rem;
+  gap: 0.5rem;
+  height: 2.5rem;
+  min-width: 8rem;
+  padding: 0 1.25rem;
   border: none;
   border-radius: var(--radius-md);
   background: linear-gradient(135deg, var(--color-hero-start) 0%, var(--color-hero-mid) 100%);
   color: #fff;
-  font-size: 0.76rem;
-  font-weight: 700;
+  font-size: 0.875rem;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   text-decoration: none;
-  box-sizing: border-box;
+  transition: all 0.15s ease;
+}
+
+.btnPrimary svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  opacity: 0.92;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 .btnPrimary:disabled {
-  opacity: 0.65;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
+/* ── Secondary action — igual ao ClientFormPage ── */
 .btnSecondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2rem;
-  padding: 0.38rem 0.75rem;
+  gap: 0.5rem;
+  height: 2.5rem;
+  min-width: 7rem;
+  padding: 0 1rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-elevated);
   color: var(--color-text);
-  font-size: 0.76rem;
+  font-size: 0.875rem;
   font-weight: 600;
   font-family: inherit;
+  text-decoration: none;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
+.btnSecondary svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.btnSecondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-primary) 20%, var(--color-border));
+}
+
+.btnSecondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Danger action — igual ao ClientFormPage ── */
 .btnDanger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2rem;
-  padding: 0.38rem 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--color-error) 45%, var(--color-border));
+  gap: 0.5rem;
+  height: 2.5rem;
+  min-width: 8rem;
+  padding: 0 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, var(--color-border));
   border-radius: var(--radius-md);
   background: var(--color-surface-elevated);
   color: var(--color-error);
-  font-size: 0.76rem;
+  font-size: 0.875rem;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
+.btnDanger svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.btnDanger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-error) 55%, var(--color-border));
+}
+
+.btnDanger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Back link — igual ao ClientFormPage ── */
 .btnBackLink {
   display: inline-flex;
   align-items: center;
-  min-height: 2rem;
-  padding: 0.35rem 0.65rem;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding: 0 1rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-elevated);
   color: var(--color-text);
-  font-size: 0.74rem;
+  font-size: 0.8125rem;
   font-weight: 600;
+  font-family: inherit;
   text-decoration: none;
+  cursor: pointer;
   margin-bottom: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.btnBackLink:hover {
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
 }
 
 .tableWrap {
@@ -236,4 +383,283 @@
 .metaMuted {
   font-size: 0.72rem;
   color: var(--color-text-muted);
+}
+
+/* ─── Equipments tab: BTU summary card ─── */
+.btuSummaryCard {
+  display: flex;
+  flex-direction: column;
+  padding: 0.85rem 1.1rem;
+  border-radius: var(--radius-lg, 0.75rem);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  margin-bottom: 0.85rem;
+}
+
+.btuSummaryRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.btuSummaryLabel {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.btuSummaryValue {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+}
+
+/* ─── Equipments tab: BTU legal alerts ─── */
+.btuAlert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg, 0.75rem);
+  border: 1px solid;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin-bottom: 0.85rem;
+}
+
+.btuAlertIcon {
+  flex-shrink: 0;
+  font-size: 1rem;
+  margin-top: 0.05rem;
+}
+
+.btuAlertMandatory {
+  border-color: color-mix(in srgb, #f59e0b 40%, var(--color-border));
+  background: color-mix(in srgb, #f59e0b 10%, var(--color-surface-elevated));
+  color: #92400e;
+}
+
+.btuAlertInfo {
+  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface-elevated));
+  color: var(--color-text);
+}
+
+/* ─── Equipments tab: table styles ─── */
+.equipRowSelected {
+  background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+}
+
+.equipRowSelected td {
+  border-color: color-mix(in srgb, var(--color-primary) 15%, var(--color-border));
+}
+
+.equipCheckbox {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.btuPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  white-space: nowrap;
+}
+
+/* ─── List page stat cards (standard pattern) ─── */
+.heroStatsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-5, 1.25rem);
+}
+
+@media (max-width: 1024px) {
+  .heroStatsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .heroStatsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.statCard {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(1rem, 2vw, 1.35rem);
+  border-radius: var(--radius-xl, 1rem);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  cursor: default;
+}
+
+.statCard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.15s;
+  background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 100%);
+}
+
+.statCard:hover {
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
+}
+
+.statCard:hover::before {
+  opacity: 1;
+}
+
+.statHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.statLabel {
+  margin: 0 0 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.statValue {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.statHint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.statIconWrap {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-lg, 0.75rem);
+}
+
+.statIconWrap svg {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ─── List page status tabs (URL-synced pills) ─── */
+.statusTab {
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+
+.statusTab:hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  color: var(--color-text);
+}
+
+.statusTabActive {
+  composes: statusTab;
+  background: linear-gradient(135deg, var(--color-hero-start) 0%, var(--color-hero-mid) 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+.statusTabActive:hover {
+  background: linear-gradient(135deg, var(--color-hero-start) 0%, var(--color-hero-mid) 100%);
+  color: #fff;
+}
+
+/* ─── Status banner row (compact alerts below hero) ─── */
+.statusBannerRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+  align-items: stretch;
+}
+
+.statusBannerChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+  max-width: min(100%, 28rem);
+  font-family: inherit;
+  cursor: default;
+  text-align: left;
+}
+
+button.statusBannerChip {
+  cursor: pointer;
+  transition: opacity 0.12s ease, box-shadow 0.12s ease;
+}
+
+button.statusBannerChip:hover {
+  opacity: 0.92;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.statusBannerDanger {
+  border-color: color-mix(in srgb, var(--color-error) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 10%, var(--color-surface-elevated));
+  color: color-mix(in srgb, var(--color-error) 85%, #000);
+}
+
+.statusBannerWarning {
+  border-color: color-mix(in srgb, #f59e0b 40%, var(--color-border));
+  background: color-mix(in srgb, #f59e0b 10%, var(--color-surface-elevated));
+  color: #92400e;
+}
+
+.statusBannerInfo {
+  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface-elevated));
+  color: var(--color-text);
 }

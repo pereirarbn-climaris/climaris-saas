@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   createService,
@@ -57,6 +57,29 @@ function emptyForm(): FormState {
   };
 }
 
+function serializeServiceFormSnapshot(f: FormState): string {
+  return JSON.stringify({
+    name: f.name.trim(),
+    description: f.description.trim(),
+    price: f.price.trim(),
+    duration_minutes: f.duration_minutes.trim(),
+    equipment_type_tags: f.equipment_type_tags.trim(),
+    btu_min: f.btu_min.trim(),
+    btu_max: f.btu_max.trim(),
+    service_category: f.service_category.trim(),
+    applies_residential: f.applies_residential,
+    applies_commercial: f.applies_commercial,
+    is_active: f.is_active,
+    nfse_codigo_tributacao_nacional: f.nfse_codigo_tributacao_nacional.trim(),
+    nfse_codigo_nbs: f.nfse_codigo_nbs.trim(),
+    periodicidade_meses: f.periodicidade_meses,
+    product_inputs: f.product_inputs.map((i) => ({
+      product_id: i.product_id.trim(),
+      quantity: i.quantity.trim(),
+    })),
+  });
+}
+
 export function ServiceFormPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const navigate = useNavigate();
@@ -79,6 +102,7 @@ export function ServiceFormPage() {
   const [productsLoadErr, setProductsLoadErr] = useState("");
   const [aiEnabled, setAiEnabled] = useState(false);
   const [activeTab, setActiveTab] = useState<ServiceFormTab>("descricao");
+  const savedSnapshotRef = useRef("");
 
   const parsedPrice = useMemo(() => parseBrlInputToNumber(form.price), [form.price]);
   const parsedDuration = useMemo(() => Number(form.duration_minutes), [form.duration_minutes]);
@@ -101,6 +125,11 @@ export function ServiceFormPage() {
     if (form.periodicidade_meses === "12") return 12;
     return null;
   }, [form.periodicidade_meses]);
+
+  const isDirty = useMemo(() => {
+    if (isNew) return false;
+    return serializeServiceFormSnapshot(form) !== savedSnapshotRef.current;
+  }, [form, isNew]);
 
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +187,27 @@ export function ServiceFormPage() {
         const s = await getService(idNum);
         if (!cancelled) {
           setForm({
+            name: s.name,
+            description: s.description ?? "",
+            price: numberToBrlInput(Number(s.price || 0)),
+            duration_minutes: String(Number(s.duration_minutes || 30)),
+            equipment_type_tags: s.equipment_type_tags ?? "",
+            btu_min: s.btu_min != null ? String(s.btu_min) : "",
+            btu_max: s.btu_max != null ? String(s.btu_max) : "",
+            service_category: s.service_category ?? "",
+            applies_residential: s.applies_residential ?? true,
+            applies_commercial: s.applies_commercial ?? true,
+            is_active: s.is_active,
+            nfse_codigo_tributacao_nacional: s.nfse_codigo_tributacao_nacional ?? "",
+            nfse_codigo_nbs: s.nfse_codigo_nbs ?? "",
+            periodicidade_meses:
+              s.periodicidade_meses === 6 || s.periodicidade_meses === 12 ? String(s.periodicidade_meses) : "",
+            product_inputs: (s.product_inputs ?? []).map((i) => ({
+              product_id: String(i.product_id),
+              quantity: String(i.quantity),
+            })),
+          });
+          savedSnapshotRef.current = serializeServiceFormSnapshot({
             name: s.name,
             description: s.description ?? "",
             price: numberToBrlInput(Number(s.price || 0)),
@@ -279,6 +329,7 @@ export function ServiceFormPage() {
           product_inputs: productInputs,
         };
         await updateService(idNum, payload);
+        savedSnapshotRef.current = serializeServiceFormSnapshot(form);
         setMsg({ kind: "ok", text: "Serviço atualizado." });
       }
     } catch (err) {
@@ -434,7 +485,7 @@ export function ServiceFormPage() {
         </div>
       </header>
 
-      <form className={styles.form} onSubmit={onSubmit}>
+      <form id="service-form-main" className={styles.form} onSubmit={onSubmit}>
         <div className={styles.tabs} role="tablist" aria-label="Seções do serviço">
           <button
             type="button"
@@ -830,36 +881,46 @@ export function ServiceFormPage() {
         {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
         {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
 
-        {canEdit ? (
-          <div className={styles.actions}>
-        <Link className={styles.btnBackLink} to="/app/services">
-          ← Voltar a lista
-        </Link>
-            <button type="submit" className={styles.btnPrimary} disabled={saving || deleting || duplicating}>
-              {saving ? "Salvando..." : isNew ? "Cadastrar" : "Salvar alteracoes"}
-            </button>
-            {!isNew ? (
-              <button type="button" className={styles.btnSecondary} onClick={() => void onDuplicate()} disabled={saving || deleting || duplicating}>
-                {duplicating ? "Duplicando..." : "Duplicar servico"}
-              </button>
-            ) : null}
-            {canDelete && !isNew ? (
-              <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={saving || deleting || duplicating}>
-                {deleting ? "Excluindo..." : "Excluir servico"}
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className={styles.actions}>
-        <Link className={styles.btnBackLink} to="/app/services">
-          ← Voltar a lista
-        </Link>
-            <p className={styles.readOnlyHint}>
-              Você pode visualizar os dados. Para alterar, use um perfil de recepção ou administrador.
-            </p>
-          </div>
-        )}
       </form>
+
+      <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">
+        <div className={styles.actionBarInner}>
+          <Link className={styles.btnBackLink} to="/app/services">
+            Voltar
+          </Link>
+          {canEdit && !isNew ? (
+            <button
+              type="button"
+              className={styles.btnSecondary}
+              onClick={() => void onDuplicate()}
+              disabled={saving || deleting || duplicating}
+            >
+              {duplicating ? "Duplicando…" : "Duplicar serviço"}
+            </button>
+          ) : null}
+          {canDelete && !isNew ? (
+            <button
+              type="button"
+              className={styles.btnDanger}
+              onClick={() => void onDelete()}
+              disabled={saving || deleting || duplicating}
+            >
+              {deleting ? "Excluindo…" : "Excluir serviço"}
+            </button>
+          ) : null}
+          {canEdit && (isNew || isDirty) ? (
+            <button
+              type="submit"
+              form="service-form-main"
+              className={styles.btnPrimary}
+              disabled={saving || deleting || duplicating}
+            >
+              {saving ? "Salvando…" : isNew ? "Cadastrar" : "Salvar alterações"}
+            </button>
+          ) : null}
+          {!canEdit ? <p className={styles.readOnlyHint}>Visualização somente leitura.</p> : null}
+        </div>
+      </div>
     </div>
   );
 }

@@ -14,21 +14,31 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.marketplace_util import tenant_has_marketplace_app
 from app.plan_rules import get_plan_definition
+from app.equipment_preventive_rules import (
+    delete_equipment_preventive_rule,
+    get_equipment_preventive_rule,
+    rule_to_dict,
+    update_equipment_preventive_rule,
+    upsert_equipment_preventive_rule,
+)
 from app.preventive_maintenance import (
-    build_preventive_reminder_send_bundle,
-    build_preview,
+    build_grouped_preview,
+    build_preventive_grouped_send_bundle,
     create_historico,
     create_historicos_from_service_order,
     dispatch_preventive_due_today,
-    dispatch_preventive_reminder,
     dispatch_preventive_reminders_bulk,
+    find_preventive_group_for_item,
     get_preventive_settings,
+    group_preventive_items_by_client_and_due_month,
     list_interest_leads,
     list_preventive_items,
+    list_preventive_items_grouped,
     patch_preventive_settings,
     register_manual_preventive_entry,
     spawn_preventive_reminder_send_thread,
     spawn_preventive_reminders_bulk_thread,
+    _preventive_item_due_month_key,
 )
 from app.security import JWT_ALGORITHM, JWT_SECRET_KEY
 from app.schemas_whatsapp import WhatsappMessageJobOut
@@ -39,6 +49,8 @@ from app.schemas_preventive import (
     PreventiveBulkSendRequest,
     PreventiveHistoricoFromOsCreate,
     PreventiveItemOut,
+    PreventiveClientGroupOut,
+    PreventiveItemsListOut,
     PreventiveLeadOut,
     PreventivePreviewOut,
     PreventiveRegisterEntryCreate,
@@ -47,6 +59,9 @@ from app.schemas_preventive import (
     PreventiveSendRequest,
     PreventiveSettingsOut,
     PreventiveSettingsPatch,
+    EquipmentPreventiveRuleCreate,
+    EquipmentPreventiveRuleOut,
+    EquipmentPreventiveRuleUpdate,
 )
 from models import Tenant, User, UserRole
 
@@ -112,29 +127,132 @@ def patch_settings(
     return patch_preventive_settings(db, current_user.tenant_id, payload)
 
 
-@router.get("/items", response_model=list[PreventiveItemOut])
+def _rule_out(rule) -> EquipmentPreventiveRuleOut:
+    return EquipmentPreventiveRuleOut.model_validate(rule_to_dict(rule))
+
+
+@router.post(
+    "/rules",
+    response_model=EquipmentPreventiveRuleOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def upsert_preventive_rule(
+    payload: EquipmentPreventiveRuleCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentPreventiveRuleOut:
+    """Cria ou atualiza a regra preventiva do equipamento (uma regra por equipamento)."""
+    rule = upsert_equipment_preventive_rule(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=payload.equipment_id,
+        interval_value=payload.interval_value,
+        interval_type=payload.interval_type,
+        is_active=payload.is_active,
+    )
+    return _rule_out(rule)
+
+
+@router.get(
+    "/rules/equipment/{equipment_id}",
+    response_model=EquipmentPreventiveRuleOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_preventive_rule_by_equipment(
+    equipment_id: Annotated[int, Path(ge=1)],
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentPreventiveRuleOut:
+    rule = get_equipment_preventive_rule(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+    )
+    if rule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Regra preventiva não configurada.")
+    return _rule_out(rule)
+
+
+@router.put(
+    "/rules/{rule_id}",
+    response_model=EquipmentPreventiveRuleOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def put_preventive_rule(
+    rule_id: Annotated[int, Path(ge=1)],
+    payload: EquipmentPreventiveRuleUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentPreventiveRuleOut:
+    if not payload.model_fields_set:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nada para atualizar.")
+    rule = update_equipment_preventive_rule(
+        db,
+        tenant_id=current_user.tenant_id,
+        rule_id=rule_id,
+        interval_value=payload.interval_value,
+        interval_type=payload.interval_type,
+        is_active=payload.is_active,
+    )
+    return _rule_out(rule)
+
+
+@router.delete(
+    "/rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_preventive_rule(
+    rule_id: Annotated[int, Path(ge=1)],
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    delete_equipment_preventive_rule(db, tenant_id=current_user.tenant_id, rule_id=rule_id)
+
+
+@router.get("/items", response_model=PreventiveItemsListOut)
 def list_items(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     days: Annotated[int, Query(ge=1, le=400)] = 7,
-) -> list[PreventiveItemOut]:
+) -> PreventiveItemsListOut:
     _require_whatsapp_module(db, current_user.tenant_id)
-    rows = list_preventive_items(db, tenant_id=current_user.tenant_id, window_days=days)
-    return [PreventiveItemOut.model_validate(r) for r in rows]
+    payload = list_preventive_items_grouped(db, tenant_id=current_user.tenant_id, window_days=days)
+    clients = [
+        PreventiveClientGroupOut(
+            client_id=int(g["client_id"]),
+            client_name=str(g["client_name"]),
+            whatsapp_valido=bool(g.get("whatsapp_valido")),
+            whatsapp_destino=g.get("whatsapp_destino"),
+            equipments=[PreventiveItemOut.model_validate(eq) for eq in g.get("equipments", [])],
+        )
+        for g in payload.get("clients", [])
+    ]
+    items = [PreventiveItemOut.model_validate(r) for r in payload.get("items", [])]
+    return PreventiveItemsListOut(window_days=int(payload["window_days"]), clients=clients, items=items)
 
 
 @router.get("/preview", response_model=PreventivePreviewOut)
 def preview_message(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-    historico_servico_id: Annotated[int, Query(ge=1)],
+    historico_servico_id: Annotated[int | None, Query(ge=1)] = None,
+    rule_id: Annotated[int | None, Query(ge=1)] = None,
+    window_days: Annotated[int, Query(ge=1, le=400)] = 365,
     technical_problem_hint: Annotated[str | None, Query()] = None,
 ) -> PreventivePreviewOut:
     _require_whatsapp_module(db, current_user.tenant_id)
-    return build_preview(
+    if (historico_servico_id is None) == (rule_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Informe historico_servico_id ou rule_id.",
+        )
+    return build_grouped_preview(
         db,
         tenant_id=current_user.tenant_id,
+        window_days=window_days,
         historico_servico_id=historico_servico_id,
+        rule_id=rule_id,
         override_problem=technical_problem_hint,
     )
 
@@ -192,10 +310,23 @@ def send_reminder(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> PreventiveSendReminderOut:
     _require_whatsapp_module(db, current_user.tenant_id)
-    build_preventive_reminder_send_bundle(
+    window_days = int(payload.window_days or 365)
+    group = find_preventive_group_for_item(
         db,
         tenant_id=current_user.tenant_id,
+        window_days=window_days,
         historico_servico_id=payload.historico_servico_id,
+        rule_id=payload.rule_id,
+    )
+    if group is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Item não encontrado na janela de preventivas ou sem WhatsApp válido.",
+        )
+    build_preventive_grouped_send_bundle(
+        db,
+        tenant_id=current_user.tenant_id,
+        items=group["items"],
         promo_image_url=payload.promo_image_url,
         promo_image_base64=payload.promo_image_base64,
         promo_image_mimetype=payload.promo_image_mimetype,
@@ -205,6 +336,8 @@ def send_reminder(
         current_user.tenant_id,
         current_user.id,
         payload.historico_servico_id,
+        payload.rule_id,
+        window_days,
         payload.promo_image_url,
         payload.promo_image_base64,
         payload.promo_image_mimetype,
@@ -233,6 +366,7 @@ def post_register_entry(
         created_by_user=current_user,
         client_id=payload.client_id,
         new_client=payload.new_client,
+        equipment_id=payload.equipment_id,
         service_id=payload.service_id,
         data_realizacao=payload.data_realizacao,
         notes=payload.notes,
@@ -273,19 +407,29 @@ def send_reminders_bulk(
 ) -> PreventiveBulkSendOut:
     _require_whatsapp_module(db, current_user.tenant_id)
     ids = list(payload.historico_servico_ids)
-    if not ids:
-        wd = int(payload.window_days_if_empty or 7)
-        rows = list_preventive_items(db, tenant_id=current_user.tenant_id, window_days=wd)
-        ids = [int(r["historico_servico_id"]) for r in rows if r.get("whatsapp_valido")]
-    if len(ids) >= 2:
+    wd = int(payload.window_days_if_empty or 7)
+    rows = list_preventive_items(db, tenant_id=current_user.tenant_id, window_days=wd)
+    eligible = [r for r in rows if r.get("whatsapp_valido")]
+    groups = group_preventive_items_by_client_and_due_month(eligible)
+    if ids:
+        id_set = {int(h) for h in ids if int(h) > 0}
+        target_keys = {
+            _preventive_item_due_month_key(r)
+            for r in eligible
+            if int(r.get("historico_servico_id") or 0) in id_set
+        }
+        groups = [g for g in groups if _preventive_item_due_month_key(g["items"][0]) in target_keys]
+    group_count = len(groups)
+    if group_count >= 2:
         spawn_preventive_reminders_bulk_thread(
             current_user.tenant_id,
             current_user.id,
             ids,
             payload.promo_image_url,
+            wd,
         )
         return PreventiveBulkSendOut(
-            attempted=len(ids),
+            attempted=group_count,
             sent=0,
             failed=0,
             errors=[],
@@ -297,6 +441,7 @@ def send_reminders_bulk(
         created_by_user=current_user,
         historico_servico_ids=ids,
         promo_image_url=payload.promo_image_url,
+        window_days=wd,
     )
     return PreventiveBulkSendOut.model_validate(result)
 

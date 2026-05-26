@@ -1,0 +1,144 @@
+.tableContainer {
+  border-radius: var(--card-radius, 0.75rem);
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface-elevated, #fff);
+  overflow: hidden;
+  box-shadow: var(--card-shadow, 0 1px 3px rgba(15, 23, 42, 0.04));
+}
+
+.table {
+  min-width: 52rem;
+}
+
+.actionsCell {
+  width: 4.5rem;
+  text-align: right;
+}
+
+.actionsWrap {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.menuTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.menuTrigger:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.menuPanel {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  z-index: 20;
+  min-width: 13.5rem;
+  padding: 0.35rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+}
+
+.menuItem {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border: none;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.menuItem:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menuDivider {
+  height: 1px;
+  margin: 0.25rem 0.35rem;
+  background: #e2e8f0;
+}
+
+.clientName {
+  display: block;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.clientMeta {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+}
+
+.equipmentName {
+  display: block;
+  font-weight: 500;
+  color: #334155;
+}
+
+.equipmentMeta {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+}
+
+.dateOverdue {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.dateSoon {
+  color: #b45309;
+  font-weight: 500;
+}
+
+.empty {
+  margin: 0;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.9375rem;
+  background: #f8fafc;
+  border-radius: 0.75rem;
+  border: 1px dashed #e2e8f0;
+}
+
+.listFoot {
+  margin: 0;
+  padding: var(--space-4, 1rem) var(--space-5, 1.25rem);
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-muted, #64748b);
+  border-top: 1px solid var(--color-border, #e2e8f0);
+  background: var(--table-header-bg, #f8fafc);
+}

@@ -65,6 +65,7 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  padding-bottom: 5.5rem;
 }
 
 /* ===== TABS ===== */
@@ -172,13 +173,27 @@
 }
 
 /* ===== ACTIONS ===== */
-.actions {
+.actionBar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--color-surface-elevated);
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-4, 1rem) var(--space-6, 1.5rem);
+  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.06);
+}
+
+.actionBarInner {
+  max-width: 56rem;
+  margin: 0 auto;
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
-  gap: 0.75rem;
   align-items: center;
-  padding-top: 1rem;
-  margin-top: 0.5rem;
+  justify-content: flex-end;
+  gap: 0.75rem;
 }
 
 .readOnlyHint {

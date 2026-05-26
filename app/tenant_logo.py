@@ -4,6 +4,7 @@ import io
 import json
 import os
 from dataclasses import dataclass
+from typing import Literal
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -30,6 +31,9 @@ class TenantLogoUploadResult:
     size_bytes: int
 
 
+S3BucketPurpose = Literal["default", "manuais", "imagens", "backups"]
+
+
 @dataclass
 class TenantS3RuntimeConfig:
     bucket: str
@@ -39,6 +43,20 @@ class TenantS3RuntimeConfig:
     prefix: str
     access_key: str
     secret_key: str
+    bucket_manuais: str = ""
+    bucket_imagens: str = ""
+    bucket_backups: str = ""
+
+
+def s3_bucket_for(cfg: TenantS3RuntimeConfig, purpose: S3BucketPurpose = "default") -> str:
+    """Resolve o bucket por finalidade; faz fallback para `bucket` legado."""
+    if purpose == "manuais":
+        return (cfg.bucket_manuais or cfg.bucket).strip()
+    if purpose == "imagens":
+        return (cfg.bucket_imagens or cfg.bucket).strip()
+    if purpose == "backups":
+        return (cfg.bucket_backups or cfg.bucket).strip()
+    return cfg.bucket.strip()
 
 
 def _env(name: str, default: str = "") -> str:
@@ -63,13 +81,16 @@ def _optional_acl() -> str | None:
 
 def _resolve_s3_runtime_config(db: Session | None) -> TenantS3RuntimeConfig:
     cfg = TenantS3RuntimeConfig(
-        bucket=_env("AWS_S3_BUCKET"),
+        bucket=_env("AWS_STORAGE_BUCKET_NAME") or _env("AWS_S3_BUCKET"),
         region=_env("AWS_S3_REGION", "us-east-1"),
         endpoint_url=_env("AWS_S3_ENDPOINT_URL"),
         public_base_url=_env("AWS_S3_PUBLIC_BASE_URL"),
         prefix=_env("AWS_S3_TENANT_LOGO_PREFIX", "tenant-logos"),
         access_key=_env("AWS_ACCESS_KEY_ID"),
         secret_key=_env("AWS_SECRET_ACCESS_KEY"),
+        bucket_manuais=_env("AWS_S3_BUCKET_MANUAIS"),
+        bucket_imagens=_env("AWS_S3_BUCKET_IMAGENS"),
+        bucket_backups=_env("AWS_S3_BUCKET_BACKUPS"),
     )
     if db is None:
         return cfg
@@ -91,6 +112,15 @@ def _resolve_s3_runtime_config(db: Session | None) -> TenantS3RuntimeConfig:
 
     if not cfg.bucket:
         cfg.bucket = extra.get("bucket", "").strip()
+    if not cfg.bucket_manuais:
+        cfg.bucket_manuais = extra.get("bucket_manuais", "").strip()
+    if not cfg.bucket_imagens:
+        cfg.bucket_imagens = extra.get("bucket_imagens", "").strip()
+    if not cfg.bucket_backups:
+        cfg.bucket_backups = extra.get("bucket_backups", "").strip()
+    # Legado: único campo "bucket" no painel = manuais se os específicos estiverem vazios
+    if cfg.bucket and not cfg.bucket_manuais:
+        cfg.bucket_manuais = cfg.bucket
     if not cfg.region:
         cfg.region = extra.get("region", "").strip() or "us-east-1"
     if not cfg.endpoint_url:
@@ -118,7 +148,12 @@ def _s3_client_from_config(cfg: TenantS3RuntimeConfig):
 
 
 def process_and_upload_tenant_logo(
-    *, tenant_id: int, file_bytes: bytes, source_filename: str | None, db: Session | None = None
+    *,
+    tenant_id: int,
+    file_bytes: bytes,
+    source_filename: str | None,
+    db: Session | None = None,
+    key_prefix: str | None = None,
 ) -> TenantLogoUploadResult:
     if not file_bytes:
         raise ValueError("Arquivo vazio.")
@@ -153,14 +188,14 @@ def process_and_upload_tenant_logo(
         raise ValueError("Arquivo inválido. Envie uma imagem JPG, PNG ou WEBP.") from exc
 
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "imagens")
     if not bucket:
-        raise RuntimeError("AWS_S3_BUCKET não configurado (env ou credencial SaaS aws-s3).")
+        raise RuntimeError("AWS S3 (imagens) não configurado (bucket_imagens ou credencial aws-s3).")
     region = cfg.region or "us-east-1"
     endpoint_url = cfg.endpoint_url
-    prefix = cfg.prefix or "tenant-logos"
+    prefix = (key_prefix or cfg.prefix or "tenant-logos").strip("/")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    key = f"{prefix.strip('/')}/tenant-{tenant_id}/{timestamp}-{uuid4().hex[:10]}.webp"
+    key = f"{prefix}/{timestamp}-{uuid4().hex[:10]}.webp"
 
     client = _s3_client_from_config(cfg)
     acl = _optional_acl()
@@ -190,7 +225,7 @@ def delete_tenant_logo_if_exists(s3_key: str | None, db: Session | None = None) 
     if not s3_key:
         return
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "imagens")
     if not bucket:
         return
     client = _s3_client_from_config(cfg)
@@ -200,13 +235,30 @@ def delete_tenant_logo_if_exists(s3_key: str | None, db: Session | None = None) 
         return
 
 
+def fetch_s3_image_bytes(s3_key: str, *, db: Session | None = None) -> tuple[bytes, str]:
+    """Baixa bytes da imagem no bucket imagens (uso em proxy same-origin)."""
+    cfg = _resolve_s3_runtime_config(db)
+    bucket = s3_bucket_for(cfg, "imagens")
+    if not bucket:
+        raise RuntimeError("AWS S3 (imagens) não configurado.")
+    client = _s3_client_from_config(cfg)
+    try:
+        resp = client.get_object(Bucket=bucket, Key=s3_key)
+    except ClientError as exc:
+        raise RuntimeError(f"Imagem não encontrada no armazenamento: {exc}") from exc
+    body = resp["Body"].read()
+    content_type = (resp.get("ContentType") or "image/webp").split(";")[0].strip()
+    return body, content_type
+
+
 def generate_tenant_logo_presigned_url(s3_key: str, *, db: Session | None = None, expires_seconds: int = 900) -> str:
     cfg = _resolve_s3_runtime_config(db)
-    if not cfg.bucket:
-        raise RuntimeError("AWS_S3_BUCKET não configurado (env ou credencial SaaS aws-s3).")
+    bucket = s3_bucket_for(cfg, "imagens")
+    if not bucket:
+        raise RuntimeError("AWS S3 (imagens) não configurado (env ou credencial SaaS aws-s3).")
     client = _s3_client_from_config(cfg)
     return client.generate_presigned_url(
         ClientMethod="get_object",
-        Params={"Bucket": cfg.bucket, "Key": s3_key},
+        Params={"Bucket": bucket, "Key": s3_key},
         ExpiresIn=max(60, min(expires_seconds, 3600)),
     )

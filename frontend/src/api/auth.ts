@@ -1,4 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { clearAccessToken, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "../lib/authStorage";
 import { accessTokenNeedsRefresh } from "../lib/jwtAccess";
 import { isDemoMode, demoUser, demoTenant, DEMO_ACCESS_TOKEN } from "../lib/demoMode";
@@ -561,7 +562,7 @@ export async function createTenantUser(payload: {
 
 export async function listTenantUsers(params?: { skip?: number; limit?: number }): Promise<UserOut[]> {
   const skip = params?.skip ?? 0;
-  const limit = params?.limit ?? 100;
+  const limit = clampApiLimit(params?.limit, 100);
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));

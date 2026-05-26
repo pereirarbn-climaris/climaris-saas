@@ -5,6 +5,10 @@ import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ServicesListPage.module.css";
 
+function compareServiceName(a: ServiceOut, b: ServiceOut): number {
+  return (a.name || "").localeCompare(b.name || "", "pt-BR");
+}
+
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
@@ -134,7 +138,7 @@ export function ServicesListPage() {
     setErr("");
     try {
       const list = await listServices({ q: q || undefined, limit: 100 });
-      setRows(list);
+      setRows([...list].sort(compareServiceName));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setRows([]);
@@ -162,7 +166,7 @@ export function ServicesListPage() {
     const num = (a: number, b: number) => a - b;
     switch (sort) {
       case "name_asc":
-        return list.sort((a, b) => cmp(a.name, b.name));
+        return list.sort(compareServiceName);
       case "name_desc":
         return list.sort((a, b) => cmp(b.name, a.name));
       case "duration_asc":
@@ -186,7 +190,7 @@ export function ServicesListPage() {
       case "status_inactive_first":
         return list.sort((a, b) => Number(a.is_active) - Number(b.is_active) || cmp(a.name, b.name));
       default:
-        return list;
+        return list.sort(compareServiceName);
     }
   }, [rows, sort]);
 

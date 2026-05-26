@@ -1,4 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
+import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
 import { demoCreateService, demoDeleteService, demoListServices, demoUpdateService, isDemoMode } from "../lib/demoMode";
 
@@ -116,7 +117,7 @@ export async function listServices(params?: { q?: string; skip?: number; limit?:
   }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
-  const limit = params?.limit ?? 50;
+  const limit = clampApiLimit(params?.limit, 50);
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));

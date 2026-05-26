@@ -5,10 +5,13 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, or_, select
+from fastapi.responses import Response
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.service_order_pdf import build_service_order_pdf
 from app.database import get_db
+from app.pagination import clamp_limit
 from app.limiter import limiter
 from app.dependencies import get_current_user, require_roles
 from app.schemas import (
@@ -21,6 +24,7 @@ from app.schemas import (
     ServiceOrderApprove,
     ServiceOrderApproveOut,
     ServiceOrderCreate,
+    ServiceOrderDetailsUpdate,
     ServiceOrderDiscountUpdate,
     ServiceOrderOut,
     ServiceOrderStatusUpdate,
@@ -46,7 +50,19 @@ from app.schemas import (
     TechnicianWorkWindowOut,
     TechnicianWorkWindowUpdate,
 )
+from app.service_order_ops import (
+    apply_technician_order_scope,
+    assert_unique_equipment_service,
+    compute_actual_duration_minutes,
+    get_total_duration_minutes,
+    technician_can_access_order,
+)
 from app.stock_ops import apply_stock_consumption
+from app.stock_reservation import (
+    StockReservationError,
+    effective_reservation_demand,
+    sync_order_reservation,
+)
 
 from models import (
     Client,
@@ -86,11 +102,191 @@ ENFORCE_EQUIPMENT_ON_SERVICE_ORDER = os.getenv("ENFORCE_EQUIPMENT_ON_SERVICE_ORD
 
 
 def _ensure_order_lines_editable(order: ServiceOrder) -> None:
-    if order.status in (OrderStatus.DONE, OrderStatus.CANCELLED):
+    """Bloqueia alteração de linhas (serviço/peça: qtd, preço, add/remove)."""
+    if order.status == OrderStatus.DONE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Não é possível alterar serviços ou produtos desta OS após conclusão ou cancelamento.",
+            detail="Não é permitido alterar produtos ou serviços de uma Ordem de Serviço já concluída.",
         )
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível alterar serviços ou produtos desta OS cancelada.",
+        )
+
+
+def _ensure_order_equipment_editable(order: ServiceOrder) -> None:
+    """Permite vínculo equipamento ↔ serviço em OS concluída; bloqueia apenas cancelada."""
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível alterar vínculos de equipamento em uma OS cancelada.",
+        )
+
+
+def _reload_service_order_for_stock(db: Session, *, tenant_id: int, order_id: int) -> ServiceOrder:
+    return db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == tenant_id)
+        .options(*_service_order_detail_options(for_stock=True))
+    ).scalar_one()
+
+
+def _sync_stock_after_order_change(
+    db: Session,
+    *,
+    tenant_id: int,
+    order: ServiceOrder,
+    old_demand: dict,
+) -> None:
+    try:
+        sync_order_reservation(db, tenant_id=tenant_id, order=order, old_demand=old_demand)
+    except StockReservationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _validate_equipment_ids_for_client(
+    db: Session,
+    *,
+    client_id: int,
+    equipment_ids: list[int],
+) -> None:
+    for equipment_id in equipment_ids:
+        equipment = db.execute(
+            select(Equipment).where(
+                Equipment.id == equipment_id,
+                Equipment.client_id == client_id,
+                Equipment.ativo.is_(True),
+            )
+        ).scalar_one_or_none()
+        if equipment is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Equipamento inválido para este cliente ou inativo.",
+            )
+
+
+def _reconcile_service_item_equipments(
+    db: Session,
+    *,
+    order: ServiceOrder,
+    anchor: ServiceOrderServiceItem,
+    equipment_ids: list[int],
+    tenant_id: int,
+    user_id: int,
+    source: str,
+) -> None:
+    """Remove todas as linhas do serviço na OS e recria do zero (evita conflitos de unicidade)."""
+    del tenant_id, user_id, source  # reservado para auditoria futura
+    _ensure_order_equipment_editable(order)
+    try:
+        service_id = anchor.service_id
+        unit_price = anchor.unit_price
+
+        unique_eq: list[int] = []
+        seen: set[int] = set()
+        for raw_id in equipment_ids:
+            eid = int(raw_id) if raw_id is not None else 0
+            if eid < 1 or eid in seen:
+                continue
+            seen.add(eid)
+            unique_eq.append(eid)
+
+        service = db.execute(select(Service).where(Service.id == service_id)).scalar_one()
+
+        rows_for_service = list(
+            db.execute(
+                select(ServiceOrderServiceItem).where(
+                    ServiceOrderServiceItem.service_order_id == order.id,
+                    ServiceOrderServiceItem.service_id == service_id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        total_qty = sum(max(int(row.quantity or 1), 1) for row in rows_for_service) or max(
+            int(anchor.quantity or 1), 1
+        )
+        unique_eq = unique_eq[:total_qty]
+
+        _validate_equipment_ids_for_client(db, client_id=order.client_id, equipment_ids=unique_eq)
+
+        total_on_order = int(
+            db.execute(
+                select(func.count())
+                .select_from(ServiceOrderServiceItem)
+                .where(ServiceOrderServiceItem.service_order_id == order.id)
+            ).scalar_one()
+        )
+        rows_to_insert = len(unique_eq) + (1 if total_qty - len(unique_eq) > 0 else 0)
+        if total_on_order - len(rows_for_service) < 1 and rows_to_insert < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A OS deve manter pelo menos um serviço.",
+            )
+
+        db.execute(
+            delete(ServiceOrderServiceItem).where(
+                ServiceOrderServiceItem.service_order_id == order.id,
+                ServiceOrderServiceItem.service_id == service_id,
+            )
+        )
+        db.flush()
+
+        for eq_id in unique_eq:
+            db.add(
+                ServiceOrderServiceItem(
+                    service_order_id=order.id,
+                    service_id=service_id,
+                    equipment_id=eq_id,
+                    quantity=1,
+                    unit_price=unit_price,
+                    duration_minutes=service.duration_minutes,
+                )
+            )
+
+        remainder = total_qty - len(unique_eq)
+        if remainder > 0:
+            db.add(
+                ServiceOrderServiceItem(
+                    service_order_id=order.id,
+                    service_id=service_id,
+                    equipment_id=None,
+                    quantity=remainder,
+                    unit_price=unit_price,
+                    duration_minutes=service.duration_minutes,
+                )
+            )
+
+        db.flush()
+
+        items_left = int(
+            db.execute(
+                select(func.count())
+                .select_from(ServiceOrderServiceItem)
+                .where(ServiceOrderServiceItem.service_order_id == order.id)
+            ).scalar_one()
+        )
+        if items_left < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A OS deve manter pelo menos um serviço.",
+            )
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        detail = str(exc)
+        if "foreign key" in detail.lower() or "integrity" in detail.lower() or "unique" in detail.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Não foi possível salvar os vínculos de equipamento: conflito de unicidade ou referência inválida.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível salvar os vínculos de equipamento: {detail}",
+        ) from exc
 
 
 def _apply_schedule_notes_to_open_schedules(order: ServiceOrder, notes: str | None) -> None:
@@ -102,6 +298,23 @@ def _apply_schedule_notes_to_open_schedules(order: ServiceOrder, notes: str | No
     for schedule in order.schedules:
         if schedule.status != ScheduleStatus.CANCELLED:
             schedule.notes = stripped
+
+
+_OS_CANCEL_MARKER = "\n---CLIMARIS_OS_CANCEL---\n"
+
+
+def _record_service_order_cancel_reason(order: ServiceOrder, reason: str | None) -> None:
+    stripped = (reason or "").strip()
+    if not stripped:
+        return
+    if order.description and _OS_CANCEL_MARKER in order.description:
+        base, _sep, _old = order.description.partition(_OS_CANCEL_MARKER)
+        order.description = f"{base.rstrip()}{_OS_CANCEL_MARKER}{stripped}"
+        return
+    if order.description:
+        order.description = f"{order.description.rstrip()}{_OS_CANCEL_MARKER}{stripped}"
+    else:
+        order.description = stripped
 
 
 def _parse_hhmm(value: str) -> time:
@@ -215,6 +428,26 @@ def _enforce_technician_scope(current_user: User, requested_technician_id: int |
     return current_user.id
 
 
+def _ensure_technician_order_access(order: ServiceOrder, current_user: User) -> None:
+    if not technician_can_access_order(order, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Você não tem acesso a esta ordem de serviço.")
+
+
+def _validate_create_equipment_services_uniqueness(
+    services: list[ServiceOrderServiceItemInput],
+) -> None:
+    seen_linked: set[tuple[int | None, int]] = set()
+    for item in services:
+        key = (item.equipment_id, item.service_id)
+        if key in seen_linked:
+            if item.equipment_id is None:
+                detail = "Serviço repetido sem equipamento na mesma OS."
+            else:
+                detail = "Combinação equipamento + serviço duplicada na mesma OS."
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        seen_linked.add(key)
+
+
 def _ensure_inside_workday(starts_at: datetime, ends_at: datetime, tenant: Tenant, holidays: set[date]) -> None:
     tz = _tenant_tz(tenant)
     local_start = starts_at.astimezone(tz)
@@ -256,7 +489,7 @@ def _check_technician_conflict(
     )
     if ignore_schedule_id is not None:
         query = query.where(Schedule.id != ignore_schedule_id)
-    conflict = db.execute(query).scalar_one_or_none()
+    conflict = db.execute(query.limit(1)).scalars().first()
     if conflict is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -268,8 +501,8 @@ def _check_technician_conflict(
             TechnicianUnavailability.technician_id == technician_id,
             TechnicianUnavailability.starts_at < _with_buffer(ends_at),
             TechnicianUnavailability.ends_at > starts_at,
-        )
-    ).scalar_one_or_none()
+        ).limit(1)
+    ).scalars().first()
     if unavailability is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -420,7 +653,7 @@ def _service_order_total_minutes(schedule: Schedule) -> int:
     order = schedule.service_order
     if order is None or not order.service_items:
         return max(1, int((schedule.ends_at - schedule.starts_at).total_seconds() // 60))
-    return sum(max(item.quantity, 1) * max(item.duration_minutes, 1) for item in order.service_items)
+    return max(1, get_total_duration_minutes(order))
 
 
 def _workday_end_utc_for_datetime(*, starts_at: datetime, tenant: Tenant, tenant_tz: ZoneInfo) -> datetime:
@@ -579,32 +812,25 @@ def _apply_split_fat_service_item(
     service_item: ServiceOrderServiceItem,
     audit_source: str,
 ) -> None:
-    """Divide um item com quantidade > 1 em uma linha com qtd 1 + novas linhas idênticas com qtd 1."""
+    """Legado: fracionar qty>1 só quando equipamento ainda não foi definido (linhas distintas por aparelho)."""
     qty = int(service_item.quantity or 1)
     if qty <= 1:
         return
-    service_item.quantity = 1
-    for _ in range(qty - 1):
-        new_item = ServiceOrderServiceItem(
-            service_order_id=order.id,
-            service_id=service_item.service_id,
-            equipment_id=service_item.equipment_id,
-            quantity=1,
-            unit_price=service_item.unit_price,
-            duration_minutes=service_item.duration_minutes,
+    if service_item.equipment_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Não é possível fracionar um serviço já vinculado a um equipamento. "
+                "Ajuste a quantidade na linha existente ou adicione outro vínculo equipamento + serviço."
+            ),
         )
-        db.add(new_item)
-        db.flush()
-        _create_equipment_link_audit(
-            db=db,
-            tenant_id=tenant_id,
-            service_order_id=order.id,
-            service_item_id=new_item.id,
-            previous_equipment_id=None,
-            new_equipment_id=new_item.equipment_id,
-            changed_by_user_id=user_id,
-            source=audit_source,
-        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            "Fracionamento automático desativado: use quantidade na linha ou cadastre vínculos "
+            "equipamento + serviço separados para cada aparelho."
+        ),
+    )
 
 
 def _ensure_unique_service_product_inputs(product_inputs: list[ServiceProductInput]) -> None:
@@ -699,13 +925,14 @@ def list_services(
     current_user: Annotated[User, Depends(get_current_user)],
     q: Annotated[str | None, Query(description="Filter by service name or description")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    limit: Annotated[int, Query(ge=1)] = 20,
 ) -> list[Service]:
+    limit = clamp_limit(limit)
     query = select(Service).where(Service.tenant_id == current_user.tenant_id).options(selectinload(Service.product_inputs))
     if q:
         term = f"%{q}%"
         query = query.where(or_(Service.name.ilike(term), Service.description.ilike(term)))
-    return db.execute(query.order_by(Service.id.desc()).offset(skip).limit(limit)).scalars().all()
+    return db.execute(query.order_by(Service.name.asc()).offset(skip).limit(limit)).scalars().all()
 
 
 @router.get(
@@ -885,7 +1112,36 @@ def get_service_order(
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     return order
+
+
+@router.get(
+    "/service-orders/{order_id}/pdf",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_service_order_pdf(
+    order_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    client = db.get(Client, order.client_id)
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    pdf_bytes = build_service_order_pdf(order=order, client=client, tenant=tenant)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="OS-{order.id}.pdf"'},
+    )
 
 
 @router.patch(
@@ -940,6 +1196,7 @@ def patch_service_order_status(
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
 
     target = payload.status
     current = order.status
@@ -947,12 +1204,21 @@ def patch_service_order_status(
     if target == "cancelled":
         if current in (OrderStatus.DONE, OrderStatus.CANCELLED):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não é possível cancelar esta OS.")
+        old_demand = effective_reservation_demand(order)
         _apply_schedule_notes_to_open_schedules(order, payload.schedule_notes)
+        _record_service_order_cancel_reason(order, payload.cancel_reason)
         order.status = OrderStatus.CANCELLED
         for schedule in order.schedules:
             if schedule.status != ScheduleStatus.CANCELLED:
                 schedule.status = ScheduleStatus.CANCELLED
-        db.commit()
+        try:
+            _sync_stock_after_order_change(
+                db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+            )
+            db.commit()
+        except HTTPException:
+            db.rollback()
+            raise
     elif target == "in_progress":
         if current not in (OrderStatus.APPROVED, OrderStatus.SCHEDULED):
             raise HTTPException(
@@ -961,6 +1227,8 @@ def patch_service_order_status(
             )
         _apply_schedule_notes_to_open_schedules(order, payload.schedule_notes)
         order.status = OrderStatus.IN_PROGRESS
+        if order.started_at is None:
+            order.started_at = datetime.now(timezone.utc)
         db.commit()
     elif target == "done":
         if current not in (OrderStatus.APPROVED, OrderStatus.SCHEDULED, OrderStatus.IN_PROGRESS):
@@ -983,11 +1251,25 @@ def patch_service_order_status(
         _apply_schedule_notes_to_open_schedules(order, payload.schedule_notes)
         try:
             apply_stock_consumption(db, tenant_id=current_user.tenant_id, order=order)
-        except ValueError as exc:
+        except StockReservationError as exc:
+            db.rollback()
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        closed_at = datetime.now(timezone.utc)
         order.status = OrderStatus.DONE
+        if order.completed_at is None:
+            order.completed_at = closed_at
+        order.finished_at = closed_at
+        order.actual_duration_minutes = compute_actual_duration_minutes(order, closed_at)
         if order.closed_at is None:
-            order.closed_at = datetime.now(timezone.utc)
+            order.closed_at = closed_at
+        from app.service_order_closure import on_service_order_closed
+
+        on_service_order_closed(
+            db,
+            order=order,
+            closed_at=closed_at,
+            tenant_id=current_user.tenant_id,
+        )
         db.commit()
         try:
             from app.whatsapp_bot import dispatch_service_order_done_flow
@@ -1007,6 +1289,52 @@ def patch_service_order_status(
     return refreshed
 
 
+@router.post(
+    "/service-orders/{order_id}/cancel-schedule",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("30/minute")
+def cancel_service_order_schedule(
+    request: Request,
+    order_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    """Cancela compromissos na agenda e reverte OS agendada para aprovada."""
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    if order.status in (OrderStatus.DONE, OrderStatus.CANCELLED, OrderStatus.IN_PROGRESS):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível cancelar o agendamento desta OS no status atual.",
+        )
+    has_open_schedule = False
+    for schedule in order.schedules:
+        if schedule.status != ScheduleStatus.CANCELLED:
+            schedule.status = ScheduleStatus.CANCELLED
+            has_open_schedule = True
+    if not has_open_schedule and order.status != OrderStatus.SCHEDULED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta OS não possui agendamento ativo para cancelar.",
+        )
+    if order.status == OrderStatus.SCHEDULED:
+        order.status = OrderStatus.APPROVED
+    db.commit()
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
 @router.get(
     "/service-orders",
     response_model=list[ServiceOrderOut],
@@ -1017,19 +1345,23 @@ def list_service_orders(
     current_user: Annotated[User, Depends(get_current_user)],
     status_filter: Annotated[OrderStatus | None, Query(alias="status")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    limit: Annotated[int, Query(ge=1)] = 100,
 ) -> list[ServiceOrder]:
+    limit = clamp_limit(limit)
     query = (
         select(ServiceOrder)
         .where(ServiceOrder.tenant_id == current_user.tenant_id)
         .options(
             selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.service),
+            selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.equipment),
             selectinload(ServiceOrder.product_items),
-            selectinload(ServiceOrder.schedules),
+            selectinload(ServiceOrder.schedules).selectinload(Schedule.technicians),
+            selectinload(ServiceOrder.technicians),
         )
     )
     if status_filter is not None:
         query = query.where(ServiceOrder.status == status_filter)
+    query = apply_technician_order_scope(query, current_user)
     return db.execute(query.order_by(ServiceOrder.id.desc()).offset(skip).limit(limit)).scalars().all()
 
 
@@ -1052,6 +1384,7 @@ def create_service_order(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
     if not payload.services:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service order requires at least one service.")
+    _validate_create_equipment_services_uniqueness(payload.services)
     client_has_active_equipments = db.execute(
         select(Equipment.id)
         .where(Equipment.client_id == client.id, Equipment.ativo.is_(True))
@@ -1095,12 +1428,19 @@ def create_service_order(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Vincule um equipamento em cada serviço desta OS.",
             )
+        assert_unique_equipment_service(
+            db,
+            service_order_id=order.id,
+            service_id=service.id,
+            equipment_id=equipment_id,
+        )
+        unit_price = service.price if service_item.unit_price is None else service_item.unit_price
         order_service_item = ServiceOrderServiceItem(
             service_order_id=order.id,
             service_id=service.id,
             equipment_id=equipment_id,
             quantity=max(service_item.quantity, 1),
-            unit_price=service.price,
+            unit_price=unit_price,
             duration_minutes=service.duration_minutes,
         )
         db.add(order_service_item)
@@ -1122,12 +1462,13 @@ def create_service_order(
         ).scalar_one_or_none()
         if product is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {product_item.product_id} not found.")
+        product_unit_price = product.sale_price if product_item.unit_price is None else product_item.unit_price
         db.add(
             ServiceOrderProductItem(
                 service_order_id=order.id,
                 product_id=product.id,
                 quantity=max(product_item.quantity, 1),
-                unit_price=product.sale_price,
+                unit_price=product_unit_price,
             )
         )
 
@@ -1143,7 +1484,18 @@ def create_service_order(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Technician {technician_id} not found.")
         db.add(ServiceOrderTechnician(service_order_id=order.id, technician_id=technician.id))
 
-    db.commit()
+    try:
+        db.flush()
+        order_for_stock = _reload_service_order_for_stock(
+            db, tenant_id=current_user.tenant_id, order_id=order.id
+        )
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order_for_stock, old_demand={}
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     return {"id": order.id, "status": order.status.value}
 
 
@@ -1168,6 +1520,8 @@ def update_service_item_equipment(
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
+    _ensure_order_equipment_editable(order)
     service_item = db.execute(
         select(ServiceOrderServiceItem).where(
             ServiceOrderServiceItem.id == service_item_id,
@@ -1176,33 +1530,56 @@ def update_service_item_equipment(
     ).scalar_one_or_none()
     if service_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service item not found.")
-    next_equipment_id = payload.equipment_id
-    if next_equipment_id is not None:
-        equipment = db.execute(
-            select(Equipment).where(
-                Equipment.id == next_equipment_id,
-                Equipment.client_id == order.client_id,
-                Equipment.ativo.is_(True),
+
+    try:
+        if payload.equipment_ids is not None:
+            _reconcile_service_item_equipments(
+                db,
+                order=order,
+                anchor=service_item,
+                equipment_ids=payload.equipment_ids,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                source="app",
             )
-        ).scalar_one_or_none()
-        if equipment is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Equipamento inválido para este cliente ou inativo.",
+        else:
+            next_equipment_id = payload.equipment_id
+            if next_equipment_id is not None:
+                _validate_equipment_ids_for_client(
+                    db,
+                    client_id=order.client_id,
+                    equipment_ids=[next_equipment_id],
+                )
+            if next_equipment_id != service_item.equipment_id:
+                assert_unique_equipment_service(
+                    db,
+                    service_order_id=order.id,
+                    service_id=service_item.service_id,
+                    equipment_id=next_equipment_id,
+                    exclude_item_id=service_item.id,
+                )
+            previous_equipment_id = service_item.equipment_id
+            service_item.equipment_id = next_equipment_id
+            _create_equipment_link_audit(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                service_order_id=order.id,
+                service_item_id=service_item.id,
+                previous_equipment_id=previous_equipment_id,
+                new_equipment_id=next_equipment_id,
+                changed_by_user_id=current_user.id,
+                source="app",
             )
-    previous_equipment_id = service_item.equipment_id
-    service_item.equipment_id = next_equipment_id
-    _create_equipment_link_audit(
-        db=db,
-        tenant_id=current_user.tenant_id,
-        service_order_id=order.id,
-        service_item_id=service_item.id,
-        previous_equipment_id=previous_equipment_id,
-        new_equipment_id=next_equipment_id,
-        changed_by_user_id=current_user.id,
-        source="app",
-    )
-    db.commit()
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível atualizar o equipamento do serviço: {exc}",
+        ) from exc
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1215,7 +1592,7 @@ def update_service_item_equipment(
     "/service-orders/{order_id}/service-items",
     response_model=ServiceOrderOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
 @limiter.limit("120/minute")
 def add_service_order_service_item(
@@ -1228,13 +1605,13 @@ def add_service_order_service_item(
     order = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(
-            selectinload(ServiceOrder.service_items),
-        )
+        .options(*_service_order_detail_options(for_stock=True))
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     _ensure_order_lines_editable(order)
+    old_demand = effective_reservation_demand(order)
     service = db.execute(
         select(Service).where(Service.id == payload.service_id, Service.tenant_id == current_user.tenant_id)
     ).scalar_one_or_none()
@@ -1266,12 +1643,19 @@ def add_service_order_service_item(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Vincule um equipamento em cada serviço desta OS.",
         )
+    assert_unique_equipment_service(
+        db,
+        service_order_id=order.id,
+        service_id=service.id,
+        equipment_id=equipment_id,
+    )
+    unit_price = service.price if payload.unit_price is None else payload.unit_price
     order_service_item = ServiceOrderServiceItem(
         service_order_id=order.id,
         service_id=service.id,
         equipment_id=equipment_id,
         quantity=max(payload.quantity, 1),
-        unit_price=service.price,
+        unit_price=unit_price,
         duration_minutes=service.duration_minutes,
     )
     db.add(order_service_item)
@@ -1286,7 +1670,79 @@ def add_service_order_service_item(
         changed_by_user_id=current_user.id,
         source="app",
     )
-    db.commit()
+    try:
+        order = _reload_service_order_for_stock(db, tenant_id=current_user.tenant_id, order_id=order.id)
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.patch(
+    "/service-orders/{order_id}/details",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+@limiter.limit("60/minute")
+def patch_service_order_details(
+    request: Request,
+    order_id: int,
+    payload: ServiceOrderDetailsUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível alterar os dados desta OS cancelada.",
+        )
+    try:
+        if payload.title is not None:
+            title = payload.title.strip()
+            if not title:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="O título da OS não pode ficar vazio.",
+                )
+            order.title = title
+        if payload.description is not None:
+            order.description = payload.description
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        detail = str(exc)
+        if "foreign key" in detail.lower() or "integrity" in detail.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Não foi possível salvar o laudo/dados da OS: vínculo inválido "
+                    "(ex.: equipamento inexistente ou serviço inconsistente)."
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível salvar os dados da OS: {detail}",
+        ) from exc
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1298,7 +1754,7 @@ def add_service_order_service_item(
 @router.patch(
     "/service-orders/{order_id}/service-items/{service_item_id}",
     response_model=ServiceOrderOut,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
 @limiter.limit("120/minute")
 def patch_service_order_service_item_quantity(
@@ -1312,11 +1768,13 @@ def patch_service_order_service_item_quantity(
     order = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(selectinload(ServiceOrder.service_items))
+        .options(*_service_order_detail_options(for_stock=True))
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     _ensure_order_lines_editable(order)
+    old_demand = effective_reservation_demand(order)
     service_item = db.execute(
         select(ServiceOrderServiceItem).where(
             ServiceOrderServiceItem.id == service_item_id,
@@ -1326,7 +1784,18 @@ def patch_service_order_service_item_quantity(
     if service_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service item not found.")
     service_item.quantity = max(payload.quantity, 1)
-    db.commit()
+    if payload.unit_price is not None:
+        service_item.unit_price = payload.unit_price
+    try:
+        db.flush()
+        order = _reload_service_order_for_stock(db, tenant_id=current_user.tenant_id, order_id=order.id)
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1338,7 +1807,7 @@ def patch_service_order_service_item_quantity(
 @router.delete(
     "/service-orders/{order_id}/service-items/{service_item_id}",
     response_model=ServiceOrderOut,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
 @limiter.limit("120/minute")
 def delete_service_order_service_item(
@@ -1351,11 +1820,13 @@ def delete_service_order_service_item(
     order = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(selectinload(ServiceOrder.service_items))
+        .options(*_service_order_detail_options(for_stock=True))
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     _ensure_order_lines_editable(order)
+    old_demand = effective_reservation_demand(order)
     if len(order.service_items) <= 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1370,7 +1841,16 @@ def delete_service_order_service_item(
     if service_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service item not found.")
     db.delete(service_item)
-    db.commit()
+    try:
+        db.flush()
+        order = _reload_service_order_for_stock(db, tenant_id=current_user.tenant_id, order_id=order.id)
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1383,7 +1863,7 @@ def delete_service_order_service_item(
     "/service-orders/{order_id}/product-items",
     response_model=ServiceOrderOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
 @limiter.limit("120/minute")
 def add_service_order_product_item(
@@ -1396,17 +1876,20 @@ def add_service_order_product_item(
     order = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(selectinload(ServiceOrder.product_items))
+        .options(*_service_order_detail_options(for_stock=True))
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     _ensure_order_lines_editable(order)
+    old_demand = effective_reservation_demand(order)
     product = db.execute(
         select(Product).where(Product.id == payload.product_id, Product.tenant_id == current_user.tenant_id)
     ).scalar_one_or_none()
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {payload.product_id} not found.")
     add_qty = max(payload.quantity, 1)
+    product_unit_price = product.sale_price if payload.unit_price is None else payload.unit_price
     existing = db.execute(
         select(ServiceOrderProductItem).where(
             ServiceOrderProductItem.service_order_id == order.id,
@@ -1415,16 +1898,27 @@ def add_service_order_product_item(
     ).scalar_one_or_none()
     if existing is not None:
         existing.quantity = existing.quantity + add_qty
+        if payload.unit_price is not None:
+            existing.unit_price = product_unit_price
     else:
         db.add(
             ServiceOrderProductItem(
                 service_order_id=order.id,
                 product_id=product.id,
                 quantity=add_qty,
-                unit_price=product.sale_price,
+                unit_price=product_unit_price,
             )
         )
-    db.commit()
+    try:
+        db.flush()
+        order = _reload_service_order_for_stock(db, tenant_id=current_user.tenant_id, order_id=order.id)
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1436,7 +1930,7 @@ def add_service_order_product_item(
 @router.patch(
     "/service-orders/{order_id}/product-items/{product_item_id}",
     response_model=ServiceOrderOut,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
 @limiter.limit("120/minute")
 def patch_service_order_product_item_quantity(
@@ -1450,11 +1944,13 @@ def patch_service_order_product_item_quantity(
     order = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(selectinload(ServiceOrder.product_items))
+        .options(*_service_order_detail_options(for_stock=True))
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     _ensure_order_lines_editable(order)
+    old_demand = effective_reservation_demand(order)
     row = db.execute(
         select(ServiceOrderProductItem).where(
             ServiceOrderProductItem.id == product_item_id,
@@ -1464,7 +1960,18 @@ def patch_service_order_product_item_quantity(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product item not found.")
     row.quantity = max(payload.quantity, 1)
-    db.commit()
+    if payload.unit_price is not None:
+        row.unit_price = payload.unit_price
+    try:
+        db.flush()
+        order = _reload_service_order_for_stock(db, tenant_id=current_user.tenant_id, order_id=order.id)
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1476,7 +1983,7 @@ def patch_service_order_product_item_quantity(
 @router.delete(
     "/service-orders/{order_id}/product-items/{product_item_id}",
     response_model=ServiceOrderOut,
-    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
 @limiter.limit("120/minute")
 def delete_service_order_product_item(
@@ -1487,11 +1994,15 @@ def delete_service_order_product_item(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ServiceOrder:
     order = db.execute(
-        select(ServiceOrder).where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=True))
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     _ensure_order_lines_editable(order)
+    old_demand = effective_reservation_demand(order)
     row = db.execute(
         select(ServiceOrderProductItem).where(
             ServiceOrderProductItem.id == product_item_id,
@@ -1501,7 +2012,16 @@ def delete_service_order_product_item(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product item not found.")
     db.delete(row)
-    db.commit()
+    try:
+        db.flush()
+        order = _reload_service_order_for_stock(db, tenant_id=current_user.tenant_id, order_id=order.id)
+        _sync_stock_after_order_change(
+            db, tenant_id=current_user.tenant_id, order=order, old_demand=old_demand
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     refreshed = db.execute(
         select(ServiceOrder)
         .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
@@ -1531,6 +2051,7 @@ def split_service_order_service_item(
     ).scalar_one_or_none()
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found.")
+    _ensure_technician_order_access(order, current_user)
     if order.status in (OrderStatus.DONE, OrderStatus.CANCELLED):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1636,7 +2157,7 @@ def approve_service_order(
     if not order.service_items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service order has no services.")
 
-    total_minutes = sum(max(item.quantity, 1) * max(item.duration_minutes, 1) for item in order.service_items)
+    total_minutes = get_total_duration_minutes(order)
     split_days = max(1, payload.split_days or 1)
     base_minutes = total_minutes // split_days
     remainder = total_minutes % split_days
@@ -1733,10 +2254,11 @@ def list_schedules(
     status_filter: Annotated[ScheduleStatus | None, Query(alias="status")] = None,
     technician_id: Annotated[int | None, Query()] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=500)] = 20,
+    limit: Annotated[int, Query(ge=1)] = 20,
     from_day: Annotated[date | None, Query(description="Inclusive start (tenant local calendar day).")] = None,
     to_day: Annotated[date | None, Query(description="Inclusive end (tenant local calendar day).")] = None,
 ) -> list[Schedule]:
+    limit = clamp_limit(limit)
     technician_id = _enforce_technician_scope(current_user, technician_id)
     tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
     tenant_tz = _tenant_tz(tenant)
@@ -1971,7 +2493,11 @@ def reschedule(
     schedule = db.execute(
         select(Schedule)
         .where(Schedule.id == schedule_id, Schedule.tenant_id == current_user.tenant_id)
-        .options(selectinload(Schedule.service_order), selectinload(Schedule.technicians))
+        .options(
+            selectinload(Schedule.service_order),
+            selectinload(Schedule.technicians),
+            selectinload(Schedule.client),
+        )
     ).scalar_one_or_none()
     if schedule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found.")
@@ -2104,6 +2630,15 @@ def reschedule(
             extra.status = ScheduleStatus.CANCELLED
             extra.notes = f"{extra.notes or ''}\nCancelado por atualização de continuação automática.".strip()
 
+    from app.whatsapp import _clear_schedule_reminder_jobs, _dispatch_reminders_for_schedule_after_reschedule
+
+    _clear_schedule_reminder_jobs(db, tenant_id=current_user.tenant_id, schedule_id=schedule.id)
+    db.flush()
+    _dispatch_reminders_for_schedule_after_reschedule(
+        db,
+        tenant_id=current_user.tenant_id,
+        schedule=schedule,
+    )
     db.commit()
     db.refresh(schedule)
     return schedule
@@ -2130,6 +2665,9 @@ def cancel_schedule(
     schedule.status = ScheduleStatus.CANCELLED
     if payload.reason:
         schedule.notes = f"{schedule.notes or ''}\nCancellation reason: {payload.reason}".strip()
+    from app.whatsapp import _clear_schedule_reminder_jobs
+
+    _clear_schedule_reminder_jobs(db, tenant_id=current_user.tenant_id, schedule_id=schedule.id)
     db.commit()
     db.refresh(schedule)
     return schedule
@@ -2187,6 +2725,60 @@ def technicians_day_availability(
     return TechnicianDayAvailabilityOut(day=day, technicians=availability)
 
 
+def _try_slot_for_technicians(
+    db: Session,
+    *,
+    tenant_id: int,
+    tenant_tz,
+    technicians: list[User],
+    probe: datetime,
+    duration_minutes: int,
+    shift_end: datetime,
+    shift_name: str,
+    allow_overtime: bool,
+) -> SuggestedSlotOut | None:
+    """Retorna o primeiro encaixe válido para probe, ou None."""
+    candidate_end = probe + timedelta(minutes=duration_minutes)
+    if not allow_overtime and candidate_end > shift_end:
+        return None
+    for tech in technicians:
+        try:
+            if allow_overtime:
+                _check_technician_start_rules(
+                    db=db,
+                    tenant_id=tenant_id,
+                    technician_id=tech.id,
+                    starts_at=probe,
+                    tenant_tz=tenant_tz,
+                )
+            else:
+                _check_technician_work_rules(
+                    db=db,
+                    tenant_id=tenant_id,
+                    technician_id=tech.id,
+                    starts_at=probe,
+                    ends_at=candidate_end,
+                    tenant_tz=tenant_tz,
+                )
+            _check_technician_conflict(
+                db=db,
+                tenant_id=tenant_id,
+                technician_id=tech.id,
+                starts_at=probe,
+                ends_at=candidate_end,
+            )
+            return SuggestedSlotOut(
+                technician_id=tech.id,
+                technician_name=(tech.full_name or "").strip() or None,
+                starts_at=probe,
+                ends_at=candidate_end,
+                shift=shift_name,  # type: ignore[arg-type]
+            )
+        except HTTPException:
+            continue
+    return None
+
+
 def suggest_booking_slots(
     db: Session,
     *,
@@ -2198,7 +2790,7 @@ def suggest_booking_slots(
     limit: int = 4,
     allow_overtime: bool = False,
 ) -> list[SuggestedSlotOut]:
-    """Encaixa horários como o botão da OS: até 4 opções alternando manhã/tarde e respeitando jornada e conflitos dos técnicos."""
+    """Até 4 janelas: até 2 na manhã (término até 12:00) e até 2 na tarde (início a partir de 13:00)."""
     tz = _tenant_tz(tenant)
     now_utc = datetime.now(timezone.utc)
     holidays = set(
@@ -2214,6 +2806,8 @@ def suggest_booking_slots(
     if technician_id is not None:
         tech_query = tech_query.where(User.id == technician_id)
     technicians = db.execute(tech_query).scalars().all()
+    if not technicians:
+        return []
 
     if from_at.tzinfo is None:
         from_at = from_at.replace(tzinfo=timezone.utc)
@@ -2221,18 +2815,25 @@ def suggest_booking_slots(
     from_local = from_at_utc.astimezone(tz)
     business_days = _tenant_business_days(tenant)
 
-    suggestions: list[SuggestedSlotOut] = []
+    morning_slots: list[SuggestedSlotOut] = []
+    afternoon_slots: list[SuggestedSlotOut] = []
+    morning_cap = 2
+    afternoon_cap = 2
     day_cursor = from_local.date()
     attempts = 0
-    max_suggestions = min(max(1, int(limit)), 4)
-    while len(suggestions) < max_suggestions and attempts < 60:
+
+    while (len(morning_slots) < morning_cap or len(afternoon_slots) < afternoon_cap) and attempts < 90:
         attempts += 1
         if _is_holiday_blocked(day_cursor, holidays) or day_cursor.weekday() not in business_days:
             day_cursor += timedelta(days=1)
             continue
-        for shift_name in ("morning", "afternoon"):
-            if len(suggestions) >= max_suggestions:
-                break
+
+        for shift_name, bucket, cap in (
+            ("morning", morning_slots, morning_cap),
+            ("afternoon", afternoon_slots, afternoon_cap),
+        ):
+            if len(bucket) >= cap:
+                continue
             shift_bounds = _reschedule_shift_bounds(day=day_cursor, shift=shift_name, tenant_tz=tz, tenant=tenant)
             if shift_bounds is None:
                 continue
@@ -2240,59 +2841,34 @@ def suggest_booking_slots(
             probe = shift_start
             if day_cursor == from_local.date() and from_at_utc > probe:
                 probe = from_at_utc
-            found_for_shift = False
-            while probe <= shift_end:
+            found = False
+            while probe <= shift_end and len(bucket) < cap:
                 local_probe = probe.astimezone(tz)
                 if local_probe < datetime.now(tz):
                     probe += timedelta(minutes=15)
                     continue
-                candidate_end = probe + timedelta(minutes=duration_minutes)
-                if not allow_overtime and candidate_end > shift_end:
-                    break
-                for tech in technicians:
-                    try:
-                        if allow_overtime:
-                            _check_technician_start_rules(
-                                db=db,
-                                tenant_id=tenant_id,
-                                technician_id=tech.id,
-                                starts_at=probe,
-                                tenant_tz=tz,
-                            )
-                        else:
-                            _check_technician_work_rules(
-                                db=db,
-                                tenant_id=tenant_id,
-                                technician_id=tech.id,
-                                starts_at=probe,
-                                ends_at=candidate_end,
-                                tenant_tz=tz,
-                            )
-                        _check_technician_conflict(
-                            db=db,
-                            tenant_id=tenant_id,
-                            technician_id=tech.id,
-                            starts_at=probe,
-                            ends_at=candidate_end,
-                        )
-                        suggestions.append(
-                            SuggestedSlotOut(
-                                technician_id=tech.id,
-                                starts_at=probe,
-                                ends_at=candidate_end,
-                                shift=shift_name,
-                            )
-                        )
-                        found_for_shift = True
-                        break
-                    except HTTPException:
-                        continue
-                if found_for_shift:
+                slot = _try_slot_for_technicians(
+                    db,
+                    tenant_id=tenant_id,
+                    tenant_tz=tz,
+                    technicians=technicians,
+                    probe=probe,
+                    duration_minutes=duration_minutes,
+                    shift_end=shift_end,
+                    shift_name=shift_name,
+                    allow_overtime=allow_overtime,
+                )
+                if slot is not None:
+                    bucket.append(slot)
+                    found = True
                     break
                 probe += timedelta(minutes=15)
+            if not found and shift_name == "morning":
+                pass
         day_cursor += timedelta(days=1)
 
-    return suggestions
+    combined = morning_slots[:morning_cap] + afternoon_slots[:afternoon_cap]
+    return combined[: min(max(1, int(limit)), 4)]
 
 
 @router.get(
@@ -2303,32 +2879,46 @@ def suggest_booking_slots(
 @limiter.limit("30/minute")
 def technicians_next_slots(
     request: Request,
-    service_order_id: int,
     from_at: datetime,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    service_order_id: int | None = None,
+    duration_minutes: int | None = Query(None, ge=1),
     technician_id: int | None = None,
-    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    limit: Annotated[int, Query(ge=1, le=20)] = 4,
     allow_overtime: bool = False,
     split_days: Annotated[int | None, Query(ge=2, le=10)] = None,
 ) -> list[SuggestedSlotOut]:
     technician_id = _enforce_technician_scope(current_user, technician_id)
     tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
-    order = db.execute(
-        select(ServiceOrder)
-        .where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == current_user.tenant_id)
-        .options(selectinload(ServiceOrder.service_items))
-    ).scalar_one_or_none()
-    if order is None or not order.service_items:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service order not found or has no services.")
 
-    total_duration_minutes = sum(max(i.quantity, 1) * max(i.duration_minutes, 1) for i in order.service_items)
-    if split_days is not None and split_days > 1:
-        duration_minutes = max(1, total_duration_minutes // split_days)
-        if total_duration_minutes % split_days != 0:
-            duration_minutes += 1
+    resolved_duration: int | None = None
+    if service_order_id is not None:
+        order = db.execute(
+            select(ServiceOrder)
+            .where(ServiceOrder.id == service_order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+            .options(selectinload(ServiceOrder.service_items))
+        ).scalar_one_or_none()
+        if order is None or not order.service_items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ordem de serviço não encontrada ou sem serviços para calcular o tempo estimado.",
+            )
+        _ensure_technician_order_access(order, current_user)
+        total_duration_minutes = get_total_duration_minutes(order)
+        if split_days is not None and split_days > 1:
+            resolved_duration = max(1, total_duration_minutes // split_days)
+            if total_duration_minutes % split_days != 0:
+                resolved_duration += 1
+        else:
+            resolved_duration = total_duration_minutes
+    elif duration_minutes is not None:
+        resolved_duration = int(duration_minutes)
     else:
-        duration_minutes = total_duration_minutes
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe service_order_id ou duration_minutes para sugerir horários.",
+        )
 
     if from_at.tzinfo is None:
         from_at = from_at.replace(tzinfo=timezone.utc)
@@ -2337,7 +2927,7 @@ def technicians_next_slots(
         db,
         tenant=tenant,
         tenant_id=current_user.tenant_id,
-        duration_minutes=duration_minutes,
+        duration_minutes=resolved_duration,
         from_at=from_at,
         technician_id=technician_id,
         limit=limit,
@@ -2378,8 +2968,9 @@ def list_tenant_holidays(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    limit: Annotated[int, Query(ge=1)] = 20,
 ) -> list[TenantHoliday]:
+    limit = clamp_limit(limit)
     return db.execute(
         select(TenantHoliday)
         .where(TenantHoliday.tenant_id == current_user.tenant_id)
@@ -2716,18 +3307,28 @@ def list_unavailability(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     technician_id: int | None = None,
+    from_day: Annotated[date | None, Query(description="Inclusive start (tenant local calendar day).")] = None,
+    to_day: Annotated[date | None, Query(description="Inclusive end (tenant local calendar day).")] = None,
     from_at: datetime | None = None,
     to_at: datetime | None = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[TechnicianUnavailability]:
     technician_id = _enforce_technician_scope(current_user, technician_id)
+    tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
+    tenant_tz = _tenant_tz(tenant)
     query = select(TechnicianUnavailability).where(TechnicianUnavailability.tenant_id == current_user.tenant_id)
     if technician_id is not None:
         query = query.where(TechnicianUnavailability.technician_id == technician_id)
-    if from_at is not None:
+    if from_day is not None:
+        range_start_utc = datetime.combine(from_day, time.min, tzinfo=tenant_tz).astimezone(timezone.utc)
+        query = query.where(TechnicianUnavailability.ends_at >= range_start_utc)
+    elif from_at is not None:
         query = query.where(TechnicianUnavailability.ends_at >= from_at)
-    if to_at is not None:
+    if to_day is not None:
+        range_end_excl = datetime.combine(to_day + timedelta(days=1), time.min, tzinfo=tenant_tz).astimezone(timezone.utc)
+        query = query.where(TechnicianUnavailability.starts_at < range_end_excl)
+    elif to_at is not None:
         query = query.where(TechnicianUnavailability.starts_at <= to_at)
     return db.execute(query.order_by(TechnicianUnavailability.starts_at.asc()).offset(skip).limit(limit)).scalars().all()
 

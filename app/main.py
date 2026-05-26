@@ -25,9 +25,13 @@ from app.config import (
     public_api_base_url,
 )
 from app.limiter import limiter
-from app.middleware import RequestContextMiddleware
+from app.middleware import MaxBodySizeMiddleware, RequestContextMiddleware
 from app.routers.auth import router as auth_router
+from app.routers.client_catalog_equipments import router as client_catalog_equipments_router
 from app.routers.clients import router as clients_router
+from app.routers.equipment_catalog import router as equipment_catalog_router
+from app.routers.operacao_manuals import router as operacao_manuals_router
+from app.routers.operacao_categories import router as operacao_categories_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.cep import router as cep_router
 from app.routers.cnpj import router as cnpj_router
@@ -41,6 +45,7 @@ from app.routers.api_keys import router as api_keys_router
 from app.routers.platform import router as platform_router
 from app.routers.platform_finance_bank_catalog import router as platform_finance_bank_catalog_router
 from app.routers.public_portal import equipment_token_router, router as public_portal_router
+from app.routers.reports import router as reports_router
 from app.routers.service_orders import router as service_orders_router
 from app.routers.finance import router as finance_router
 from app.routers.webhooks_asaas import router as webhooks_asaas_router
@@ -53,6 +58,8 @@ from app.routers.whatsapp import router as whatsapp_router
 from app.routers.ai_settings import router as ai_settings_router
 from app.routers.nfse import router as nfse_router
 from app.routers.preventive_maintenance import router as preventive_maintenance_router
+from app.routers.system import router as system_router
+from app.routers.qrcodes import router as qrcodes_router
 from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.routers.whatsapp_broadcast_campaigns import router as whatsapp_broadcast_campaigns_router
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
@@ -62,6 +69,8 @@ logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", "").strip()
 
 API_V1_PREFIX = "/api/v1"
+# Limite de corpo HTTP (uploads multipart). Nginx também precisa client_max_body_size ≥ este valor.
+MAX_HTTP_BODY_BYTES = int(os.getenv("MAX_HTTP_BODY_BYTES", str(100 * 1024 * 1024)))
 
 app = FastAPI(title="ERP SaaS API", version="0.1.0")
 app.state.limiter = limiter
@@ -75,6 +84,7 @@ if CORS_ORIGINS or CORS_ORIGIN_REGEX:
         allow_headers=["*"],
     )
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(MaxBodySizeMiddleware, max_body_size=MAX_HTTP_BODY_BYTES)
 app.add_middleware(RequestContextMiddleware)
 
 web_dir = Path(__file__).resolve().parent / "web"
@@ -152,6 +162,18 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             default=str,
         )
     )
+    message = detail if isinstance(detail, str) else str(detail)
+    if exc.status_code == 413 and (
+        not message
+        or message == "Request Entity Too Large"
+        or "entity too large" in message.lower()
+    ):
+        max_mb = MAX_HTTP_BODY_BYTES // (1024 * 1024)
+        message = (
+            f"Arquivo ou requisição excede o limite de {max_mb} MB. "
+            "Reduza o PDF ou peça ao administrador para ajustar o Nginx (client_max_body_size)."
+        )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -159,7 +181,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
                 "id": error_id,
                 "request_id": rid,
                 "status_code": exc.status_code,
-                "message": detail,
+                "message": message,
                 "path": str(request.url.path),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
@@ -172,17 +194,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_id = str(uuid4())
     rid = _request_id(request)
     err_logger = logging.getLogger("erp.errors")
-    err_logger.warning(
-        json.dumps(
-            {
-                "event": "validation_error",
-                "request_id": rid,
-                "error_id": error_id,
-                "path": str(request.url.path),
-            },
-            default=str,
-        )
-    )
+    field_errors = exc.errors()
+    log_payload = {
+        "event": "validation_error",
+        "request_id": rid,
+        "error_id": error_id,
+        "path": str(request.url.path),
+        "fields": field_errors,
+    }
+    if "/equipment-catalog" in str(request.url.path):
+        err_logger.error(json.dumps(log_payload, default=str))
+    else:
+        err_logger.warning(json.dumps(log_payload, default=str))
     return JSONResponse(
         status_code=422,
         content={
@@ -377,6 +400,10 @@ app.include_router(api_keys_router, prefix=API_V1_PREFIX)
 app.include_router(cep_router, prefix=API_V1_PREFIX)
 app.include_router(cnpj_router, prefix=API_V1_PREFIX)
 app.include_router(clients_router, prefix=API_V1_PREFIX)
+app.include_router(client_catalog_equipments_router, prefix=API_V1_PREFIX)
+app.include_router(equipment_catalog_router, prefix=API_V1_PREFIX)
+app.include_router(operacao_manuals_router, prefix=API_V1_PREFIX)
+app.include_router(operacao_categories_router, prefix=API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=API_V1_PREFIX)
 app.include_router(product_images_router, prefix=API_V1_PREFIX)
 app.include_router(products_router, prefix=API_V1_PREFIX)
@@ -384,6 +411,7 @@ app.include_router(equipment_documents_router, prefix=API_V1_PREFIX)
 app.include_router(pmoc_router, prefix=API_V1_PREFIX)
 app.include_router(integrations_mercado_livre_router, prefix=API_V1_PREFIX)
 app.include_router(service_orders_router, prefix=API_V1_PREFIX)
+app.include_router(reports_router, prefix=API_V1_PREFIX)
 app.include_router(equipment_token_router, prefix=API_V1_PREFIX)
 app.include_router(budgets_router, prefix=API_V1_PREFIX)
 app.include_router(finance_router, prefix=API_V1_PREFIX)
@@ -399,11 +427,24 @@ app.include_router(nfse_router, prefix=API_V1_PREFIX)
 app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_broadcast_campaigns_router, prefix=API_V1_PREFIX)
+app.include_router(system_router, prefix=API_V1_PREFIX)
+app.include_router(qrcodes_router, prefix=API_V1_PREFIX)
 
 
 @app.on_event("startup")
 def _startup_workers() -> None:
     start_whatsapp_reminder_worker()
+    try:
+        from app.database import SessionLocal
+        from app.storage_integrity import run_startup_storage_validation
+
+        db = SessionLocal()
+        try:
+            run_startup_storage_validation(db)
+        finally:
+            db.close()
+    except Exception:
+        logging.getLogger(__name__).exception("storage_integrity startup hook failed")
 
 
 @app.on_event("shutdown")

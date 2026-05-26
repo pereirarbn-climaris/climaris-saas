@@ -11,9 +11,31 @@ from uuid import uuid4
 from botocore.exceptions import ClientError
 from sqlalchemy.orm import Session
 
-from app.tenant_logo import _build_public_url, _optional_acl, _resolve_s3_runtime_config, _s3_client_from_config
+from app.tenant_logo import (
+    _build_public_url,
+    _optional_acl,
+    _resolve_s3_runtime_config,
+    _s3_client_from_config,
+    s3_bucket_for,
+)
 
 MAX_PMOC_FILE_BYTES = 25 * 1024 * 1024
+
+PDF_CONTENT_TYPES = frozenset({"application/pdf", "application/x-pdf", "application/vnd.pdf"})
+
+
+def validate_pmoc_pdf_upload(source_filename: str | None, source_content_type: str | None, file_bytes: bytes) -> None:
+    """Valida laudos PMOC em PDF antes do upload S3."""
+    if not file_bytes:
+        raise ValueError("Arquivo vazio.")
+    name = (source_filename or "").lower()
+    ctype = (source_content_type or "").lower()
+    is_pdf_name = name.endswith(".pdf")
+    is_pdf_type = ctype in PDF_CONTENT_TYPES or ctype == ""
+    if not is_pdf_name and not is_pdf_type:
+        raise ValueError("Envie apenas arquivos PDF (.pdf).")
+    if file_bytes[:4] != b"%PDF":
+        raise ValueError("Arquivo PDF inválido ou corrompido.")
 
 
 @dataclass
@@ -55,9 +77,9 @@ def upload_pmoc_file(
             ext = ext[1:]
 
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "manuais")
     if not bucket:
-        raise RuntimeError("AWS_S3_BUCKET não configurado (env ou credencial SaaS aws-s3).")
+        raise RuntimeError("AWS S3 (manuais) não configurado (bucket_manuais ou credencial aws-s3).")
 
     region = cfg.region or "us-east-1"
     endpoint_url = cfg.endpoint_url
@@ -102,7 +124,7 @@ def delete_pmoc_file_if_exists(s3_key: str | None, db: Session | None = None) ->
     if not s3_key:
         return
     cfg = _resolve_s3_runtime_config(db)
-    bucket = cfg.bucket
+    bucket = s3_bucket_for(cfg, "manuais")
     if not bucket:
         return
     client = _s3_client_from_config(cfg)

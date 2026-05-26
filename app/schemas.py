@@ -3,16 +3,21 @@ from __future__ import annotations
 from datetime import date, datetime
 import json
 import re
+import uuid
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator, model_validator
 
 from app.plan_rules import get_plan_definition, normalize_plan_key
+from app.service_order_ops import build_equipment_cards, get_total_duration_minutes
 from models import (
     BudgetStatus,
+    EquipmentCatalogComponentType,
     EquipmentType,
     FinanceEntryStatus,
     FinanceEntryType,
+    ServiceOrder,
+    ServiceOrderEquipmentService,
     ServiceOrderServiceItem,
     StockMovementReason,
     TenantStatus,
@@ -1010,6 +1015,81 @@ class ClientOut(BaseModel):
     preventive_campaign_opt_out: bool = False
     is_active: bool = True
     is_verified_cnpj: bool = False
+    last_cnpj_commercial_update: datetime | None = None
+
+
+class ClientSiteCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=150)
+    street: str | None = Field(default=None, max_length=255)
+    number: str | None = Field(default=None, max_length=20)
+    neighborhood: str | None = Field(default=None, max_length=100)
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=2)
+    cep: str | None = Field(default=None, max_length=12)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _upper_site_state(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        return v.strip().upper()[:2]
+
+    @field_validator("cep", mode="before")
+    @classmethod
+    def _digits_site_cep(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from app.tax_id import digits_only
+
+        d = digits_only(v)
+        return d[:8] if d else None
+
+
+class ClientSiteUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    street: str | None = Field(default=None, max_length=255)
+    number: str | None = Field(default=None, max_length=20)
+    neighborhood: str | None = Field(default=None, max_length=100)
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=2)
+    cep: str | None = Field(default=None, max_length=12)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _upper_site_state_update(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        return v.strip().upper()[:2]
+
+    @field_validator("cep", mode="before")
+    @classmethod
+    def _digits_site_cep_update(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from app.tax_id import digits_only
+
+        d = digits_only(v)
+        return d[:8] if d else None
+
+
+class ClientSiteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    name: str
+    street: str | None = None
+    number: str | None = None
+    neighborhood: str | None = None
+    city: str | None = None
+    state: str | None = None
+    cep: str | None = None
+    created_at: datetime
+
+
+class ClientCnpjCommercialRefreshOut(BaseModel):
+    client: ClientOut
+    lookup: "CnpjCommercialLookupOut"
 
 
 class ClientAuditEntryOut(BaseModel):
@@ -1051,6 +1131,7 @@ class EquipmentCreate(BaseModel):
     voltagem: str | None = Field(default=None, max_length=20)
     tecnologia_ciclo: Literal["on_off", "inverter"] | None = None
     local_instalacao: str | None = Field(default=None, max_length=180)
+    installation_reference: str | None = Field(default=None, max_length=500)
     ambiente_nome: str | None = Field(default=None, max_length=180)
     ambiente_tipo: str | None = Field(default=None, max_length=120)
     area_m2: float | None = Field(default=None, ge=0)
@@ -1064,6 +1145,7 @@ class EquipmentCreate(BaseModel):
     filtro_dimensoes: str | None = Field(default=None, max_length=120)
     filtro_periodicidade_limpeza: str | None = Field(default=None, max_length=120)
     ativo: bool = True
+    client_site_id: int | None = Field(default=None, ge=1)
 
 
 class EquipmentUpdate(BaseModel):
@@ -1081,6 +1163,7 @@ class EquipmentUpdate(BaseModel):
     voltagem: str | None = Field(default=None, max_length=20)
     tecnologia_ciclo: Literal["on_off", "inverter"] | None = None
     local_instalacao: str | None = Field(default=None, max_length=180)
+    installation_reference: str | None = Field(default=None, max_length=500)
     ambiente_nome: str | None = Field(default=None, max_length=180)
     ambiente_tipo: str | None = Field(default=None, max_length=120)
     area_m2: float | None = Field(default=None, ge=0)
@@ -1094,6 +1177,7 @@ class EquipmentUpdate(BaseModel):
     filtro_dimensoes: str | None = Field(default=None, max_length=120)
     filtro_periodicidade_limpeza: str | None = Field(default=None, max_length=120)
     ativo: bool | None = None
+    client_site_id: int | None = Field(default=None, ge=1)
 
 
 class EquipmentOut(BaseModel):
@@ -1101,6 +1185,7 @@ class EquipmentOut(BaseModel):
 
     id: int
     client_id: int
+    client_site_id: int | None = None
     public_token: str
     tipo: EquipmentType
     identificacao: str
@@ -1116,6 +1201,7 @@ class EquipmentOut(BaseModel):
     voltagem: str | None = None
     tecnologia_ciclo: str | None = None
     local_instalacao: str | None = None
+    installation_reference: str | None = None
     ambiente_nome: str | None = None
     ambiente_tipo: str | None = None
     area_m2: float | None = None
@@ -1286,6 +1372,8 @@ class PmocPlanOut(BaseModel):
     id: int
     tenant_id: int
     client_id: int
+    client_site_id: int | None = None
+    establishment_name: str | None = None
     status: PmocPlanStatusApi
     title: str
     version_label: str
@@ -1311,6 +1399,7 @@ class PmocPlanOut(BaseModel):
 
 class PmocPlanCreate(BaseModel):
     client_id: int = Field(ge=1)
+    client_site_id: int = Field(ge=1, description="Obra/filial (client_sites) vinculada ao PMOC.")
     title: str = Field(..., min_length=3, max_length=200)
 
     @field_validator("title")
@@ -1322,17 +1411,44 @@ class PmocPlanCreate(BaseModel):
         return s[:200]
 
 
+class PmocActivePlanCheckOut(BaseModel):
+    has_active: bool
+    active_plan_id: int | None = None
+    active_plan_title: str | None = None
+
+
 class PmocPlanUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str | None = Field(default=None, min_length=3, max_length=200)
     version_label: str | None = Field(default=None, max_length=40)
     law_reference_note: str | None = None
     internal_notes: str | None = None
     extras: dict[str, Any] | None = None
-    responsible_name: str | None = Field(default=None, max_length=180)
-    responsible_council: str | None = Field(default=None, max_length=16)
-    responsible_registration: str | None = Field(default=None, max_length=80)
-    art_number: str | None = Field(default=None, max_length=120)
-    art_issued_at: date | None = None
+    responsible_name: str | None = Field(
+        default=None,
+        max_length=180,
+        validation_alias=AliasChoices("responsible_name", "responsavel_tecnico"),
+    )
+    responsible_council: str | None = Field(
+        default=None,
+        max_length=16,
+        validation_alias=AliasChoices("responsible_council", "conselho_profissional"),
+    )
+    responsible_registration: str | None = Field(
+        default=None,
+        max_length=80,
+        validation_alias=AliasChoices("responsible_registration", "registro_profissional"),
+    )
+    art_number: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("art_number", "numero_art"),
+    )
+    art_issued_at: date | None = Field(
+        default=None,
+        validation_alias=AliasChoices("art_issued_at", "data_emissao_art"),
+    )
     next_air_analysis_due: date | None = None
 
 
@@ -1348,10 +1464,19 @@ class PmocPlanEquipmentOut(BaseModel):
     modelo: str | None = None
     capacidade_btu: int | None = None
     local_instalacao: str | None = None
+    installation_reference: str | None = None
 
 
 class PmocPlanEquipmentsReplace(BaseModel):
     equipment_ids: list[int] = Field(default_factory=list, max_length=500)
+
+
+class PmocActivityServiceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    duration_minutes: int
 
 
 class PmocScheduledActivityOut(BaseModel):
@@ -1360,6 +1485,8 @@ class PmocScheduledActivityOut(BaseModel):
     id: int
     pmoc_id: int
     equipment_id: int | None = None
+    service_id: int | None = None
+    service: PmocActivityServiceOut | None = None
     frequency: PmocFrequencyApi
     task_code: str | None = None
     title: str
@@ -1370,6 +1497,7 @@ class PmocScheduledActivityOut(BaseModel):
 
 class PmocScheduledActivityCreate(BaseModel):
     equipment_id: int | None = Field(default=None, ge=1)
+    service_id: int | None = Field(default=None, ge=1)
     frequency: PmocFrequencyApi
     task_code: str | None = Field(default=None, max_length=40)
     title: str = Field(..., min_length=2, max_length=200)
@@ -1379,11 +1507,218 @@ class PmocScheduledActivityCreate(BaseModel):
 
 class PmocScheduledActivityUpdate(BaseModel):
     equipment_id: int | None = Field(default=None, ge=1)
+    service_id: int | None = Field(default=None, ge=1)
     frequency: PmocFrequencyApi | None = None
     task_code: str | None = Field(default=None, max_length=40)
     title: str | None = Field(default=None, min_length=2, max_length=200)
     description: str | None = None
     sort_order: int | None = None
+
+
+class PmocPlanningScheduleCreate(BaseModel):
+    technician_id: int = Field(..., ge=1)
+    starts_at: datetime
+    duration_minutes: int = Field(..., ge=1, le=24 * 60)
+    period_year: int = Field(..., ge=2000, le=2100)
+    period_month: int = Field(..., ge=1, le=12)
+    row_keys: list[str] = Field(default_factory=list, max_length=200)
+    activity_count: int = Field(..., ge=1, le=200)
+
+
+class PmocRtDataCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    responsible_name: str | None = Field(
+        default=None,
+        max_length=180,
+        validation_alias=AliasChoices("responsible_name", "responsibleName"),
+    )
+    responsible_council: str | None = Field(
+        default=None,
+        max_length=16,
+        validation_alias=AliasChoices("responsible_council", "responsibleCouncil"),
+    )
+    responsible_registration: str | None = Field(
+        default=None,
+        max_length=80,
+        validation_alias=AliasChoices("responsible_registration", "responsibleRegistration"),
+    )
+    art_number: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("art_number", "artNumber"),
+    )
+    art_issued_at: date | None = Field(
+        default=None,
+        validation_alias=AliasChoices("art_issued_at", "artIssuedAt"),
+    )
+    next_air_analysis_due: date | None = Field(
+        default=None,
+        validation_alias=AliasChoices("next_air_analysis_due", "nextAirAnalysisDue"),
+    )
+
+
+class PmocCreateActivityIn(BaseModel):
+    service_id: int = Field(ge=1, validation_alias=AliasChoices("service_id", "serviceId"))
+    frequency: PmocFrequencyApi
+    equipment_id: int | None = Field(default=None, ge=1, validation_alias=AliasChoices("equipment_id", "equipmentId"))
+    title: str | None = Field(default=None, min_length=2, max_length=200)
+    task_code: str | None = Field(default=None, max_length=40)
+    description: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class PmocCreateIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    client_id: int = Field(ge=1, validation_alias=AliasChoices("client_id", "clientId"))
+    client_site_id: int = Field(ge=1, validation_alias=AliasChoices("client_site_id", "siteId"))
+    title: str = Field(..., min_length=3, max_length=200)
+    equipment_ids: list[int] = Field(
+        default_factory=list,
+        max_length=500,
+        validation_alias=AliasChoices("equipment_ids", "equipmentIds"),
+    )
+    activities: list[PmocCreateActivityIn] = Field(default_factory=list)
+    rt_data: PmocRtDataCreate | None = Field(default=None, validation_alias=AliasChoices("rt_data", "rtData"))
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: str) -> str:
+        s = v.strip()
+        if len(s) < 3:
+            raise ValueError("Informe um título com pelo menos 3 caracteres.")
+        return s[:200]
+
+
+class PmocCreateValidationIssueOut(BaseModel):
+    code: str
+    field: str
+    message: str
+    tab: str
+
+
+class PmocEstimatedTimeLineOut(BaseModel):
+    activity_id: int
+    title: str
+    service_name: str | None = None
+    minutes_per_unit: int
+    occurrences: int
+    total_minutes: int
+
+
+class PmocEstimatedTimeOut(BaseModel):
+    total_minutes: int
+    equipment_count: int
+    activities_in_period: int
+    period_year: int
+    period_month: int
+    breakdown: list[PmocEstimatedTimeLineOut]
+
+
+class PmocPendingTaskOut(BaseModel):
+    equipment_id: int
+    equipment_label: str
+    activity_id: int
+    activity_title: str
+    service_id: int | None = None
+    service_name: str | None = None
+    status: Literal["pending"] = "pending"
+
+
+class PmocPendingTasksOut(BaseModel):
+    period_year: int
+    period_month: int
+    total_pending: int
+    tasks: list[PmocPendingTaskOut]
+
+
+PmocComplianceTrafficLightApi = Literal["green", "yellow", "red"]
+
+
+class PmocComplianceIndicatorOut(BaseModel):
+    key: str
+    label: str
+    status: PmocComplianceTrafficLightApi
+    summary: str
+    detail: str | None = None
+
+
+class PmocComplianceSummaryOut(BaseModel):
+    pmoc_id: int
+    overall_status: PmocComplianceTrafficLightApi
+    indicators: list[PmocComplianceIndicatorOut]
+    monthly_execution_pct: int
+    open_occurrences: int
+
+
+class PmocOccurrenceCreate(BaseModel):
+    equipment_id: int | None = Field(default=None, ge=1)
+    service_order_id: int | None = Field(default=None, ge=1)
+    checklist_item_id: str | None = Field(default=None, max_length=64)
+    checklist_item_descricao: str = Field(..., min_length=1, max_length=500)
+    failure_description: str = Field(..., min_length=3, max_length=5000)
+
+
+class PmocOccurrenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    pmoc_id: int
+    equipment_id: int | None = None
+    service_order_id: int | None = None
+    checklist_item_id: str | None = None
+    checklist_item_descricao: str
+    failure_description: str
+    status: Literal["open", "resolved"]
+    created_by_user_id: int | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+    equipment_label: str | None = None
+    client_name: str | None = None
+
+
+class PmocOccurrenceAlertOut(BaseModel):
+    id: int
+    pmoc_id: int
+    pmoc_title: str
+    client_name: str
+    equipment_label: str | None
+    checklist_item_descricao: str
+    failure_description: str
+    created_at: datetime
+
+
+PublicPmocConservationStatusApi = Literal["ok", "attention", "critical", "pending"]
+
+
+class PublicPmocValidationEquipmentOut(BaseModel):
+    label: str
+    model: str | None = None
+    location: str | None = None
+    conservation_status: PublicPmocConservationStatusApi
+    last_inspection_at: datetime | None = None
+
+
+class PublicPmocValidationOut(BaseModel):
+    pmoc_id: int
+    plan_title: str
+    plan_status: str
+    client_name: str
+    establishment_label: str | None = None
+    establishment_city: str | None = None
+    establishment_state: str | None = None
+    responsible_name: str | None = None
+    art_number: str | None = None
+    art_valid_until: date | None = None
+    overall_status: PmocComplianceTrafficLightApi
+    indicators: list[PmocComplianceIndicatorOut]
+    last_maintenance_at: datetime | None = None
+    next_maintenance_expected: date | None = None
+    equipments: list[PublicPmocValidationEquipmentOut]
+    validated_at: datetime
+    validation_url: str
 
 
 class PmocExecutionOut(BaseModel):
@@ -1408,6 +1743,32 @@ class PmocExecutionCreate(BaseModel):
     completion_status: PmocExecutionCompletionApi = "done"
     notes: str | None = None
     service_order_id: int | None = Field(default=None, ge=1)
+
+
+PmocFieldChecklistStatusApi = Literal["ok", "not_ok", "na"]
+
+
+class PmocFieldChecklistItemIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=300)
+    status: PmocFieldChecklistStatusApi
+    photoReference: str | None = None
+
+
+class PmocFieldInspectionCreate(BaseModel):
+    pmocId: int = Field(ge=1)
+    equipmentId: int | None = Field(default=None, ge=1)
+    checklist: list[PmocFieldChecklistItemIn] = Field(min_length=1)
+    generalNotes: str = ""
+    signatureBase64: str | None = None
+
+
+class PmocFieldInspectionOut(BaseModel):
+    id: int
+    pmoc_id: int
+    equipment_id: int | None = None
+    completion_status: PmocExecutionCompletionApi
+    created_at: datetime
 
 
 class PmocAirQualityAnalysisOut(BaseModel):
@@ -1468,6 +1829,9 @@ class ProductOut(BaseModel):
     sale_price: float
     unit_price: float
     stock_quantity: float
+    quantity_physical: float = 0
+    quantity_reserved: float = 0
+    quantity_available: float = 0
     compatible_equipment_tags: str | None = None
     btu_min: int | None = None
     btu_max: int | None = None
@@ -1599,6 +1963,7 @@ class StockAdjustmentCreate(BaseModel):
 class ServiceOrderStatusUpdate(BaseModel):
     status: Literal["in_progress", "done", "cancelled"]
     schedule_notes: str | None = Field(default=None, max_length=4000)
+    cancel_reason: str | None = Field(default=None, max_length=4000)
 
 
 class ServiceProductInput(BaseModel):
@@ -1679,15 +2044,31 @@ class ServiceOut(BaseModel):
     estimated_profit: float = 0
 
 
-class ServiceOrderServiceItemInput(BaseModel):
+class ServiceOrderEquipmentServiceInput(BaseModel):
+    """Linha da pivot equipamento ↔ serviço na OS."""
+
     service_id: int
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1)
     equipment_id: int | None = None
+    unit_price: float | None = Field(
+        default=None,
+        ge=0,
+        description="Opcional; quando omitido, usa o preço do catálogo de serviços.",
+    )
+
+
+# Alias retrocompatível
+ServiceOrderServiceItemInput = ServiceOrderEquipmentServiceInput
 
 
 class ServiceOrderProductItemInput(BaseModel):
     product_id: int
     quantity: int = 1
+    unit_price: float | None = Field(
+        default=None,
+        ge=0,
+        description="Opcional; quando omitido, usa o preço de venda do catálogo.",
+    )
 
 
 class BudgetServiceItemInput(BaseModel):
@@ -2386,13 +2767,24 @@ class FinanceCategorySummaryOut(BaseModel):
 
 
 class ServiceOrderCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     client_id: int
     title: str
     description: str | None = None
     technician_ids: list[int] = []
-    services: list[ServiceOrderServiceItemInput]
+    services: list[ServiceOrderEquipmentServiceInput] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("services", "equipment_services"),
+    )
     products: list[ServiceOrderProductItemInput] = []
     discount_amount: float = Field(default=0, ge=0, le=9_999_999)
+
+    @model_validator(mode="after")
+    def _require_services(self) -> "ServiceOrderCreate":
+        if not self.services:
+            raise ValueError("Service order requires at least one equipment_service.")
+        return self
 
 
 class ServiceOrderApprove(BaseModel):
@@ -2411,7 +2803,23 @@ class ServiceOrderApproveOut(BaseModel):
     split_days: int | None = None
 
 
-class ServiceOrderServiceItemOut(BaseModel):
+def _equipment_service_item_dict(data: ServiceOrderEquipmentService | ServiceOrderServiceItem) -> dict[str, Any]:
+    svc = data.service
+    return {
+        "id": data.id,
+        "service_id": data.service_id,
+        "equipment_id": data.equipment_id,
+        "quantity": data.quantity,
+        "unit_price": float(data.unit_price),
+        "duration_minutes": data.duration_minutes,
+        "service_name": svc.name if svc is not None else None,
+        "periodicidade_meses": svc.periodicidade_meses if svc is not None else None,
+    }
+
+
+class ServiceOrderEquipmentServiceOut(BaseModel):
+    """Linha da pivot os_equipment_services exposta na API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -2426,31 +2834,55 @@ class ServiceOrderServiceItemOut(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _from_orm_item(cls, data: Any) -> Any:
-        if isinstance(data, ServiceOrderServiceItem):
-            svc = data.service
-            return {
-                "id": data.id,
-                "service_id": data.service_id,
-                "equipment_id": data.equipment_id,
-                "quantity": data.quantity,
-                "unit_price": float(data.unit_price),
-                "duration_minutes": data.duration_minutes,
-                "service_name": svc.name if svc is not None else None,
-                "periodicidade_meses": svc.periodicidade_meses if svc is not None else None,
-            }
+        if isinstance(data, (ServiceOrderEquipmentService, ServiceOrderServiceItem)):
+            return _equipment_service_item_dict(data)
         return data
 
 
+# Alias retrocompatível
+ServiceOrderServiceItemOut = ServiceOrderEquipmentServiceOut
+
+
+class ServiceOrderEquipmentCardOut(BaseModel):
+    """Equipamento na OS com seus serviços (visão do técnico)."""
+
+    equipment_id: int | None = None
+    equipment_identificacao: str | None = None
+    equipment_tipo: str | None = None
+    equipment_modelo: str | None = None
+    services: list[ServiceOrderEquipmentServiceOut]
+    total_duration_minutes: int = 0
+
+
 class ServiceOrderItemEquipmentUpdate(BaseModel):
-    equipment_id: int | None = Field(default=None, ge=1)
+    """Vínculo de equipamento(s) à linha de serviço.
+
+    Preferir ``equipment_ids`` (lista completa). ``equipment_id`` permanece para compatibilidade.
+    """
+
+    equipment_id: int | None = Field(
+        default=None,
+        description="Legado: um único equipamento ou null para remover.",
+    )
+    equipment_ids: list[int] | None = Field(
+        default=None,
+        description="Lista completa de equipamentos vinculados à linha (até a quantidade do item).",
+    )
 
 
 class ServiceOrderServiceItemQuantityPatch(BaseModel):
     quantity: int = Field(ge=1)
+    unit_price: float | None = Field(default=None, ge=0)
 
 
 class ServiceOrderProductItemQuantityPatch(BaseModel):
     quantity: int = Field(ge=1)
+    unit_price: float | None = Field(default=None, ge=0)
+
+
+class ServiceOrderDetailsUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
 
 
 class EquipmentUsageReportRowOut(BaseModel):
@@ -2467,12 +2899,34 @@ class PublicEquipmentHistoryEntryOut(BaseModel):
     detail: str | None = None
 
 
+class PublicEquipmentTechnicalSpecOut(BaseModel):
+    key: str
+    label: str
+    value: str
+
+
 class PublicEquipmentPageOut(BaseModel):
+    equipment_id: int | None = None
+    client_id: int | None = None
+    qrcode_code_id: str | None = None
+    equipment_status_label: str | None = None
     tenant_name: str
+    tenant_cnpj: str | None = None
+    tenant_phone: str | None = None
+    tenant_email: str | None = None
+    tenant_address: str | None = None
+    tenant_city: str | None = None
+    tenant_state: str | None = None
+    tenant_website: str | None = None
+    tenant_logo_url: str | None = None
     identificacao: str
     tipo: str
     modelo: str | None = None
     fabricante: str | None = None
+    category_name: str | None = None
+    serial: str | None = None
+    is_active: bool = True
+    technical_specs: list[PublicEquipmentTechnicalSpecOut] = Field(default_factory=list)
     entries: list[PublicEquipmentHistoryEntryOut]
 
 
@@ -2481,6 +2935,12 @@ class EquipmentTokenResolveOut(BaseModel):
     client_id: int
     identificacao: str
     public_token: str
+
+
+class EquipmentChecklistItemOut(BaseModel):
+    id: str | None = None
+    descricao: str
+    status: str
 
 
 class EquipmentHistoryRowOut(BaseModel):
@@ -2493,6 +2953,14 @@ class EquipmentHistoryRowOut(BaseModel):
     service_name: str | None = None
     changed_by_user_id: int | None = None
     changed_by_user_name: str | None = None
+    service_order_number: str | None = None
+    order_status: str | None = None
+    order_status_label: str | None = None
+    service_type: str | None = None
+    order_tipo_servico: str | None = None
+    technician_name: str | None = None
+    checklist_items: list[EquipmentChecklistItemOut] = Field(default_factory=list)
+    is_preventive: bool = False
 
 
 class ClientServiceItemLinkRowOut(BaseModel):
@@ -2540,12 +3008,49 @@ class ServiceOrderOut(BaseModel):
     description: str | None = None
     discount_amount: float = 0
     status: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    completed_at: datetime | None = None
+    actual_duration_minutes: int | None = None
     stock_consumed_at: datetime | None = None
-    service_items: list[ServiceOrderServiceItemOut]
+    equipment_services: list[ServiceOrderEquipmentServiceOut] = Field(default_factory=list)
+    equipment_cards: list[ServiceOrderEquipmentCardOut] = Field(default_factory=list)
+    total_duration_minutes: int = 0
+    service_items: list[ServiceOrderServiceItemOut] = Field(default_factory=list)
     product_items: list[ServiceOrderProductItemOut]
     schedule: ScheduleOut | None = None
     assigned_technician_name: str | None = None
     technician_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _enrich_technician_view(cls, data: Any) -> Any:
+        if not isinstance(data, ServiceOrder):
+            return data
+        items = list(data.service_items)
+        equipment_services = [_equipment_service_item_dict(item) for item in items]
+        return {
+            "id": data.id,
+            "tenant_id": data.tenant_id,
+            "client_id": data.client_id,
+            "title": data.title,
+            "description": data.description,
+            "discount_amount": float(data.discount_amount or 0),
+            "status": data.status.value if hasattr(data.status, "value") else data.status,
+            "started_at": data.started_at,
+            "finished_at": data.finished_at or data.completed_at,
+            "completed_at": data.completed_at,
+            "actual_duration_minutes": data.actual_duration_minutes,
+            "stock_consumed_at": data.stock_consumed_at,
+            "equipment_services": equipment_services,
+            "equipment_cards": build_equipment_cards(data),
+            "total_duration_minutes": get_total_duration_minutes(data),
+            "service_items": equipment_services,
+            "product_items": data.product_items,
+            "schedule": data.schedule,
+            "assigned_technician_name": data.assigned_technician_name,
+            "technician_ids": data.technician_ids,
+        }
 
 
 class ServiceOrderDiscountUpdate(BaseModel):
@@ -2576,6 +3081,7 @@ class TechnicianDayAvailabilityOut(BaseModel):
 
 class SuggestedSlotOut(BaseModel):
     technician_id: int
+    technician_name: str | None = None
     starts_at: datetime
     ends_at: datetime
     shift: Literal["morning", "afternoon"] | None = None
@@ -2798,6 +3304,29 @@ class PlatformMarketplaceEntitlementUpdate(BaseModel):
     internal_notes: str | None = Field(default=None, max_length=8000)
 
 
+class TechnicianEfficiencyOut(BaseModel):
+    technician_id: int
+    technician_name: str
+    orders_count: int
+    estimated_minutes: int
+    actual_minutes: int
+    variance_pct: float
+
+
+class ServiceEfficiencyOut(BaseModel):
+    service_id: int
+    service_name: str
+    orders_count: int
+    estimated_minutes: int
+    actual_minutes: int
+    variance_pct: float
+
+
+class EfficiencyReportOut(BaseModel):
+    by_technician: list[TechnicianEfficiencyOut] = Field(default_factory=list)
+    by_service: list[ServiceEfficiencyOut] = Field(default_factory=list)
+
+
 class DashboardHomeKpisOut(BaseModel):
     """Indicadores consolidados do painel inicial (/app)."""
 
@@ -2851,3 +3380,409 @@ class DashboardRecentOrderOut(BaseModel):
     opened_at: datetime
     total_value: float
     title: str | None = None
+
+
+class EquipmentManualBriefOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    s3_url: str
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class EquipmentManualOptionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class EquipmentManualListOut(BaseModel):
+    items: list[EquipmentManualOptionOut]
+
+
+class CategoryFieldDefinitionOut(BaseModel):
+    key: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=120)
+    type: Literal["text", "number", "select"] = "text"
+    unit: str | None = Field(default=None, max_length=40)
+    required: bool = False
+    is_active: bool = True
+    options: list[str] = Field(default_factory=list)
+
+
+class CategoryFieldDefinitionIn(BaseModel):
+    key: str | None = Field(default=None, max_length=64)
+    name: str = Field(..., min_length=1, max_length=120)
+    type: Literal["text", "number", "select"] = "text"
+    unit: str | None = Field(default=None, max_length=40)
+    required: bool = False
+    is_active: bool = True
+    options: list[str] = Field(default_factory=list)
+
+
+class EquipmentCategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    icon_key: str
+    sort_order: int
+    has_fluid_type: bool
+    has_capacity: bool
+    has_voltage: bool
+    field_definitions: list[CategoryFieldDefinitionOut] = Field(default_factory=list)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+    @field_validator("field_definitions", mode="before")
+    @classmethod
+    def _coerce_field_definitions(cls, value: object) -> list:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        return []
+
+
+class EquipmentCategoryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    icon_key: str = Field(default="outros", max_length=40)
+    sort_order: int = Field(default=0, ge=0, le=9999)
+    has_fluid_type: bool = False
+    has_capacity: bool = False
+    has_voltage: bool = False
+    field_definitions: list[CategoryFieldDefinitionIn] = Field(default_factory=list)
+
+
+class EquipmentCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    icon_key: str | None = Field(default=None, max_length=40)
+    sort_order: int | None = Field(default=None, ge=0, le=9999)
+    has_fluid_type: bool | None = None
+    has_capacity: bool | None = None
+    has_voltage: bool | None = None
+    field_definitions: list[CategoryFieldDefinitionIn] | None = None
+
+
+class EquipmentCategoryListOut(BaseModel):
+    items: list[EquipmentCategoryOut]
+
+
+class EquipmentLabelExtractionOut(BaseModel):
+    """Dados extraídos de etiqueta de ar-condicionado via IA (visão computacional)."""
+
+    marca: str | None = None
+    modelo_evaporadora: str | None = None
+    modelo_condensadora: str | None = None
+    capacidade_btus: str | None = None
+    fluido_refrigerante: str | None = None
+    tensao: str | None = None
+    tipo_equipamento: str | None = None
+    tecnologia: str | None = None
+
+
+class EquipmentCatalogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    category_id: str
+    category: EquipmentCategoryOut
+    component_type: EquipmentCatalogComponentType
+    brand: str
+    model: str
+    model_evaporator: str | None = None
+    model_condenser: str | None = None
+    capacity: str | None = None
+    fluid_type: str | None = None
+    voltage: str | None = None
+    technical_data: dict[str, Any] = Field(default_factory=dict)
+    manual_id: str | None = None
+    manual: EquipmentManualBriefOut | None = None
+    manual_url: str | None = None
+
+    @field_validator("id", "category_id", "manual_id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return str(value)
+
+    @field_validator("technical_data", mode="before")
+    @classmethod
+    def _coerce_technical_data(cls, value: object) -> dict:
+        if value is None or not isinstance(value, dict):
+            return {}
+        return value
+
+    @model_validator(mode="after")
+    def _sync_manual_url(self) -> "EquipmentCatalogOut":
+        if self.manual_url is None and self.manual is not None:
+            object.__setattr__(self, "manual_url", self.manual.s3_url)
+        return self
+
+
+class EquipmentCatalogCreate(BaseModel):
+    """Legado JSON — preferir POST multipart em /equipment-catalog."""
+
+    category_id: uuid.UUID
+    brand: str = Field(..., min_length=1, max_length=120)
+    model: str | None = Field(default=None, max_length=120)
+    model_evaporator: str | None = Field(default=None, max_length=120)
+    model_condenser: str | None = Field(default=None, max_length=120)
+    capacity: str | None = Field(default=None, max_length=80)
+    fluid_type: str | None = Field(default=None, max_length=40)
+    voltage: str | None = Field(default=None, max_length=40)
+
+    @field_validator("category_id", mode="before")
+    @classmethod
+    def _validate_category_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            s = value.strip()
+            if not s or s.lower() in {"undefined", "null"}:
+                raise ValueError("category_id deve ser o UUID da categoria (não o nome).")
+            return s
+        return value
+
+    @field_validator("brand", mode="before")
+    @classmethod
+    def _validate_brand(cls, value: object) -> object:
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                raise ValueError("Marca é obrigatória.")
+            return s
+        return value
+
+    @field_validator(
+        "model",
+        "model_evaporator",
+        "model_condenser",
+        "capacity",
+        "fluid_type",
+        "voltage",
+        mode="before",
+    )
+    @classmethod
+    def _empty_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+# Alias usado na documentação / integrações
+CatalogEquipmentCreate = EquipmentCatalogCreate
+
+
+class EquipmentCatalogUpdate(BaseModel):
+    """Payload JSON opcional para edição de item do catálogo."""
+
+    category_id: str | None = None
+    brand: str | None = Field(default=None, min_length=1, max_length=120)
+    model: str | None = Field(default=None, max_length=120)
+    model_evaporator: str | None = Field(default=None, max_length=120)
+    model_condenser: str | None = Field(default=None, max_length=120)
+    capacity: str | None = Field(default=None, max_length=80)
+    fluid_type: str | None = Field(default=None, max_length=40)
+    voltage: str | None = Field(default=None, max_length=40)
+
+    @field_validator(
+        "model",
+        "model_evaporator",
+        "model_condenser",
+        "capacity",
+        "fluid_type",
+        "voltage",
+        mode="before",
+    )
+    @classmethod
+    def _empty_optional_strings(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+class EquipmentCatalogListOut(BaseModel):
+    items: list[EquipmentCatalogOut]
+    total: int
+    skip: int
+    limit: int
+
+
+class ClientEquipmentCatalogRefOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    category_id: str
+    category: EquipmentCategoryOut
+    component_type: EquipmentCatalogComponentType
+    brand: str
+    model: str
+    model_evaporator: str | None = None
+    model_condenser: str | None = None
+    capacity: str | None = None
+    fluid_type: str | None = None
+    voltage: str | None = None
+    technical_data: dict[str, Any] = Field(default_factory=dict)
+    manual_id: str | None = None
+    manual: EquipmentManualBriefOut | None = None
+    manual_url: str | None = None
+
+    @field_validator("id", "category_id", "manual_id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return str(value)
+
+    @field_validator("technical_data", mode="before")
+    @classmethod
+    def _coerce_technical_data(cls, value: object) -> dict:
+        if value is None or not isinstance(value, dict):
+            return {}
+        return value
+
+    @model_validator(mode="after")
+    def _sync_manual_url(self) -> "ClientEquipmentCatalogRefOut":
+        if self.manual_url is None and self.manual is not None:
+            object.__setattr__(self, "manual_url", self.manual.s3_url)
+        return self
+
+
+class ClientEquipmentComponentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    catalog_id: str
+    serial_number: str | None = None
+    catalog: ClientEquipmentCatalogRefOut
+
+    @field_validator("id", "catalog_id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class ClientEquipmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    client_id: int
+    client_site_id: int | None = None
+    tag: str
+    installation_reference: str | None = None
+    installation_date: date | None = None
+    is_active: bool
+    legacy_equipment_id: int | None = None
+    public_token: str | None = None
+    qrcode_code_id: str | None = None
+    components: list[ClientEquipmentComponentOut] = Field(default_factory=list)
+    can_delete: bool = False
+    delete_block_reason: str | None = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class ClientEquipmentComponentCreate(BaseModel):
+    catalog_id: str = Field(..., min_length=36, max_length=36)
+    serial_number: str | None = Field(default=None, max_length=120)
+
+
+class QrCodeGenerateRequest(BaseModel):
+    quantity: int = Field(default=28, ge=1, le=500)
+
+
+class QrCodeOut(BaseModel):
+    id: int
+    tenant_id: int
+    code_id: str
+    status: str
+    linked_to_equipment_id: int | None = None
+    client_id: int | None = None
+    tenant_has_logo: bool = False
+    tracking_url: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class QrCodeValidateOut(BaseModel):
+    found: bool
+    available: bool
+    code_id: str | None = None
+    linked_to_equipment_id: int | None = None
+    message: str
+
+
+class ClientEquipmentCreate(BaseModel):
+    tag: str = Field(..., min_length=1, max_length=120)
+    installation_reference: str | None = Field(default=None, max_length=500)
+    client_site_id: int | None = Field(default=None, ge=1)
+    installation_date: date | None = None
+    qrcode_code_id: str | None = Field(default=None, max_length=32, description="Cartela QR disponível para vincular")
+    components: list[ClientEquipmentComponentCreate] = Field(..., min_length=1)
+    catalog_id: str | None = Field(default=None, min_length=36, max_length=36, description="Legado: vira um único componente")
+    serial_number: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_single_catalog(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        if data.get("components"):
+            return data
+        legacy_id = data.get("catalog_id")
+        if legacy_id:
+            return {
+                **data,
+                "components": [
+                    {
+                        "catalog_id": legacy_id,
+                        "serial_number": data.get("serial_number"),
+                    }
+                ],
+            }
+        return data
+
+    @model_validator(mode="after")
+    def _require_components(self) -> "ClientEquipmentCreate":
+        if not self.components:
+            raise ValueError("Informe ao menos um componente (catalog_id nos components ou legado catalog_id).")
+        return self
+
+
+class ClientEquipmentStatusUpdate(BaseModel):
+    is_active: bool
+
+
+class ClientEquipmentInstallationReferenceUpdate(BaseModel):
+    installation_reference: str | None = Field(default=None, max_length=500)
+
+    @field_validator("installation_reference")
+    @classmethod
+    def _strip_reference(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+
+class ClientEquipmentSiteUpdate(BaseModel):
+    """Altera apenas a filial/obra vinculada à instalação."""
+
+    client_site_id: int | None = None

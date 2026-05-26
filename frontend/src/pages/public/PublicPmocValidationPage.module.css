@@ -1,0 +1,185 @@
+.page {
+  min-height: 100dvh;
+  background: linear-gradient(165deg, #f0f7ff 0%, #f8fafc 42%, #eef2ff 100%);
+}
+
+.wrap {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2.5rem;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #0f172a;
+}
+
+.hero {
+  margin-bottom: 1rem;
+  padding: 1.1rem 1rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.brand {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.title {
+  margin: 0.35rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-family: Poppins, Inter, sans-serif;
+}
+
+.meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.card {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+}
+
+.cardTitle {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.value {
+  margin-top: 0.15rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.equipmentList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.equipmentItem {
+  padding: 0.75rem 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.equipmentItem:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.equipmentName {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.equipmentMeta {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.badgeOk {
+  display: inline-flex;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.badgeAttention {
+  display: inline-flex;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.badgeCritical {
+  display: inline-flex;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.badgePending {
+  display: inline-flex;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.err {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.9rem;
+}
+
+.muted {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.footer {
+  margin-top: 1.25rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.link {
+  color: #006fee;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+}

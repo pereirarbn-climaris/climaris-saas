@@ -12,12 +12,14 @@ from app.equipment_documents_media import (
     delete_equipment_document_attachment_if_exists,
     upload_equipment_document_attachment,
 )
+from app.equipment_history import list_equipment_preventive_visits, list_equipment_service_visits
 from app.schemas import (
     EquipmentDocumentAttachmentOut,
     EquipmentDocumentCreate,
     EquipmentDocumentEventOut,
     EquipmentDocumentOut,
     EquipmentDocumentUpdate,
+    EquipmentHistoryRowOut,
 )
 from models import (
     Client,
@@ -464,3 +466,36 @@ def update_equipment_document(
             .limit(1)
         ).scalar_one_or_none()
     return _to_out(doc, field)
+
+
+@router.get("/{equipment_id}/history", response_model=list[EquipmentHistoryRowOut])
+def equipment_history_by_id(
+    equipment_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[EquipmentHistoryRowOut]:
+    """Histórico geral de OS vinculadas ao equipamento (todas as naturezas de serviço)."""
+    equipment = _get_equipment_for_tenant(db, equipment_id, current_user.tenant_id)
+    return list_equipment_service_visits(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        client_id=equipment.client_id,
+        preventive_only=False,
+    )
+
+
+@router.get("/{equipment_id}/history/preventives", response_model=list[EquipmentHistoryRowOut])
+def equipment_preventive_history_by_id(
+    equipment_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[EquipmentHistoryRowOut]:
+    """Histórico de manutenções preventivas/PMOC do equipamento."""
+    equipment = _get_equipment_for_tenant(db, equipment_id, current_user.tenant_id)
+    return list_equipment_preventive_visits(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        client_id=equipment.client_id,
+    )

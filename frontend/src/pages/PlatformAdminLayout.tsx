@@ -41,6 +41,8 @@ export function PlatformAdminLayout() {
   const isMarketplaceRoute = location.pathname.startsWith("/operacao/loja");
   const isBanksRoute = location.pathname.startsWith("/operacao/bancos");
   const isPagarmeRoute = location.pathname.startsWith("/operacao/pagar-me");
+  const isCatalogRoute = location.pathname.startsWith("/operacao/catalogo");
+  const isCategoryRoute = location.pathname.startsWith("/operacao/categorias-equipamentos");
   const pageTitle = isApiKeysRoute
     ? "Chaves APIs"
     : isTenantsRoute
@@ -55,7 +57,11 @@ export function PlatformAdminLayout() {
               ? "Bancos (wizard de contas)"
               : isPagarmeRoute
                 ? "Pagar.me (referência)"
-                : location.pathname === "/operacao"
+                : isCatalogRoute
+                  ? "Catálogo de equipamentos"
+                  : isCategoryRoute
+                    ? "Categorias de equipamentos"
+                    : location.pathname === "/operacao"
                   ? "Painel de operação"
                   : "Operação Climaris";
 
@@ -291,6 +297,39 @@ export function PlatformAdminLayout() {
                   <NavIconKey />
                 </span>
                 Chaves APIs
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/catalogo"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="2" y="4" width="20" height="14" rx="2" />
+                    <path d="M6 8h.01M10 8h4" />
+                    <path d="M6 14v4M18 14v4" />
+                  </svg>
+                </span>
+                Catálogo equipamentos
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/categorias-equipamentos"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </span>
+                Categorias equipamentos
               </NavLink>
             </li>
             <li>

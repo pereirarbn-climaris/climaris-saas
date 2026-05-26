@@ -17,7 +17,8 @@ from sqlalchemy import Select, delete, desc, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app.config import CLAUDE_API_KEY, CLAUDE_MODEL, HAUKU_ECONOMY_MODEL
+from app.config import CLAUDE_MODEL, HAUKU_ECONOMY_MODEL
+from app.platform_credentials import resolve_claude_api_key
 from models import (
     AIChatHistory,
     AIPendingToolConfirmation,
@@ -2308,7 +2309,7 @@ def execute_ai_tool_sandbox(
         return {"ok": False, "message": f"Falha na execução da tool: {type(exc).__name__}: {exc}"}
 
 
-def _anthropic_request(body: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+def _anthropic_request(body: dict[str, Any], *, api_key: str) -> tuple[dict[str, Any] | None, bool]:
     payload = {
         "model": body["model"],
         "max_tokens": body.get("max_tokens", 700),
@@ -2323,7 +2324,7 @@ def _anthropic_request(body: dict[str, Any]) -> tuple[dict[str, Any] | None, boo
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "x-api-key": CLAUDE_API_KEY,
+            "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
         },
     )
@@ -2373,6 +2374,7 @@ def _call_claude_with_tools(
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     tools = _filter_tool_definitions(policy)
+    claude_api_key = resolve_claude_api_key(db) or ""
     for _ in range(5):
         data, key_invalid = _anthropic_request(
             {
@@ -2382,7 +2384,8 @@ def _call_claude_with_tools(
                 "tools": tools,
                 "temperature": 0,
                 "max_tokens": 1400,
-            }
+            },
+            api_key=claude_api_key,
         )
         if key_invalid:
             return "", [], True, None
@@ -2582,7 +2585,7 @@ def generate_ai_response(
             )
             return {"intent": "appointment_from_option", "reply_text": reply}
 
-    if not CLAUDE_API_KEY:
+    if not resolve_claude_api_key(db):
         mocked = _fallback_local_reply(
             db,
             tenant_id=tenant_id,

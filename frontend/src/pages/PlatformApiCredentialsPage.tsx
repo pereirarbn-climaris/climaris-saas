@@ -22,6 +22,7 @@ export function PlatformApiCredentialsPage() {
   const [cnpjaMsg, setCnpjaMsg] = useState("");
   const [awsMsg, setAwsMsg] = useState("");
   const [smtpMsg, setSmtpMsg] = useState("");
+  const [claudeMsg, setClaudeMsg] = useState("");
 
   const [cnpjaDisplayName, setCnpjaDisplayName] = useState("CNPJA");
   const [cnpjaBaseUrl, setCnpjaBaseUrl] = useState("https://api.cnpja.com/");
@@ -33,7 +34,9 @@ export function PlatformApiCredentialsPage() {
   const [awsDisplayName, setAwsDisplayName] = useState("AWS S3");
   const [awsAccessKeyId, setAwsAccessKeyId] = useState("");
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
-  const [awsBucket, setAwsBucket] = useState("");
+  const [awsBucketManuais, setAwsBucketManuais] = useState("");
+  const [awsBucketImagens, setAwsBucketImagens] = useState("");
+  const [awsBucketBackups, setAwsBucketBackups] = useState("");
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [awsEndpointUrl, setAwsEndpointUrl] = useState("");
   const [awsPublicBaseUrl, setAwsPublicBaseUrl] = useState("");
@@ -52,9 +55,16 @@ export function PlatformApiCredentialsPage() {
   const [clearSmtpPassword, setClearSmtpPassword] = useState(false);
   const [savingSmtp, setSavingSmtp] = useState(false);
 
+  const [claudeDisplayName, setClaudeDisplayName] = useState("IA Claude (Anthropic)");
+  const [claudeModel, setClaudeModel] = useState("claude-haiku-4-5-20251001");
+  const [claudeApiKey, setClaudeApiKey] = useState("");
+  const [clearClaudeKey, setClearClaudeKey] = useState(false);
+  const [savingClaude, setSavingClaude] = useState(false);
+
   const cnpja = useMemo(() => rows.find((r) => r.provider_slug === "cnpja") ?? null, [rows]);
   const aws = useMemo(() => rows.find((r) => r.provider_slug === "aws-s3") ?? null, [rows]);
   const smtp = useMemo(() => rows.find((r) => r.provider_slug === "smtp") ?? null, [rows]);
+  const claude = useMemo(() => rows.find((r) => r.provider_slug === "claude") ?? null, [rows]);
 
   async function refresh() {
     setPageErr("");
@@ -85,7 +95,19 @@ export function PlatformApiCredentialsPage() {
   useEffect(() => {
     if (!aws) return;
     setAwsDisplayName(aws.display_name);
-    setAwsBucket(typeof aws.extra_config?.bucket === "string" ? aws.extra_config.bucket : "");
+    const legacyBucket =
+      typeof aws.extra_config?.bucket === "string" ? aws.extra_config.bucket : "";
+    setAwsBucketManuais(
+      typeof aws.extra_config?.bucket_manuais === "string"
+        ? aws.extra_config.bucket_manuais
+        : legacyBucket,
+    );
+    setAwsBucketImagens(
+      typeof aws.extra_config?.bucket_imagens === "string" ? aws.extra_config.bucket_imagens : "",
+    );
+    setAwsBucketBackups(
+      typeof aws.extra_config?.bucket_backups === "string" ? aws.extra_config.bucket_backups : "",
+    );
     setAwsRegion(typeof aws.extra_config?.region === "string" ? aws.extra_config.region : "us-east-1");
     setAwsEndpointUrl(typeof aws.extra_config?.endpoint_url === "string" ? aws.extra_config.endpoint_url : "");
     setAwsPublicBaseUrl(typeof aws.extra_config?.public_base_url === "string" ? aws.extra_config.public_base_url : "");
@@ -113,6 +135,18 @@ export function PlatformApiCredentialsPage() {
     setSmtpPassword("");
     setClearSmtpPassword(false);
   }, [smtp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!claude) return;
+    setClaudeDisplayName(claude.display_name || "IA Claude (Anthropic)");
+    setClaudeModel(
+      typeof claude.extra_config?.model === "string" && claude.extra_config.model.trim()
+        ? claude.extra_config.model
+        : "claude-haiku-4-5-20251001",
+    );
+    setClaudeApiKey("");
+    setClearClaudeKey(false);
+  }, [claude?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function onSubmitCnpja(e: FormEvent) {
     e.preventDefault();
@@ -175,7 +209,10 @@ export function PlatformApiCredentialsPage() {
         aws_access_key_id: normalizedAwsAccessKeyId || undefined,
         aws_secret_access_key: awsSecretAccessKey.trim() || undefined,
         extra_config: {
-          bucket: awsBucket.trim(),
+          bucket: awsBucketManuais.trim() || undefined,
+          bucket_manuais: awsBucketManuais.trim() || undefined,
+          bucket_imagens: awsBucketImagens.trim() || undefined,
+          bucket_backups: awsBucketBackups.trim() || undefined,
           region: awsRegion.trim() || "us-east-1",
           endpoint_url: awsEndpointUrl.trim() || undefined,
           public_base_url: awsPublicBaseUrl.trim() || undefined,
@@ -243,6 +280,36 @@ export function PlatformApiCredentialsPage() {
     }
   }
 
+  async function onSubmitClaude(e: FormEvent) {
+    e.preventDefault();
+    setPageErr("");
+    setClaudeMsg("");
+    setSavingClaude(true);
+    try {
+      const saved = await upsertPlatformApiCredential("claude", {
+        display_name: claudeDisplayName.trim() || "IA Claude (Anthropic)",
+        api_base_url: "https://api.anthropic.com",
+        api_key: claudeApiKey.trim() || undefined,
+        extra_config: {
+          model: claudeModel.trim() || "claude-haiku-4-5-20251001",
+        },
+        clear_api_key: clearClaudeKey,
+      });
+      setClaudeApiKey("");
+      setClearClaudeKey(false);
+      setClaudeMsg(
+        saved.has_api_key
+          ? "Chave Claude salva com sucesso."
+          : "Configuração salva sem chave ativa.",
+      );
+      await refresh();
+    } catch (error) {
+      setClaudeMsg(error instanceof Error ? error.message : "Não foi possível salvar Claude.");
+    } finally {
+      setSavingClaude(false);
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <section className={styles.heroCard}>
@@ -250,7 +317,7 @@ export function PlatformApiCredentialsPage() {
           <p className={styles.eyebrow}>Operação · Integrações</p>
           <h2 className={styles.heroTitle}>Chaves APIs do SaaS</h2>
           <p className={styles.heroLead}>
-            CNPJA, AWS e SMTP ficam separados em blocos independentes. Assim, salvar um provedor nunca altera dados do outro.
+            CNPJA, AWS, SMTP e IA Claude ficam separados em blocos independentes. Assim, salvar um provedor nunca altera dados do outro.
           </p>
         </div>
         <div className={styles.heroAccent} aria-hidden />
@@ -297,7 +364,7 @@ export function PlatformApiCredentialsPage() {
 
         <article className={styles.integrationCard}>
           <div className={styles.integrationHeader}>
-            <h3 className={styles.cardTitle}>AWS (Imagens e Backup)</h3>
+            <h3 className={styles.cardTitle}>AWS S3 (manuais, imagens, backup)</h3>
             <span
               className={`${styles.badge} ${
                 aws?.has_aws_access_key_id && aws?.has_aws_secret_access_key ? styles.badgeActive : styles.badgeSuspended
@@ -314,9 +381,21 @@ export function PlatformApiCredentialsPage() {
             <input className={styles.link} value="https://s3.amazonaws.com" disabled aria-readonly />
             <input
               className={styles.link}
-              value={awsBucket}
-              onChange={(e) => setAwsBucket(e.target.value)}
-              placeholder="Bucket (ex.: erp-imagens-prod-climaris)"
+              value={awsBucketManuais}
+              onChange={(e) => setAwsBucketManuais(e.target.value)}
+              placeholder="Bucket manuais / PDF (ex.: erp-manuais-prod-climaris)"
+            />
+            <input
+              className={styles.link}
+              value={awsBucketImagens}
+              onChange={(e) => setAwsBucketImagens(e.target.value)}
+              placeholder="Bucket imagens (logos, produtos) — ex.: erp-imagens-prod-climaris"
+            />
+            <input
+              className={styles.link}
+              value={awsBucketBackups}
+              onChange={(e) => setAwsBucketBackups(e.target.value)}
+              placeholder="Bucket backups (restic) — ex.: erp-backups-prod-climaris"
             />
             <input
               className={styles.link}
@@ -442,6 +521,50 @@ export function PlatformApiCredentialsPage() {
               {savingSmtp ? "Salvando..." : "Salvar SMTP"}
             </button>
             {smtpMsg ? <p className={styles.contactHint}>{smtpMsg}</p> : null}
+          </form>
+        </article>
+
+        <article className={styles.integrationCard}>
+          <div className={styles.integrationHeader}>
+            <h3 className={styles.cardTitle}>IA Claude (Anthropic)</h3>
+            <span className={`${styles.badge} ${claude?.has_api_key ? styles.badgeActive : styles.badgeSuspended}`}>
+              {claude?.has_api_key ? "Conectado" : "Pendente"}
+            </span>
+          </div>
+          <p className={styles.integrationMeta}>
+            Usada no WhatsApp bot, assistente e leitura de etiquetas de equipamentos. Última atualização:{" "}
+            {fmtDate(claude?.key_updated_at ?? claude?.updated_at ?? null)}
+          </p>
+          <form onSubmit={onSubmitClaude} className={styles.section}>
+            <input
+              className={styles.link}
+              value={claudeDisplayName}
+              onChange={(e) => setClaudeDisplayName(e.target.value)}
+              placeholder="Nome de exibição"
+            />
+            <input className={styles.link} value="https://api.anthropic.com" disabled aria-readonly />
+            <input
+              className={styles.link}
+              type="password"
+              value={claudeApiKey}
+              onChange={(e) => setClaudeApiKey(e.target.value)}
+              placeholder="Nova API key Claude (sk-ant-..., vazio = manter)"
+              autoComplete="new-password"
+            />
+            <input
+              className={styles.link}
+              value={claudeModel}
+              onChange={(e) => setClaudeModel(e.target.value)}
+              placeholder="Modelo (ex.: claude-haiku-4-5-20251001)"
+            />
+            <label className={styles.note}>
+              <input type="checkbox" checked={clearClaudeKey} onChange={(e) => setClearClaudeKey(e.target.checked)} />{" "}
+              Remover API key Claude salva
+            </label>
+            <button className={`${styles.link} ${styles.linkPrimary}`} disabled={savingClaude} type="submit">
+              {savingClaude ? "Salvando..." : "Salvar Claude"}
+            </button>
+            {claudeMsg ? <p className={styles.contactHint}>{claudeMsg}</p> : null}
           </form>
         </article>
       </section>

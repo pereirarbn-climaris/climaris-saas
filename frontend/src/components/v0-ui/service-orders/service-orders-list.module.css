@@ -1,0 +1,182 @@
+/* Estilos específicos da listagem de OS (stats/tabela base em clients-list.module.css) */
+
+.actualDurationOver {
+  color: var(--color-danger, #dc2626);
+  font-weight: var(--font-weight-semibold);
+}
+
+.rowEfficiencyAlert {
+  background: color-mix(in srgb, var(--color-danger, #dc2626) 8%, transparent);
+}
+
+.rowEfficiencyAlert:hover {
+  background: color-mix(in srgb, var(--color-danger, #dc2626) 14%, var(--color-surface-hover, #f8fafc));
+}
+
+.osTableDense {
+  font-size: 0.8125rem;
+}
+
+.osTableDense :is(th, td) {
+  vertical-align: middle;
+}
+
+.osTableDense .clientCell {
+  white-space: normal;
+}
+
+.osLink {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: var(--font-weight-semibold);
+  transition: color var(--motion-duration) var(--motion-easing);
+}
+
+.osLink:hover {
+  color: var(--color-primary-hover);
+  text-decoration: underline;
+}
+
+.technicianCell {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.technicianUnassigned {
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.techAvatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.techRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.totalCell {
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--badge-radius);
+  padding: 0.375rem 0.875rem;
+  font-size: var(--badge-font-size);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.statusPending {
+  color: #c2410c;
+  background: linear-gradient(135deg, #ffedd5 0%, #fed7aa 100%);
+}
+
+.statusApprovedUi {
+  color: var(--color-success);
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+}
+
+.statusRunning {
+  color: #1d4ed8;
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+}
+
+.statusDoneUi {
+  color: #166534;
+  background: linear-gradient(135deg, #bbf7d0 0%, #86efac 100%);
+}
+
+.statusCancelledUi {
+  color: var(--color-error);
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+}
+
+.statusDraft {
+  color: #475569;
+  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+}
+
+.listFootPagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.pagerBtns {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pagerBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.pagerBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pagerBtnActive {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.shimmerRow {
+  height: 2.25rem;
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 0%,
+    #e2e8f0 50%,
+    var(--color-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

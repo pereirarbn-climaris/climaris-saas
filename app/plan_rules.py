@@ -10,6 +10,7 @@ class PlanDefinition:
     max_users: int | None
     is_beta_internal: bool = False
     can_contract: bool = True
+    whatsapp_automation_allowed: bool = False
 
 
 _PLAN_ALIAS: dict[str, str] = {
@@ -21,6 +22,7 @@ _PLAN_ALIAS: dict[str, str] = {
     "enterprise": "enterprise",
     "beta": "beta_internal",
     "beta-internal": "beta_internal",
+    "beta_interno": "beta_internal",
     "developer": "beta_internal",
     "dev": "beta_internal",
     # Typos / ruído em `tenants.active_plan` (UI pode mostrar parecido com "INTERNALSS").
@@ -35,24 +37,28 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
         label="Free 30 dias",
         max_users=2,
         can_contract=True,
+        whatsapp_automation_allowed=False,
     ),
     "basic": PlanDefinition(
         key="basic",
         label="Basic",
         max_users=2,
         can_contract=True,
+        whatsapp_automation_allowed=False,
     ),
     "professional": PlanDefinition(
         key="professional",
         label="Professional",
         max_users=5,
         can_contract=True,
+        whatsapp_automation_allowed=True,
     ),
     "enterprise": PlanDefinition(
         key="enterprise",
         label="Enterprise",
         max_users=None,
         can_contract=True,
+        whatsapp_automation_allowed=True,
     ),
     "beta_internal": PlanDefinition(
         key="beta_internal",
@@ -60,6 +66,7 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
         max_users=None,
         is_beta_internal=True,
         can_contract=False,
+        whatsapp_automation_allowed=True,
     ),
 }
 

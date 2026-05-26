@@ -1,0 +1,140 @@
+/* Área de impressão térmica — oculta na tela, visível apenas no @media print */
+.thermalPrintRoot {
+  display: none;
+}
+
+.thermalPrintSheet {
+  box-sizing: border-box;
+  width: 60mm;
+  height: 40mm;
+  padding: 3mm 4mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1mm;
+  text-align: center;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #000;
+  background: #fff;
+  overflow: hidden;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.thermalPrintLogo {
+  width: 8mm;
+  height: 8mm;
+  margin: 0;
+  flex-shrink: 0;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.thermalPrintLogoFallback {
+  width: 8mm;
+  height: 8mm;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #0b7faf;
+  color: #fff;
+  font-size: 4mm;
+  font-weight: 700;
+  line-height: 8mm;
+  text-align: center;
+}
+
+.thermalPrintQrWrap {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 2mm;
+  background: #fff;
+  border-radius: 1mm;
+}
+
+.thermalPrintQr {
+  display: block;
+  width: 18mm;
+  height: 18mm;
+  margin: 0;
+  image-rendering: pixelated;
+}
+
+.thermalPrintTag {
+  margin: 0;
+  flex-shrink: 0;
+  max-width: 52mm;
+  font-size: 3mm;
+  font-weight: 700;
+  line-height: 1.15;
+  word-break: break-word;
+}
+
+.thermalPrintBrandModel {
+  margin: 0;
+  flex-shrink: 0;
+  max-width: 52mm;
+  font-size: 2.4mm;
+  font-weight: 600;
+  line-height: 1.15;
+  word-break: break-word;
+}
+
+@media print {
+  @page {
+    size: 60mm 40mm;
+    margin: 0;
+  }
+
+  html,
+  body {
+    width: 60mm !important;
+    height: 40mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .thermalPrintRoot,
+  .thermalPrintRoot * {
+    visibility: visible !important;
+  }
+
+  .thermalPrintRoot {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 60mm;
+    height: 40mm;
+    margin: 0;
+    padding: 0;
+    z-index: 2147483647;
+    background: #fff;
+    overflow: hidden;
+    page-break-after: avoid;
+    page-break-before: avoid;
+    break-inside: avoid;
+  }
+
+  .thermalPrintSheet {
+    width: 60mm;
+    height: 40mm;
+    min-height: 40mm;
+    max-height: 40mm;
+    margin: 0;
+    padding: 3mm 4mm;
+  }
+
+  .thermalPrintQrWrap {
+    padding: 2mm;
+    background: #fff !important;
+  }
+}

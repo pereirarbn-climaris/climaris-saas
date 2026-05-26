@@ -7,6 +7,21 @@ import type {
   ServiceType,
   Tecnico,
 } from "../components/v0-ui/service-orders/ServiceOrderFormView";
+import {
+  computeLaborTotal,
+  computePartsTotal,
+  enrichProductLabels,
+  productLinesFromOrder,
+  serviceLinesFromOrder,
+} from "./serviceOrderLinesSync";
+import {
+  computeDiscountAmountFromView,
+  computeOrderTotalFromView,
+  discountFieldsFromAmount,
+  type DiscountType,
+} from "./serviceOrderDiscount";
+
+export { computeOrderTotalFromView } from "./serviceOrderDiscount";
 import type {
   ServiceOrder,
   ServiceOrderMetrics,
@@ -22,10 +37,33 @@ import type {
   ServiceOrderCreatePayload,
   ServiceOrderOut,
 } from "../api/serviceOrders";
+import type { ServiceOrderEquipmentServiceInput } from "../types/serviceOrders";
 import type { UserOut } from "../api/auth";
+import { addMinutesToTimeString } from "./pmocOsSchedule";
 import { formatPhoneBrInput, formatTaxDocumentInput } from "./brMask";
 
 const META_MARKER = "\n---CLIMARIS_OS_META---\n";
+const META_MARKER_ALT = "---CLIMARIS_OS_META---";
+
+function findMetaSlice(description: string): { index: number; markerLen: number } | null {
+  const idxNewline = description.indexOf(META_MARKER);
+  if (idxNewline >= 0) return { index: idxNewline, markerLen: META_MARKER.length };
+  const idxAlt = description.indexOf(META_MARKER_ALT);
+  if (idxAlt >= 0) return { index: idxAlt, markerLen: META_MARKER_ALT.length };
+  return null;
+}
+
+/** Remove trecho de meta embutido em texto de laudo (legado). */
+export function stripOsMetaFromText(text: string | null | undefined): string {
+  if (!text) return "";
+  const raw = String(text);
+  const hit = findMetaSlice(raw);
+  if (hit) return raw.slice(0, hit.index).trim();
+  if (raw.trimStart().startsWith(META_MARKER_ALT)) {
+    return "";
+  }
+  return raw.trim();
+}
 
 const DEFAULT_CHECKLIST: ChecklistItem[] = [
   { id: "chk_1", descricao: "Limpeza dos filtros de ar", status: "na" },
@@ -51,6 +89,16 @@ type OsMeta = {
   checklist?: ChecklistItem[];
   valorPecas?: number;
   valorMaoDeObra?: number;
+  descontoTipo?: DiscountType;
+  descontoValor?: number;
+  pmocPlanId?: number;
+  pmocPeriodYear?: number;
+  pmocPeriodMonth?: number;
+  pmocEstimatedMinutes?: number;
+  clientSignatureBase64?: string | null;
+  clientSignatureName?: string | null;
+  clientSignatureAt?: string | null;
+  clientSignatureGeo?: { lat: number; lng: number } | null;
 };
 
 function mapEquipmentTipo(categoria?: string | null): string {
@@ -65,19 +113,62 @@ function mapEquipmentTipo(categoria?: string | null): string {
 
 function parseMeta(description: string | null | undefined): OsMeta | null {
   if (!description) return null;
-  const idx = description.indexOf(META_MARKER);
-  if (idx < 0) return null;
-  try {
-    return JSON.parse(description.slice(idx + META_MARKER.length)) as OsMeta;
-  } catch {
-    return null;
+  const trimmed = description.trim();
+  const hit = findMetaSlice(description);
+  if (hit) {
+    const jsonPart = description.slice(hit.index + hit.markerLen).trim();
+    try {
+      return JSON.parse(jsonPart) as OsMeta;
+    } catch {
+      return null;
+    }
   }
+  if (trimmed.startsWith(META_MARKER_ALT)) {
+    const jsonPart = trimmed.slice(META_MARKER_ALT.length).trim();
+    try {
+      return JSON.parse(jsonPart) as OsMeta;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function freeTextFromDescription(description: string | null | undefined): string {
   if (!description) return "";
-  const idx = description.indexOf(META_MARKER);
-  return (idx >= 0 ? description.slice(0, idx) : description).trim();
+  return stripOsMetaFromText(description);
+}
+
+/** Expande description da API em campos de laudo/checklist do formulário. */
+export function expandServiceOrderDescriptionToViewFields(
+  description: string | null | undefined,
+  fallbackTitle?: string,
+): {
+  descricaoProblema: string;
+  diagnosticoTecnico: string;
+  checklist: ChecklistItem[];
+  tipoServico?: ServiceType;
+  observacoesInternas: string;
+  clientSignatureBase64?: string | null;
+  clientSignatureName?: string | null;
+  clientSignatureAt?: string | null;
+  clientSignatureGeo?: { lat: number; lng: number } | null;
+} {
+  const meta = parseMeta(description);
+  const freeText = freeTextFromDescription(description);
+  const descFromMeta = stripOsMetaFromText(meta?.descricaoProblema);
+  const diagFromMeta = stripOsMetaFromText(meta?.diagnosticoTecnico);
+  return {
+    descricaoProblema: descFromMeta || freeText || (fallbackTitle ?? ""),
+    diagnosticoTecnico: diagFromMeta,
+    checklist: mergeChecklist(meta?.checklist),
+    tipoServico: meta?.tipoServico,
+    observacoesInternas: meta?.observacoesInternas ?? "",
+    clientSignatureBase64: meta?.clientSignatureBase64 ?? null,
+    clientSignatureName: meta?.clientSignatureName ?? null,
+    clientSignatureAt: meta?.clientSignatureAt ?? null,
+    clientSignatureGeo: meta?.clientSignatureGeo ?? null,
+  };
 }
 
 function serializeDescription(freeText: string, meta: OsMeta): string | null {
@@ -88,6 +179,7 @@ function serializeDescription(freeText: string, meta: OsMeta): string | null {
 }
 
 function metaFromViewData(data: ServiceOrderData): OsMeta {
+  const pmocPlanId = data.pmocPlanId ? Number(data.pmocPlanId) : undefined;
   return {
     v: 1,
     tipoServico: data.tipoServico,
@@ -97,10 +189,23 @@ function metaFromViewData(data: ServiceOrderData): OsMeta {
     checklist: data.checklist,
     valorPecas: data.valorPecas,
     valorMaoDeObra: data.valorMaoDeObra,
+    descontoTipo: data.descontoTipo,
+    descontoValor: data.descontoValor,
+    pmocPlanId: Number.isFinite(pmocPlanId) && pmocPlanId! > 0 ? pmocPlanId : undefined,
+    pmocPeriodYear: data.pmocPeriodYear,
+    pmocPeriodMonth: data.pmocPeriodMonth,
+    pmocEstimatedMinutes: data.pmocEstimatedMinutes,
+    clientSignatureBase64: data.clientSignatureBase64,
+    clientSignatureName: data.clientSignatureName,
+    clientSignatureAt: data.clientSignatureAt,
+    clientSignatureGeo: data.clientSignatureGeo,
   };
 }
 
 function mergeChecklist(stored: ChecklistItem[] | undefined): ChecklistItem[] {
+  if (stored?.length && stored.every((item) => item.id.startsWith("pmoc_"))) {
+    return stored.map((item) => ({ ...item }));
+  }
   const byId = new Map((stored ?? []).map((item) => [item.id, item]));
   return DEFAULT_CHECKLIST.map((def) => {
     const hit = byId.get(def.id);
@@ -190,21 +295,11 @@ function resolveServiceId(tipo: ServiceType, services: ServiceOut[]): number {
   return match(["corretiv", "manuten"])?.id ?? active[0]!.id;
 }
 
-function resolvePartsProductId(products: ProductOut[]): number | null {
-  const active = products.filter((p) => p.is_active);
-  if (!active.length) return null;
-  const preferred =
-    active.find((p) => /pe[cç]a|material|insumo/i.test(p.name)) ??
-    active[0];
-  return preferred?.id ?? null;
-}
-
-export function computeOrderTotalFromView(data: ServiceOrderData): number {
-  return Math.max(0, (data.valorPecas || 0) + (data.valorMaoDeObra || 0));
-}
-
 export function mapClientsToFormView(clients: ClientOut[]): Cliente[] {
-  return clients.map((c) => {
+  const sorted = [...clients].sort((a, b) =>
+    (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base", numeric: true }),
+  );
+  return sorted.map((c) => {
     const type = c.tax_id_kind === "cpf" ? "cpf" : "cnpj";
     const parts = [
       c.address_street,
@@ -215,9 +310,11 @@ export function mapClientsToFormView(clients: ClientOut[]): Cliente[] {
     ]
       .map((p) => (p ?? "").trim())
       .filter(Boolean);
+    const tradeName = (c.trade_name ?? "").trim();
     return {
       id: String(c.id),
       nome: c.name,
+      nomeFantasia: tradeName || undefined,
       documento: formatTaxDocumentInput(c.document ?? "", type),
       telefone: formatPhoneBrInput(c.whatsapp ?? c.phone ?? ""),
       endereco: parts.length ? parts.join(", ") : undefined,
@@ -228,6 +325,7 @@ export function mapClientsToFormView(clients: ClientOut[]): Cliente[] {
 export function mapTechniciansToFormView(users: UserOut[]): Tecnico[] {
   return users
     .filter((u) => u.is_active && u.role === "technician")
+    .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || "", "pt-BR", { sensitivity: "base" }))
     .map((u) => ({
       id: String(u.id),
       nome: u.full_name,
@@ -251,13 +349,17 @@ export function mapEquipmentsToFormView(rows: EquipmentOut[]): Equipamento[] {
       tipo: mapEquipmentTipo(e.categoria_instalacao),
       capacidadeBtu: e.capacidade_btu ?? 0,
       tag: e.identificacao?.trim() || undefined,
-      localizacao: e.local_instalacao?.trim() || e.ambiente_nome?.trim() || undefined,
+      localizacao:
+        [e.local_instalacao?.trim(), e.installation_reference?.trim(), e.ambiente_nome?.trim()]
+          .filter(Boolean)
+          .join(" · ") || undefined,
       numeroSerie: e.serial?.trim() || undefined,
     }));
 }
 
 export function serviceOrderOutToViewData(order: ServiceOrderOut): ServiceOrderData {
   const meta = parseMeta(order.description);
+  const laudo = expandServiceOrderDescriptionToViewFields(order.description, order.title);
   const { date, time } = splitSchedule(order.schedule?.starts_at);
   const laborFromItems = order.service_items.reduce(
     (s, i) => s + Math.max(i.quantity, 1) * Number(i.unit_price),
@@ -276,22 +378,57 @@ export function serviceOrderOutToViewData(order: ServiceOrderOut): ServiceOrderD
     ),
   ];
 
+  const servicos = serviceLinesFromOrder(order);
+  const pecas = productLinesFromOrder(order);
+  const subtotal = laborFromItems + partsFromItems;
+  const { descontoTipo, descontoValor } = discountFieldsFromAmount(
+    subtotal,
+    order.discount_amount || 0,
+    meta ?? undefined,
+  );
+
   return {
     id: String(order.id),
     numero: String(order.id),
     clienteId: String(order.client_id),
     tecnicoId: order.technician_ids?.[0] ? String(order.technician_ids[0]) : "",
     status: mapApiStatusToForm(order.status),
-    tipoServico: inferServiceType(order, meta),
+    tipoServico: laudo.tipoServico ?? inferServiceType(order, meta),
     dataAgendamento: date,
     horaAgendamento: time,
     equipamentosIds: equipmentIds,
-    descricaoProblema: meta?.descricaoProblema ?? freeTextFromDescription(order.description) ?? order.title,
-    diagnosticoTecnico: meta?.diagnosticoTecnico ?? "",
-    checklist: mergeChecklist(meta?.checklist),
-    valorPecas: meta?.valorPecas ?? partsFromItems,
-    valorMaoDeObra: meta?.valorMaoDeObra ?? laborFromItems,
-    observacoesInternas: meta?.observacoesInternas ?? order.schedule?.notes ?? "",
+    servicos,
+    pecas,
+    descricaoProblema: laudo.descricaoProblema,
+    diagnosticoTecnico: laudo.diagnosticoTecnico,
+    checklist: laudo.checklist,
+    valorPecas: partsFromItems,
+    valorMaoDeObra: laborFromItems,
+    descontoTipo,
+    descontoValor,
+    observacoesInternas: laudo.observacoesInternas || order.schedule?.notes || "",
+    pmocPlanId: meta?.pmocPlanId ? String(meta.pmocPlanId) : "",
+    pmocPeriodYear: meta?.pmocPeriodYear,
+    pmocPeriodMonth: meta?.pmocPeriodMonth,
+    pmocEstimatedMinutes: meta?.pmocEstimatedMinutes,
+    horaTermino:
+      time && meta?.pmocEstimatedMinutes
+        ? addMinutesToTimeString(time, meta.pmocEstimatedMinutes)
+        : "",
+    clientSignatureBase64: laudo.clientSignatureBase64,
+    clientSignatureName: laudo.clientSignatureName,
+    clientSignatureAt: laudo.clientSignatureAt,
+    clientSignatureGeo: laudo.clientSignatureGeo,
+  };
+}
+
+export function enrichOrderViewLines(
+  data: ServiceOrderData,
+  products: ProductOut[],
+): ServiceOrderData {
+  return {
+    ...data,
+    pecas: enrichProductLabels(data.pecas ?? [], products),
   };
 }
 
@@ -319,6 +456,8 @@ export function mapOrdersToListView(
       openedAt: o.schedule?.starts_at ?? new Date().toISOString(),
       scheduledAt: o.schedule?.starts_at,
       totalValue: orderGrandTotal(o),
+      estimatedMinutes: o.total_duration_minutes ?? 0,
+      actualMinutes: o.actual_duration_minutes ?? null,
       description: o.title,
     };
   });
@@ -356,27 +495,51 @@ export function viewDataToCreatePayload(
     products: ProductOut[];
   },
 ): ServiceOrderCreatePayload {
-  const serviceId = resolveServiceId(data.tipoServico, ctx.services);
-  const service = ctx.services.find((s) => s.id === serviceId)!;
-  const equipmentIds = data.equipamentosIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0);
-  const serviceLines =
-    equipmentIds.length > 0
-      ? equipmentIds.map((equipment_id) => ({ service_id: serviceId, quantity: 1, equipment_id }))
-      : [{ service_id: serviceId, quantity: 1 }];
+  const serviceLinesInput =
+    data.servicos && data.servicos.length > 0
+      ? data.servicos.flatMap((line) => {
+          const qty = Math.max(line.quantity, 1);
+          const unit_price = Math.max(0, line.unitPrice);
+          const service_id = Number(line.serviceId);
+          const eqIds = (line.equipmentIds?.length ? line.equipmentIds : line.equipmentId ? [line.equipmentId] : [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0)
+            .slice(0, qty);
+          if (eqIds.length === 0) {
+            return [{ service_id, quantity: qty, equipment_id: null as number | null, unit_price }];
+          }
+          const rows: ServiceOrderEquipmentServiceInput[] = eqIds.map((equipment_id) => ({
+            service_id,
+            quantity: 1,
+            equipment_id,
+            unit_price,
+          }));
+          const remainder = qty - eqIds.length;
+          if (remainder > 0) {
+            rows.push({ service_id, quantity: remainder, equipment_id: null as number | null, unit_price });
+          }
+          return rows;
+        })
+      : (() => {
+          const serviceId = resolveServiceId(data.tipoServico, ctx.services);
+          const equipmentIds = data.equipamentosIds
+            .map((id) => Number(id))
+            .filter((id) => Number.isFinite(id) && id > 0);
+          return equipmentIds.length > 0
+            ? equipmentIds.map((equipment_id) => ({ service_id: serviceId, quantity: 1, equipment_id }))
+            : [{ service_id: serviceId, quantity: 1 }];
+        })();
 
-  const products: Array<{ product_id: number; quantity: number }> = [];
-  if (data.valorPecas > 0) {
-    const productId = resolvePartsProductId(ctx.products);
-    if (productId) products.push({ product_id: productId, quantity: 1 });
-  }
+  const productLinesInput =
+    data.pecas && data.pecas.length > 0
+      ? data.pecas.map((line) => ({
+          product_id: Number(line.productId),
+          quantity: Math.max(line.quantity, 1),
+          unit_price: Math.max(0, line.unitPrice),
+        }))
+      : [];
 
-  const catalogServicesTotal = serviceLines.length * Number(service.price || 0);
-  const catalogProductsTotal =
-    products.length > 0
-      ? Number(ctx.products.find((p) => p.id === products[0]!.product_id)?.sale_price ?? 0)
-      : 0;
-  const desiredTotal = computeOrderTotalFromView(data);
-  const discount_amount = Math.max(0, catalogServicesTotal + catalogProductsTotal - desiredTotal);
+  const discount_amount = computeDiscountAmountFromView(data);
 
   const description = serializeDescription(data.descricaoProblema, metaFromViewData(data));
 
@@ -385,9 +548,35 @@ export function viewDataToCreatePayload(
     title: `OS - ${ctx.clientName}`,
     description,
     technician_ids: data.tecnicoId ? [Number(data.tecnicoId)] : [],
-    services: serviceLines,
-    products,
+    services: serviceLinesInput,
+    products: productLinesInput,
     discount_amount,
+  };
+}
+
+export function buildDescriptionFromView(data: ServiceOrderData): string | null {
+  return serializeDescription(data.descricaoProblema, metaFromViewData(data));
+}
+
+/** Payload PATCH /service-orders/{id}/details — laudo, checklist e totais do fechamento. */
+export function buildOrderDetailsPayload(data: ServiceOrderData): {
+  description: string | null;
+  valorMaoDeObra: number;
+  valorPecas: number;
+  total: number;
+} {
+  const labor = computeLaborTotal(data.servicos ?? []);
+  const parts = computePartsTotal(data.pecas ?? []);
+  const meta = metaFromViewData({
+    ...data,
+    valorMaoDeObra: labor,
+    valorPecas: parts,
+  });
+  return {
+    description: serializeDescription(data.descricaoProblema, meta),
+    valorMaoDeObra: labor,
+    valorPecas: parts,
+    total: computeOrderTotalFromView(data),
   };
 }
 
@@ -396,6 +585,48 @@ export function buildScheduleStartsAt(data: ServiceOrderData): string | null {
   const local = new Date(`${data.dataAgendamento}T${data.horaAgendamento}:00`);
   if (Number.isNaN(local.getTime())) return null;
   return local.toISOString();
+}
+
+/** Snapshot estável para detectar alterações não salvas no formulário. */
+export function serializeServiceOrderFormSnapshot(data: ServiceOrderData): string {
+  const servicos = [...(data.servicos ?? [])]
+    .map((s) => ({
+      serviceId: s.serviceId,
+      quantity: s.quantity,
+      unitPrice: s.unitPrice,
+      equipmentIds: [...(s.equipmentIds ?? [])].sort(),
+    }))
+    .sort((a, b) => a.serviceId.localeCompare(b.serviceId));
+
+  const pecas = [...(data.pecas ?? [])]
+    .map((p) => ({
+      productId: p.productId,
+      quantity: p.quantity,
+      unitPrice: p.unitPrice,
+    }))
+    .sort((a, b) => a.productId.localeCompare(b.productId));
+
+  const checklist = [...(data.checklist ?? [])]
+    .map((c) => ({ id: c.id, status: c.status }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  return JSON.stringify({
+    clienteId: data.clienteId,
+    tecnicoId: data.tecnicoId,
+    status: data.status,
+    tipoServico: data.tipoServico,
+    dataAgendamento: data.dataAgendamento,
+    horaAgendamento: data.horaAgendamento,
+    equipamentosIds: [...(data.equipamentosIds ?? [])].sort(),
+    servicos,
+    pecas,
+    descricaoProblema: data.descricaoProblema ?? "",
+    diagnosticoTecnico: data.diagnosticoTecnico ?? "",
+    checklist,
+    descontoTipo: data.descontoTipo ?? "fixed",
+    descontoValor: data.descontoValor ?? 0,
+    observacoesInternas: data.observacoesInternas ?? "",
+  });
 }
 
 export function mapFormStatusToPatchTarget(

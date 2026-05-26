@@ -14,6 +14,8 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
 from app.schemas import BudgetCreate, BudgetRejectRequest, BudgetSendRequest
+from app.storage_integrity import get_storage_alerts, normalize_budget_status, verify_budget_storage
+from app.storage_integrity import upload_budget_pdf_to_s3 as _upload_budget_pdf_to_s3
 from app.tenant_logo import generate_tenant_logo_presigned_url
 from models import (
     Budget,
@@ -33,6 +35,12 @@ from models import (
 )
 
 router = APIRouter(tags=["budgets"])
+
+
+def _budget_storage_alert(budget: Budget) -> str | None:
+    if getattr(budget, "pdf_file_missing", False):
+        return f"Orçamento {budget.id} indisponível: arquivo não encontrado"
+    return None
 
 
 def _budget_to_out(budget: Budget) -> dict:
@@ -69,6 +77,9 @@ def _budget_to_out(budget: Budget) -> dict:
         "approved_at": budget.approved_at,
         "created_at": budget.created_at,
         "generated_service_order_id": budget.generated_service_order.id if budget.generated_service_order is not None else None,
+        "tracking_url": getattr(budget, "tracking_url", None),
+        "pdf_file_missing": bool(getattr(budget, "pdf_file_missing", False)),
+        "storage_alert": _budget_storage_alert(budget),
         "service_items": service_items,
         "product_items": product_items,
     }
@@ -96,12 +107,25 @@ def list_budgets(
     status_filter: Annotated[BudgetStatus | None, Query(alias="status")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> list[dict]:
+    include_storage_alerts: Annotated[
+        bool,
+        Query(description="Se true, retorna { items, storage_alerts } em vez de array (painel de orçamentos)."),
+    ] = False,
+) -> list[dict] | dict:
     query = _budget_query_for_tenant(current_user.tenant_id)
     if status_filter is not None:
         query = query.where(Budget.status == status_filter)
     rows = db.execute(query.order_by(Budget.id.desc()).offset(skip).limit(limit)).scalars().all()
+    for row in rows:
+        normalized = normalize_budget_status(row.status)
+        if normalized is not None and normalized != row.status:
+            row.status = normalized
+    if rows:
+        db.commit()
     payload = [_budget_to_out(row) for row in rows]
+    if include_storage_alerts:
+        panel_alerts = get_storage_alerts(current_user.tenant_id)
+        return JSONResponse(content=jsonable_encoder({"items": payload, "storage_alerts": panel_alerts}))
     return JSONResponse(content=jsonable_encoder(payload))
 
 
@@ -203,13 +227,27 @@ def send_budget_to_client(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    budget = db.execute(_budget_query_for_tenant(current_user.tenant_id).where(Budget.id == budget_id)).scalar_one_or_none()
+    budget = db.execute(
+        _budget_query_for_tenant(current_user.tenant_id)
+        .where(Budget.id == budget_id)
+        .options(
+            selectinload(Budget.client),
+            selectinload(Budget.service_items).selectinload(BudgetServiceItem.service),
+            selectinload(Budget.product_items).selectinload(BudgetProductItem.product),
+        )
+    ).scalar_one_or_none()
     if budget is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found.")
     if budget.status == BudgetStatus.APPROVED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approved budget cannot be sent again.")
     budget.status = BudgetStatus.SENT
     budget.sent_at = payload.sent_at or datetime.now(timezone.utc)
+    tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
+    try:
+        budget.pdf_s3_key = _upload_budget_pdf_to_s3(budget, tenant, db)
+        verify_budget_storage(budget, db, reupload_missing=False)
+    except Exception:
+        budget.pdf_file_missing = True
     db.commit()
     db.refresh(budget)
     return JSONResponse(content=jsonable_encoder(_budget_to_out(budget)))
@@ -324,6 +362,8 @@ def budget_pdf(
     ).scalar_one_or_none()
     if budget is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found.")
+    verify_budget_storage(budget, db, reupload_missing=False)
+    db.commit()
     tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
     logo_url: str | None = getattr(tenant, "logo_url", None)
     logo_s3_key = getattr(tenant, "logo_s3_key", None)

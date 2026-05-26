@@ -91,18 +91,6 @@ export function NavIconBox(props: NavSvgProps) {
   );
 }
 
-/** Pilhas / estoque (prateleiras) */
-export function NavIconInventory(props: NavSvgProps) {
-  return (
-    <svg {...base} aria-hidden {...props}>
-      <path d="M4 10v10a1 1 0 0 0 1 1h5V9H5a1 1 0 0 0-1 1Z" />
-      <path d="M14 13h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-5V13Z" />
-      <path d="M14 4h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5V4Z" />
-      <path d="M4 5a1 1 0 0 1 1-1h5v8H5a1 1 0 0 1-1-1V5Z" />
-    </svg>
-  );
-}
-
 export function NavIconCalendar(props: NavSvgProps) {
   return (
     <svg {...base} aria-hidden {...props}>
@@ -274,6 +262,17 @@ export function NavIconAirCompliance(props: NavSvgProps) {
       <path d="M4.93 19.07l2.83-2.83" />
       <path d="M16.24 7.76l2.83-2.83" />
       <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** PMOC — plano de manutenção com conformidade legal (prancheta + escudo) */
+export function NavIconPmoc(props: NavSvgProps) {
+  return (
+    <svg {...base} aria-hidden {...props}>
+      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+      <rect x="9" y="3" width="6" height="4" rx="1" />
+      <path d="m9 12 2 2 4-4" />
     </svg>
   );
 }

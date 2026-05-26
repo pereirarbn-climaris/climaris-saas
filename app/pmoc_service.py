@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from models import (
     Client,
+    ClientSite,
     Equipment,
     PmocActivityFrequency,
     PmocPlan,
@@ -22,8 +23,8 @@ from models import (
 LAW_THRESHOLD_BTU = 60_000
 
 DEFAULT_LAW_NOTE = (
-    "Referência: Lei Federal nº 13.589/2018 e normas correlatas da ANVISA sobre sistemas de climatização. "
-    "Para instalações acima de 60.000 BTUs (soma das capacidades), verifique obrigatoriedade de análise "
+    "Referência: Lei Federal nº 13.589/2018 e ABNT NBR 17.037:2023 (Qualidade do Ar Interior em Sistemas de Climatização). "
+    "Para instalações a partir de 60.000 BTUs (soma das capacidades), verifique obrigatoriedade de análise "
     "periódica da qualidade do ar em ambiente climatizado e responsável técnico habilitado."
 )
 
@@ -48,6 +49,24 @@ def client_snapshot_dict(client: Client) -> dict[str, Any]:
     }
 
 
+def client_site_snapshot_dict(client: Client, site: ClientSite) -> dict[str, Any]:
+    """Snapshot congelado da obra/filial vinculada ao PMOC."""
+    base = client_snapshot_dict(client)
+    base.update(
+        {
+            "site_id": site.id,
+            "site_name": site.name,
+            "address_street": site.street or client.address_street,
+            "address_number": site.number or client.address_number,
+            "address_district": site.neighborhood or client.address_district,
+            "address_city": site.city or client.address_city,
+            "address_state": site.state or client.address_state,
+            "address_postal_code": site.cep or client.address_postal_code,
+        }
+    )
+    return base
+
+
 def sum_equipment_btu_for_pmoc(db: Session, pmoc_id: int) -> int:
     total = db.execute(
         select(func.coalesce(func.sum(Equipment.capacidade_btu), 0)).where(
@@ -63,7 +82,7 @@ def sum_equipment_btu_for_pmoc(db: Session, pmoc_id: int) -> int:
 def refresh_pmoc_computed_fields(db: Session, plan: PmocPlan) -> None:
     total = sum_equipment_btu_for_pmoc(db, plan.id)
     plan.total_btu_sum = total
-    plan.air_analysis_required = total > LAW_THRESHOLD_BTU
+    plan.air_analysis_required = total >= LAW_THRESHOLD_BTU
     if plan.air_analysis_required and plan.next_air_analysis_due is None:
         plan.next_air_analysis_due = date.today() + timedelta(days=180)
 
@@ -117,15 +136,25 @@ def seed_default_activities(db: Session, pmoc_id: int) -> None:
         )
 
 
-def deactivate_other_active_plans(db: Session, tenant_id: int, client_id: int, keep_pmoc_id: int) -> None:
-    others = db.execute(
-        select(PmocPlan).where(
-            PmocPlan.tenant_id == tenant_id,
-            PmocPlan.client_id == client_id,
-            PmocPlan.status == PmocPlanStatus.ACTIVE,
-            PmocPlan.id != keep_pmoc_id,
-        )
-    ).scalars().all()
+def deactivate_other_active_plans(
+    db: Session,
+    tenant_id: int,
+    client_id: int,
+    keep_pmoc_id: int,
+    *,
+    client_site_id: int | None = None,
+) -> None:
+    query = select(PmocPlan).where(
+        PmocPlan.tenant_id == tenant_id,
+        PmocPlan.client_id == client_id,
+        PmocPlan.status == PmocPlanStatus.ACTIVE,
+        PmocPlan.id != keep_pmoc_id,
+    )
+    if client_site_id is not None:
+        query = query.where(PmocPlan.client_site_id == client_site_id)
+    else:
+        query = query.where(PmocPlan.client_site_id.is_(None))
+    others = db.execute(query).scalars().all()
     now = datetime.now(timezone.utc)
     for p in others:
         p.status = PmocPlanStatus.INACTIVE
@@ -138,6 +167,7 @@ def extras_default() -> dict[str, str]:
         "parts_history": "",
         "efficiency_notes": "",
         "improvement_suggestions": "",
+        "planning_scheduled_rows": "",
     }
 
 
@@ -157,5 +187,88 @@ def parse_extras(raw: str | None) -> dict[str, Any]:
     return extras_default()
 
 
+def parse_planning_scheduled_rows(extras: dict[str, Any]) -> set[str]:
+    raw = extras.get("planning_scheduled_rows", "")
+    if not isinstance(raw, str) or not raw.strip():
+        return set()
+    return {key.strip() for key in raw.split(",") if key.strip()}
+
+
+def merge_planning_scheduled_rows(extras: dict[str, Any], row_keys: list[str]) -> dict[str, str]:
+    merged = extras_default()
+    for key in merged:
+        if key in extras and isinstance(extras[key], str):
+            merged[key] = extras[key]
+    scheduled = parse_planning_scheduled_rows(merged)
+    scheduled.update(key.strip() for key in row_keys if key.strip())
+    merged["planning_scheduled_rows"] = ",".join(sorted(scheduled))
+    return merged
+
+
 def serialize_extras(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
+
+
+def build_pmoc_create_validation_issues(
+    *,
+    client_id: int,
+    client_site_id: int,
+    equipment_ids: list[int],
+    responsible_name: str | None,
+) -> list[dict[str, str]]:
+    """Regras mínimas para cadastro PMOC (cliente, obra, equipamentos, RT)."""
+    issues: list[dict[str, str]] = []
+    if client_id < 1:
+        issues.append(
+            {
+                "code": "missing_client",
+                "field": "clientId",
+                "message": "Selecione o cliente titular do PMOC.",
+                "tab": "identification",
+            }
+        )
+    if client_site_id < 1:
+        issues.append(
+            {
+                "code": "missing_site",
+                "field": "siteId",
+                "message": "Selecione a obra ou filial vinculada ao plano.",
+                "tab": "identification",
+            }
+        )
+    if len(equipment_ids) < 1:
+        issues.append(
+            {
+                "code": "missing_equipment",
+                "field": "equipmentIds",
+                "message": "Vincule ao menos um equipamento ao PMOC.",
+                "tab": "identification",
+            }
+        )
+    if not (responsible_name or "").strip():
+        issues.append(
+            {
+                "code": "missing_rt",
+                "field": "rtData.responsibleName",
+                "message": "Informe o responsável técnico (RT) na aba Ar & ART.",
+                "tab": "air",
+            }
+        )
+    return issues
+
+
+def apply_pmoc_rt_fields(plan: PmocPlan, rt_data: Any | None) -> None:
+    if rt_data is None:
+        return
+    if rt_data.responsible_name is not None:
+        plan.responsible_name = rt_data.responsible_name.strip() or None
+    if rt_data.responsible_council is not None:
+        plan.responsible_council = rt_data.responsible_council.strip()[:16] or None
+    if rt_data.responsible_registration is not None:
+        plan.responsible_registration = rt_data.responsible_registration.strip()[:80] or None
+    if rt_data.art_number is not None:
+        plan.art_number = rt_data.art_number.strip()[:120] or None
+    if rt_data.art_issued_at is not None:
+        plan.art_issued_at = rt_data.art_issued_at
+    if rt_data.next_air_analysis_due is not None:
+        plan.next_air_analysis_due = rt_data.next_air_analysis_due

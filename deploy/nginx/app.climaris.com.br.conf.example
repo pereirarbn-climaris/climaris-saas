@@ -30,13 +30,40 @@ server {
 
     root /var/www/climaris-web;
     index index.html;
-    # Evita 413 em uploads (logo da empresa, anexos futuros).
-    client_max_body_size 10m;
+    # PDFs de manual no catálogo (até 100 MB) e outros uploads.
+    client_max_body_size 100m;
+    client_body_timeout 120s;
 
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
 
-    # Webhook Evolution: pode demorar (IA / DB); evita "upstream prematurely closed" no Nginx.
+    # Webhook WhatsApp agenda + alias legado Evolution (podem demorar — IA / DB).
+    location ^~ /api/v1/whatsapp/webhook/agenda {
+        proxy_pass http://climaris_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
+    location ^~ /api/v1/whatsapp/webhook/preventiva {
+        proxy_pass http://climaris_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
     location ^~ /api/v1/whatsapp/webhook/evolution {
         proxy_pass http://climaris_api;
         proxy_http_version 1.1;
@@ -57,9 +84,10 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_connect_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+        send_timeout 120s;
     }
 
     location = /health {
