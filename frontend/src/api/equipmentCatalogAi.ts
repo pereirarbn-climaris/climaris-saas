@@ -1,6 +1,8 @@
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 
+export type EquipmentLabelKind = "ar_condicionado" | "climatizador";
+
 export type EquipmentLabelExtractionOut = {
   marca: string | null;
   modelo_evaporadora: string | null;
@@ -10,6 +12,11 @@ export type EquipmentLabelExtractionOut = {
   tensao: string | null;
   tipo_equipamento: string | null;
   tecnologia: string | null;
+  modelo?: string | null;
+  vazao_m3h?: string | null;
+  potencia_kw?: string | null;
+  tipo_instalacao?: string | null;
+  pressao_estatica?: string | null;
 };
 
 function bearer(): HeadersInit {
@@ -37,15 +44,21 @@ function errorMessage(body: unknown, fallback: string, status: number): string {
 
 /** Envia fotos de etiqueta(s) para extração via IA multimodal. */
 export async function extractEquipmentLabelFromPhotos(params: {
+  equipmentKind?: EquipmentLabelKind;
   evaporatorImage?: File | null;
   condenserImage?: File | null;
+  labelImage?: File | null;
 }): Promise<EquipmentLabelExtractionOut> {
   const fd = new FormData();
+  fd.append("equipment_kind", params.equipmentKind ?? "ar_condicionado");
   if (params.evaporatorImage) {
     fd.append("evaporator_image", params.evaporatorImage, params.evaporatorImage.name);
   }
   if (params.condenserImage) {
     fd.append("condenser_image", params.condenserImage, params.condenserImage.name);
+  }
+  if (params.labelImage) {
+    fd.append("label_image", params.labelImage, params.labelImage.name);
   }
   const response = await fetch(apiUrl("/api/v1/equipment-catalog/ai/extract-label"), {
     method: "POST",

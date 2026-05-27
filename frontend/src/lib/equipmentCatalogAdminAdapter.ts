@@ -17,6 +17,12 @@ import type { EquipmentCatalogOut } from "../api/equipmentCatalog";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const MANUAL_TECHNICAL_ID_KEYS = [
+  "manual_usuario_id",
+  "manual_instalacao_id",
+  "manual_servico_id",
+] as const;
+
 export function mapApiCategoryToOption(item: EquipmentCategoryOut): CategoryOption {
   const fieldDefinitions = resolveCategoryFieldDefinitions(item);
   return {
@@ -34,6 +40,8 @@ export function mapApiCategoryToOption(item: EquipmentCategoryOut): CategoryOpti
 export function mapCatalogItemToView(item: EquipmentCatalogOut): CatalogEquipment {
   const fieldDefinitions = resolveCategoryFieldDefinitions(item.category);
   const technicalData = technicalDataFromCatalog(item);
+  const td = item.technical_data ?? {};
+  const hasExtraManuals = MANUAL_TECHNICAL_ID_KEYS.some((key) => Boolean(td[key]));
   return {
     id: item.id,
     categoryId: item.category_id,
@@ -48,6 +56,7 @@ export function mapCatalogItemToView(item: EquipmentCatalogOut): CatalogEquipmen
     manualUrl: item.manual_url,
     manualId: item.manual_id,
     manualTitle: item.manual?.title ?? null,
+    hasExtraManuals,
     createdAt: "",
     updatedAt: "",
   };
@@ -63,7 +72,7 @@ export function buildCatalogMetrics(items: CatalogEquipment[], total?: number): 
       const k = e.categoryIconKey ?? normalizeCategoryIconKey(null, e.categoryName);
       return k === "geladeira" || k === "bebedouro";
     }).length,
-    totalComManual: items.filter((e) => Boolean(e.manualUrl)).length,
+    totalComManual: items.filter((e) => Boolean(e.manualUrl) || e.hasExtraManuals).length,
   };
 }
 
@@ -146,6 +155,9 @@ export function newCatalogDataToFormData(data: NewCatalogEquipmentData): FormDat
       "Manual tecnico";
     appendFormField(fd, "manual_title", title);
     fd.append("manual_pdf", data.manualPdf, data.manualPdf.name || "manual.pdf");
+    if (data.manualCombinadoUsuarioInstalacao) {
+      fd.append("manual_combinado_usuario_instalacao", "true");
+    }
   } else if (data.manualMode === "existing") {
     const manualId = optionalFormValue(data.manualId);
     if (!manualId || !UUID_RE.test(manualId)) {
@@ -156,13 +168,13 @@ export function newCatalogDataToFormData(data: NewCatalogEquipmentData): FormDat
 
   const manuals = data.acManuals;
   if (manuals) {
-    if (manuals.usuario.pdf) {
+    if (manuals.usuario.pdf && data.manualPdf !== manuals.usuario.pdf) {
       fd.append("manual_usuario_pdf", manuals.usuario.pdf, manuals.usuario.pdf.name || "manual-usuario.pdf");
     }
-    if (manuals.servico.pdf) {
+    if (manuals.servico.pdf && data.manualPdf !== manuals.servico.pdf) {
       fd.append("manual_servico_pdf", manuals.servico.pdf, manuals.servico.pdf.name || "manual-servico.pdf");
     }
-    if (manuals.instalacao.pdf && !data.manualPdf) {
+    if (manuals.instalacao.pdf && data.manualPdf !== manuals.instalacao.pdf) {
       fd.append("manual_instalacao_pdf", manuals.instalacao.pdf, manuals.instalacao.pdf.name || "manual-instalacao.pdf");
     }
     if (manuals.existingManualId && data.manualMode === "existing" && !data.manualId) {

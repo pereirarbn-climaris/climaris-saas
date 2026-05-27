@@ -270,6 +270,7 @@ class Tenant(Base):
     preventive_message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 0 = só lembrete no dia do vencimento; N>0 = também envia quando faltam N dias (calendário do tenant.timezone).
     preventive_auto_remind_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    preventive_auto_whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[TenantStatus] = mapped_column(
         Enum(TenantStatus, name="tenant_status", values_callable=lambda items: [item.value for item in items]),
         nullable=False,
@@ -1031,6 +1032,69 @@ class EquipmentPreventiveRule(Base):
         )
 
 
+class EquipmentServicePreventiveOverride(Base):
+    """Intervalo preventivo customizado por equipamento + tipo de serviço."""
+
+    __tablename__ = "equipment_service_preventive_overrides"
+    __table_args__ = (
+        UniqueConstraint("equipment_id", "service_id", name="uq_equipment_service_preventive_override"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    equipment_id: Mapped[int] = mapped_column(
+        ForeignKey("equipments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    interval_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    interval_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    equipment: Mapped["Equipment"] = relationship()
+    service: Mapped["Service"] = relationship()
+
+
+class EquipmentServicePreventiveSchedule(Base):
+    """Prazos preventivos persistidos por equipamento + serviço (fonte da Gestão Preventiva)."""
+
+    __tablename__ = "equipment_service_preventive_schedules"
+    __table_args__ = (
+        UniqueConstraint("equipment_id", "service_id", name="uq_equipment_service_preventive_schedule"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    equipment_id: Mapped[int] = mapped_column(
+        ForeignKey("equipments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    interval_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    interval_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    last_performed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_service_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    equipment: Mapped["Equipment"] = relationship()
+    service: Mapped["Service"] = relationship()
+
+
 class CustomerBillingAutomation(Base):
     """Preferências de faturamento automático pós-fechamento da OS (fase 2)."""
 
@@ -1633,6 +1697,9 @@ class Service(Base):
     nfse_codigo_tributacao_nacional: Mapped[str | None] = mapped_column(String(32), nullable=True)
     nfse_codigo_nbs: Mapped[str | None] = mapped_column(String(32), nullable=True)
     periodicidade_meses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preventive_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    preventive_interval_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    preventive_interval_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -1,18 +1,18 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown, ClipboardList, ExternalLink, MessageCircle } from "lucide-react";
 import type { PreventiveClientGroup, PreventiveItem } from "../../api/preventiveMaintenance";
 import { formatFriendlyDatePt } from "../../lib/preventiveLastService";
+import { buildPreventiveServiceOrderUrl } from "../../lib/preventiveServiceOrder";
 import styles from "./PreventiveClientsGroupedList.module.css";
 
 type Props = {
   clients: PreventiveClientGroup[];
-  windowDays: number;
-  canEdit: boolean;
-  sendingId: number | null;
-  selectedHistoricoId: number | null;
-  onSend: (row: PreventiveItem) => void;
-  onTogglePreview: (row: PreventiveItem) => void;
+  monthLabel: string;
+  loading?: boolean;
+  canEdit?: boolean;
+  sendingClientId?: number | null;
+  onSendClient?: (clientId: number) => void;
 };
 
 function formatConfiguredInterval(row: PreventiveItem): string {
@@ -26,11 +26,9 @@ function formatConfiguredInterval(row: PreventiveItem): string {
 
 function equipmentDisplayName(row: PreventiveItem): string {
   const ident = row.equipment_identificacao?.trim();
-  const fromService = row.service_name?.replace(/^Preventiva\s*[—-]\s*/i, "").trim();
-  if (ident && fromService && ident !== fromService) {
-    return `${ident} — ${fromService}`;
-  }
-  return ident || fromService || "Equipamento";
+  const service = row.service_name?.trim();
+  if (ident && service) return `${ident} — ${service}`;
+  return ident || service || "Equipamento";
 }
 
 function formatDueDate(iso: string): string {
@@ -41,21 +39,22 @@ function formatLastMaintenance(iso: string): string {
   return formatFriendlyDatePt(iso) ?? iso.split("T")[0] ?? iso;
 }
 
-function dueTone(dias: number): "overdue" | "warning" {
-  return dias < 0 ? "overdue" : "warning";
+function dueTone(dias: number): "overdue" | "warning" | "ok" {
+  if (dias < 0) return "overdue";
+  if (dias <= 7) return "warning";
+  return "ok";
 }
 
 export function PreventiveClientsGroupedList({
   clients,
-  windowDays,
-  canEdit,
-  sendingId,
-  selectedHistoricoId,
-  onSend,
-  onTogglePreview,
+  monthLabel,
+  loading = false,
+  canEdit = false,
+  sendingClientId = null,
+  onSendClient,
 }: Props) {
   const defaultOpen = useMemo(
-    () => new Set(clients.slice(0, 3).map((c) => c.client_id)),
+    () => new Set(clients.slice(0, 5).map((c) => c.client_id)),
     [clients],
   );
   const [openIds, setOpenIds] = useState<Set<number>>(() => defaultOpen);
@@ -69,11 +68,16 @@ export function PreventiveClientsGroupedList({
     });
   };
 
+  if (loading) {
+    return <p className={styles.empty}>Carregando vencimentos de {monthLabel}…</p>;
+  }
+
   if (clients.length === 0) {
     return (
       <p className={styles.empty}>
-        Nenhum cliente com equipamentos vencidos ou a vencer nesta janela ({windowDays} dias). Cadastre
-        regras na ficha do cliente (aba Preventiva) ou histórico de serviços com periodicidade.
+        Nenhum equipamento com validade preventiva vencendo em {monthLabel}. Use{" "}
+        <strong>Nova Preventiva</strong> para cadastrar lembretes de clientes que fizeram serviço antes do
+        sistema, ou conclua ordens de serviço para atualizar prazos automaticamente.
       </p>
     );
   }
@@ -99,7 +103,7 @@ export function PreventiveClientsGroupedList({
               <span className={styles.clientMain}>
                 <span className={styles.clientName}>{group.client_name}</span>
                 <span className={styles.clientMeta}>
-                  {alertCount} equipamento{alertCount === 1 ? "" : "s"} na janela
+                  {alertCount} equipamento{alertCount === 1 ? "" : "s"} vencendo em {monthLabel}
                   {overdueCount > 0 ? ` · ${overdueCount} vencido${overdueCount === 1 ? "" : "s"}` : ""}
                 </span>
               </span>
@@ -110,13 +114,43 @@ export function PreventiveClientsGroupedList({
                   {alertCount}
                 </span>
               </span>
+              {canEdit && onSendClient ? (
+                <button
+                  type="button"
+                  className={styles.waSendBtn}
+                  disabled={!group.whatsapp_valido || sendingClientId === group.client_id}
+                  title={
+                    group.whatsapp_valido
+                      ? "Enviar lembrete preventivo por WhatsApp"
+                      : "Cliente sem WhatsApp válido"
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSendClient(group.client_id);
+                  }}
+                >
+                  <MessageCircle size={14} strokeWidth={2} aria-hidden />
+                  {sendingClientId === group.client_id ? "Enviando…" : "Enviar WhatsApp"}
+                </button>
+              ) : null}
+              {canEdit ? (
+                <Link
+                  to={buildPreventiveServiceOrderUrl(group)}
+                  className={styles.osLink}
+                  title="Gerar ordem de serviço preventiva para este cliente"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <ClipboardList size={14} strokeWidth={2} aria-hidden />
+                  Gerar OS
+                </Link>
+              ) : null}
               <Link
-                to={`/app/clients/${group.client_id}?tab=preventiva`}
+                to={`/app/clients/${group.client_id}`}
                 className={styles.clientLink}
                 onClick={(e) => e.stopPropagation()}
               >
                 <ExternalLink size={14} strokeWidth={2} aria-hidden />
-                Abrir ficha
+                Abrir cliente
               </Link>
             </button>
 
@@ -126,70 +160,42 @@ export function PreventiveClientsGroupedList({
                   <table className={styles.table}>
                     <thead>
                       <tr>
-                        <th>Equipamento</th>
+                        <th>Equipamento / serviço</th>
                         <th>Intervalo</th>
-                        <th>Última manutenção</th>
-                        <th>Próximo vencimento</th>
-                        <th className={styles.thActions}>Ações</th>
+                        <th>Última realização</th>
+                        <th>Próxima validade</th>
                       </tr>
                     </thead>
                     <tbody>
                       {group.equipments.map((row) => {
                         const tone = dueTone(row.dias_ate_vencimento);
-                        const canSendWa =
-                          row.whatsapp_valido && row.historico_servico_id > 0 && group.whatsapp_valido;
-
                         return (
-                          <tr key={`${row.rule_id ?? 0}-${row.equipment_id ?? row.historico_servico_id}`}>
+                          <tr key={`${row.equipment_id ?? 0}-${row.service_id}-${row.data_proximo_vencimento}`}>
                             <td>
                               <span className={styles.equipName}>{equipmentDisplayName(row)}</span>
                               {row.dias_ate_vencimento < 0 ? (
                                 <span className={styles.equipTagOverdue}>Vencido</span>
-                              ) : (
+                              ) : row.dias_ate_vencimento === 0 ? (
+                                <span className={styles.equipTagSoon}>Vence hoje</span>
+                              ) : row.dias_ate_vencimento <= 7 ? (
                                 <span className={styles.equipTagSoon}>
                                   Em {row.dias_ate_vencimento} dia
                                   {row.dias_ate_vencimento === 1 ? "" : "s"}
                                 </span>
-                              )}
+                              ) : null}
                             </td>
                             <td>{formatConfiguredInterval(row)}</td>
                             <td>{formatLastMaintenance(row.data_ultima_realizacao)}</td>
-                            <td>
-                              <span className={tone === "overdue" ? styles.dueOverdue : styles.dueWarning}>
-                                {formatDueDate(row.data_proximo_vencimento)}
-                              </span>
-                            </td>
-                            <td className={styles.actions}>
-                              {row.historico_servico_id > 0 ? (
-                                <button
-                                  type="button"
-                                  className={styles.btnGhost}
-                                  onClick={() => onTogglePreview(row)}
-                                >
-                                  {selectedHistoricoId === row.historico_servico_id
-                                    ? "Fechar prévia"
-                                    : "Prévia"}
-                                </button>
-                              ) : null}
-                              {canEdit ? (
-                                <button
-                                  type="button"
-                                  className={styles.btnSend}
-                                  disabled={!canSendWa || sendingId === row.historico_servico_id}
-                                  title={
-                                    row.historico_servico_id <= 0
-                                      ? "Envio por WhatsApp disponível para registros com histórico de serviço."
-                                      : !row.whatsapp_valido
-                                        ? "WhatsApp do cliente inválido ou ausente."
-                                        : undefined
-                                  }
-                                  onClick={() => void onSend(row)}
-                                >
-                                  {sendingId === row.historico_servico_id
-                                    ? "Enviando…"
-                                    : "WhatsApp"}
-                                </button>
-                              ) : null}
+                            <td
+                              className={
+                                tone === "overdue"
+                                  ? styles.dueOverdue
+                                  : tone === "warning"
+                                    ? styles.dueWarning
+                                    : undefined
+                              }
+                            >
+                              {formatDueDate(row.data_proximo_vencimento)}
                             </td>
                           </tr>
                         );

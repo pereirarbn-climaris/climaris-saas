@@ -20,3 +20,63 @@
   gap: var(--form-group-inner-gap);
   min-width: 0;
 }
+
+/* Card padrão de formulário com abas (mesmo padrão de Clientes). */
+.formCard {
+  background: var(--color-surface-elevated);
+  border-radius: var(--card-radius);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.formCardTabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0;
+  margin: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.formCardTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.formCardTab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: auto;
+  padding: var(--space-4) var(--space-5);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  margin: 0 0 -1px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--motion-duration) var(--motion-easing), border-color var(--motion-duration) var(--motion-easing),
+    background var(--motion-duration) var(--motion-easing);
+}
+
+.formCardTab:hover:not(.formCardTabActive) {
+  color: var(--color-text);
+}
+
+.formCardTabActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  background: var(--color-surface-elevated);
+}
+
+.formCardContent {
+  padding: var(--card-padding-lg);
+}

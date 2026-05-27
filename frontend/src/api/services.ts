@@ -19,7 +19,10 @@ export type ServiceOut = {
   is_active: boolean;
   nfse_codigo_tributacao_nacional: string | null;
   nfse_codigo_nbs: string | null;
-  periodicidade_meses: 6 | 12 | null;
+  periodicidade_meses: number | null;
+  preventive_enabled: boolean;
+  preventive_interval_type: "days" | "months" | "years" | null;
+  preventive_interval_value: number | null;
   product_inputs: Array<{
     id: number;
     product_id: number;
@@ -50,7 +53,10 @@ export type ServiceCreatePayload = {
   is_active?: boolean;
   nfse_codigo_tributacao_nacional?: string | null;
   nfse_codigo_nbs?: string | null;
-  periodicidade_meses?: 6 | 12 | null;
+  periodicidade_meses?: number | null;
+  preventive_enabled?: boolean;
+  preventive_interval_type?: "days" | "months" | "years" | null;
+  preventive_interval_value?: number | null;
   product_inputs?: ServiceProductInputPayload[];
 };
 
@@ -68,7 +74,10 @@ export type ServiceUpdatePayload = {
   is_active?: boolean;
   nfse_codigo_tributacao_nacional?: string | null;
   nfse_codigo_nbs?: string | null;
-  periodicidade_meses?: 6 | 12 | null;
+  periodicidade_meses?: number | null;
+  preventive_enabled?: boolean;
+  preventive_interval_type?: "days" | "months" | "years" | null;
+  preventive_interval_value?: number | null;
   product_inputs?: ServiceProductInputPayload[];
 };
 
@@ -160,6 +169,9 @@ export async function createService(payload: ServiceCreatePayload): Promise<Serv
         nfse_codigo_tributacao_nacional: payload.nfse_codigo_tributacao_nacional ?? null,
         nfse_codigo_nbs: payload.nfse_codigo_nbs ?? null,
         periodicidade_meses: payload.periodicidade_meses ?? null,
+        preventive_enabled: payload.preventive_enabled ?? false,
+        preventive_interval_type: payload.preventive_interval_type ?? null,
+        preventive_interval_value: payload.preventive_interval_value ?? null,
         product_inputs: [],
       }),
     );

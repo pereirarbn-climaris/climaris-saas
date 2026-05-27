@@ -1995,9 +1995,25 @@ class ServiceCreate(BaseModel):
     is_active: bool = True
     nfse_codigo_tributacao_nacional: str | None = Field(default=None, max_length=32)
     nfse_codigo_nbs: str | None = Field(default=None, max_length=32)
-    periodicidade_meses: Literal[6, 12] | None = Field(
+    periodicidade_meses: int | None = Field(
         default=None,
-        description="Periodicidade para alertas de manutenção preventiva (meses). Null desliga o rastreamento.",
+        ge=1,
+        le=144,
+        description="Legado — preferir preventive_enabled + interval_type/value.",
+    )
+    preventive_enabled: bool = Field(
+        default=False,
+        description="Ativa alertas e histórico na Gestão preventiva para este serviço.",
+    )
+    preventive_interval_type: Literal["days", "months", "years"] | None = Field(
+        default=None,
+        description="Unidade do intervalo quando preventive_enabled=true.",
+    )
+    preventive_interval_value: int | None = Field(
+        default=None,
+        ge=1,
+        le=3650,
+        description="Quantidade (1–12 para meses/anos; livre para dias).",
     )
     product_inputs: list[ServiceProductInput] = []
 
@@ -2016,7 +2032,10 @@ class ServiceUpdate(BaseModel):
     is_active: bool | None = None
     nfse_codigo_tributacao_nacional: str | None = Field(default=None, max_length=32)
     nfse_codigo_nbs: str | None = Field(default=None, max_length=32)
-    periodicidade_meses: Literal[6, 12] | None = None
+    periodicidade_meses: int | None = Field(default=None, ge=1, le=144)
+    preventive_enabled: bool | None = None
+    preventive_interval_type: Literal["days", "months", "years"] | None = None
+    preventive_interval_value: int | None = Field(default=None, ge=1, le=3650)
     product_inputs: list[ServiceProductInput] | None = None
 
 
@@ -2038,7 +2057,10 @@ class ServiceOut(BaseModel):
     is_active: bool
     nfse_codigo_tributacao_nacional: str | None = None
     nfse_codigo_nbs: str | None = None
-    periodicidade_meses: Literal[6, 12] | None = None
+    periodicidade_meses: int | None = None
+    preventive_enabled: bool = False
+    preventive_interval_type: Literal["days", "months", "years"] | None = None
+    preventive_interval_value: int | None = None
     product_inputs: list[ServiceProductInputOut] = []
     estimated_material_cost: float = 0
     estimated_profit: float = 0
@@ -3411,6 +3433,18 @@ class EquipmentManualListOut(BaseModel):
     items: list[EquipmentManualOptionOut]
 
 
+class ClientEquipmentManualOut(BaseModel):
+    id: str
+    title: str
+    url: str
+    kind: str
+    component_label: str | None = None
+
+
+class ClientEquipmentManualListOut(BaseModel):
+    items: list[ClientEquipmentManualOut] = Field(default_factory=list)
+
+
 class CategoryFieldDefinitionOut(BaseModel):
     key: str = Field(..., min_length=1, max_length=64)
     name: str = Field(..., min_length=1, max_length=120)
@@ -3483,7 +3517,7 @@ class EquipmentCategoryListOut(BaseModel):
 
 
 class EquipmentLabelExtractionOut(BaseModel):
-    """Dados extraídos de etiqueta de ar-condicionado via IA (visão computacional)."""
+    """Dados extraídos de etiqueta via IA (visão computacional)."""
 
     marca: str | None = None
     modelo_evaporadora: str | None = None
@@ -3493,6 +3527,12 @@ class EquipmentLabelExtractionOut(BaseModel):
     tensao: str | None = None
     tipo_equipamento: str | None = None
     tecnologia: str | None = None
+    # Climatizador
+    modelo: str | None = None
+    vazao_m3h: str | None = None
+    potencia_kw: str | None = None
+    tipo_instalacao: str | None = None
+    pressao_estatica: str | None = None
 
 
 class EquipmentCatalogOut(BaseModel):
@@ -3622,6 +3662,14 @@ class EquipmentCatalogListOut(BaseModel):
     limit: int
 
 
+class EquipmentCatalogDuplicateCheckOut(BaseModel):
+    exists: bool
+    catalog_id: str | None = None
+    brand: str | None = None
+    model: str | None = None
+    category_name: str | None = None
+
+
 class ClientEquipmentCatalogRefOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -3687,6 +3735,10 @@ class ClientEquipmentOut(BaseModel):
     installation_date: date | None = None
     is_active: bool
     legacy_equipment_id: int | None = None
+    legacy_fabricante: str | None = None
+    legacy_modelo: str | None = None
+    legacy_capacidade_btu: int | None = None
+    legacy_serial: str | None = None
     public_token: str | None = None
     qrcode_code_id: str | None = None
     components: list[ClientEquipmentComponentOut] = Field(default_factory=list)
@@ -3786,3 +3838,61 @@ class ClientEquipmentSiteUpdate(BaseModel):
     """Altera apenas a filial/obra vinculada à instalação."""
 
     client_site_id: int | None = None
+
+
+class ClientEquipmentComponentSerialUpdate(BaseModel):
+    id: str = Field(..., min_length=36, max_length=36)
+    serial_number: str | None = Field(default=None, max_length=120)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+    @field_validator("serial_number")
+    @classmethod
+    def _strip_serial(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+
+class ClientEquipmentUpdate(BaseModel):
+    """Atualização parcial dos dados editáveis da instalação no cliente."""
+
+    tag: str | None = Field(default=None, min_length=1, max_length=120)
+    installation_reference: str | None = Field(default=None, max_length=500)
+    installation_date: date | None = None
+    is_active: bool | None = None
+    client_site_id: int | None = None
+    components: list[ClientEquipmentComponentSerialUpdate] | None = None
+
+    @field_validator("tag")
+    @classmethod
+    def _strip_tag(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+    @field_validator("installation_reference")
+    @classmethod
+    def _strip_reference_update(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+    @model_validator(mode="after")
+    def _require_at_least_one_field(self) -> "ClientEquipmentUpdate":
+        if (
+            self.tag is None
+            and self.installation_reference is None
+            and self.installation_date is None
+            and self.is_active is None
+            and self.client_site_id is None
+            and self.components is None
+        ):
+            raise ValueError("Informe ao menos um campo para atualizar.")
+        return self

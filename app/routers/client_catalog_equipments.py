@@ -17,10 +17,15 @@ from app.services.platform_catalog import catalog_tenant_ids_for_lookup
 from app.schemas import (
     ClientEquipmentCreate,
     ClientEquipmentInstallationReferenceUpdate,
+    ClientEquipmentManualListOut,
+    ClientEquipmentManualOut,
     ClientEquipmentOut,
     ClientEquipmentSiteUpdate,
     ClientEquipmentStatusUpdate,
+    ClientEquipmentUpdate,
 )
+from app.services.legacy_equipment_import import import_orphan_legacy_equipments_for_client
+from app.services.client_equipment_manuals import list_client_equipment_manuals
 from app.services.client_sites import validate_equipment_client_site
 from app.services.qrcode_labels import link_qrcode_to_equipment, normalize_code_id
 from models import (
@@ -194,6 +199,10 @@ def _serialize_client_equipment(row: ClientEquipment, db: Session) -> ClientEqui
     if row.legacy_equipment is not None:
         payload.public_token = row.legacy_equipment.public_token
         payload.qrcode_code_id = _qrcode_code_for_equipment(db, row.legacy_equipment.id)
+        payload.legacy_fabricante = row.legacy_equipment.fabricante
+        payload.legacy_modelo = row.legacy_equipment.modelo
+        payload.legacy_capacidade_btu = row.legacy_equipment.capacidade_btu
+        payload.legacy_serial = row.legacy_equipment.serial
     return payload
 
 
@@ -204,7 +213,12 @@ def list_client_catalog_equipments(
     current_user: Annotated[User, Depends(get_current_user)],
     only_active: Annotated[bool, Query()] = False,
 ) -> list[ClientEquipmentOut]:
-    _get_client_or_404(db, client_id, current_user.tenant_id)
+    client = _get_client_or_404(db, client_id, current_user.tenant_id)
+    import_orphan_legacy_equipments_for_client(
+        db,
+        tenant_id=current_user.tenant_id,
+        client_id=client.id,
+    )
     query = _client_equipment_query().where(
         ClientEquipment.client_id == client_id,
         ClientEquipment.tenant_id == current_user.tenant_id,
@@ -299,6 +313,43 @@ def create_client_catalog_equipment(
             detail="Equipamento criado mas não foi possível recarregar.",
         )
     return _serialize_client_equipment(installation, db)
+
+
+@router.get(
+    "/equipments/{equipment_id}/manuals",
+    response_model=ClientEquipmentManualListOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_client_catalog_equipment_manuals(
+    equipment_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientEquipmentManualListOut:
+    rows = list_client_equipment_manuals(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+    )
+    return ClientEquipmentManualListOut(
+        items=[ClientEquipmentManualOut.model_validate(row) for row in rows],
+    )
+
+
+def _sync_legacy_from_installation(
+    installation: ClientEquipment,
+    components: list[ClientEquipmentComponent],
+) -> None:
+    legacy = installation.legacy_equipment
+    if legacy is None:
+        return
+    tag = installation.tag.strip()
+    legacy.identificacao = tag or legacy.identificacao
+    legacy.local_instalacao = tag
+    legacy.ambiente_nome = tag
+    legacy.installation_reference = installation.installation_reference
+    legacy.ativo = installation.is_active
+    legacy.client_site_id = installation.client_site_id
+    legacy.serial = _primary_serial(components)
 
 
 @router.patch(
@@ -424,6 +475,64 @@ def update_client_catalog_equipment_site(
     installation.client_site_id = site_id
     if installation.legacy_equipment is not None:
         installation.legacy_equipment.client_site_id = site_id
+
+    db.commit()
+    installation = _fetch_client_equipment(db, installation.id, tenant_id=current_user.tenant_id)
+    if installation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipamento não encontrado.")
+    return _serialize_client_equipment(installation, db)
+
+
+@router.patch(
+    "/equipments/{equipment_id}",
+    response_model=ClientEquipmentOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_client_catalog_equipment(
+    equipment_id: uuid.UUID,
+    payload: ClientEquipmentUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientEquipmentOut:
+    installation = _fetch_client_equipment(db, equipment_id, tenant_id=current_user.tenant_id)
+    if installation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipamento não encontrado.")
+
+    if "client_site_id" in payload.model_fields_set:
+        site_id = payload.client_site_id
+        if site_id is not None:
+            validate_equipment_client_site(
+                db,
+                client_site_id=site_id,
+                client_id=installation.client_id,
+                tenant_id=current_user.tenant_id,
+            )
+        installation.client_site_id = site_id
+
+    if payload.tag is not None:
+        installation.tag = payload.tag
+
+    if "installation_reference" in payload.model_fields_set:
+        installation.installation_reference = payload.installation_reference
+
+    if "installation_date" in payload.model_fields_set:
+        installation.installation_date = payload.installation_date
+
+    if payload.is_active is not None:
+        installation.is_active = payload.is_active
+
+    if payload.components:
+        component_by_id = {str(row.id): row for row in installation.components}
+        for item in payload.components:
+            row = component_by_id.get(item.id)
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Componente não encontrado: {item.id}",
+                )
+            row.serial_number = item.serial_number
+
+    _sync_legacy_from_installation(installation, list(installation.components))
 
     db.commit()
     installation = _fetch_client_equipment(db, installation.id, tenant_id=current_user.tenant_id)

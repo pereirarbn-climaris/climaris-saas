@@ -368,6 +368,7 @@ def get_preventive_settings(db: Session, tenant_id: int) -> dict[str, Any]:
         "preventive_button_schedule_text": t.preventive_button_schedule_text,
         "preventive_message_template": t.preventive_message_template,
         "preventive_auto_remind_days_before": int(t.preventive_auto_remind_days_before or 0),
+        "preventive_auto_whatsapp_enabled": bool(getattr(t, "preventive_auto_whatsapp_enabled", False)),
         "default_message_template": DEFAULT_MESSAGE_TEMPLATE,
     }
 
@@ -499,7 +500,15 @@ def list_preventive_items(db: Session, *, tenant_id: int, window_days: int) -> l
         for row in list_equipment_preventive_due(db, tenant_id=tenant_id, window_days=window_days)
     ]
     historico_items = _list_preventive_items_from_historico(db, tenant_id=tenant_id, window_days=window_days)
-    return _merge_equipment_and_historico_preventive_items(equipment_items, historico_items)
+    from app.equipment_service_preventive import list_schedule_preventive_items_in_window
+
+    schedule_items = list_schedule_preventive_items_in_window(
+        db,
+        tenant_id=tenant_id,
+        window_days=window_days,
+    )
+    merged = _merge_equipment_and_historico_preventive_items(equipment_items, historico_items)
+    return _merge_equipment_and_historico_preventive_items(merged, schedule_items)
 
 
 def _merge_equipment_and_historico_preventive_items(
@@ -515,13 +524,20 @@ def _merge_equipment_and_historico_preventive_items(
         if cid > 0 and ident:
             covered.add((cid, ident))
         eid = int(item.get("equipment_id") or 0)
+        sid = int(item.get("service_id") or 0)
         if cid > 0 and eid > 0:
             covered.add((cid, f"equipment:{eid}"))
+        if cid > 0 and eid > 0 and sid > 0:
+            covered.add((cid, f"schedule:{eid}:{sid}"))
 
     for hist in historico_items:
         cid = int(hist.get("client_id") or 0)
         ident = str(hist.get("equipment_identificacao") or "").strip().lower()
         if ident and (cid, ident) in covered:
+            continue
+        eid = int(hist.get("equipment_id") or 0)
+        sid = int(hist.get("service_id") or 0)
+        if eid > 0 and sid > 0 and (cid, f"schedule:{eid}:{sid}") in covered:
             continue
         merged.append(hist)
 
@@ -1574,6 +1590,8 @@ def register_manual_preventive_entry(
     client_id: int | None,
     new_client: PreventiveQuickClientCreate | None,
     equipment_id: int | None,
+    equipment_label: str | None = None,
+    entry_mode: Literal["temporary", "existing"] = "temporary",
     service_id: int,
     data_realizacao: date,
     notes: str | None,
@@ -1606,11 +1624,32 @@ def register_manual_preventive_entry(
     ).scalar_one_or_none()
     if svc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Serviço não encontrado.")
-    if svc.periodicidade_meses is None:
+    from app.services.service_preventive_config import preventive_config_from_service
+
+    svc_cfg = preventive_config_from_service(svc)
+    if not svc_cfg.get("preventive_enabled") and svc.periodicidade_meses is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Serviço sem periodicidade (configure 6 ou 12 meses no cadastro).",
+            detail="Serviço sem gestão preventiva ativa (ative em Serviços ou defina periodicidade).",
         )
+
+    resolved_equipment_id = equipment_id
+    if resolved_equipment_id is None:
+        label = (equipment_label or "").strip()
+        if not label:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Informe o apelido do aparelho (ex.: Split sala, Mercado).",
+            )
+        from app.equipment_service_preventive import create_temporary_equipment_for_preventive
+
+        temp_eq = create_temporary_equipment_for_preventive(
+            db,
+            tenant_id=tenant_id,
+            client_id=cli.id,
+            label=label,
+        )
+        resolved_equipment_id = temp_eq.id
 
     if reminder_send != "none":
         if bool(cli.preventive_campaign_opt_out):
@@ -1662,20 +1701,32 @@ def register_manual_preventive_entry(
         notes=notes,
     )
 
+    from app.equipment_service_preventive import record_manual_preventive_schedule
+
+    record_manual_preventive_schedule(
+        db,
+        tenant_id=tenant_id,
+        equipment_id=int(resolved_equipment_id),
+        service_id=service_id,
+        performed_date=data_realizacao,
+    )
+
     equipment_rule_id: int | None = None
     if equipment_id is not None:
         from app.equipment_preventive_rules import record_manual_equipment_preventive
 
+        interval_months = int(svc.periodicidade_meses or svc_cfg.get("preventive_interval_value") or 6)
         rule = record_manual_equipment_preventive(
             db,
             tenant_id=tenant_id,
             equipment_id=equipment_id,
-            interval_value=int(svc.periodicidade_meses),
+            interval_value=interval_months,
             interval_type="months",
             performed_date=data_realizacao,
         )
         equipment_rule_id = rule.id
-        db.commit()
+
+    db.commit()
 
     job: WhatsappMessageJob | None = None
     if reminder_send != "none":
@@ -1818,6 +1869,8 @@ def dispatch_preventive_due_today(
         tenants = db.execute(select(Tenant)).scalars().all()
         for tenant in tenants:
             if not tenant_whatsapp_automation_active(tenant):
+                continue
+            if not bool(getattr(tenant, "preventive_auto_whatsapp_enabled", False)):
                 continue
             tz_name = tenant.timezone or "UTC"
             local_today = tenant_local_date(now, tz_name)
@@ -1977,15 +2030,19 @@ def run_preventive_reminder_send_background(
     promo_image_base64: str | None,
     promo_image_mimetype: str | None,
     technical_problem_hint: str | None,
+    client_id: int | None = None,
+    year: int | None = None,
+    month: int | None = None,
 ) -> None:
     """Envio unitário (agrupado por cliente+mês) fora do ciclo ASGI."""
     from app.database import SessionLocal
 
     logger.info(
-        "preventive single background iniciado tenant_id=%s historico=%s rule_id=%s user_id=%s",
+        "preventive single background iniciado tenant_id=%s historico=%s rule_id=%s client=%s user_id=%s",
         tenant_id,
         historico_servico_id,
         rule_id,
+        client_id,
         user_id,
     )
     group: dict[str, Any] | None = None
@@ -1999,19 +2056,31 @@ def run_preventive_reminder_send_background(
                     tenant_id,
                 )
                 return
-            group = find_preventive_group_for_item(
-                db,
-                tenant_id=tenant_id,
-                window_days=window_days,
-                historico_servico_id=historico_servico_id,
-                rule_id=rule_id,
-            )
+            if client_id is not None and year is not None and month is not None:
+                from app.equipment_service_preventive import find_preventive_group_for_client_month
+
+                group = find_preventive_group_for_client_month(
+                    db,
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    year=year,
+                    month=month,
+                )
+            else:
+                group = find_preventive_group_for_item(
+                    db,
+                    tenant_id=tenant_id,
+                    window_days=window_days,
+                    historico_servico_id=historico_servico_id,
+                    rule_id=rule_id,
+                )
             if group is None:
                 logger.warning(
-                    "preventive single background: grupo não encontrado tenant_id=%s historico=%s rule_id=%s",
+                    "preventive single background: grupo não encontrado tenant_id=%s historico=%s rule_id=%s client=%s",
                     tenant_id,
                     historico_servico_id,
                     rule_id,
+                    client_id,
                 )
                 return
             dispatch_preventive_grouped_reminder(
@@ -2096,9 +2165,12 @@ def spawn_preventive_reminder_send_thread(
     promo_image_base64: str | None,
     promo_image_mimetype: str | None,
     technical_problem_hint: str | None,
+    client_id: int | None = None,
+    year: int | None = None,
+    month: int | None = None,
 ) -> None:
     """Dispara envio unitário agrupado em thread."""
-    ref = historico_servico_id or rule_id or 0
+    ref = historico_servico_id or rule_id or client_id or 0
     threading.Thread(
         target=run_preventive_reminder_send_background,
         args=(
@@ -2111,6 +2183,9 @@ def spawn_preventive_reminder_send_thread(
             promo_image_base64,
             promo_image_mimetype,
             technical_problem_hint,
+            client_id,
+            year,
+            month,
         ),
         daemon=True,
         name=f"preventive-send-{ref}",

@@ -166,7 +166,11 @@ export async function syncServiceOrderItems(
         .filter((id): id is number => id != null && id > 0)
         .sort((a, b) => a - b);
       const nextEqIds = [...equipmentIds].sort((a, b) => a - b);
-      if (prevEqIds.join(",") !== nextEqIds.join(",")) {
+      const relatedQty = related.reduce((sum, item) => sum + Math.max(item.quantity, 1), 0);
+      const desiredQty = Math.max(qty, equipmentIds.length);
+      const equipmentChanged = prevEqIds.join(",") !== nextEqIds.join(",");
+      const quantityExpanded = equipmentLinksOnly && desiredQty > relatedQty;
+      if (equipmentChanged || quantityExpanded) {
         console.log("[syncServiceOrderItems] PUT equipamentos", anchorId, nextEqIds);
         current = await updateServiceOrderItemEquipment(orderId, anchorId!, nextEqIds);
       }
@@ -291,6 +295,20 @@ export async function syncServiceOrderLines(
   return current;
 }
 
+/** Vincula cada linha de serviço a todos os equipamentos selecionados na OS. */
+export function linkServicesToAllSelectedEquipment(
+  lines: ServiceLineDraft[],
+  equipamentosIds: string[],
+): ServiceLineDraft[] {
+  if (equipamentosIds.length === 0) return lines;
+  return lines.map((line) => ({
+    ...line,
+    quantity: equipamentosIds.length,
+    equipmentIds: [...equipamentosIds],
+    equipmentId: undefined,
+  }));
+}
+
 export function toggleServiceOnEquipment(
   lines: ServiceLineDraft[],
   equipmentId: string,
@@ -300,15 +318,17 @@ export function toggleServiceOnEquipment(
   const target = lines.find((l) => l.localId === lineLocalId);
   if (!target) return lines;
 
-  const maxSelections = Math.max(target.quantity, 1);
   const current = lineEquipmentIds(target);
 
   if (checked) {
     if (current.includes(equipmentId)) return lines;
-    if (current.length >= maxSelections) return lines;
+    const nextCount = current.length + 1;
+    const quantity = Math.max(target.quantity, nextCount);
     const equipmentIds = [...current, equipmentId];
     return lines.map((l) =>
-      l.localId === lineLocalId ? { ...l, equipmentIds, equipmentId: undefined } : l,
+      l.localId === lineLocalId
+        ? { ...l, quantity, equipmentIds, equipmentId: undefined }
+        : l,
     );
   }
 

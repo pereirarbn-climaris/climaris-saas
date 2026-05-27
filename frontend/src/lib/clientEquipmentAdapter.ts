@@ -175,8 +175,16 @@ export function mapClientEquipmentToView(row: ClientEquipmentOut, sites?: Client
   const components = row.components ?? [];
   const primary = pickPrimaryComponent(components);
   const catalog = primary?.catalog;
-  const category = catalog ? categorySlugFromCatalog(catalog.category) : "outros";
-  const bKey = catalog ? brandKey(catalog.brand, catalog.category_id) : "";
+  const legacyBrand = row.legacy_fabricante?.trim();
+  const legacyModel = row.legacy_modelo?.trim();
+  const legacySerial = row.legacy_serial?.trim();
+  const legacyBtu = row.legacy_capacidade_btu ?? undefined;
+  const category = catalog
+    ? categorySlugFromCatalog(catalog.category)
+    : legacyBrand || legacyModel
+      ? "ar_condicionado"
+      : "outros";
+  const bKey = catalog ? brandKey(catalog.brand, catalog.category_id) : legacyBrand ? `legacy::${legacyBrand.toLowerCase()}` : "";
   const fieldDefinitions = catalog ? resolveCategoryFieldDefinitions(catalog.category) : [];
   const technicalData = catalog ? technicalDataFromCatalog(catalog) : {};
   const technicalSpecs = buildTechnicalSpecRows(fieldDefinitions, technicalData);
@@ -191,10 +199,10 @@ export function mapClientEquipmentToView(row: ClientEquipmentOut, sites?: Client
     category,
     categoryName: catalog?.category.name,
     brandId: bKey,
-    brandName: catalog?.brand ?? "—",
+    brandName: catalog?.brand ?? legacyBrand ?? "—",
     modelId: primary?.catalog_id ?? "",
-    modelName: formatModelLabel(components),
-    serialNumber: serials || primary?.serial_number || "",
+    modelName: components.length > 0 ? formatModelLabel(components) : legacyModel ?? row.tag ?? "—",
+    serialNumber: serials || primary?.serial_number || legacySerial || "",
     tag: row.tag,
     installationReference: row.installation_reference ?? "",
     location: row.tag,
@@ -204,9 +212,9 @@ export function mapClientEquipmentToView(row: ClientEquipmentOut, sites?: Client
     status: row.is_active ? "ativo" : "inativo",
     specs: {
       gasType: (catalog?.fluid_type ?? technicalData.fluid_type) as string | undefined,
-      capacityBTU: parseBtu(
-        catalog?.capacity ?? (technicalData.capacity != null ? String(technicalData.capacity) : undefined),
-      ),
+      capacityBTU:
+        parseBtu(catalog?.capacity ?? (technicalData.capacity != null ? String(technicalData.capacity) : undefined)) ??
+        legacyBtu,
       voltage: (catalog?.voltage ?? technicalData.voltage) as string | undefined,
     },
     fieldDefinitions,

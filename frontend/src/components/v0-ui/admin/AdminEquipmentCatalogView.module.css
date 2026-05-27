@@ -956,6 +956,17 @@
   color: var(--color-error);
 }
 
+.formWarning {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--input-radius);
+}
+
 .formHint {
   margin: var(--space-1) 0 0;
   font-size: var(--font-size-xs);

@@ -21,7 +21,7 @@
 
 .cardHeader {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto auto auto;
   align-items: center;
   gap: 0.75rem;
   width: 100%;
@@ -109,6 +109,49 @@
 
 .clientLink:hover {
   background: rgba(11, 127, 175, 0.06);
+}
+
+.osLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  border: none;
+  background: #0b7faf;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.osLink:hover {
+  background: #096d96;
+}
+
+.waSendBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.08);
+  color: #15803d;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.waSendBtn:hover:not(:disabled) {
+  background: rgba(22, 163, 74, 0.14);
+}
+
+.waSendBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .cardBody {
@@ -230,7 +273,9 @@
     grid-column: 2;
   }
 
-  .clientLink {
+  .clientLink,
+  .osLink,
+  .waSendBtn {
     grid-column: 1 / -1;
     justify-self: start;
   }

@@ -14,6 +14,12 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.marketplace_util import tenant_has_marketplace_app
 from app.plan_rules import get_plan_definition
+from app.equipment_service_preventive import (
+    list_equipment_service_preventive_schedules,
+    list_preventive_items_by_equipment_month,
+    reset_equipment_service_preventive_override,
+    upsert_equipment_service_preventive_override,
+)
 from app.equipment_preventive_rules import (
     delete_equipment_preventive_rule,
     get_equipment_preventive_rule,
@@ -62,6 +68,9 @@ from app.schemas_preventive import (
     EquipmentPreventiveRuleCreate,
     EquipmentPreventiveRuleOut,
     EquipmentPreventiveRuleUpdate,
+    EquipmentServicePreventiveOverrideUpsert,
+    EquipmentServicePreventiveScheduleListOut,
+    EquipmentServicePreventiveScheduleOut,
 )
 from models import Tenant, User, UserRole
 
@@ -173,6 +182,69 @@ def get_preventive_rule_by_equipment(
     return _rule_out(rule)
 
 
+@router.get(
+    "/equipment/{equipment_id}/service-schedules",
+    response_model=EquipmentServicePreventiveScheduleListOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_equipment_service_preventive_schedules(
+    equipment_id: Annotated[int, Path(ge=1)],
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentServicePreventiveScheduleListOut:
+    rows = list_equipment_service_preventive_schedules(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+    )
+    return EquipmentServicePreventiveScheduleListOut(
+        items=[EquipmentServicePreventiveScheduleOut.model_validate(row) for row in rows]
+    )
+
+
+@router.put(
+    "/equipment/{equipment_id}/service-schedules/{service_id}",
+    response_model=EquipmentServicePreventiveScheduleOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def put_equipment_service_preventive_schedule(
+    equipment_id: Annotated[int, Path(ge=1)],
+    service_id: Annotated[int, Path(ge=1)],
+    payload: EquipmentServicePreventiveOverrideUpsert,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentServicePreventiveScheduleOut:
+    row = upsert_equipment_service_preventive_override(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        service_id=service_id,
+        interval_value=payload.interval_value,
+        interval_type=payload.interval_type,
+    )
+    return EquipmentServicePreventiveScheduleOut.model_validate(row)
+
+
+@router.delete(
+    "/equipment/{equipment_id}/service-schedules/{service_id}",
+    response_model=EquipmentServicePreventiveScheduleOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_equipment_service_preventive_schedule_override(
+    equipment_id: Annotated[int, Path(ge=1)],
+    service_id: Annotated[int, Path(ge=1)],
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentServicePreventiveScheduleOut:
+    row = reset_equipment_service_preventive_override(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        service_id=service_id,
+    )
+    return EquipmentServicePreventiveScheduleOut.model_validate(row)
+
+
 @router.put(
     "/rules/{rule_id}",
     response_model=EquipmentPreventiveRuleOut,
@@ -214,10 +286,27 @@ def delete_preventive_rule(
 def list_items(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-    days: Annotated[int, Query(ge=1, le=400)] = 7,
+    year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    month: Annotated[int | None, Query(ge=1, le=12)] = None,
+    days: Annotated[int | None, Query(ge=1, le=400)] = None,
 ) -> PreventiveItemsListOut:
-    _require_whatsapp_module(db, current_user.tenant_id)
-    payload = list_preventive_items_grouped(db, tenant_id=current_user.tenant_id, window_days=days)
+    if year is not None or month is not None:
+        if year is None or month is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Informe year e month juntos.",
+            )
+        payload = list_preventive_items_by_equipment_month(
+            db,
+            tenant_id=current_user.tenant_id,
+            year=year,
+            month=month,
+        )
+    else:
+        _require_whatsapp_module(db, current_user.tenant_id)
+        window_days = days if days is not None else 30
+        payload = list_preventive_items_grouped(db, tenant_id=current_user.tenant_id, window_days=window_days)
+
     clients = [
         PreventiveClientGroupOut(
             client_id=int(g["client_id"]),
@@ -229,7 +318,13 @@ def list_items(
         for g in payload.get("clients", [])
     ]
     items = [PreventiveItemOut.model_validate(r) for r in payload.get("items", [])]
-    return PreventiveItemsListOut(window_days=int(payload["window_days"]), clients=clients, items=items)
+    return PreventiveItemsListOut(
+        window_days=payload.get("window_days"),
+        year=payload.get("year"),
+        month=payload.get("month"),
+        clients=clients,
+        items=items,
+    )
 
 
 @router.get("/preview", response_model=PreventivePreviewOut)
@@ -311,13 +406,24 @@ def send_reminder(
 ) -> PreventiveSendReminderOut:
     _require_whatsapp_module(db, current_user.tenant_id)
     window_days = int(payload.window_days or 365)
-    group = find_preventive_group_for_item(
-        db,
-        tenant_id=current_user.tenant_id,
-        window_days=window_days,
-        historico_servico_id=payload.historico_servico_id,
-        rule_id=payload.rule_id,
-    )
+    if payload.client_id is not None and payload.year is not None and payload.month is not None:
+        from app.equipment_service_preventive import find_preventive_group_for_client_month
+
+        group = find_preventive_group_for_client_month(
+            db,
+            tenant_id=current_user.tenant_id,
+            client_id=payload.client_id,
+            year=payload.year,
+            month=payload.month,
+        )
+    else:
+        group = find_preventive_group_for_item(
+            db,
+            tenant_id=current_user.tenant_id,
+            window_days=window_days,
+            historico_servico_id=payload.historico_servico_id,
+            rule_id=payload.rule_id,
+        )
     if group is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -342,6 +448,9 @@ def send_reminder(
         payload.promo_image_base64,
         payload.promo_image_mimetype,
         payload.technical_problem_hint,
+        payload.client_id,
+        payload.year,
+        payload.month,
     )
     return PreventiveSendReminderOut(processing_in_background=True, whatsapp_job=None)
 
@@ -367,6 +476,8 @@ def post_register_entry(
         client_id=payload.client_id,
         new_client=payload.new_client,
         equipment_id=payload.equipment_id,
+        equipment_label=payload.equipment_label,
+        entry_mode=payload.entry_mode,
         service_id=payload.service_id,
         data_realizacao=payload.data_realizacao,
         notes=payload.notes,

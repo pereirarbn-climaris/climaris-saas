@@ -13,12 +13,14 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.pagination import clamp_limit
 from app.schemas import (
+    EquipmentCatalogDuplicateCheckOut,
     EquipmentCatalogListOut,
     EquipmentCatalogOut,
     EquipmentCategoryListOut,
     EquipmentCategoryOut,
     EquipmentLabelExtractionOut,
 )
+from app.services.catalog_duplicate import find_catalog_duplicate
 from app.services.category_field_definitions import (
     parse_field_definitions,
     sync_legacy_catalog_columns,
@@ -37,7 +39,10 @@ from app.services.equipment_catalog_form import (
     read_catalog_existing_manual_multipart,
 )
 from app.platform_credentials import resolve_claude_api_key, resolve_claude_model
-from app.services.equipment_label_vision import extract_ac_label_from_images
+from app.services.equipment_label_vision import (
+    extract_ac_label_from_images,
+    extract_climatizador_label_from_images,
+)
 from app.services.equipment_manuals import (
     build_catalog_display_model,
     create_equipment_manual_from_pdf,
@@ -151,6 +156,65 @@ async def _merge_extra_manuals_into_entry(
         )
         td[id_keys.get(form_key, form_key)] = str(manual_id)
     entry.technical_data = td
+
+
+def _apply_combined_usuario_instalacao_manual(entry: EquipmentCatalog, manual_id: uuid.UUID) -> None:
+    """Um único PDF serve como manual do usuário e de instalação."""
+    td = dict(entry.technical_data or {})
+    mid = str(manual_id)
+    td["manual_usuario_id"] = mid
+    td["manual_instalacao_id"] = mid
+    entry.technical_data = td
+
+
+def _collect_extra_manual_pdfs(
+    *,
+    manual_usuario_pdf: UploadFile | None,
+    manual_instalacao_pdf: UploadFile | None,
+    manual_servico_pdf: UploadFile | None,
+) -> dict[str, UploadFile]:
+    extra_pdfs: dict[str, UploadFile] = {}
+    for key, pdf in (
+        ("manual_usuario_pdf", manual_usuario_pdf),
+        ("manual_instalacao_pdf", manual_instalacao_pdf),
+        ("manual_servico_pdf", manual_servico_pdf),
+    ):
+        if has_manual_pdf_upload(pdf):
+            extra_pdfs[key] = pdf
+    return extra_pdfs
+
+
+async def _assign_primary_manual_from_pdf(
+    *,
+    entry: EquipmentCatalog,
+    manual_pdf: UploadFile,
+    manual_title: str | None,
+    tenant_id: int,
+    db: Session,
+) -> uuid.UUID:
+    title = (manual_title or "").strip()
+    if not title and manual_pdf.filename:
+        title = manual_pdf.filename.rsplit(".", 1)[0].strip() or manual_pdf.filename.strip()
+    if not title:
+        title = "Manual tecnico"
+    try:
+        manual = await create_equipment_manual_from_pdf(
+            file=manual_pdf,
+            title=title,
+            tenant_id=tenant_id,
+            db=db,
+        )
+    except ValueError as exc:
+        raise _manual_upload_http_error(exc) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(exc) or "Tempo esgotado ao enviar o manual para o armazenamento.",
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    entry.manual_id = manual.id
+    return manual.id
 
 
 def _apply_catalog_fields(
@@ -280,10 +344,28 @@ def _apply_catalog_list_filters(
 )
 async def extract_equipment_label_from_photos(
     db: Annotated[Session, Depends(get_db)],
+    equipment_kind: Annotated[str, Form()] = "ar_condicionado",
     evaporator_image: Annotated[UploadFile | None, File()] = None,
     condenser_image: Annotated[UploadFile | None, File()] = None,
+    label_image: Annotated[UploadFile | None, File()] = None,
 ) -> EquipmentLabelExtractionOut:
-    """Extrai dados estruturados de etiquetas de ar-condicionado via IA multimodal."""
+    """Extrai dados estruturados de etiquetas via IA multimodal (ar-condicionado ou climatizador)."""
+    kind = (equipment_kind or "ar_condicionado").strip().lower()
+    claude_key = resolve_claude_api_key(db)
+    claude_model = resolve_claude_model(db)
+
+    if kind in ("climatizador", "clima"):
+        label = label_image or evaporator_image
+        label_bytes = await label.read() if label else None
+        result = await extract_climatizador_label_from_images(
+            label_bytes=label_bytes,
+            label_content_type=label.content_type if label else None,
+            label_filename=label.filename if label else None,
+            claude_api_key=claude_key,
+            claude_model=claude_model,
+        )
+        return EquipmentLabelExtractionOut.model_validate(result)
+
     evap_bytes = await evaporator_image.read() if evaporator_image else None
     cond_bytes = await condenser_image.read() if condenser_image else None
     result = await extract_ac_label_from_images(
@@ -293,8 +375,8 @@ async def extract_equipment_label_from_photos(
         condenser_bytes=cond_bytes,
         condenser_content_type=condenser_image.content_type if condenser_image else None,
         condenser_filename=condenser_image.filename if condenser_image else None,
-        claude_api_key=resolve_claude_api_key(db),
-        claude_model=resolve_claude_model(db),
+        claude_api_key=claude_key,
+        claude_model=claude_model,
     )
     return EquipmentLabelExtractionOut.model_validate(result)
 
@@ -312,6 +394,41 @@ def list_catalog_categories(
         .order_by(EquipmentCategory.sort_order.asc(), EquipmentCategory.name.asc())
     ).scalars().all()
     return EquipmentCategoryListOut(items=[EquipmentCategoryOut.model_validate(row) for row in rows])
+
+
+@router.get("/check-duplicate", response_model=EquipmentCatalogDuplicateCheckOut)
+def check_equipment_catalog_duplicate(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    category_id: Annotated[uuid.UUID, Query()],
+    brand: Annotated[str, Query(min_length=1, max_length=120)],
+    model_evaporator: Annotated[str | None, Query(max_length=120)] = None,
+    model_condenser: Annotated[str | None, Query(max_length=120)] = None,
+    model: Annotated[str | None, Query(max_length=120)] = None,
+    exclude_catalog_id: Annotated[uuid.UUID | None, Query()] = None,
+) -> EquipmentCatalogDuplicateCheckOut:
+    """Verifica se marca/modelo já existem no catálogo (evita cadastro duplicado)."""
+    catalog_tenant_id = resolve_catalog_list_tenant_id(db, current_user)
+    category = _get_category_or_404(db, category_id, catalog_tenant_id)
+    existing = find_catalog_duplicate(
+        db,
+        tenant_id=catalog_tenant_id,
+        category=category,
+        brand=brand,
+        model_evaporator=model_evaporator,
+        model_condenser=model_condenser,
+        model_fallback=model,
+        exclude_catalog_id=exclude_catalog_id,
+    )
+    if existing is None:
+        return EquipmentCatalogDuplicateCheckOut(exists=False)
+    return EquipmentCatalogDuplicateCheckOut(
+        exists=True,
+        catalog_id=str(existing.id),
+        brand=existing.brand,
+        model=existing.model,
+        category_name=category.name,
+    )
 
 
 @router.get("", response_model=EquipmentCatalogListOut)
@@ -362,10 +479,13 @@ async def create_equipment_catalog_with_manual_upload(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> EquipmentCatalog:
-    form_data, manual_pdf, extra_pdfs = await read_catalog_create_multipart(request)
+    form_data, manual_pdf, extra_pdfs, manual_combinado = await read_catalog_create_multipart(request)
 
-    if not has_manual_pdf_upload(manual_pdf) and "manual_instalacao_pdf" in extra_pdfs:
-        manual_pdf = extra_pdfs.pop("manual_instalacao_pdf")
+    if not has_manual_pdf_upload(manual_pdf):
+        for promote_key in ("manual_instalacao_pdf", "manual_usuario_pdf", "manual_servico_pdf"):
+            if promote_key in extra_pdfs:
+                manual_pdf = extra_pdfs.pop(promote_key)
+                break
 
     catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
     category = _get_category_or_404(db, form_data.category_id, catalog_tenant_id)
@@ -377,7 +497,6 @@ async def create_equipment_catalog_with_manual_upload(
             title = manual_pdf.filename.rsplit(".", 1)[0].strip() or manual_pdf.filename.strip()
         if not title:
             title = "Manual tecnico"
-
         try:
             manual = await create_equipment_manual_from_pdf(
                 file=manual_pdf,
@@ -418,6 +537,24 @@ async def create_equipment_catalog_with_manual_upload(
         )
     except HTTPException:
         raise
+    duplicate = find_catalog_duplicate(
+        db,
+        tenant_id=catalog_tenant_id,
+        category=category,
+        brand=form_data.brand,
+        model_evaporator=form_data.model_evaporator,
+        model_condenser=form_data.model_condenser,
+        model_fallback=form_data.model,
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Este equipamento já está cadastrado no catálogo: "
+                f"{duplicate.brand} {duplicate.model} ({category.name}). "
+                "Não cadastre novamente — edite o registro existente se precisar atualizar dados."
+            ),
+        )
     db.add(entry)
     await _merge_extra_manuals_into_entry(
         entry=entry,
@@ -426,13 +563,18 @@ async def create_equipment_catalog_with_manual_upload(
         tenant_id=catalog_tenant_id,
         db=db,
     )
+    if manual_combinado and entry.manual_id is not None:
+        _apply_combined_usuario_instalacao_manual(entry, entry.manual_id)
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Já existe um item no catálogo com esta marca, modelos e categoria.",
+            detail=(
+                "Este equipamento já está cadastrado no catálogo com a mesma marca, modelo e categoria. "
+                "Não cadastre novamente."
+            ),
         ) from exc
     return db.execute(_catalog_query().where(EquipmentCatalog.id == entry.id)).scalar_one()
 
@@ -479,6 +621,24 @@ async def create_equipment_catalog_with_existing_manual(
         )
     except HTTPException:
         raise
+    duplicate = find_catalog_duplicate(
+        db,
+        tenant_id=catalog_tenant_id,
+        category=category,
+        brand=form_data.brand,
+        model_evaporator=form_data.model_evaporator,
+        model_condenser=form_data.model_condenser,
+        model_fallback=form_data.model,
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Este equipamento já está cadastrado no catálogo: "
+                f"{duplicate.brand} {duplicate.model} ({category.name}). "
+                "Não cadastre novamente — edite o registro existente se precisar atualizar dados."
+            ),
+        )
     db.add(entry)
     try:
         db.commit()
@@ -486,7 +646,10 @@ async def create_equipment_catalog_with_existing_manual(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Já existe um item no catálogo com esta marca, modelos e categoria.",
+            detail=(
+                "Este equipamento já está cadastrado no catálogo com a mesma marca, modelo e categoria. "
+                "Não cadastre novamente."
+            ),
         ) from exc
     return db.execute(_catalog_query().where(EquipmentCatalog.id == entry.id)).scalar_one()
 
@@ -512,6 +675,10 @@ async def update_equipment_catalog_entry(
     manual_id: Annotated[uuid.UUID | None, Form()] = None,
     manual_title: Annotated[str | None, Form(max_length=200)] = None,
     manual_pdf: Annotated[UploadFile | None, File()] = None,
+    manual_usuario_pdf: Annotated[UploadFile | None, File()] = None,
+    manual_instalacao_pdf: Annotated[UploadFile | None, File()] = None,
+    manual_servico_pdf: Annotated[UploadFile | None, File()] = None,
+    manual_combinado_usuario_instalacao: Annotated[bool, Form()] = False,
     clear_manual: Annotated[bool, Form()] = False,
 ) -> EquipmentCatalog:
     catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
@@ -578,35 +745,44 @@ async def update_equipment_catalog_entry(
 
     if clear_manual:
         entry.manual_id = None
-    elif has_manual_pdf_upload(manual_pdf):
-        title = (manual_title or "").strip()
-        if not title and manual_pdf and manual_pdf.filename:
-            title = manual_pdf.filename.rsplit(".", 1)[0].strip() or manual_pdf.filename.strip()
-        if not title:
-            title = "Manual tecnico"
-        try:
-            manual = await create_equipment_manual_from_pdf(
-                file=manual_pdf,
-                title=title,
+    else:
+        extra_pdfs = _collect_extra_manual_pdfs(
+            manual_usuario_pdf=manual_usuario_pdf,
+            manual_instalacao_pdf=manual_instalacao_pdf,
+            manual_servico_pdf=manual_servico_pdf,
+        )
+        primary_pdf = manual_pdf
+        if not has_manual_pdf_upload(primary_pdf) and entry.manual_id is None:
+            for promote_key in ("manual_instalacao_pdf", "manual_usuario_pdf", "manual_servico_pdf"):
+                if promote_key in extra_pdfs:
+                    primary_pdf = extra_pdfs.pop(promote_key)
+                    break
+
+        if has_manual_pdf_upload(primary_pdf):
+            await _assign_primary_manual_from_pdf(
+                entry=entry,
+                manual_pdf=primary_pdf,
+                manual_title=manual_title,
                 tenant_id=catalog_tenant_id,
                 db=db,
             )
-            entry.manual_id = manual.id
-        except ValueError as exc:
-            raise _manual_upload_http_error(exc) from exc
-        except TimeoutError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=str(exc) or "Tempo esgotado ao enviar o manual para o armazenamento.",
-            ) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    elif manual_id is not None:
-        try:
-            get_equipment_manual_or_404(db, manual_id, catalog_tenant_id)
-            entry.manual_id = manual_id
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            if manual_combinado_usuario_instalacao and entry.manual_id is not None:
+                _apply_combined_usuario_instalacao_manual(entry, entry.manual_id)
+        elif manual_id is not None:
+            try:
+                get_equipment_manual_or_404(db, manual_id, catalog_tenant_id)
+                entry.manual_id = manual_id
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        if extra_pdfs:
+            await _merge_extra_manuals_into_entry(
+                entry=entry,
+                extra_pdfs=extra_pdfs,
+                brand=entry.brand,
+                tenant_id=catalog_tenant_id,
+                db=db,
+            )
 
     entry.model = build_catalog_display_model(
         model_evaporator=entry.model_evaporator,

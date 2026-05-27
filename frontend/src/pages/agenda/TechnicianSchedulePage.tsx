@@ -250,6 +250,7 @@ export function TechnicianSchedulePage() {
   const [scheduleRows, setScheduleRows] = useState<ScheduleOut[]>([]);
   const [pmocMockRevision, setPmocMockRevision] = useState(0);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
+  const [hasLoadedVisualOnce, setHasLoadedVisualOnce] = useState(false);
   const [tenantHolidays, setTenantHolidays] = useState<TenantHoliday[]>([]);
   const [apiNationalHolidays, setApiNationalHolidays] = useState<Map<string, string>>(new Map());
 
@@ -438,6 +439,10 @@ export function TechnicianSchedulePage() {
     return map;
   }, [technicians]);
 
+  const agendaVisualBooting = loading || (loadingSchedules && !hasLoadedVisualOnce);
+  const agendaVisualReady = !agendaVisualBooting;
+  const agendaVisualRefreshing = loadingSchedules && hasLoadedVisualOnce;
+
   useEffect(() => {
     if (!ctx) return;
     let cancelled = false;
@@ -583,6 +588,11 @@ export function TechnicianSchedulePage() {
       cancelled = true;
     };
   }, [technicianId, agendaMode, scheduleQueryRange.from_day, scheduleQueryRange.to_day, ctx?.user.role]);
+
+  useEffect(() => {
+    if (agendaMode !== "visual" || loadingSchedules) return;
+    setHasLoadedVisualOnce(true);
+  }, [agendaMode, loadingSchedules]);
 
   useEffect(() => {
     if (agendaMode !== "visual") return;
@@ -952,12 +962,12 @@ export function TechnicianSchedulePage() {
         </div>
       ) : null}
 
-      {loading ? <p className={styles.meta}>Carregando...</p> : null}
+      {agendaMode === "config" && loading ? <p className={styles.loadingBanner}>Carregando configuração da agenda…</p> : null}
       {msg ? <p className={msg.kind === "ok" ? styles.ok : styles.err}>{msg.text}</p> : null}
 
       {agendaMode === "config" ? (
         <>
-      <section className={styles.card}>
+      <section className={`${styles.card} ${styles.cardInteractive}`}>
         <h3 className={styles.sectionTitle}>Visão semanal</h3>
         <div className={styles.kpiRow}>
           <article className={styles.kpiCard}>
@@ -1005,7 +1015,7 @@ export function TechnicianSchedulePage() {
         </div>
       </section>
 
-      <section className={styles.card}>
+      <section className={`${styles.card} ${styles.cardInteractive}`}>
         <h3 className={styles.sectionTitle}>Jornada semanal</h3>
         <div className={styles.formGrid}>
           <select className={styles.input} value={workForm.weekday} onChange={(e) => setWorkForm((v) => ({ ...v, weekday: e.target.value }))}>
@@ -1034,7 +1044,7 @@ export function TechnicianSchedulePage() {
         </ul>
       </section>
 
-      <section className={styles.card}>
+      <section className={`${styles.card} ${styles.cardInteractive}`}>
         <h3 className={styles.sectionTitle}>Pausas / almoço</h3>
         <div className={styles.formGrid}>
           <select className={styles.input} value={breakForm.weekday} onChange={(e) => setBreakForm((v) => ({ ...v, weekday: e.target.value }))}>
@@ -1063,7 +1073,7 @@ export function TechnicianSchedulePage() {
         </ul>
       </section>
 
-      <section className={styles.card}>
+      <section className={`${styles.card} ${styles.cardInteractive}`}>
         <h3 className={styles.sectionTitle}>Indisponibilidades</h3>
         <div className={styles.formGridWide}>
           <input className={styles.input} type="datetime-local" value={unForm.starts_at} onChange={(e) => setUnForm((v) => ({ ...v, starts_at: e.target.value }))} />
@@ -1193,7 +1203,24 @@ export function TechnicianSchedulePage() {
               />
             </div>
           </div>
-          {loadingSchedules ? <p className={styles.meta}>Carregando agenda visual...</p> : null}
+          <div
+            className={`${styles.calendarViewport} ${calendarView === "month" ? styles.calendarViewportMonth : ""}`}
+            aria-busy={agendaVisualBooting}
+          >
+            <div
+              className={`${styles.calendarLoadingOverlay} ${agendaVisualReady ? styles.calendarLoadingOverlayHidden : ""}`}
+              aria-hidden={agendaVisualReady}
+            >
+              <div className={styles.calendarLoadingOverlayInner}>
+                <div className={styles.calendarLoadingSpinner} aria-hidden />
+                <p className={styles.calendarLoadingText}>Carregando agenda…</p>
+              </div>
+            </div>
+            <div
+              className={`${styles.calendarSurface} ${agendaVisualReady ? styles.calendarSurfaceReady : ""} ${
+                agendaVisualRefreshing ? styles.calendarSurfaceRefreshing : ""
+              }`}
+            >
           {calendarView === "month" ? (
             <div className={styles.monthPlanner}>
               <div className={styles.monthWeekdayLabels}>
@@ -1491,6 +1518,8 @@ export function TechnicianSchedulePage() {
             })}
           </div>
           )}
+            </div>
+          </div>
         </section>
       ) : null}
 

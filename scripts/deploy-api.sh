@@ -31,15 +31,33 @@ run_migrations() {
   docker compose exec -T api alembic upgrade heads
 }
 
+db_revision() {
+  docker compose exec -T db psql -U "${POSTGRES_USER:-erp_user}" -d "${POSTGRES_DB:-erp_db}" -tAc "SELECT version_num FROM alembic_version LIMIT 1;" 2>/dev/null | tr -d '[:space:]'
+}
+
 echo "==> Aplicando migrações"
 if run_migrations; then
   echo "==> Migrações aplicadas com sucesso"
 else
-  echo "==> Falha no 'alembic upgrade heads'."
-  echo "==> Instalando driver Postgres + alembic no container e tentando de novo…"
-  docker compose exec -T api pip install --no-cache-dir "psycopg[binary]" alembic sqlalchemy
-  run_migrations
-  echo "==> Migrações aplicadas após instalar dependências"
+  current_rev="$(db_revision)"
+  if [[ -n "$current_rev" ]]; then
+    echo "==> Aviso: alembic upgrade falhou (revisões ausentes no repositório?), banco em ${current_rev}."
+    echo "==> Continuando deploy — API já recriada; valide migrações manualmente se necessário."
+  else
+    echo "==> Falha no 'alembic upgrade heads'."
+    echo "==> Instalando driver Postgres + alembic no container e tentando de novo…"
+    docker compose exec -T api pip install --no-cache-dir "psycopg[binary]" alembic sqlalchemy
+    if run_migrations; then
+      echo "==> Migrações aplicadas após instalar dependências"
+    else
+      current_rev="$(db_revision)"
+      if [[ -n "$current_rev" ]]; then
+        echo "==> Aviso: migrações indisponíveis no grafo Alembic; banco permanece em ${current_rev}."
+      else
+        exit 1
+      fi
+    fi
+  fi
 fi
 
 echo "==> Deploy da API concluído"

@@ -26,6 +26,9 @@ export function getCapacityFieldMeta(category: CategoryNameRef): CapacityFieldMe
   return { label: "Capacidade *", placeholder: "Ex: conforme especificação do fabricante" };
 }
 
+/** Split evaporadora/condensadora — somente ar-condicionado. */
 export function isSplitCategoryName(name: string): boolean {
-  return /ar-condicionado|climatizador|split/i.test(name);
+  const n = name.toLowerCase();
+  if (n.includes("climatizador")) return false;
+  return /ar-condicionado|split/i.test(n);
 }

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.equipment_preventive_rules import sync_preventive_rules_on_order_closure
+from app.equipment_service_preventive import sync_service_preventive_schedules_on_order_closure
 from models import CustomerBillingAutomation, ServiceOrder
 
 logger = logging.getLogger("erp.service_order_closure")
@@ -75,6 +76,7 @@ def on_service_order_closed(
         when = when.replace(tzinfo=timezone.utc)
 
     sync_preventive_rules_on_order_closure(db, order=order, closed_at=when)
+    sync_service_preventive_schedules_on_order_closure(db, order=order, closed_at=when)
 
     try:
         execute_post_closure_automations(

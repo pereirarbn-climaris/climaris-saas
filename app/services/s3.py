@@ -7,6 +7,7 @@ import queue
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from boto3.s3.transfer import TransferConfig
@@ -14,6 +15,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.tenant_logo import (
+    S3BucketPurpose,
     _build_public_url,
     _optional_acl,
     _resolve_s3_runtime_config,
@@ -265,3 +267,76 @@ async def upload_manual_pdf(file: UploadFile, *, db: Session | None = None) -> s
         except (asyncio.CancelledError, Exception):
             pass
         raise
+
+
+def parse_s3_bucket_and_key_from_url(
+    url: str,
+    *,
+    db: Session | None = None,
+    purpose: S3BucketPurpose = "manuais",
+) -> tuple[str, str]:
+    """Extrai bucket e object key de uma URL pública S3 (virtual-hosted, path-style ou base customizada)."""
+    raw = (url or "").strip()
+    if not raw:
+        raise ValueError("URL S3 vazia.")
+
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("URL S3 inválida.")
+
+    path_key = unquote(parsed.path.lstrip("/"))
+    if not path_key:
+        raise ValueError("URL S3 sem object key.")
+
+    cfg = _resolve_s3_runtime_config(db)
+    host = parsed.netloc.lower()
+
+    if ".s3." in host or host.endswith(".s3.amazonaws.com"):
+        bucket = host.split(".s3", 1)[0]
+        return bucket, path_key
+
+    endpoint_url = (cfg.endpoint_url or os.getenv("AWS_S3_ENDPOINT_URL", "")).strip()
+    if endpoint_url:
+        endpoint_host = urlparse(endpoint_url.rstrip("/")).netloc.lower()
+        if endpoint_host and endpoint_host == host:
+            bucket, _, key = path_key.partition("/")
+            if bucket and key:
+                return bucket, key
+
+    public_base = (cfg.public_base_url or os.getenv("AWS_S3_PUBLIC_BASE_URL", "")).strip()
+    if public_base and raw.startswith(public_base.rstrip("/")):
+        bucket = s3_bucket_for(cfg, purpose)
+        if bucket:
+            key = unquote(raw[len(public_base.rstrip("/")) :].lstrip("/"))
+            if key:
+                return bucket, key
+
+    bucket = s3_bucket_for(cfg, purpose)
+    if bucket:
+        return bucket, path_key
+
+    raise ValueError("Não foi possível resolver bucket/key da URL S3.")
+
+
+def generate_manual_presigned_url(
+    s3_url: str,
+    *,
+    db: Session | None = None,
+    expires_seconds: int = 900,
+) -> str:
+    """Gera URL temporária para download de manual PDF em bucket privado."""
+    bucket, key = parse_s3_bucket_and_key_from_url(s3_url, db=db, purpose="manuais")
+    cfg = _resolve_s3_runtime_config(db)
+    if not cfg.access_key or not cfg.secret_key:
+        raise RuntimeError("Credenciais AWS S3 não configuradas para gerar link de download.")
+
+    client = _s3_client_from_config(cfg)
+    return client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": bucket,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{Path(key).name}"',
+        },
+        ExpiresIn=max(60, min(expires_seconds, 3600)),
+    )

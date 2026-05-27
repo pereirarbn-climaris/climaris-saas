@@ -133,11 +133,23 @@ export type ClientEquipmentOut = {
   installation_date: string | null;
   is_active: boolean;
   legacy_equipment_id: number | null;
+  legacy_fabricante?: string | null;
+  legacy_modelo?: string | null;
+  legacy_capacidade_btu?: number | null;
+  legacy_serial?: string | null;
   public_token?: string | null;
   qrcode_code_id?: string | null;
   components: ClientEquipmentComponentOut[];
   can_delete?: boolean;
   delete_block_reason?: string | null;
+};
+
+export type ClientEquipmentManualOut = {
+  id: string;
+  title: string;
+  url: string;
+  kind: string;
+  component_label?: string | null;
 };
 
 export type ClientEquipmentComponentCreatePayload = {
@@ -260,6 +272,40 @@ export async function listEquipmentManuals(): Promise<EquipmentManualListOut> {
   return body as EquipmentManualListOut;
 }
 
+export type EquipmentCatalogDuplicateCheckOut = {
+  exists: boolean;
+  catalog_id: string | null;
+  brand: string | null;
+  model: string | null;
+  category_name: string | null;
+};
+
+export async function checkEquipmentCatalogDuplicate(params: {
+  category_id: string;
+  brand: string;
+  model_evaporator?: string;
+  model_condenser?: string;
+  model?: string;
+  exclude_catalog_id?: string;
+}): Promise<EquipmentCatalogDuplicateCheckOut> {
+  const qs = new URLSearchParams();
+  qs.set("category_id", params.category_id);
+  qs.set("brand", params.brand);
+  if (params.model_evaporator?.trim()) qs.set("model_evaporator", params.model_evaporator.trim());
+  if (params.model_condenser?.trim()) qs.set("model_condenser", params.model_condenser.trim());
+  if (params.model?.trim()) qs.set("model", params.model.trim());
+  if (params.exclude_catalog_id) qs.set("exclude_catalog_id", params.exclude_catalog_id);
+
+  const response = await fetch(apiUrl(`/api/v1/equipment-catalog/check-duplicate?${qs}`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível verificar duplicidade no catálogo.", response.status));
+  }
+  return body as EquipmentCatalogDuplicateCheckOut;
+}
+
 export async function listEquipmentCatalog(params?: {
   skip?: number;
   limit?: number;
@@ -315,7 +361,11 @@ export async function createEquipmentCatalog(form: FormData): Promise<EquipmentC
   });
   const body = await parseBody(response);
   if (!response.ok) {
-    throw new Error(errorMessage(body, "Não foi possível cadastrar o modelo no catálogo.", response.status));
+    const fallback =
+      response.status === 409
+        ? "Este equipamento já está cadastrado no catálogo. Não cadastre novamente."
+        : "Não foi possível cadastrar o modelo no catálogo.";
+    throw new Error(errorMessage(body, fallback, response.status));
   }
   return body as EquipmentCatalogOut;
 }
@@ -328,7 +378,11 @@ export async function createEquipmentCatalogWithExistingManual(form: FormData): 
   });
   const body = await parseBody(response);
   if (!response.ok) {
-    throw new Error(errorMessage(body, "Não foi possível cadastrar o modelo no catálogo.", response.status));
+    const fallback =
+      response.status === 409
+        ? "Este equipamento já está cadastrado no catálogo. Não cadastre novamente."
+        : "Não foi possível cadastrar o modelo no catálogo.";
+    throw new Error(errorMessage(body, fallback, response.status));
   }
   return body as EquipmentCatalogOut;
 }
@@ -380,6 +434,31 @@ export async function createClientCatalogEquipment(
   return body as ClientEquipmentOut;
 }
 
+export type ClientEquipmentUpdatePayload = {
+  tag?: string;
+  installation_reference?: string | null;
+  installation_date?: string | null;
+  is_active?: boolean;
+  client_site_id?: number | null;
+  components?: Array<{ id: string; serial_number: string | null }>;
+};
+
+export async function updateClientCatalogEquipment(
+  equipmentId: string,
+  payload: ClientEquipmentUpdatePayload,
+): Promise<ClientEquipmentOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/equipments/${equipmentId}`), {
+    method: "PATCH",
+    headers: { ...bearer(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível salvar o equipamento.", response.status));
+  }
+  return body as ClientEquipmentOut;
+}
+
 export async function updateClientCatalogEquipmentInstallationReference(
   equipmentId: string,
   installationReference: string | null,
@@ -394,6 +473,17 @@ export async function updateClientCatalogEquipmentInstallationReference(
     throw new Error(errorMessage(body, "Não foi possível salvar a referência de localização.", response.status));
   }
   return body as ClientEquipmentOut;
+}
+
+export async function listClientEquipmentManuals(equipmentId: string): Promise<ClientEquipmentManualOut[]> {
+  const response = await fetch(apiUrl(`/api/v1/clients/equipments/${equipmentId}/manuals`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível carregar os manuais.", response.status));
+  }
+  return (body as { items: ClientEquipmentManualOut[] }).items ?? [];
 }
 
 export async function updateClientCatalogEquipmentSite(

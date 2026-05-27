@@ -40,7 +40,8 @@
   line-height: var(--line-height-normal);
 }
 
-.grid {
+.grid,
+.gridSingle {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--space-3);

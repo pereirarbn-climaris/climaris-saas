@@ -8,6 +8,9 @@ from models import EquipmentCategory
 CATALOG_EXTRA_TECHNICAL_KEYS = frozenset({
     "tipo_equipamento",
     "tecnologia",
+    "tipo_instalacao",
+    "potencia_kw",
+    "pressao_estatica",
     "manual_usuario_id",
     "manual_instalacao_id",
     "manual_servico_id",

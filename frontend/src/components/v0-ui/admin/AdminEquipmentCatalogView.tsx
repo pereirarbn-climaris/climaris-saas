@@ -18,7 +18,18 @@ import {
   mapAiExtractionToTechnicalData,
   mergeAcFieldDefinitions,
 } from '../../../lib/acEquipmentFields';
+import {
+  isClimatizadorCategory,
+  mapClimatizadorAiToFormFields,
+  mapClimatizadorAiToTechnicalData,
+  mergeClimatizadorFieldDefinitions,
+} from '../../../lib/climatizadorEquipmentFields';
 import type { EquipmentLabelExtractionOut } from '../../../api/equipmentCatalogAi';
+import { checkEquipmentCatalogDuplicate } from '../../../api/equipmentCatalog';
+import {
+  findDuplicateCatalogEntry,
+  formatDuplicateCatalogMessage,
+} from '../../../lib/catalogDuplicateCheck';
 import { EquipmentLabelPhotoButtons } from '../../equipment/EquipmentLabelPhotoButtons';
 import {
   emptyGlobalEquipmentManualsValue,
@@ -63,6 +74,7 @@ export interface CatalogEquipment {
   manualUrl: string | null;
   manualId: string | null;
   manualTitle: string | null;
+  hasExtraManuals?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -91,6 +103,7 @@ export interface NewCatalogEquipmentData {
   manualId: string;
   manualPdf?: File | null;
   removeManual?: boolean;
+  manualCombinadoUsuarioInstalacao?: boolean;
   /** Manuais estruturados (Ar-Condicionado): usuário, instalação, serviço + vínculo existente. */
   acManuals?: GlobalEquipmentManualsValue;
 }
@@ -421,7 +434,7 @@ const CategoryBadge: React.FC<{ categoryName: string; iconKey?: CategoryIconKey 
 };
 
 // Manual Badge
-const ManualBadge: React.FC<{ url: string | null }> = ({ url }) => {
+const ManualBadge: React.FC<{ url: string | null; hasManual?: boolean }> = ({ url, hasManual }) => {
   if (url) {
     return (
       <a
@@ -434,6 +447,15 @@ const ManualBadge: React.FC<{ url: string | null }> = ({ url }) => {
         <IconFileText style={iconSize('xs')} />
         PDF
       </a>
+    );
+  }
+
+  if (hasManual) {
+    return (
+      <span className={`${styles.badge} ${styles.badgeSuccess}`} title="Manual anexado">
+        <IconFileText style={iconSize('xs')} />
+        PDF
+      </span>
     );
   }
 
@@ -728,6 +750,7 @@ const CreateCategoryModal: React.FC<CreateCategoryModalProps> = ({
 
 interface EquipmentFormProps {
   initialData?: CatalogEquipment | null;
+  catalogItems: CatalogEquipment[];
   existingManuals: ManualOption[];
   categoryOptions: CategoryOption[];
   onCreateCategory?: (payload: EquipmentCategoryCreatePayload) => Promise<CategoryOption>;
@@ -737,6 +760,7 @@ interface EquipmentFormProps {
 
 const EquipmentForm: React.FC<EquipmentFormProps> = ({
   initialData,
+  catalogItems,
   existingManuals,
   categoryOptions,
   onCreateCategory,
@@ -775,6 +799,8 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
   const [errors, setErrors] = useState<Partial<Record<keyof NewCatalogEquipmentData, string>>>({});
   const [technicalErrors, setTechnicalErrors] = useState<Record<string, string>>({});
   const [formValidationError, setFormValidationError] = useState('');
+  const [duplicateHint, setDuplicateHint] = useState('');
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
 
   useEffect(() => {
     if (initialData?.categoryId) return;
@@ -785,23 +811,79 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
 
   const selectedCategory = formCategoryOptions.find((c) => c.id === formData.categoryId) ?? null;
   const isAcCategory = isAirConditioningCategory(selectedCategory?.name);
-  const acFieldDefinitions = isAcCategory
+  const isClimaCategory = isClimatizadorCategory(selectedCategory?.name);
+  const isProductizedCategory = isAcCategory || isClimaCategory;
+  const productizedFieldDefinitions = isAcCategory
     ? mergeAcFieldDefinitions(selectedCategory?.fieldDefinitions ?? [])
-    : selectedCategory?.fieldDefinitions ?? [];
+    : isClimaCategory
+      ? mergeClimatizadorFieldDefinitions(selectedCategory?.fieldDefinitions ?? [])
+      : selectedCategory?.fieldDefinitions ?? [];
 
-  const handleAiExtracted = useCallback((extraction: EquipmentLabelExtractionOut) => {
-      const mapped = mapAiExtractionToFormFields(extraction);
-      setFormData((prev) => ({
-        ...prev,
-        marca: mapped.marca || prev.marca,
-        modelEvaporator: mapped.modelEvaporator || prev.modelEvaporator,
-        modelCondenser: mapped.modelCondenser || prev.modelCondenser,
-        technicalData: mapAiExtractionToTechnicalData(extraction, prev.technicalData),
-      }));
+  const warnIfDuplicate = useCallback(
+    (draft: NewCatalogEquipmentData) => {
+      if (initialData?.id) {
+        setDuplicateHint('');
+        return;
+      }
+      const local = findDuplicateCatalogEntry(draft, catalogItems);
+      if (local) {
+        setDuplicateHint(formatDuplicateCatalogMessage(local, selectedCategory?.name));
+        return;
+      }
+      setDuplicateHint('');
+    },
+    [catalogItems, initialData?.id, selectedCategory?.name],
+  );
+
+  const handleAiExtracted = useCallback(
+    (extraction: EquipmentLabelExtractionOut) => {
+      if (isClimaCategory) {
+        const mapped = mapClimatizadorAiToFormFields(extraction);
+        setFormData((prev) => {
+          const next = {
+            ...prev,
+            marca: mapped.marca || prev.marca,
+            modelEvaporator: mapped.modelEvaporator || prev.modelEvaporator,
+            technicalData: mapClimatizadorAiToTechnicalData(extraction, prev.technicalData),
+          };
+          warnIfDuplicate(next);
+          return next;
+        });
+      } else {
+        const mapped = mapAiExtractionToFormFields(extraction);
+        setFormData((prev) => {
+          const next = {
+            ...prev,
+            marca: mapped.marca || prev.marca,
+            modelEvaporator: mapped.modelEvaporator || prev.modelEvaporator,
+            modelCondenser: mapped.modelCondenser || prev.modelCondenser,
+            technicalData: mapAiExtractionToTechnicalData(extraction, prev.technicalData),
+          };
+          warnIfDuplicate(next);
+          return next;
+        });
+      }
       setErrors({});
       setTechnicalErrors({});
     },
-  []);
+    [isClimaCategory, warnIfDuplicate],
+  );
+
+  useEffect(() => {
+    if (initialData?.id) {
+      setDuplicateHint('');
+      return;
+    }
+    warnIfDuplicate(formData);
+  }, [
+    formData.marca,
+    formData.modelEvaporator,
+    formData.modelCondenser,
+    formData.modelo,
+    formData.categoryId,
+    initialData?.id,
+    warnIfDuplicate,
+  ]);
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof NewCatalogEquipmentData, string>> = {};
@@ -809,13 +891,19 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
     if (!formData.marca.trim()) {
       newErrors.marca = 'Marca e obrigatoria';
     }
-    const hasSplit =
-      Boolean(formData.modelEvaporator.trim()) || Boolean(formData.modelCondenser.trim());
-    if (!hasSplit) {
-      newErrors.modelEvaporator = 'Informe ao menos o modelo da evaporadora ou da condensadora';
+    if (isAcCategory) {
+      const hasSplit =
+        Boolean(formData.modelEvaporator.trim()) || Boolean(formData.modelCondenser.trim());
+      if (!hasSplit) {
+        newErrors.modelEvaporator = 'Informe ao menos o modelo da evaporadora ou da condensadora';
+      }
+    } else if (isClimaCategory) {
+      if (!formData.modelEvaporator.trim()) {
+        newErrors.modelEvaporator = 'Informe o modelo do climatizador';
+      }
     }
     if (
-      !isAcCategory &&
+      !isProductizedCategory &&
       formData.manualMode === 'existing' &&
       !formData.manualPdf &&
       !formData.manualId &&
@@ -824,7 +912,7 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
       newErrors.manualId = 'Selecione um manual da lista, envie um PDF ou escolha "Sem manual"';
     }
     if (
-      !isAcCategory &&
+      !isProductizedCategory &&
       formData.manualMode === 'upload' &&
       !formData.manualPdf &&
       !initialData?.manualUrl
@@ -836,7 +924,9 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
     }
 
     const techErrors = validateTechnicalDataForm(
-      isAcCategory ? acFieldDefinitions : selectedCategory?.fieldDefinitions ?? [],
+      isProductizedCategory
+        ? productizedFieldDefinitions
+        : selectedCategory?.fieldDefinitions ?? [],
       formData.technicalData,
     );
 
@@ -845,19 +935,56 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
     return Object.keys(newErrors).length === 0 && Object.keys(techErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormValidationError('');
+    setDuplicateHint('');
     if (!validate()) {
       setFormValidationError('Revise os campos destacados antes de salvar.');
       return;
     }
-    const defs = isAcCategory ? acFieldDefinitions : selectedCategory?.fieldDefinitions ?? [];
+
+    if (!initialData?.id) {
+      const localDup = findDuplicateCatalogEntry(formData, catalogItems);
+      if (localDup) {
+        setFormValidationError(formatDuplicateCatalogMessage(localDup, selectedCategory?.name));
+        return;
+      }
+      setCheckingDuplicate(true);
+      try {
+        const remote = await checkEquipmentCatalogDuplicate({
+          category_id: formData.categoryId,
+          brand: formData.marca,
+          model_evaporator: formData.modelEvaporator,
+          model_condenser: formData.modelCondenser,
+          model: formData.modelo,
+        });
+        if (remote.exists) {
+          const label = [remote.brand, remote.model].filter(Boolean).join(' ');
+          const cat = remote.category_name ? ` (${remote.category_name})` : '';
+          setFormValidationError(
+            `Este equipamento já está cadastrado no catálogo: ${label}${cat}. Não cadastre novamente — edite o registro existente se precisar atualizar.`,
+          );
+          return;
+        }
+      } catch (err) {
+        setFormValidationError(
+          err instanceof Error ? err.message : 'Não foi possível verificar se o modelo já existe.',
+        );
+        return;
+      } finally {
+        setCheckingDuplicate(false);
+      }
+    }
+
+    const defs = isProductizedCategory
+      ? productizedFieldDefinitions
+      : selectedCategory?.fieldDefinitions ?? [];
     let payload: NewCatalogEquipmentData = {
       ...formData,
       fieldDefinitions: defs,
     };
-    if (isAcCategory && formData.acManuals) {
+    if (isProductizedCategory && formData.acManuals) {
       const manuals = formData.acManuals;
       if (manuals.existingManualId) {
         payload = {
@@ -865,24 +992,48 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
           manualMode: "existing",
           manualId: manuals.existingManualId,
         };
-      } else if (manuals.instalacao.pdf) {
+      } else if (manuals.combinedUsuarioInstalacao && manuals.combined.pdf) {
         payload = {
           ...payload,
           manualMode: "upload",
-          manualPdf: manuals.instalacao.pdf,
-          manualTitle: manuals.instalacao.title || manuals.instalacao.pdf.name.replace(/\.pdf$/i, ""),
+          manualPdf: manuals.combined.pdf,
+          manualTitle:
+            manuals.combined.title ||
+            manuals.combined.pdf.name.replace(/\.pdf$/i, ""),
+          manualCombinadoUsuarioInstalacao: true,
         };
-      } else if (manuals.usuario.pdf || manuals.servico.pdf) {
-        payload = { ...payload, manualMode: "upload" };
       } else {
-        payload = { ...payload, manualMode: "none" };
+        const primarySlot = manuals.instalacao.pdf
+          ? manuals.instalacao
+          : manuals.usuario.pdf
+            ? manuals.usuario
+            : manuals.servico.pdf
+              ? manuals.servico
+              : null;
+        if (primarySlot?.pdf) {
+          payload = {
+            ...payload,
+            manualMode: "upload",
+            manualPdf: primarySlot.pdf,
+            manualTitle:
+              primarySlot.title || primarySlot.pdf.name.replace(/\.pdf$/i, ""),
+          };
+        } else {
+          payload = { ...payload, manualMode: "none" };
+        }
       }
     }
     onSave(payload);
   };
 
   const handleChange = (field: keyof NewCatalogEquipmentData, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      if (!initialData?.id && (field === 'marca' || field === 'modelo')) {
+        warnIfDuplicate(next);
+      }
+      return next;
+    });
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: undefined }));
     }
@@ -932,6 +1083,11 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
       {formValidationError ? <p className={styles.formError}>{formValidationError}</p> : null}
+      {!formValidationError && duplicateHint ? (
+        <p className={styles.formWarning} role="status">
+          {duplicateHint}
+        </p>
+      ) : null}
       {/* Categoria */}
       <div>
         <label className={styles.fieldLabel}>Categoria *</label>
@@ -976,10 +1132,13 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
       />
 
       {isAcCategory ? (
-        <EquipmentLabelPhotoButtons onExtracted={handleAiExtracted} />
+        <EquipmentLabelPhotoButtons variant="split_ac" onExtracted={handleAiExtracted} />
+      ) : null}
+      {isClimaCategory ? (
+        <EquipmentLabelPhotoButtons variant="climatizador" onExtracted={handleAiExtracted} />
       ) : null}
 
-      {isAcCategory ? (
+      {isProductizedCategory ? (
         <div className={styles.formSection}>
           <h3 className={styles.formSectionTitle}>Identificação Básica</h3>
           <div>
@@ -992,26 +1151,38 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
             />
             {errors.marca ? <p className={styles.formError}>{errors.marca}</p> : null}
           </div>
-          <div className={styles.modelSplitRow}>
-            <div className={styles.modelSplitField}>
-              <label className={styles.fieldLabel}>Modelo (Evaporadora)</label>
+          {isAcCategory ? (
+            <div className={styles.modelSplitRow}>
+              <div className={styles.modelSplitField}>
+                <label className={styles.fieldLabel}>Modelo (Evaporadora)</label>
+                <Input
+                  type="text"
+                  value={formData.modelEvaporator}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
+                  placeholder="Ex: ASYG09LFCA"
+                />
+              </div>
+              <div className={styles.modelSplitField}>
+                <label className={styles.fieldLabel}>Modelo (Condensadora)</label>
+                <Input
+                  type="text"
+                  value={formData.modelCondenser}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, modelCondenser: e.target.value }))}
+                  placeholder="Ex: AOYG09LFCA"
+                />
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className={styles.fieldLabel}>Modelo *</label>
               <Input
                 type="text"
                 value={formData.modelEvaporator}
                 onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
-                placeholder="Ex: ASYG09LFCA"
+                placeholder="Ex: MV80, CL80, EcoBreeze 12000..."
               />
             </div>
-            <div className={styles.modelSplitField}>
-              <label className={styles.fieldLabel}>Modelo (Condensadora)</label>
-              <Input
-                type="text"
-                value={formData.modelCondenser}
-                onChange={(e) => setFormData((prev) => ({ ...prev, modelCondenser: e.target.value }))}
-                placeholder="Ex: AOYG09LFCA"
-              />
-            </div>
-          </div>
+          )}
           {errors.modelEvaporator ? <p className={styles.formError}>{errors.modelEvaporator}</p> : null}
         </div>
       ) : (
@@ -1063,11 +1234,11 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
       )}
 
       {selectedCategory ? (
-        isAcCategory ? (
+        isProductizedCategory ? (
           <div className={styles.formSection}>
             <h3 className={styles.formSectionTitle}>Especificações Técnicas</h3>
             <DynamicTechnicalFields
-              definitions={acFieldDefinitions}
+              definitions={productizedFieldDefinitions}
               values={formData.technicalData}
               errors={technicalErrors}
               categoryName={selectedCategory.name}
@@ -1109,7 +1280,7 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
         )
       ) : null}
 
-      {isAcCategory ? (
+      {isProductizedCategory ? (
         <GlobalEquipmentManualsPanel
           value={formData.acManuals ?? emptyGlobalEquipmentManualsValue()}
           existingManuals={existingManuals}
@@ -1230,8 +1401,16 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
         <Button type="button" variant="secondary" onClick={onCancel}>
           Cancelar
         </Button>
-        <Button type="submit" variant="primary">
-          {initialData ? 'Salvar Alteracoes' : 'Cadastrar Modelo'}
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={checkingDuplicate || Boolean(!initialData && duplicateHint)}
+        >
+          {checkingDuplicate
+            ? 'Verificando...'
+            : initialData
+              ? 'Salvar Alteracoes'
+              : 'Cadastrar Modelo'}
         </Button>
       </div>
     </form>
@@ -1492,7 +1671,7 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
                           {equipment.technicalSummary}
                         </td>
                         <td className="px-4 py-3">
-                          <ManualBadge url={equipment.manualUrl} />
+                          <ManualBadge url={equipment.manualUrl} hasManual={equipment.hasExtraManuals} />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
@@ -1546,6 +1725,7 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
       >
         <EquipmentForm
           initialData={editingEquipment}
+          catalogItems={equipments}
           existingManuals={existingManuals}
           categoryOptions={categoryOptions}
           onCreateCategory={onCreateCategory}

@@ -9,7 +9,7 @@ import re
 import ssl
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException, status
 
@@ -26,7 +26,7 @@ CLAUDE_VISION_MODEL_FALLBACKS: tuple[str, ...] = (
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 ALLOWED_MEDIA = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 
-EXTRACTION_PROMPT = """Você é um especialista em HVAC lendo placas de identificação (nameplate) de ar-condicionado.
+AC_EXTRACTION_PROMPT = """Você é um especialista em HVAC lendo placas de identificação (nameplate) de ar-condicionado.
 Analise a(s) imagem(ns) e extraia APENAS os dados visíveis na etiqueta.
 
 Retorne SOMENTE um JSON válido (sem markdown, sem texto extra) com exatamente estas chaves:
@@ -47,6 +47,29 @@ Regras:
 - tecnologia deve ser exatamente "Inverter" ou "On-Off" (ou null se incerto).
 - Se houver duas imagens, a primeira tende a ser evaporadora e a segunda condensadora.
 - Não invente dados que não apareçam na placa."""
+
+CLIMATIZADOR_EXTRACTION_PROMPT = """Você é um especialista em climatização evaporativa lendo placas de identificação (nameplate) de CLIMATIZADOR.
+Analise a(s) imagem(ns) e extraia APENAS os dados visíveis na etiqueta.
+
+Retorne SOMENTE um JSON válido (sem markdown, sem texto extra) com exatamente estas chaves:
+{
+  "marca": "String",
+  "modelo": "String ou null",
+  "vazao_m3h": "String (ex: 8000 m³/h, 12000 m³/h)",
+  "potencia_kw": "String (ex: 0,75 kW, 1,1 kW)",
+  "tensao": "String (ex: 220V, 380V)",
+  "tipo_instalacao": "String (ex: Parede, Teto, Chão, Industrial)",
+  "pressao_estatica": "String (ex: 30 Pa, 50 mmH2O) ou null",
+  "fluido_refrigerante": "String ou null (se houver circuito híbrido/refrigeração auxiliar)"
+}
+
+Regras:
+- Use null quando o campo não estiver legível na imagem.
+- vazao_m3h deve mencionar m³/h quando aplicável.
+- Climatizador é equipamento único (não há evaporadora/condensadora separadas).
+- Não invente dados que não apareçam na placa."""
+
+EXTRACTION_PROMPT = AC_EXTRACTION_PROMPT
 
 
 def _normalize_media_type(content_type: str | None, filename: str | None) -> str:
@@ -108,13 +131,35 @@ def _normalize_extraction(raw: dict[str, Any]) -> dict[str, str | None]:
     }
 
 
+def _normalize_climatizador_extraction(raw: dict[str, Any]) -> dict[str, str | None]:
+    def s(key: str) -> str | None:
+        val = raw.get(key)
+        if val is None:
+            return None
+        text = str(val).strip()
+        return text or None
+
+    return {
+        "marca": s("marca"),
+        "modelo": s("modelo"),
+        "vazao_m3h": s("vazao_m3h"),
+        "potencia_kw": s("potencia_kw"),
+        "tensao": s("tensao"),
+        "tipo_instalacao": s("tipo_instalacao"),
+        "pressao_estatica": s("pressao_estatica"),
+        "fluido_refrigerante": s("fluido_refrigerante"),
+    }
+
+
 def _anthropic_vision(
     images: list[tuple[str, bytes]],
     *,
     media_types: list[str],
+    prompt: str,
     claude_api_key: str | None,
     claude_model: str,
-) -> dict[str, Any] | None:
+    normalize: Callable[[dict[str, Any]], dict[str, str | None]],
+) -> dict[str, str | None] | None:
     if not claude_api_key:
         return None
     content: list[dict[str, Any]] = []
@@ -129,7 +174,7 @@ def _anthropic_vision(
                 },
             }
         )
-    content.append({"type": "text", "text": EXTRACTION_PROMPT})
+    content.append({"type": "text", "text": prompt})
     payload = {
         "model": claude_model,
         "max_tokens": 800,
@@ -154,7 +199,7 @@ def _anthropic_vision(
         text_parts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
         joined = "\n".join(text_parts).strip()
         if joined:
-            return _normalize_extraction(_parse_json_payload(joined))
+            return normalize(_parse_json_payload(joined))
     except Exception:
         logger.exception("Falha na extração via Claude Vision.")
     return None
@@ -164,10 +209,12 @@ def _gemini_vision(
     images: list[tuple[str, bytes]],
     *,
     media_types: list[str],
-) -> dict[str, Any] | None:
+    prompt: str,
+    normalize: Callable[[dict[str, Any]], dict[str, str | None]],
+) -> dict[str, str | None] | None:
     if not GEMINI_API_KEY:
         return None
-    parts: list[dict[str, Any]] = [{"text": EXTRACTION_PROMPT}]
+    parts: list[dict[str, Any]] = [{"text": prompt}]
     for (_, data), mt in zip(images, media_types, strict=True):
         parts.append(
             {
@@ -198,7 +245,7 @@ def _gemini_vision(
         parts_out = candidates[0].get("content", {}).get("parts") or []
         text = "\n".join(p.get("text", "") for p in parts_out if p.get("text")).strip()
         if text:
-            return _normalize_extraction(_parse_json_payload(text))
+            return normalize(_parse_json_payload(text))
     except Exception:
         logger.exception("Falha na extração via Gemini Vision.")
     return None
@@ -208,10 +255,12 @@ def _openai_vision(
     images: list[tuple[str, bytes]],
     *,
     media_types: list[str],
-) -> dict[str, Any] | None:
+    prompt: str,
+    normalize: Callable[[dict[str, Any]], dict[str, str | None]],
+) -> dict[str, str | None] | None:
     if not OPENAI_API_KEY:
         return None
-    content: list[dict[str, Any]] = [{"type": "text", "text": EXTRACTION_PROMPT}]
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for (_, data), mt in zip(images, media_types, strict=True):
         content.append(
             {
@@ -242,14 +291,16 @@ def _openai_vision(
             data = json.loads(resp.read().decode("utf-8"))
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if text:
-            return _normalize_extraction(_parse_json_payload(str(text)))
+            return normalize(_parse_json_payload(str(text)))
     except Exception:
         logger.exception("Falha na extração via OpenAI Vision.")
     return None
 
 
-async def extract_ac_label_from_images(
+async def _extract_label_from_images(
     *,
+    prompt: str,
+    normalize: Callable[[dict[str, Any]], dict[str, str | None]],
     evaporator_bytes: bytes | None,
     evaporator_content_type: str | None,
     evaporator_filename: str | None,
@@ -258,6 +309,7 @@ async def extract_ac_label_from_images(
     condenser_filename: str | None,
     claude_api_key: str | None = None,
     claude_model: str | None = None,
+    empty_detail: str,
 ) -> dict[str, str | None]:
     images: list[tuple[str, bytes]] = []
     media_types: list[str] = []
@@ -278,10 +330,7 @@ async def extract_ac_label_from_images(
         media_types.append(mt)
 
     if not images:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Envie ao menos uma foto da etiqueta (evaporadora e/ou condensadora).",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=empty_detail)
 
     model = claude_model or CLAUDE_MODEL
     models_to_try: list[str] = []
@@ -293,17 +342,19 @@ async def extract_ac_label_from_images(
         result = _anthropic_vision(
             images,
             media_types=media_types,
+            prompt=prompt,
             claude_api_key=claude_api_key,
             claude_model=attempt_model,
+            normalize=normalize,
         )
         if result and any(v for v in result.values() if v):
             return result
 
-    result = _gemini_vision(images, media_types=media_types)
+    result = _gemini_vision(images, media_types=media_types, prompt=prompt, normalize=normalize)
     if result and any(v for v in result.values() if v):
         return result
 
-    result = _openai_vision(images, media_types=media_types)
+    result = _openai_vision(images, media_types=media_types, prompt=prompt, normalize=normalize)
     if result and any(v for v in result.values() if v):
         return result
 
@@ -313,4 +364,53 @@ async def extract_ac_label_from_images(
             "Não foi possível extrair dados da etiqueta. "
             "Configure a chave Claude em Operação → Chaves APIs, ou defina CLAUDE_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY no servidor."
         ),
+    )
+
+
+async def extract_ac_label_from_images(
+    *,
+    evaporator_bytes: bytes | None,
+    evaporator_content_type: str | None,
+    evaporator_filename: str | None,
+    condenser_bytes: bytes | None,
+    condenser_content_type: str | None,
+    condenser_filename: str | None,
+    claude_api_key: str | None = None,
+    claude_model: str | None = None,
+) -> dict[str, str | None]:
+    return await _extract_label_from_images(
+        prompt=AC_EXTRACTION_PROMPT,
+        normalize=_normalize_extraction,
+        evaporator_bytes=evaporator_bytes,
+        evaporator_content_type=evaporator_content_type,
+        evaporator_filename=evaporator_filename,
+        condenser_bytes=condenser_bytes,
+        condenser_content_type=condenser_content_type,
+        condenser_filename=condenser_filename,
+        claude_api_key=claude_api_key,
+        claude_model=claude_model,
+        empty_detail="Envie ao menos uma foto da etiqueta (evaporadora e/ou condensadora).",
+    )
+
+
+async def extract_climatizador_label_from_images(
+    *,
+    label_bytes: bytes | None,
+    label_content_type: str | None,
+    label_filename: str | None,
+    claude_api_key: str | None = None,
+    claude_model: str | None = None,
+) -> dict[str, str | None]:
+    return await _extract_label_from_images(
+        prompt=CLIMATIZADOR_EXTRACTION_PROMPT,
+        normalize=_normalize_climatizador_extraction,
+        evaporator_bytes=label_bytes,
+        evaporator_content_type=label_content_type,
+        evaporator_filename=label_filename,
+        condenser_bytes=None,
+        condenser_content_type=None,
+        condenser_filename=None,
+        claude_api_key=claude_api_key,
+        claude_model=claude_model,
+        empty_detail="Envie ao menos uma foto da etiqueta do climatizador.",
     )

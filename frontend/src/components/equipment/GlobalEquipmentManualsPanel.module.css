@@ -142,3 +142,16 @@
   font-size: var(--font-size-sm);
   color: var(--color-error);
 }
+
+.combinedToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.combinedToggle input {
+  margin-top: 0.15rem;
+}

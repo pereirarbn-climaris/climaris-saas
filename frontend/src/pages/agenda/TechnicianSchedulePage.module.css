@@ -29,10 +29,9 @@
   padding: 1.25rem;
   margin-bottom: 1rem;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-.card:hover {
+.cardInteractive:hover {
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
@@ -78,6 +77,103 @@
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.875rem;
+}
+
+.loadingBanner {
+  margin: 0 0 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface-elevated));
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+/* ===== Calendar viewport (evita “tremor” no carregamento) ===== */
+.calendarViewport {
+  position: relative;
+  min-height: 38rem;
+}
+
+.calendarViewportMonth {
+  min-height: 22rem;
+}
+
+.calendarLoadingOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 72%, transparent);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.28s ease, visibility 0.28s ease;
+}
+
+.calendarLoadingOverlayHidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.calendarLoadingSpinner {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border-top-color: var(--color-primary);
+  animation: agendaSpin 0.75s linear infinite;
+}
+
+.calendarLoadingText {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.calendarLoadingOverlayInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.calendarSurface {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.32s ease, transform 0.32s ease;
+}
+
+.calendarSurfaceReady {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.calendarSurfaceRefreshing {
+  opacity: 0.72;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+@keyframes agendaSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendarLoadingSpinner {
+    animation: none;
+    border-top-color: var(--color-primary);
+  }
+
+  .calendarSurface {
+    transform: none;
+    transition: opacity 0.15s ease;
+  }
 }
 
 .ok {
@@ -455,6 +551,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  scrollbar-gutter: stable both-edges;
 }
 
 .calendarGridWeek {

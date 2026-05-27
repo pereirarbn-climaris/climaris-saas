@@ -8,6 +8,7 @@ import {
   defaultUnitPriceForProduct,
   defaultUnitPriceForService,
   newLocalId,
+  linkServicesToAllSelectedEquipment,
   toggleServiceOnEquipment,
 } from "../../../lib/serviceOrderLinesSync";
 import type { Equipamento, ProductLineDraft, ServiceLineDraft } from "./ServiceOrderFormView";
@@ -329,7 +330,7 @@ export function ServiceOrderLineSections({
         <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Serviços por equipamento</h3>
         <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
           {selectedEquipments.length > 0
-            ? "Marque em quais aparelhos cada linha de serviço foi executada."
+            ? "Marque em quais aparelhos cada linha de serviço foi executada. A quantidade do serviço aumenta automaticamente conforme você vincula aparelhos."
             : "Opcional: selecione equipamentos na seção acima para vincular serviços a aparelhos específicos."}
         </p>
         {selectedEquipments.length === 0 ? (
@@ -353,14 +354,39 @@ export function ServiceOrderLineSections({
             Adicione serviços solicitados para vinculá-los aos equipamentos.
           </p>
         ) : (
-          <EquipmentGrid
-            equipments={selectedEquipments}
-            servicos={servicos}
-            canEditEquipmentLinks={canEditEquipmentLinks}
-            onToggle={(equipmentId, lineLocalId, checked) =>
-              onServicosChange(toggleServiceOnEquipment(servicos, equipmentId, lineLocalId, checked))
-            }
-          />
+          <>
+            {canEditEquipmentLinks && selectedEquipments.length > 1 ? (
+              <div style={{ marginBottom: "0.75rem" }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onServicosChange(linkServicesToAllSelectedEquipment(servicos, equipamentosIds))
+                  }
+                  style={{
+                    height: "2.25rem",
+                    padding: "0 0.85rem",
+                    borderRadius: "var(--btn-radius)",
+                    border: "1px solid var(--color-primary)",
+                    background: "#fff",
+                    color: "var(--color-primary)",
+                    fontWeight: 600,
+                    fontSize: "var(--font-size-sm)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Marcar serviço em todos os {selectedEquipments.length} equipamentos selecionados
+                </button>
+              </div>
+            ) : null}
+            <EquipmentGrid
+              equipments={selectedEquipments}
+              servicos={servicos}
+              canEditEquipmentLinks={canEditEquipmentLinks}
+              onToggle={(equipmentId, lineLocalId, checked) =>
+                onServicosChange(toggleServiceOnEquipment(servicos, equipmentId, lineLocalId, checked))
+              }
+            />
+          </>
         )}
       </section>
     </>
@@ -530,14 +556,13 @@ function EquipmentGrid(props: {
                   ? [line.equipmentId]
                   : [];
               const checked = ids.includes(eq.id);
-              const atCap = ids.length >= Math.max(line.quantity, 1);
               return (
                 <li key={`${eq.id}_${line.localId}`}>
                   <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: props.canEditEquipmentLinks ? "pointer" : "default" }}>
                     <input
                       type="checkbox"
                       checked={checked}
-                      disabled={!props.canEditEquipmentLinks || (!checked && atCap)}
+                      disabled={!props.canEditEquipmentLinks}
                       onChange={(e) => props.onToggle(eq.id, line.localId, e.target.checked)}
                     />
                     <span style={{ fontSize: "var(--font-size-sm)" }}>{line.label}</span>

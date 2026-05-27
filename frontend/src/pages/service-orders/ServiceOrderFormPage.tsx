@@ -36,6 +36,7 @@ import {
   viewDataToCreatePayload,
 } from "../../lib/serviceOrderFormViewAdapter";
 import { monthYearFromDateString } from "../../lib/pmocOsSchedule";
+import { buildServiceLinesFromPreventiveLines } from "../../lib/preventiveServiceOrder";
 import {
   computeDiscountAmountFromView,
   computeOrderTotalFromView,
@@ -79,6 +80,7 @@ export function ServiceOrderFormPage() {
   const [isLoading, setIsLoading] = useState(!isNew);
   const [isSaving, setIsSaving] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [isCancellingSchedule, setIsCancellingSchedule] = useState(false);
   const [isCancellingOrder, setIsCancellingOrder] = useState(false);
   const [schedulingPanelKey, setSchedulingPanelKey] = useState("default");
@@ -116,6 +118,11 @@ export function ServiceOrderFormPage() {
   const canCancelOrder = useMemo(() => {
     if (isNew || !orderRow || !canEditGeneral) return false;
     return orderRow.status !== "done" && orderRow.status !== "cancelled";
+  }, [isNew, orderRow, canEditGeneral]);
+
+  const canCompleteOrder = useMemo(() => {
+    if (isNew || !orderRow || !canEditGeneral) return false;
+    return orderRow.status === "scheduled" || orderRow.status === "approved" || orderRow.status === "in_progress";
   }, [isNew, orderRow, canEditGeneral]);
 
   const loadEquipments = useCallback(async (clientId: string) => {
@@ -213,16 +220,28 @@ export function ServiceOrderFormPage() {
   useEffect(() => {
     if (!isNew) return;
     const clientIdParam = searchParams.get("client_id");
-    const equipmentIdParam = searchParams.get("equipment_id");
     if (!clientIdParam) return;
+
+    const tipo = searchParams.get("tipo");
+    const equipmentIdParam = searchParams.get("equipment_id");
+    const equipmentIdsParam = searchParams.get("equipment_ids");
+
+    let equipmentIds: string[] = [];
+    if (equipmentIdsParam) {
+      equipmentIds = equipmentIdsParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (equipmentIdParam) {
+      equipmentIds = [equipmentIdParam];
+    }
 
     let cancelled = false;
     void (async () => {
       const partial: Partial<ServiceOrderData> = { clienteId: clientIdParam };
+      if (tipo === "preventiva") partial.tipoServico = "preventiva";
+      if (equipmentIds.length > 0) partial.equipamentosIds = equipmentIds;
       await loadEquipments(clientIdParam);
-      if (equipmentIdParam) {
-        partial.equipamentosIds = [equipmentIdParam];
-      }
       if (!cancelled) {
         setServiceOrder((prev) => ({ ...(prev ?? {}), ...partial }));
       }
@@ -231,6 +250,20 @@ export function ServiceOrderFormPage() {
       cancelled = true;
     };
   }, [isNew, searchParams, loadEquipments]);
+
+  useEffect(() => {
+    if (!isNew) return;
+    const preventiveLines = searchParams.get("preventive_lines");
+    if (!preventiveLines || servicesCatalog.length === 0) return;
+
+    const servicos = buildServiceLinesFromPreventiveLines(preventiveLines, servicesCatalog);
+    if (servicos.length === 0) return;
+
+    setServiceOrder((prev) => {
+      if (prev?.servicos?.length) return prev;
+      return { ...(prev ?? {}), servicos };
+    });
+  }, [isNew, searchParams, servicesCatalog]);
 
   useEffect(() => {
     if (isNew) {
@@ -242,7 +275,9 @@ export function ServiceOrderFormPage() {
         searchParams.get("starts_at") ||
         searchParams.get("technician_id") ||
         searchParams.get("tipo") ||
-        searchParams.get("client_id");
+        searchParams.get("client_id") ||
+        searchParams.get("equipment_ids") ||
+        searchParams.get("preventive_lines");
       if (!hasPrefill) setServiceOrder(undefined);
       return;
     }
@@ -370,12 +405,27 @@ export function ServiceOrderFormPage() {
     }
   }, [orderRow, canStartAttendance, productsCatalog]);
 
+  const handleCompleteOrder = useCallback(async () => {
+    if (!orderRow || !canCompleteOrder) return;
+    setIsCompleting(true);
+    try {
+      await patchServiceOrderStatus(orderRow.id, "done");
+      await refreshOrderState(orderRow.id);
+      toast.success("Ordem de serviço concluída. Prazos da gestão preventiva atualizados.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível concluir a ordem de serviço.");
+    } finally {
+      setIsCompleting(false);
+    }
+  }, [orderRow, canCompleteOrder, refreshOrderState]);
+
   const clientNameById = useMemo(() => new Map(clientes.map((c) => [c.id, c.nome])), [clientes]);
 
   const handleSave = useCallback(
     async (data: ServiceOrderData) => {
       if (!canSave) {
         console.warn("[ServiceOrderFormPage] save ignorado: sem permissão");
+        toast.error("Sem permissão para salvar esta ordem de serviço.");
         return;
       }
 
@@ -629,6 +679,9 @@ export function ServiceOrderFormPage() {
         schedulingPanelKey={schedulingPanelKey}
         isCancellingSchedule={isCancellingSchedule}
         isCancellingOrder={isCancellingOrder}
+        canCompleteOrder={canCompleteOrder}
+        onCompleteOrder={handleCompleteOrder}
+        isCompletingOrder={isCompleting}
         onGeneratePDF={
           !isNew && orderRow
             ? async (osId) => {

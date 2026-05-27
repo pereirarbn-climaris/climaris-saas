@@ -29,6 +29,8 @@ export interface MaintenanceEvent {
   id: string;
   date: string;
   osNumber?: string;
+  /** Linha resumida para listagens (ex.: OS #19 — Concluída — Serviço). */
+  summaryLine?: string;
   title: string;
   description?: string;
   technicianName?: string;

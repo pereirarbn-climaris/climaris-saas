@@ -21,6 +21,7 @@ class PreventiveSettingsOut(BaseModel):
     preventive_button_schedule_text: str = Field(default="Agendar agora", max_length=80)
     preventive_message_template: str | None = None
     preventive_auto_remind_days_before: int = Field(default=0, ge=0, le=90)
+    preventive_auto_whatsapp_enabled: bool = False
     default_message_template: str | None = None
 
 
@@ -33,6 +34,7 @@ class PreventiveSettingsPatch(BaseModel):
     preventive_button_schedule_text: str | None = Field(default=None, max_length=80)
     preventive_message_template: str | None = None
     preventive_auto_remind_days_before: int | None = Field(default=None, ge=0, le=90)
+    preventive_auto_whatsapp_enabled: bool | None = None
 
 
 class HistoricoServicoCreate(BaseModel):
@@ -95,7 +97,9 @@ class PreventiveClientGroupOut(BaseModel):
 
 
 class PreventiveItemsListOut(BaseModel):
-    window_days: int
+    window_days: int | None = None
+    year: int | None = Field(default=None, ge=2000, le=2100)
+    month: int | None = Field(default=None, ge=1, le=12)
     clients: list[PreventiveClientGroupOut] = Field(default_factory=list)
     items: list[PreventiveItemOut] = Field(default_factory=list)
 
@@ -129,6 +133,33 @@ class EquipmentPreventiveRuleOut(BaseModel):
     client_id: int | None = None
 
 
+class EquipmentServicePreventiveScheduleOut(BaseModel):
+    service_id: int
+    service_name: str
+    service_description: str | None = None
+    default_interval_value: int
+    default_interval_type: Literal["days", "months", "years"]
+    override_interval_value: int | None = None
+    override_interval_type: Literal["days", "months", "years"] | None = None
+    effective_interval_value: int
+    effective_interval_type: Literal["days", "months", "years"]
+    last_performed_at: datetime | None = None
+    next_due_at: datetime | None = None
+    last_service_order_id: int | None = None
+    pending_service_order_id: int | None = None
+    awaiting_completion: bool = False
+    has_override: bool = False
+
+
+class EquipmentServicePreventiveScheduleListOut(BaseModel):
+    items: list[EquipmentServicePreventiveScheduleOut] = Field(default_factory=list)
+
+
+class EquipmentServicePreventiveOverrideUpsert(BaseModel):
+    interval_value: int = Field(ge=1, le=3650)
+    interval_type: Literal["days", "months", "years"]
+
+
 class PreventivePreviewOut(BaseModel):
     message_text: str
     image_url: str | None = None
@@ -142,6 +173,9 @@ class PreventivePreviewOut(BaseModel):
 class PreventiveSendRequest(BaseModel):
     historico_servico_id: int | None = Field(default=None, ge=1)
     rule_id: int | None = Field(default=None, ge=1)
+    client_id: int | None = Field(default=None, ge=1)
+    year: int | None = Field(default=None, ge=2000, le=2100)
+    month: int | None = Field(default=None, ge=1, le=12)
     window_days: int | None = Field(default=None, ge=1, le=400)
     promo_image_url: str | None = Field(default=None, max_length=500)
     promo_image_base64: str | None = Field(default=None, max_length=350_000)
@@ -158,8 +192,13 @@ class PreventiveSendRequest(BaseModel):
 
     @model_validator(mode="after")
     def _require_ref(self) -> PreventiveSendRequest:
-        if (self.historico_servico_id is None) == (self.rule_id is None):
-            raise ValueError("Informe historico_servico_id ou rule_id.")
+        by_historico = self.historico_servico_id is not None
+        by_rule = self.rule_id is not None
+        by_client_month = (
+            self.client_id is not None and self.year is not None and self.month is not None
+        )
+        if sum((by_historico, by_rule, by_client_month)) != 1:
+            raise ValueError("Informe historico_servico_id, rule_id ou client_id+year+month.")
         return self
 
 
@@ -210,11 +249,13 @@ class PreventiveQuickClientCreate(BaseModel):
 
 
 class PreventiveRegisterEntryCreate(BaseModel):
-    """Registra histórico preventivo e opcionalmente envia ou agenda lembrete por WhatsApp."""
+    """Registra última realização preventiva e opcionalmente envia ou agenda lembrete por WhatsApp."""
 
+    entry_mode: Literal["temporary", "existing"] = "temporary"
     client_id: int | None = Field(default=None, ge=1)
     new_client: PreventiveQuickClientCreate | None = None
     equipment_id: int | None = Field(default=None, ge=1)
+    equipment_label: str | None = Field(default=None, max_length=120)
     service_id: int = Field(ge=1)
     data_realizacao: date
     notes: str | None = Field(default=None, max_length=4000)
@@ -234,6 +275,8 @@ class PreventiveRegisterEntryCreate(BaseModel):
             raise ValueError("Informe exatamente um de: client_id ou new_client.")
         if self.reminder_send == "scheduled" and self.reminder_local_date is None:
             raise ValueError("Informe reminder_local_date ao agendar o lembrete.")
+        if self.equipment_id is None and not (self.equipment_label or "").strip():
+            raise ValueError("Informe equipment_id ou equipment_label (apelido do aparelho).")
         return self
 
 

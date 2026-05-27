@@ -10,13 +10,17 @@ import {
 } from "../../api/services";
 import { listProducts, type ProductOut } from "../../api/products";
 import { getAiSettings } from "../../api/ai";
+import { ToastHost } from "../../components/ToastHost";
 import { formatBrlDisplay, formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
+import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
 import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
 import styles from "./ServiceFormPage.module.css";
 
 type ServiceFormTab = "descricao" | "produtos" | "ia" | "fiscal";
+
+type PreventiveIntervalType = "days" | "months" | "years";
 
 type FormState = {
   name: string;
@@ -32,10 +36,58 @@ type FormState = {
   is_active: boolean;
   nfse_codigo_tributacao_nacional: string;
   nfse_codigo_nbs: string;
-  /** "" | "6" | "12" — enviado como periodicidade_meses ou null */
-  periodicidade_meses: string;
+  preventive_enabled: boolean;
+  preventive_interval_type: PreventiveIntervalType;
+  preventive_interval_value: string;
   product_inputs: Array<{ product_id: string; quantity: string }>;
 };
+
+function mapServicePreventiveToForm(s: {
+  preventive_enabled?: boolean;
+  preventive_interval_type?: PreventiveIntervalType | null;
+  preventive_interval_value?: number | null;
+  periodicidade_meses?: number | null;
+}): Pick<FormState, "preventive_enabled" | "preventive_interval_type" | "preventive_interval_value"> {
+  if (s.preventive_enabled && s.preventive_interval_type && s.preventive_interval_value) {
+    return {
+      preventive_enabled: true,
+      preventive_interval_type: s.preventive_interval_type,
+      preventive_interval_value: String(s.preventive_interval_value),
+    };
+  }
+  if (s.periodicidade_meses != null && s.periodicidade_meses > 0) {
+    return {
+      preventive_enabled: true,
+      preventive_interval_type: "months",
+      preventive_interval_value: String(s.periodicidade_meses),
+    };
+  }
+  return {
+    preventive_enabled: false,
+    preventive_interval_type: "months",
+    preventive_interval_value: "6",
+  };
+}
+
+function buildPreventivePayload(form: FormState): {
+  preventive_enabled: boolean;
+  preventive_interval_type: PreventiveIntervalType | null;
+  preventive_interval_value: number | null;
+} {
+  if (!form.preventive_enabled) {
+    return {
+      preventive_enabled: false,
+      preventive_interval_type: null,
+      preventive_interval_value: null,
+    };
+  }
+  const value = Number(form.preventive_interval_value);
+  return {
+    preventive_enabled: true,
+    preventive_interval_type: form.preventive_interval_type,
+    preventive_interval_value: Number.isFinite(value) ? value : null,
+  };
+}
 
 function emptyForm(): FormState {
   return {
@@ -52,7 +104,9 @@ function emptyForm(): FormState {
     is_active: true,
     nfse_codigo_tributacao_nacional: "",
     nfse_codigo_nbs: "",
-    periodicidade_meses: "",
+    preventive_enabled: false,
+    preventive_interval_type: "months",
+    preventive_interval_value: "6",
     product_inputs: [],
   };
 }
@@ -72,7 +126,9 @@ function serializeServiceFormSnapshot(f: FormState): string {
     is_active: f.is_active,
     nfse_codigo_tributacao_nacional: f.nfse_codigo_tributacao_nacional.trim(),
     nfse_codigo_nbs: f.nfse_codigo_nbs.trim(),
-    periodicidade_meses: f.periodicidade_meses,
+    preventive_enabled: f.preventive_enabled,
+    preventive_interval_type: f.preventive_interval_type,
+    preventive_interval_value: f.preventive_interval_value.trim(),
     product_inputs: f.product_inputs.map((i) => ({
       product_id: i.product_id.trim(),
       quantity: i.quantity.trim(),
@@ -97,9 +153,7 @@ export function ServiceFormPage() {
   const [deleting, setDeleting] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [loadErr, setLoadErr] = useState("");
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [products, setProducts] = useState<ProductOut[]>([]);
-  const [productsLoadErr, setProductsLoadErr] = useState("");
   const [aiEnabled, setAiEnabled] = useState(false);
   const [activeTab, setActiveTab] = useState<ServiceFormTab>("descricao");
   const savedSnapshotRef = useRef("");
@@ -120,11 +174,7 @@ export function ServiceFormPage() {
   );
   const estimatedProfit = useMemo(() => parsedPrice - estimatedMaterialCost, [parsedPrice, estimatedMaterialCost]);
 
-  const periodicidadeApi = useMemo((): 6 | 12 | null => {
-    if (form.periodicidade_meses === "6") return 6;
-    if (form.periodicidade_meses === "12") return 12;
-    return null;
-  }, [form.periodicidade_meses]);
+  const preventivePayload = useMemo(() => buildPreventivePayload(form), [form]);
 
   const isDirty = useMemo(() => {
     if (isNew) return false;
@@ -138,12 +188,11 @@ export function ServiceFormPage() {
         const list = await listProducts({ limit: 100 });
         if (!cancelled) {
           setProducts(list);
-          setProductsLoadErr("");
         }
       } catch (e) {
         if (!cancelled) {
           setProducts([]);
-          setProductsLoadErr(
+          toast.error(
             e instanceof Error
               ? e.message
               : "Não foi possível carregar produtos. Verifique se as migrações recentes foram aplicadas na API.",
@@ -186,7 +235,8 @@ export function ServiceFormPage() {
       try {
         const s = await getService(idNum);
         if (!cancelled) {
-          setForm({
+          const preventiveFields = mapServicePreventiveToForm(s);
+          const loadedForm: FormState = {
             name: s.name,
             description: s.description ?? "",
             price: numberToBrlInput(Number(s.price || 0)),
@@ -200,34 +250,14 @@ export function ServiceFormPage() {
             is_active: s.is_active,
             nfse_codigo_tributacao_nacional: s.nfse_codigo_tributacao_nacional ?? "",
             nfse_codigo_nbs: s.nfse_codigo_nbs ?? "",
-            periodicidade_meses:
-              s.periodicidade_meses === 6 || s.periodicidade_meses === 12 ? String(s.periodicidade_meses) : "",
+            ...preventiveFields,
             product_inputs: (s.product_inputs ?? []).map((i) => ({
               product_id: String(i.product_id),
               quantity: String(i.quantity),
             })),
-          });
-          savedSnapshotRef.current = serializeServiceFormSnapshot({
-            name: s.name,
-            description: s.description ?? "",
-            price: numberToBrlInput(Number(s.price || 0)),
-            duration_minutes: String(Number(s.duration_minutes || 30)),
-            equipment_type_tags: s.equipment_type_tags ?? "",
-            btu_min: s.btu_min != null ? String(s.btu_min) : "",
-            btu_max: s.btu_max != null ? String(s.btu_max) : "",
-            service_category: s.service_category ?? "",
-            applies_residential: s.applies_residential ?? true,
-            applies_commercial: s.applies_commercial ?? true,
-            is_active: s.is_active,
-            nfse_codigo_tributacao_nacional: s.nfse_codigo_tributacao_nacional ?? "",
-            nfse_codigo_nbs: s.nfse_codigo_nbs ?? "",
-            periodicidade_meses:
-              s.periodicidade_meses === 6 || s.periodicidade_meses === 12 ? String(s.periodicidade_meses) : "",
-            product_inputs: (s.product_inputs ?? []).map((i) => ({
-              product_id: String(i.product_id),
-              quantity: String(i.quantity),
-            })),
-          });
+          };
+          setForm(loadedForm);
+          savedSnapshotRef.current = serializeServiceFormSnapshot(loadedForm);
         }
       } catch (e) {
         if (!cancelled) setLoadErr(e instanceof Error ? e.message : "Erro ao carregar.");
@@ -246,40 +276,55 @@ export function ServiceFormPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setMsg(null);
     if (readOnly) return;
 
     if (!form.name.trim()) {
       setActiveTab("descricao");
-      setMsg({ kind: "err", text: "Informe o nome do serviço." });
+      toast.error("Informe o nome do serviço.");
       return;
     }
     if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
       setActiveTab("descricao");
-      setMsg({ kind: "err", text: "Informe um preco valido (maior ou igual a zero)." });
+      toast.error("Informe um preco valido (maior ou igual a zero).");
       return;
     }
     if (!Number.isFinite(parsedDuration) || parsedDuration < 1) {
       setActiveTab("descricao");
-      setMsg({ kind: "err", text: "Informe o tempo de execucao em minutos (minimo 1)." });
+      toast.error("Informe o tempo de execucao em minutos (minimo 1).");
       return;
     }
     const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
     const parsedBtuMax = form.btu_max.trim() ? Number(form.btu_max) : null;
     if (parsedBtuMin != null && (!Number.isFinite(parsedBtuMin) || parsedBtuMin < 0)) {
       if (aiEnabled) setActiveTab("ia");
-      setMsg({ kind: "err", text: "BTU mínimo inválido." });
+      toast.error("BTU mínimo inválido.");
       return;
     }
     if (parsedBtuMax != null && (!Number.isFinite(parsedBtuMax) || parsedBtuMax < 0)) {
       if (aiEnabled) setActiveTab("ia");
-      setMsg({ kind: "err", text: "BTU máximo inválido." });
+      toast.error("BTU máximo inválido.");
       return;
     }
     if (parsedBtuMin != null && parsedBtuMax != null && parsedBtuMin > parsedBtuMax) {
       if (aiEnabled) setActiveTab("ia");
-      setMsg({ kind: "err", text: "BTU mínimo não pode ser maior que BTU máximo." });
+      toast.error("BTU mínimo não pode ser maior que BTU máximo.");
       return;
+    }
+    if (form.preventive_enabled) {
+      const intervalValue = Number(form.preventive_interval_value);
+      if (!Number.isFinite(intervalValue) || intervalValue < 1) {
+        setActiveTab("descricao");
+        toast.error("Informe o intervalo da gestão preventiva.");
+        return;
+      }
+      if (
+        (form.preventive_interval_type === "months" || form.preventive_interval_type === "years") &&
+        (intervalValue < 1 || intervalValue > 12)
+      ) {
+        setActiveTab("descricao");
+        toast.error("Para meses ou anos, escolha um valor entre 1 e 12.");
+        return;
+      }
     }
 
     setSaving(true);
@@ -305,7 +350,7 @@ export function ServiceFormPage() {
           is_active: form.is_active,
           nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
           nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
-          periodicidade_meses: periodicidadeApi,
+          ...preventivePayload,
           product_inputs: productInputs,
         };
         const created = await createService(payload);
@@ -325,34 +370,33 @@ export function ServiceFormPage() {
           is_active: form.is_active,
           nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
           nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
-          periodicidade_meses: periodicidadeApi,
+          ...preventivePayload,
           product_inputs: productInputs,
         };
         await updateService(idNum, payload);
         savedSnapshotRef.current = serializeServiceFormSnapshot(form);
-        setMsg({ kind: "ok", text: "Serviço atualizado." });
+        toast.success("Alterações salvas com sucesso!");
       }
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao salvar." });
+      toast.error(err instanceof Error ? err.message : "Erro ao salvar.");
     } finally {
       setSaving(false);
     }
   }
 
   async function onDuplicate() {
-    setMsg(null);
     if (readOnly || isNew) return;
 
     if (!form.name.trim()) {
-      setMsg({ kind: "err", text: "Informe o nome do serviço para duplicar." });
+      toast.error("Informe o nome do serviço para duplicar.");
       return;
     }
     if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
-      setMsg({ kind: "err", text: "Informe um preco valido (maior ou igual a zero)." });
+      toast.error("Informe um preco valido (maior ou igual a zero).");
       return;
     }
     if (!Number.isFinite(parsedDuration) || parsedDuration < 1) {
-      setMsg({ kind: "err", text: "Informe o tempo de execucao em minutos (minimo 1)." });
+      toast.error("Informe o tempo de execucao em minutos (minimo 1).");
       return;
     }
     const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
@@ -383,7 +427,7 @@ export function ServiceFormPage() {
           is_active: form.is_active,
           nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
           nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
-          periodicidade_meses: periodicidadeApi,
+          ...preventivePayload,
           product_inputs: productInputs,
         });
         navigate(`/app/services/${created.id}`);
@@ -405,7 +449,7 @@ export function ServiceFormPage() {
             is_active: form.is_active,
             nfse_codigo_tributacao_nacional: form.nfse_codigo_tributacao_nacional.trim() || null,
             nfse_codigo_nbs: form.nfse_codigo_nbs.trim() || null,
-            periodicidade_meses: periodicidadeApi,
+            ...preventivePayload,
             product_inputs: productInputs,
           });
           navigate(`/app/services/${created.id}`);
@@ -414,7 +458,7 @@ export function ServiceFormPage() {
         }
       }
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao duplicar." });
+      toast.error(err instanceof Error ? err.message : "Erro ao duplicar.");
     } finally {
       setDuplicating(false);
     }
@@ -425,12 +469,11 @@ export function ServiceFormPage() {
       return;
     }
     setDeleting(true);
-    setMsg(null);
     try {
       await deleteService(idNum);
       navigate("/app/services", { replace: true });
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao excluir." });
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir.");
     } finally {
       setDeleting(false);
     }
@@ -468,7 +511,9 @@ export function ServiceFormPage() {
   }
 
   return (
-    <div className={styles.wrap}>
+    <>
+      <ToastHost />
+      <div className={styles.wrap}>
       <header className={styles.hero}>
         <div className={styles.heroLeft}>
           <span className={styles.heroIcon} aria-hidden>
@@ -486,51 +531,53 @@ export function ServiceFormPage() {
       </header>
 
       <form id="service-form-main" className={styles.form} onSubmit={onSubmit}>
-        <div className={styles.tabs} role="tablist" aria-label="Seções do serviço">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "descricao"}
-            className={`${styles.tabBtn} ${activeTab === "descricao" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("descricao")}
-          >
-            Descrição do serviço
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "produtos"}
-            className={`${styles.tabBtn} ${activeTab === "produtos" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("produtos")}
-          >
-            Produtos utilizados
-          </button>
-          {aiEnabled ? (
+        <div className={formLayout.formCard}>
+          <div className={formLayout.formCardTabs} role="tablist" aria-label="Seções do serviço">
             <button
               type="button"
               role="tab"
-              aria-selected={activeTab === "ia"}
-              className={`${styles.tabBtn} ${activeTab === "ia" ? styles.tabBtnActive : ""}`}
-              onClick={() => setActiveTab("ia")}
+              aria-selected={activeTab === "descricao"}
+              className={`${formLayout.formCardTab} ${activeTab === "descricao" ? formLayout.formCardTabActive : ""}`}
+              onClick={() => setActiveTab("descricao")}
             >
-              IA
+              Descrição do serviço
             </button>
-          ) : null}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "fiscal"}
-            className={`${styles.tabBtn} ${activeTab === "fiscal" ? styles.tabBtnActive : ""}`}
-            onClick={() => setActiveTab("fiscal")}
-          >
-            Fiscal
-          </button>
-        </div>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "produtos"}
+              className={`${formLayout.formCardTab} ${activeTab === "produtos" ? formLayout.formCardTabActive : ""}`}
+              onClick={() => setActiveTab("produtos")}
+            >
+              Produtos utilizados
+            </button>
+            {aiEnabled ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "ia"}
+                className={`${formLayout.formCardTab} ${activeTab === "ia" ? formLayout.formCardTabActive : ""}`}
+                onClick={() => setActiveTab("ia")}
+              >
+                IA
+              </button>
+            ) : null}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "fiscal"}
+              className={`${formLayout.formCardTab} ${activeTab === "fiscal" ? formLayout.formCardTabActive : ""}`}
+              onClick={() => setActiveTab("fiscal")}
+            >
+              Fiscal
+            </button>
+          </div>
 
-        {activeTab === "descricao" ? (
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Dados do servico</h2>
-            <div className={formLayout.stack}>
+          <div className={`${formLayout.formCardContent} ${styles.formCardContent}`}>
+            {activeTab === "descricao" ? (
+              <div className={styles.section}>
+                <h2 className={styles.sectionTitle}>Dados do servico</h2>
+                <div className={formLayout.stack}>
               <div className={formLayout.field}>
                 <label className={loginStyles.label} htmlFor="s-name">
                   Nome
@@ -595,35 +642,110 @@ export function ServiceFormPage() {
                   />
                 </div>
               </div>
-              <h2 className={styles.sectionTitle}>Manutenção preventiva</h2>
+              <h2 className={styles.sectionTitle}>Gestão preventiva</h2>
               <p className={styles.sectionHint}>
-                Define a cada quantos meses este tipo de serviço deve ser refeito para alertas na Gestão preventiva (com histórico de realização por
-                cliente).
+                Quando ativada, este serviço entra nos alertas da Gestão preventiva (com histórico de realização por cliente).
               </p>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="s-periodicidade">
-                  Periodicidade de revisão
-                </label>
-                <select
-                  id="s-periodicidade"
-                  className={loginStyles.input}
-                  value={form.periodicidade_meses}
-                  onChange={(e) => setForm((prev) => ({ ...prev, periodicidade_meses: e.target.value }))}
+              <div className={styles.preventiveToggleRow}>
+                <span className={styles.preventiveToggleText} id="s-preventive-enabled-label">
+                  Ativar gestão preventiva
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.preventive_enabled}
+                  aria-labelledby="s-preventive-enabled-label"
+                  id="s-preventive-enabled"
                   disabled={readOnly}
+                  onClick={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      preventive_enabled: !prev.preventive_enabled,
+                    }))
+                  }
+                  className={`${styles.preventiveSwitch} ${form.preventive_enabled ? styles.preventiveSwitchOn : ""}`}
                 >
-                  <option value="">Não rastrear</option>
-                  <option value="6">6 meses</option>
-                  <option value="12">12 meses</option>
-                </select>
+                  <span
+                    className={`${styles.preventiveSwitchThumb} ${form.preventive_enabled ? styles.preventiveSwitchThumbOn : ""}`}
+                  />
+                </button>
               </div>
-            </div>
-          </div>
-        ) : null}
+              {form.preventive_enabled ? (
+                <div className={styles.preventiveFieldsRow}>
+                  <div className={formLayout.field}>
+                    <label className={loginStyles.label} htmlFor="s-preventive-type">
+                      Unidade
+                    </label>
+                    <select
+                      id="s-preventive-type"
+                      className={loginStyles.input}
+                      value={form.preventive_interval_type}
+                      disabled={readOnly}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          preventive_interval_type: e.target.value as PreventiveIntervalType,
+                          preventive_interval_value:
+                            e.target.value === "days" ? prev.preventive_interval_value || "30" : prev.preventive_interval_value || "6",
+                        }))
+                      }
+                    >
+                      <option value="months">Meses</option>
+                      <option value="years">Anos</option>
+                      <option value="days">Dias</option>
+                    </select>
+                  </div>
+                  <div className={formLayout.field}>
+                    <label className={loginStyles.label} htmlFor="s-preventive-value">
+                      {form.preventive_interval_type === "days" ? "Quantidade de dias" : "Intervalo (1 a 12)"}
+                    </label>
+                    {form.preventive_interval_type === "days" ? (
+                      <input
+                        id="s-preventive-value"
+                        className={loginStyles.input}
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={form.preventive_interval_value}
+                        disabled={readOnly}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            preventive_interval_value: e.target.value,
+                          }))
+                        }
+                        placeholder="Ex: 30"
+                      />
+                    ) : (
+                      <select
+                        id="s-preventive-value"
+                        className={loginStyles.input}
+                        value={form.preventive_interval_value}
+                        disabled={readOnly}
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            preventive_interval_value: e.target.value,
+                          }))
+                        }
+                      >
+                        {Array.from({ length: 12 }, (_, i) => String(i + 1)).map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+                </div>
+              </div>
+            ) : null}
 
         {activeTab === "produtos" ? (
           <div className={styles.section}>
             <h2 className={styles.sectionTitle}>Produtos utilizados (opcional)</h2>
-            {productsLoadErr ? <p className={styles.msgErr}>{productsLoadErr}</p> : null}
             <div className={styles.productInputsCard}>
               <div className={styles.productInputsToolbar}>
                 <span className={styles.productInputsToolbarLabel}>Materiais do serviço</span>
@@ -878,9 +1000,8 @@ export function ServiceFormPage() {
           </div>
         ) : null}
 
-        {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
-        {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
-
+          </div>
+        </div>
       </form>
 
       <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">
@@ -922,5 +1043,6 @@ export function ServiceFormPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

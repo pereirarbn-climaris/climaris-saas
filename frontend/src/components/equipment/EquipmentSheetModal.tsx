@@ -1,50 +1,56 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Pencil, Save } from "lucide-react";
+import type { ClientSiteOut } from "../../api/clients";
 import { fetchCurrentTenant, type TenantOut } from "../../api/auth";
-import { listHvacEquipmentHistory, listHvacEquipmentPreventiveHistory } from "../../api/clients";
-import { updateClientCatalogEquipmentInstallationReference } from "../../api/equipmentCatalog";
+import { listHvacEquipmentHistory } from "../../api/clients";
+import { updateClientCatalogEquipment } from "../../api/equipmentCatalog";
 import { buildTechnicalSpecRows } from "../../lib/categoryFieldDefinitions";
-import {
-  mapEquipmentItemToProfile,
-  mapHistoryRowsToMaintenanceEvents,
-  mapTenantOutToProvider,
-} from "../../lib/equipmentProfileAdapter";
+import { mapHistoryRowsToMaintenanceEvents } from "../../lib/equipmentProfileAdapter";
 import { buildPublicEquipmentUrl } from "../../lib/publicEquipmentUrl";
+import { toast } from "../../lib/toast";
 import type { EquipmentItem } from "../v0-ui/clients/ClientEquipmentManager";
-import { PublicEquipmentProfileView } from "../v0-ui/clients/PublicEquipmentProfileView v2";
+import {
+  buildEquipmentEditDraft,
+  EquipmentSheetEditForm,
+  type EquipmentEditDraft,
+} from "./EquipmentSheetEditForm";
+import { EquipmentSheetEmbeddedView } from "./EquipmentSheetEmbeddedView";
+import { EquipmentThermalLabelPrint } from "./EquipmentThermalLabelPrint";
 import { EquipmentTechnicalSpecsGrid } from "./EquipmentTechnicalSpecsGrid";
 import styles from "./EquipmentSheetModal.module.css";
 
 type Props = {
   equipment: EquipmentItem;
   clientId: number;
+  clientSites?: ClientSiteOut[];
   readOnly?: boolean;
   onClose: () => void;
   onUpdated?: () => void;
 };
 
-export function EquipmentSheetModal({ equipment, clientId, readOnly = false, onClose, onUpdated }: Props) {
+export function EquipmentSheetModal({
+  equipment,
+  clientId,
+  clientSites,
+  readOnly = false,
+  onClose,
+  onUpdated,
+}: Props) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyErr, setHistoryErr] = useState("");
   const [maintenanceHistory, setMaintenanceHistory] = useState(
     () => [] as ReturnType<typeof mapHistoryRowsToMaintenanceEvents>,
   );
-  const [preventiveHistory, setPreventiveHistory] = useState(
-    () => [] as ReturnType<typeof mapHistoryRowsToMaintenanceEvents>,
-  );
-  const [preventiveHistoryLoading, setPreventiveHistoryLoading] = useState(false);
-  const [preventiveHistoryErr, setPreventiveHistoryErr] = useState("");
   const [tenant, setTenant] = useState<TenantOut | null>(null);
-  const [installationReference, setInstallationReference] = useState(equipment.installationReference ?? "");
-  const [savingReference, setSavingReference] = useState(false);
-  const [referenceErr, setReferenceErr] = useState("");
-  const [referenceOk, setReferenceOk] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState<EquipmentEditDraft>(() => buildEquipmentEditDraft(equipment));
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
-    setInstallationReference(equipment.installationReference ?? "");
-    setReferenceErr("");
-    setReferenceOk("");
-  }, [equipment.id, equipment.installationReference]);
+    setIsEditing(false);
+    setEditDraft(buildEquipmentEditDraft(equipment));
+  }, [equipment]);
 
   const publicUrl =
     equipment.qrcodeCodeId?.trim()
@@ -54,100 +60,57 @@ export function EquipmentSheetModal({ equipment, clientId, readOnly = false, onC
         : null;
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const current = await fetchCurrentTenant();
-        if (!cancelled) setTenant(current);
-      } catch {
+    void fetchCurrentTenant()
+      .then((t) => {
+        if (!cancelled) setTenant(t);
+      })
+      .catch(() => {
         if (!cancelled) setTenant(null);
-      }
-    })();
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
   useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isEditing) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, isEditing]);
+
+  useEffect(() => {
     if (!equipment.legacyEquipmentId) {
       setMaintenanceHistory([]);
-      setPreventiveHistory([]);
       return;
     }
     let cancelled = false;
     setHistoryLoading(true);
     setHistoryErr("");
-    setPreventiveHistoryLoading(true);
-    setPreventiveHistoryErr("");
     void (async () => {
-      const loadGeneral = async () => {
-        try {
-          const rows = await listHvacEquipmentHistory(clientId, equipment.legacyEquipmentId!);
-          if (!cancelled) setMaintenanceHistory(mapHistoryRowsToMaintenanceEvents(rows));
-        } catch (e) {
-          if (!cancelled) {
-            setHistoryErr(e instanceof Error ? e.message : "Não foi possível carregar o histórico.");
-          }
-        } finally {
-          if (!cancelled) setHistoryLoading(false);
+      try {
+        const rows = await listHvacEquipmentHistory(clientId, equipment.legacyEquipmentId!);
+        if (!cancelled) setMaintenanceHistory(mapHistoryRowsToMaintenanceEvents(rows));
+      } catch (e) {
+        if (!cancelled) {
+          setHistoryErr(e instanceof Error ? e.message : "Não foi possível carregar o histórico.");
         }
-      };
-      const loadPreventive = async () => {
-        try {
-          const preventiveRows = await listHvacEquipmentPreventiveHistory(
-            clientId,
-            equipment.legacyEquipmentId!,
-          );
-          if (!cancelled) setPreventiveHistory(mapHistoryRowsToMaintenanceEvents(preventiveRows));
-        } catch (e) {
-          if (!cancelled) {
-            setPreventiveHistoryErr(
-              e instanceof Error ? e.message : "Não foi possível carregar o histórico preventivo.",
-            );
-          }
-        } finally {
-          if (!cancelled) setPreventiveHistoryLoading(false);
-        }
-      };
-      void Promise.all([loadGeneral(), loadPreventive()]);
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [clientId, equipment.legacyEquipmentId]);
 
-  const provider = useMemo(
-    () => (tenant ? mapTenantOutToProvider(tenant) : { name: "Empresa" }),
-    [tenant],
-  );
-
-  const equipmentProfile = useMemo(
-    () =>
-      mapEquipmentItemToProfile(equipment, {
-        provider,
-        maintenanceHistory,
-        publicUrl,
-      }),
-    [equipment, provider, maintenanceHistory, publicUrl],
-  );
-
-  const multiSplitSlot =
-    isMultiSplit(equipment) && equipment.components?.length ? (
-      <div
-        className="
-          bg-white rounded-xl border border-slate-200
-          p-4
-        "
-      >
-        <h3 className="text-sm font-semibold text-slate-900 mb-3">Componentes</h3>
+  const multiSplitSlot = useMemo(() => {
+    if (!isMultiSplit(equipment) || !equipment.components?.length) return null;
+    return (
+      <div className={styles.componentsWrap}>
+        <h3 className={styles.componentsTitle}>Componentes</h3>
         <ul className={styles.componentsList}>
           {equipment.components.map((part) => {
             const partDefs = part.fieldDefinitions?.length
@@ -159,107 +122,143 @@ export function EquipmentSheetModal({ equipment, clientId, readOnly = false, onC
                 <p className={styles.componentTitle}>
                   {part.brand} · {part.model}
                 </p>
-                {part.serialNumber ? (
-                  <p className={styles.componentMeta}>Série: {part.serialNumber}</p>
-                ) : null}
-                {partSpecs.length > 0 ? (
-                  <EquipmentTechnicalSpecsGrid specs={partSpecs} compact />
-                ) : null}
+                {part.serialNumber ? <p className={styles.componentMeta}>Série: {part.serialNumber}</p> : null}
+                {partSpecs.length > 0 ? <EquipmentTechnicalSpecsGrid specs={partSpecs} compact /> : null}
               </li>
             );
           })}
         </ul>
       </div>
-    ) : null;
+    );
+  }, [equipment]);
 
-  const locationReferenceSlot = (
-    <div className={styles.referenceBox}>
-      <label className={styles.referenceLabel} htmlFor="equipment-installation-reference">
-        Referência de localização
-      </label>
-      <textarea
-        id="equipment-installation-reference"
-        className={styles.referenceInput}
-        rows={3}
-        value={installationReference}
-        disabled={readOnly || savingReference}
-        placeholder="Ex: Teto falso - Sala de reunião - Ao lado da janela"
-        onChange={(e) => setInstallationReference(e.target.value)}
-      />
-      {!readOnly ? (
-        <div className={styles.referenceActions}>
-          <button
-            type="button"
-            className={styles.btnPrimary}
-            disabled={savingReference}
-            onClick={() => {
-              setSavingReference(true);
-              setReferenceErr("");
-              setReferenceOk("");
-              void (async () => {
-                try {
-                  await updateClientCatalogEquipmentInstallationReference(
-                    equipment.id,
-                    installationReference.trim() || null,
-                  );
-                  setReferenceOk("Referência salva.");
-                  onUpdated?.();
-                } catch (e) {
-                  setReferenceErr(
-                    e instanceof Error ? e.message : "Não foi possível salvar a referência de localização.",
-                  );
-                } finally {
-                  setSavingReference(false);
-                }
-              })();
-            }}
-          >
-            {savingReference ? "Salvando…" : "Salvar referência"}
-          </button>
-        </div>
-      ) : null}
-      {referenceErr ? <p className={styles.referenceErr}>{referenceErr}</p> : null}
-      {referenceOk ? <p className={styles.referenceOk}>{referenceOk}</p> : null}
-    </div>
-  );
+  async function handleSaveEdit() {
+    const tag = editDraft.tag.trim();
+    if (!tag) {
+      toast.error("Informe o local / identificação do equipamento.");
+      return;
+    }
+
+    const components =
+      equipment.components?.map((part) => ({
+        id: part.id,
+        serial_number: editDraft.componentSerials[part.id]?.trim() || null,
+      })) ?? [];
+
+    setSavingEdit(true);
+    try {
+      await updateClientCatalogEquipment(equipment.id, {
+        tag,
+        installation_reference: editDraft.installationReference.trim() || null,
+        installation_date: editDraft.installationDate || null,
+        is_active: editDraft.status === "ativo",
+        client_site_id: editDraft.clientSiteId,
+        components: components.length > 0 ? components : undefined,
+      });
+      toast.success("Equipamento atualizado.");
+      setIsEditing(false);
+      onUpdated?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
 
   return (
     <div
       className={styles.backdrop}
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !isEditing) onClose();
       }}
     >
       <div className={styles.panel} role="dialog" aria-modal="true" aria-labelledby="equipment-sheet-title">
+        {publicUrl && tenant ? (
+          <EquipmentThermalLabelPrint
+            providerName={tenant.name}
+            logoUrl={tenant.logo_url}
+            publicUrl={publicUrl}
+            tag={equipment.tag}
+            brand={equipment.brandName ?? ""}
+            model={equipment.modelName ?? ""}
+          />
+        ) : null}
         <div className={styles.body}>
-          <PublicEquipmentProfileView
-            equipment={equipmentProfile}
-            variant="embedded"
-            onClose={onClose}
+          <EquipmentSheetEmbeddedView
+            equipment={equipment}
+            publicUrl={publicUrl}
+            history={maintenanceHistory}
             historyLoading={historyLoading}
             historyError={historyErr || null}
-            preventiveHistory={preventiveHistory}
-            preventiveHistoryLoading={preventiveHistoryLoading}
-            preventiveHistoryError={preventiveHistoryErr || null}
-            middleSlot={
-              <>
-                {locationReferenceSlot}
-                {multiSplitSlot}
-              </>
+            middleSlot={!isEditing ? multiSplitSlot : null}
+            readOnly={readOnly}
+            isEditing={isEditing}
+            editForm={
+              isEditing ? (
+                <EquipmentSheetEditForm
+                  equipment={equipment}
+                  draft={editDraft}
+                  clientSites={clientSites}
+                  disabled={savingEdit}
+                  onChange={setEditDraft}
+                />
+              ) : null
             }
+            onClose={onClose}
+            onPrintLabel={publicUrl ? () => window.print() : undefined}
           />
         </div>
 
         <footer className={styles.footer}>
-          <button type="button" className={styles.btnGhost} onClick={onClose}>
-            Fechar
-          </button>
-          {equipment.legacyEquipmentId ? (
-            <Link to="/app/service-orders" className={styles.btnPrimary}>
-              Ver ordens de serviço
-            </Link>
-          ) : null}
+          {isEditing ? (
+            <>
+              <button
+                type="button"
+                className={styles.btnGhost}
+                disabled={savingEdit}
+                onClick={() => {
+                  setEditDraft(buildEquipmentEditDraft(equipment));
+                  setIsEditing(false);
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className={styles.btnPrimary}
+                disabled={savingEdit}
+                onClick={() => void handleSaveEdit()}
+              >
+                <Save size={16} aria-hidden />
+                {savingEdit ? "Salvando…" : "Salvar alterações"}
+              </button>
+            </>
+          ) : (
+            <>
+              {!readOnly ? (
+                <button
+                  type="button"
+                  className={styles.btnGhost}
+                  onClick={() => {
+                    setEditDraft(buildEquipmentEditDraft(equipment));
+                    setIsEditing(true);
+                  }}
+                >
+                  <Pencil size={16} aria-hidden />
+                  Editar
+                </button>
+              ) : null}
+              <button type="button" className={styles.btnGhost} onClick={onClose}>
+                Fechar
+              </button>
+              {equipment.legacyEquipmentId ? (
+                <Link to="/app/service-orders" className={styles.btnPrimary}>
+                  Ver ordens de serviço
+                </Link>
+              ) : null}
+            </>
+          )}
         </footer>
       </div>
     </div>

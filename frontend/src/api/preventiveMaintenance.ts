@@ -4,13 +4,17 @@ import type {
   EquipmentPreventiveRuleCreate,
   EquipmentPreventiveRuleOut,
   EquipmentPreventiveRuleUpdate,
+  EquipmentServicePreventiveScheduleOut,
+  ServicePreventiveIntervalType,
 } from "../types/preventive";
 
 export type {
   EquipmentPreventiveRuleCreate,
   EquipmentPreventiveRuleOut,
   EquipmentPreventiveRuleUpdate,
+  EquipmentServicePreventiveScheduleOut,
   PreventiveIntervalType,
+  ServicePreventiveIntervalType,
 } from "../types/preventive";
 
 export type PreventiveSettings = {
@@ -22,6 +26,7 @@ export type PreventiveSettings = {
   preventive_button_schedule_text: string;
   preventive_message_template: string | null;
   preventive_auto_remind_days_before: number;
+  preventive_auto_whatsapp_enabled?: boolean;
   default_message_template?: string | null;
 };
 
@@ -62,7 +67,9 @@ export type PreventiveClientGroup = {
 };
 
 export type PreventiveItemsList = {
-  window_days: number;
+  window_days?: number | null;
+  year?: number | null;
+  month?: number | null;
   clients: PreventiveClientGroup[];
   items: PreventiveItem[];
 };
@@ -121,11 +128,13 @@ export type PreventiveRegisterEntryOut = {
 
 export type PreventiveRegisterEntryPayload =
   | {
+      entry_mode?: "temporary" | "existing";
       client_id: number;
       new_client?: undefined;
       service_id: number;
       data_realizacao: string;
       equipment_id?: number | null;
+      equipment_label?: string | null;
       notes?: string | null;
       reminder_send: "none" | "now" | "scheduled";
       reminder_local_date?: string | null;
@@ -134,11 +143,13 @@ export type PreventiveRegisterEntryPayload =
       technical_problem_hint?: string | null;
     }
   | {
+      entry_mode?: "temporary" | "existing";
       client_id?: undefined;
       new_client: { name: string; phone?: string | null; whatsapp?: string | null };
       service_id: number;
       data_realizacao: string;
       equipment_id?: number | null;
+      equipment_label?: string | null;
       notes?: string | null;
       reminder_send: "none" | "now" | "scheduled";
       reminder_local_date?: string | null;
@@ -238,20 +249,42 @@ export async function patchPreventiveSettings(payload: Partial<PreventiveSetting
 }
 
 export async function listPreventiveItems(days: number): Promise<PreventiveItem[]> {
-  const grouped = await listPreventiveItemsGrouped(days);
+  const grouped = await listPreventiveItemsGrouped({ days });
   return grouped.items;
 }
 
-export async function listPreventiveItemsGrouped(days: number): Promise<PreventiveItemsList> {
+export function currentPreventiveMonthValue(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${now.getFullYear()}-${month}`;
+}
+
+export function parsePreventiveMonthValue(value: string): { year: number; month: number } | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+export async function listPreventiveItemsGrouped(
+  params: { year: number; month: number } | { days: number },
+): Promise<PreventiveItemsList> {
   const sp = new URLSearchParams();
-  sp.set("days", String(days));
+  if ("year" in params) {
+    sp.set("year", String(params.year));
+    sp.set("month", String(params.month));
+  } else {
+    sp.set("days", String(params.days));
+  }
   const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/items?${sp.toString()}`), {
     headers: bearer(),
   });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar."));
   if (Array.isArray(body)) {
-    return { window_days: days, clients: [], items: body as PreventiveItem[] };
+    return { clients: [], items: body as PreventiveItem[] };
   }
   return body as PreventiveItemsList;
 }
@@ -324,6 +357,9 @@ export type PreventiveSendReminderResult = {
 export async function sendPreventiveReminder(payload: {
   historico_servico_id?: number;
   rule_id?: number;
+  client_id?: number;
+  year?: number;
+  month?: number;
   window_days?: number;
   promo_image_url?: string | null;
   promo_image_base64?: string | null;
@@ -435,6 +471,64 @@ export async function deletePreventiveRule(ruleId: number): Promise<void> {
       apiFailureMessage(body, response.status, "Não foi possível remover a regra preventiva."),
     );
   }
+}
+
+export async function listEquipmentServicePreventiveSchedules(
+  equipmentId: number,
+): Promise<EquipmentServicePreventiveScheduleOut[]> {
+  const response = await fetch(
+    apiUrl(`/api/v1/preventive-maintenance/equipment/${equipmentId}/service-schedules`),
+    { headers: bearer() },
+  );
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível carregar a gestão preventiva."),
+    );
+  }
+  return (body as { items: EquipmentServicePreventiveScheduleOut[] }).items ?? [];
+}
+
+export async function upsertEquipmentServicePreventiveSchedule(
+  equipmentId: number,
+  serviceId: number,
+  payload: { interval_value: number; interval_type: ServicePreventiveIntervalType },
+): Promise<EquipmentServicePreventiveScheduleOut> {
+  const response = await fetch(
+    apiUrl(`/api/v1/preventive-maintenance/equipment/${equipmentId}/service-schedules/${serviceId}`),
+    {
+      method: "PUT",
+      headers: jsonHeaders(),
+      body: JSON.stringify(payload),
+    },
+  );
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível salvar a validade preventiva."),
+    );
+  }
+  return body as EquipmentServicePreventiveScheduleOut;
+}
+
+export async function resetEquipmentServicePreventiveScheduleOverride(
+  equipmentId: number,
+  serviceId: number,
+): Promise<EquipmentServicePreventiveScheduleOut> {
+  const response = await fetch(
+    apiUrl(`/api/v1/preventive-maintenance/equipment/${equipmentId}/service-schedules/${serviceId}`),
+    {
+      method: "DELETE",
+      headers: bearer(),
+    },
+  );
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(body, response.status, "Não foi possível restaurar o padrão do serviço."),
+    );
+  }
+  return body as EquipmentServicePreventiveScheduleOut;
 }
 
 export async function listPreventiveLeads(limit = 100): Promise<PreventiveLead[]> {

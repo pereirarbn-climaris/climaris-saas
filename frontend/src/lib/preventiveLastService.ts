@@ -26,6 +26,37 @@ export function formatFriendlyDatePt(value: Date | string | null | undefined): s
   return `${day} ${month}. de ${year}`;
 }
 
+function addCalendarMonths(d: Date, months: number): Date {
+  if (months <= 0) return new Date(d);
+  const day = d.getDate();
+  let monthIndex = d.getMonth() + months;
+  const year = d.getFullYear() + Math.floor(monthIndex / 12);
+  monthIndex = ((monthIndex % 12) + 12) % 12;
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  return new Date(year, monthIndex, Math.min(day, lastDay), d.getHours(), d.getMinutes(), d.getSeconds());
+}
+
+/** Calcula próxima validade a partir da última OS + intervalo (meses/dias/anos). */
+export function computePreventiveNextDue(
+  lastPerformedAt: string | null | undefined,
+  intervalValue: number,
+  intervalType: "days" | "months" | "years",
+): Date | null {
+  if (!lastPerformedAt) return null;
+  const last = new Date(lastPerformedAt);
+  if (Number.isNaN(last.getTime())) return null;
+  const value = Math.max(1, Math.floor(intervalValue));
+  if (intervalType === "days") {
+    const next = new Date(last);
+    next.setDate(next.getDate() + value);
+    return next;
+  }
+  if (intervalType === "years") {
+    return addCalendarMonths(last, value * 12);
+  }
+  return addCalendarMonths(last, value);
+}
+
 function collectEquipmentIdsFromOrder(order: ServiceOrderOut): number[] {
   const ids = new Set<number>();
   const lineItems = order.equipment_services?.length

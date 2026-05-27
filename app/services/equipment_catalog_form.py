@@ -218,7 +218,7 @@ def _extract_named_pdf_uploads(form: FormData, keys: tuple[str, ...]) -> dict[st
 
 async def read_catalog_create_multipart(
     request: Request,
-) -> tuple[EquipmentCatalogMultipartForm, UploadFile | None, dict[str, UploadFile]]:
+) -> tuple[EquipmentCatalogMultipartForm, UploadFile | None, dict[str, UploadFile], bool]:
     """Lê multipart completo; PDF principal + PDFs extras (usuario/servico/instalacao)."""
     try:
         form = await request.form()
@@ -234,13 +234,19 @@ async def read_catalog_create_multipart(
         form,
         ("manual_usuario_pdf", "manual_instalacao_pdf", "manual_servico_pdf"),
     )
+    manual_combinado = str(form.get("manual_combinado_usuario_instalacao", "")).lower() in {
+        "true",
+        "1",
+        "on",
+        "yes",
+    }
 
     try:
         parsed = EquipmentCatalogMultipartForm.model_validate(_build_multipart_payload(form))
     except ValidationError as exc:
         raise _validation_http_exception(exc, path=str(request.url.path)) from exc
 
-    return parsed, manual_pdf, extra_pdfs
+    return parsed, manual_pdf, extra_pdfs, manual_combinado
 
 
 async def read_catalog_existing_manual_multipart(

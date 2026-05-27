@@ -1508,12 +1508,12 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     setQrcodeMsg("");
   };
 
-  const validateAndLockQrcode = async (raw: string) => {
+  const validateAndLockQrcode = async (raw: string): Promise<boolean> => {
     const code = parseScannedQrCode(raw);
     if (!code) {
       setQrcodeMsg("Informe ou escaneie um código QR válido.");
       setQrcodeLocked(false);
-      return;
+      return false;
     }
     setQrcodeValidating(true);
     setQrcodeMsg("");
@@ -1522,15 +1522,16 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
       if (!result.found || !result.available) {
         setQrcodeMsg(result.message || "Código indisponível.");
         setQrcodeLocked(false);
-        setFormData((prev) => ({ ...prev, qrcodeCodeId: "" }));
-        return;
+        return false;
       }
       setFormData((prev) => ({ ...prev, qrcodeCodeId: result.code_id ?? code }));
       setQrcodeLocked(true);
       setQrcodeMsg("Código validado e bloqueado para este cadastro.");
+      return true;
     } catch (e) {
       setQrcodeMsg(e instanceof Error ? e.message : "Falha ao validar código.");
       setQrcodeLocked(false);
+      return false;
     } finally {
       setQrcodeValidating(false);
     }
@@ -1670,6 +1671,11 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
 
   const handleSubmit = async () => {
     if (!selectedCategory || !canSubmit || isSubmitting) return;
+
+    if (formData.qrcodeCodeId.trim() && !qrcodeLocked) {
+      const ok = await validateAndLockQrcode(formData.qrcodeCodeId);
+      if (!ok) return;
+    }
 
     let payload: NewEquipmentData;
     if (multiSplitActive) {
@@ -2167,13 +2173,41 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                       type="text"
                       value={formData.qrcodeCodeId}
                       readOnly={qrcodeLocked}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, qrcodeCodeId: e.target.value.toUpperCase() }))}
-                      onBlur={() => {
-                        if (!qrcodeLocked && formData.qrcodeCodeId.trim()) void validateAndLockQrcode(formData.qrcodeCodeId);
+                      onChange={(e) => {
+                        const next = e.target.value.toUpperCase();
+                        setFormData((prev) => ({ ...prev, qrcodeCodeId: next }));
+                        if (qrcodeMsg) setQrcodeMsg("");
+                        if (qrcodeLocked) setQrcodeLocked(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !qrcodeLocked && formData.qrcodeCodeId.trim()) {
+                          e.preventDefault();
+                          void validateAndLockQrcode(formData.qrcodeCodeId);
+                        }
                       }}
                       placeholder="Ex: QR0000035 ou escaneie"
                       style={{ ...inputStyle, flex: 1 }}
                     />
+                    {!qrcodeLocked ? (
+                      <button
+                        type="button"
+                        disabled={!formData.qrcodeCodeId.trim() || qrcodeValidating}
+                        onClick={() => void validateAndLockQrcode(formData.qrcodeCodeId)}
+                        style={{
+                          padding: "0 0.75rem",
+                          borderRadius: "var(--input-radius)",
+                          border: "1px solid var(--color-border)",
+                          background: "var(--color-surface)",
+                          fontSize: "var(--font-size-xs)",
+                          fontWeight: "var(--font-weight-medium)",
+                          cursor:
+                            !formData.qrcodeCodeId.trim() || qrcodeValidating ? "not-allowed" : "pointer",
+                          opacity: !formData.qrcodeCodeId.trim() || qrcodeValidating ? 0.6 : 1,
+                        }}
+                      >
+                        {qrcodeValidating ? "Validando…" : "Validar"}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       title="Escanear etiqueta"
@@ -2216,14 +2250,14 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                       style={{
                         margin: "0.35rem 0 0",
                         fontSize: "var(--font-size-xs)",
-                        color: qrcodeLocked ? "#047857" : "var(--color-text-muted)",
+                        color: qrcodeLocked ? "#047857" : "var(--color-error)",
                       }}
                     >
                       {qrcodeMsg}
                     </p>
                   ) : (
                     <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
-                      Opcional: vincule a etiqueta pré-impressa gerada em Gestão de Etiquetas QR.
+                      Opcional: digite o código (ex.: QR0000035) e clique em Validar, ou use o escaneamento.
                     </p>
                   )}
                 </div>
@@ -2536,6 +2570,7 @@ export const ClientEquipmentManager: React.FC<ClientEquipmentManagerProps> = ({
         <EquipmentSheetModal
           equipment={sheetEquipment}
           clientId={clientId}
+          clientSites={clientSites}
           readOnly={readOnly}
           onClose={() => setSheetEquipmentId(null)}
           onUpdated={() => void onEquipmentsChanged?.()}

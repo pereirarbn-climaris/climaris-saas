@@ -14,6 +14,8 @@ export type GlobalEquipmentManualsValue = {
   usuario: ManualDocumentSlot;
   instalacao: ManualDocumentSlot;
   servico: ManualDocumentSlot;
+  combined: ManualDocumentSlot;
+  combinedUsuarioInstalacao: boolean;
   existingManualId: string;
 };
 
@@ -55,12 +57,16 @@ function PdfSlotField({
   kind,
   slot,
   disabled,
+  titleOverride,
+  hintOverride,
   onSelect,
   onClear,
 }: {
   kind: ManualDocumentKind;
   slot: ManualDocumentSlot;
   disabled?: boolean;
+  titleOverride?: string;
+  hintOverride?: string;
   onSelect: (file: File) => void;
   onClear: () => void;
 }) {
@@ -76,8 +82,8 @@ function PdfSlotField({
 
   return (
     <div className={styles.manualBlock}>
-      <h4 className={styles.manualBlockTitle}>{meta.title}</h4>
-      <p className={styles.manualBlockHint}>{meta.hint}</p>
+      <h4 className={styles.manualBlockTitle}>{titleOverride ?? meta.title}</h4>
+      <p className={styles.manualBlockHint}>{hintOverride ?? meta.hint}</p>
       {slot.pdf ? (
         <div className={styles.pdfChip}>
           <span className={styles.pdfChipName} title={slot.pdf.name}>
@@ -139,16 +145,53 @@ export function GlobalEquipmentManualsPanel({
         Organize a documentação que o técnico consulta em campo. Todos os campos são opcionais.
       </p>
 
-      {(Object.keys(MANUAL_META) as ManualDocumentKind[]).map((kind) => (
-        <PdfSlotField
-          key={kind}
-          kind={kind}
-          slot={value[kind]}
+      <label className={styles.combinedToggle}>
+        <input
+          type="checkbox"
+          checked={value.combinedUsuarioInstalacao}
           disabled={disabled}
-          onSelect={(file) => updateSlot(kind, { pdf: file, title: file.name.replace(/\.pdf$/i, "") })}
-          onClear={() => updateSlot(kind, { pdf: null, title: "" })}
+          onChange={(e) =>
+            onChange({
+              ...value,
+              combinedUsuarioInstalacao: e.target.checked,
+              usuario: { pdf: null, title: "" },
+              instalacao: { pdf: null, title: "" },
+              combined: e.target.checked ? value.combined : { pdf: null, title: "" },
+            })
+          }
         />
-      ))}
+        <span>
+          Um único PDF contém manual do usuário e de instalação
+        </span>
+      </label>
+
+      {value.combinedUsuarioInstalacao ? (
+        <PdfSlotField
+          kind="instalacao"
+          slot={value.combined}
+          disabled={disabled}
+          titleOverride="Manual do usuário e instalação"
+          hintOverride="Use quando a fabricante disponibiliza um único PDF com operação e instalação."
+          onSelect={(file) =>
+            onChange({
+              ...value,
+              combined: { pdf: file, title: file.name.replace(/\.pdf$/i, "") },
+            })
+          }
+          onClear={() => onChange({ ...value, combined: { pdf: null, title: "" } })}
+        />
+      ) : (
+        (Object.keys(MANUAL_META) as ManualDocumentKind[]).map((kind) => (
+          <PdfSlotField
+            key={kind}
+            kind={kind}
+            slot={value[kind]}
+            disabled={disabled}
+            onSelect={(file) => updateSlot(kind, { pdf: file, title: file.name.replace(/\.pdf$/i, "") })}
+            onClear={() => updateSlot(kind, { pdf: null, title: "" })}
+          />
+        ))
+      )}
 
       <div className={styles.existingWrap}>
         <label className={styles.fieldLabel} htmlFor="existing-manual-select">
@@ -183,6 +226,8 @@ export function emptyGlobalEquipmentManualsValue(): GlobalEquipmentManualsValue 
     usuario: { pdf: null, title: "" },
     instalacao: { pdf: null, title: "" },
     servico: { pdf: null, title: "" },
+    combined: { pdf: null, title: "" },
+    combinedUsuarioInstalacao: false,
     existingManualId: "",
   };
 }

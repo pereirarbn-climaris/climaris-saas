@@ -15,6 +15,8 @@ from app.services.s3 import (
     _ChunkQueueReader,
     _stream_manual_pdf_to_tempfile,
     _validate_manual_pdf,
+    generate_manual_presigned_url,
+    parse_s3_bucket_and_key_from_url,
     upload_manual_pdf,
 )
 
@@ -112,3 +114,38 @@ def test_upload_manual_pdf_pipelines_chunks_to_s3_thread():
 
     assert url.endswith("x.pdf")
     assert len(captured_reader) == 1
+
+
+def test_parse_s3_bucket_and_key_virtual_hosted():
+    url = (
+        "https://erp-manuais-prod-climaris.s3.amazonaws.com/"
+        "manuais/20240516220049-806427c68e-Manual%20MV60.pdf"
+    )
+    bucket, key = parse_s3_bucket_and_key_from_url(url, db=None)
+    assert bucket == "erp-manuais-prod-climaris"
+    assert key == "manuais/20240516220049-806427c68e-Manual MV60.pdf"
+
+
+def test_generate_manual_presigned_url():
+    url = "https://erp-manuais-prod-climaris.s3.amazonaws.com/manuais/manual.pdf"
+    fake_client = MagicMock()
+    fake_client.generate_presigned_url.return_value = "https://signed.example/manual.pdf?X-Amz-Signature=abc"
+
+    with patch("app.services.s3._resolve_s3_runtime_config") as mock_cfg, patch(
+        "app.services.s3._s3_client_from_config", return_value=fake_client
+    ):
+        mock_cfg.return_value = MagicMock(
+            access_key="AKIA",
+            secret_key="secret",
+            endpoint_url="",
+            public_base_url="",
+            bucket_manuais="erp-manuais-prod-climaris",
+            bucket="",
+        )
+        signed = generate_manual_presigned_url(url, db=MagicMock())
+
+    assert signed.startswith("https://signed.example/")
+    fake_client.generate_presigned_url.assert_called_once()
+    call_kwargs = fake_client.generate_presigned_url.call_args.kwargs
+    assert call_kwargs["Params"]["Bucket"] == "erp-manuais-prod-climaris"
+    assert call_kwargs["Params"]["Key"] == "manuais/manual.pdf"

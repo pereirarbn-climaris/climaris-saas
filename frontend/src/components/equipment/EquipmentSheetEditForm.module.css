@@ -1,0 +1,65 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.groupLabel {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--color-text, #0f172a);
+}
+
+.label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text, #0f172a);
+}
+
+.input,
+.textarea,
+.inputMono {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 0.5rem;
+  font: inherit;
+  color: var(--color-text, #0f172a);
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.inputMono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+}

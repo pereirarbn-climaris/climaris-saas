@@ -26,7 +26,11 @@ import { PmocScheduleOsSection, type PmocScheduleOsApplyPayload } from '../../pm
 import { SignaturePad } from '../../pmoc/SignaturePad'
 import { addMinutesToTimeString } from '../../../lib/pmocOsSchedule'
 import { formatDurationMinutes } from '../../../lib/formatDuration'
-import { computeLaborTotal, computePartsTotal } from '../../../lib/serviceOrderLinesSync'
+import {
+  computeLaborTotal,
+  computePartsTotal,
+  toggleServiceOnEquipment,
+} from '../../../lib/serviceOrderLinesSync'
 import { ClientCombobox } from '../../ui/client-combobox'
 import { ServiceOrderLineSections } from './ServiceOrderLineSections'
 import { ServiceOrderSchedulingPanel } from './ServiceOrderSchedulingPanel'
@@ -45,6 +49,7 @@ import {
   AlertDialogTitle,
 } from '../../ui/alert-dialog'
 import { computeDiscountAmountFromView, type DiscountType } from '../../../lib/serviceOrderDiscount'
+import { toast } from '../../../lib/toast'
 
 export type { DiscountType }
 
@@ -210,6 +215,10 @@ export interface ServiceOrderFormViewProps {
   schedulingPanelKey?: string
   isCancellingSchedule?: boolean
   isCancellingOrder?: boolean
+  /** Admin/recepção: concluir OS agendada/em andamento sem passar pelo fluxo de assinatura */
+  canCompleteOrder?: boolean
+  onCompleteOrder?: () => void | Promise<void>
+  isCompletingOrder?: boolean
 }
 
 // ============================================================================
@@ -1100,6 +1109,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   schedulingPanelKey = 'default',
   isCancellingSchedule = false,
   isCancellingOrder = false,
+  canCompleteOrder = false,
+  onCompleteOrder,
+  isCompletingOrder = false,
 }) => {
   const clientLocked = mode === 'edit' && Boolean(serviceOrder?.id ?? orderId)
   // Form state
@@ -1139,6 +1151,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   const [activeTab, setActiveTab] = useState<'dados' | 'laudo'>('dados')
   const [cancelScheduleOpen, setCancelScheduleOpen] = useState(false)
   const [cancelOrderOpen, setCancelOrderOpen] = useState(false)
+  const [completeOrderOpen, setCompleteOrderOpen] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const savedSnapshotRef = useRef('')
 
@@ -1147,6 +1160,12 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     setCancelScheduleOpen(false)
     await onCancelSchedule()
   }, [onCancelSchedule])
+
+  const confirmCompleteOrder = useCallback(async () => {
+    if (!onCompleteOrder) return
+    setCompleteOrderOpen(false)
+    await onCompleteOrder()
+  }, [onCompleteOrder])
 
   const confirmCancelOrder = useCallback(async () => {
     if (!onCancelOrder) return
@@ -1280,30 +1299,41 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   }, [updateField, onClienteChange])
   
   const toggleEquipamento = useCallback((id: string) => {
-    setFormData(prev => ({
-      ...prev,
-      equipamentosIds: prev.equipamentosIds.includes(id)
-        ? prev.equipamentosIds.filter(e => e !== id)
-        : [...prev.equipamentosIds, id]
-    }))
-  }, [])
+    setFormData((prev) => {
+      const isSelecting = !prev.equipamentosIds.includes(id);
+      const equipamentosIds = isSelecting
+        ? [...prev.equipamentosIds, id]
+        : prev.equipamentosIds.filter((e) => e !== id);
+      let servicos = prev.servicos;
+      if (prev.servicos.length === 1) {
+        servicos = toggleServiceOnEquipment(prev.servicos, id, prev.servicos[0].localId, isSelecting);
+      }
+      return { ...prev, equipamentosIds, servicos };
+    });
+  }, []);
   
   const handleChecklistChange = useCallback((checklist: ChecklistItem[]) => {
     setFormData((prev) => ({ ...prev, checklist }))
   }, [])
   
+  const initialStatus = serviceOrder?.status ?? 'pendente'
+
   // Validation
-  const validate = useCallback((): boolean => {
+  const validate = useCallback((): Record<string, string> => {
     const newErrors: Record<string, string> = {}
     
     if (!formData.clienteId) newErrors.clienteId = 'Selecione um cliente'
-    const schedulingRequired = canEditGeneral && formData.servicos.length > 0
+    const schedulingRequired =
+      canEditGeneral &&
+      formData.servicos.length > 0 &&
+      !['concluida', 'cancelada'].includes(formData.status)
     if (schedulingRequired && !formData.tecnicoId) newErrors.tecnicoId = 'Selecione um técnico'
     if (schedulingRequired && !formData.dataAgendamento) newErrors.dataAgendamento = 'Informe a data'
     if (schedulingRequired && !formData.horaAgendamento) newErrors.horaAgendamento = 'Informe a hora'
     if (formData.servicos.length === 0) newErrors.servicos = 'Adicione ao menos um serviço'
 
-    if (formData.status === 'concluida' && canEditLaudo) {
+    const completingNow = formData.status === 'concluida' && initialStatus !== 'concluida'
+    if (completingNow && canEditLaudo) {
       if (!formData.clientSignatureName?.trim()) {
         newErrors.clientSignatureName = 'Informe o nome do cliente signatário'
       }
@@ -1312,26 +1342,48 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
       }
     }
 
-    const missingFailureNotes = formData.checklist.filter(
-      (item) => item.status === 'nao' && !item.observacao?.trim(),
-    )
-    if (missingFailureNotes.length > 0) {
-      newErrors.checklist = 'Informe a descrição da falha para todos os itens reprovados'
+    if (initialStatus !== 'concluida') {
+      const missingFailureNotes = formData.checklist.filter(
+        (item) => item.status === 'nao' && !item.observacao?.trim(),
+      )
+      if (missingFailureNotes.length > 0) {
+        newErrors.checklist = 'Informe a descrição da falha para todos os itens reprovados'
+      }
     }
     
     setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }, [formData, canEditGeneral, canEditLaudo])
+    return newErrors
+  }, [formData, canEditGeneral, canEditLaudo, initialStatus])
   
   const handleSubmit = useCallback(async () => {
-    if (!validate()) {
-      console.warn("[ServiceOrderFormView] validação falhou");
+    const validationErrors = validate()
+    if (Object.keys(validationErrors).length > 0) {
+      console.warn("[ServiceOrderFormView] validação falhou", validationErrors);
+      const firstMessage =
+        validationErrors.servicos ??
+        validationErrors.tecnicoId ??
+        validationErrors.dataAgendamento ??
+        validationErrors.horaAgendamento ??
+        validationErrors.clientSignature ??
+        validationErrors.clientSignatureName ??
+        validationErrors.checklist ??
+        validationErrors.clienteId ??
+        'Corrija os campos destacados antes de salvar.'
+      toast.error(firstMessage)
+      if (
+        validationErrors.clientSignature ||
+        validationErrors.clientSignatureName ||
+        validationErrors.checklist
+      ) {
+        setActiveTab('laudo')
+      }
       return;
     }
     try {
       await onSave(formData);
     } catch (e) {
       console.error("[ServiceOrderFormView] onSave rejeitou", e);
+      toast.error(e instanceof Error ? e.message : 'Erro ao salvar ordem de serviço.');
     }
   }, [validate, onSave, formData])
   
@@ -1665,6 +1717,22 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             title="Status e tipo"
             subtitle="Situação da OS e classificação do serviço"
           >
+            {canCompleteOrder ? (
+              <p
+                style={{
+                  margin: '0 0 var(--space-4)',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 'var(--input-radius)',
+                  backgroundColor: 'color-mix(in srgb, var(--color-success, #16a34a) 10%, transparent)',
+                  fontSize: 'var(--font-size-sm)',
+                  lineHeight: 1.45,
+                  color: 'var(--color-text)',
+                }}
+              >
+                O serviço já foi executado mas a OS continua aberta? Use o botão{' '}
+                <strong>Concluir OS</strong> no rodapé para registrar a conclusão e atualizar a gestão preventiva.
+              </p>
+            ) : null}
             <div
               style={{
                 display: 'grid',
@@ -1975,9 +2043,24 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                 setCancelOrderOpen(true)
               }}
               loading={isCancellingOrder}
-              disabled={isLoading || isCancellingSchedule}
+              disabled={isLoading || isCancellingSchedule || isCompletingOrder}
             >
               Cancelar OS
+            </Button>
+          ) : null}
+
+          {canCompleteOrder && onCompleteOrder ? (
+            <Button
+              variant="primary"
+              onClick={() => setCompleteOrderOpen(true)}
+              loading={isCompletingOrder}
+              disabled={isLoading || isCancellingSchedule || isCancellingOrder}
+              icon={<Icons.Check style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
+              style={{
+                backgroundColor: 'var(--color-success, #16a34a)',
+              }}
+            >
+              Concluir OS
             </Button>
           ) : null}
 
@@ -2073,6 +2156,30 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               onClick={() => void confirmCancelOrder()}
             >
               {isCancellingOrder ? 'Cancelando…' : 'Sim, Cancelar OS'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={completeOrderOpen} onOpenChange={setCompleteOrderOpen}>
+        <AlertDialogContent labelledBy="os-complete-order-title" describedBy="os-complete-order-desc">
+          <AlertDialogHeader>
+            <AlertDialogTitle id="os-complete-order-title">Concluir ordem de serviço?</AlertDialogTitle>
+            <AlertDialogDescription id="os-complete-order-desc">
+              Use esta opção quando o serviço já foi realizado mas o técnico não finalizou a OS. A conclusão
+              registra a manutenção, atualiza prazos da gestão preventiva e consome estoque reservado — sem
+              exigir assinatura do cliente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setCompleteOrderOpen(false)} disabled={isCompletingOrder}>
+              Voltar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isCompletingOrder}
+              onClick={() => void confirmCompleteOrder()}
+            >
+              {isCompletingOrder ? 'Concluindo…' : 'Sim, concluir OS'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

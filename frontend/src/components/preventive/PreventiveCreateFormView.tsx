@@ -15,14 +15,17 @@ import { Input, Select } from "../ui/input";
 import styles from "./PreventiveCreateFormView.module.css";
 
 type ReminderSend = "none" | "now" | "scheduled";
+type EntryMode = "temporary" | "existing";
 
 type FormSnapshot = {
-  clientMode: "existing" | "new";
+  entryMode: EntryMode;
+  useExistingClient: boolean;
   clientId: string;
-  newClientName: string;
-  newClientPhone: string;
-  newClientWhatsapp: string;
+  clientName: string;
+  clientPhone: string;
+  clientWhatsapp: string;
   equipmentId: string;
+  equipmentLabel: string;
   serviceId: string;
   dataRealizacao: string;
   reminderSend: ReminderSend;
@@ -49,12 +52,14 @@ function todayIsoDate(): string {
 function emptySnapshot(): FormSnapshot {
   const today = todayIsoDate();
   return {
-    clientMode: "existing",
+    entryMode: "temporary",
+    useExistingClient: false,
     clientId: "",
-    newClientName: "",
-    newClientPhone: "",
-    newClientWhatsapp: "",
+    clientName: "",
+    clientPhone: "",
+    clientWhatsapp: "",
     equipmentId: "",
+    equipmentLabel: "",
     serviceId: "",
     dataRealizacao: today,
     reminderSend: "none",
@@ -85,21 +90,31 @@ function equipmentLabel(eq: EquipmentOut): string {
   const parts = [title];
   if (brandModel) parts.push(brandModel);
   if (location && location.toLowerCase() !== title.toLowerCase()) parts.push(location);
-  return normalizeEquipmentLabelText(parts.join(" · "));
+  return parts.join(" · ");
 }
 
-function normalizeEquipmentLabelText(label: string): string {
-  const parts = label.split(" · ").map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 0) return label;
-  if (parts.length >= 2 && parts[0]!.toLowerCase() === parts[parts.length - 1]!.toLowerCase()) {
-    parts.pop();
+function serviceIntervalMonths(service: ServiceOut): number | null {
+  if (service.preventive_enabled && service.preventive_interval_type && service.preventive_interval_value) {
+    const value = service.preventive_interval_value;
+    if (service.preventive_interval_type === "months") return value;
+    if (service.preventive_interval_type === "years") return value * 12;
+    if (service.preventive_interval_type === "days") return Math.max(1, Math.round(value / 30));
   }
-  const deduped: string[] = [];
-  for (const part of parts) {
-    if (deduped.length > 0 && deduped[deduped.length - 1]!.toLowerCase() === part.toLowerCase()) continue;
-    deduped.push(part);
+  return service.periodicidade_meses ?? null;
+}
+
+function serviceIntervalLabel(service: ServiceOut): string {
+  if (service.preventive_enabled && service.preventive_interval_type && service.preventive_interval_value) {
+    const unit =
+      service.preventive_interval_type === "days"
+        ? "dias"
+        : service.preventive_interval_type === "years"
+          ? "anos"
+          : "meses";
+    return `${service.preventive_interval_value} ${unit}`;
   }
-  return deduped.join(" · ");
+  if (service.periodicidade_meses != null) return `${service.periodicidade_meses} meses`;
+  return "";
 }
 
 function addMonthsIso(isoDate: string, months: number): string | null {
@@ -143,7 +158,7 @@ export function PreventiveCreateFormView({
   preventiveSettings,
 }: PreventiveCreateFormViewProps) {
   const [form, setForm] = useState<FormSnapshot>(emptySnapshot);
-  const [baseline, setBaseline] = useState("");
+  const [, setBaseline] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -157,8 +172,6 @@ export function PreventiveCreateFormView({
   const [servicesLoading, setServicesLoading] = useState(false);
   const [servicesErr, setServicesErr] = useState("");
 
-  const isDirty = baseline.length > 0 && serializeSnapshot(form) !== baseline;
-
   const clientItems = useMemo(() => clients.map(clientToComboboxItem), [clients]);
 
   const equipmentItems = useMemo(
@@ -167,7 +180,7 @@ export function PreventiveCreateFormView({
   );
 
   const servicesWithPeriod = useMemo(
-    () => services.filter((s) => s.periodicidade_meses != null),
+    () => services.filter((s) => s.preventive_enabled || s.periodicidade_meses != null),
     [services],
   );
 
@@ -175,7 +188,7 @@ export function PreventiveCreateFormView({
     () =>
       servicesWithPeriod.map((s) => ({
         id: String(s.id),
-        name: `${s.name} (${s.periodicidade_meses} meses)`,
+        name: `${s.name} (${serviceIntervalLabel(s)})`,
       })),
     [servicesWithPeriod],
   );
@@ -185,19 +198,14 @@ export function PreventiveCreateFormView({
     [services, form.serviceId],
   );
 
-  const selectedEquipment = useMemo(
-    () => equipments.find((eq) => String(eq.id) === form.equipmentId) ?? null,
-    [equipments, form.equipmentId],
-  );
-
   const periodicityLabel = useMemo(() => {
-    const months = selectedService?.periodicidade_meses;
-    if (!months) return "Selecione um contrato com periodicidade";
-    return `A cada ${months} meses`;
+    if (!selectedService) return "Selecione um serviço preventivo";
+    const label = serviceIntervalLabel(selectedService);
+    return label ? `A cada ${label}` : "Sem intervalo configurado";
   }, [selectedService]);
 
   const nextMaintenanceLabel = useMemo(() => {
-    const months = selectedService?.periodicidade_meses;
+    const months = selectedService ? serviceIntervalMonths(selectedService) : null;
     if (!months || !form.dataRealizacao) return "—";
     return addMonthsIso(form.dataRealizacao, months) ?? "—";
   }, [selectedService, form.dataRealizacao]);
@@ -266,7 +274,9 @@ export function PreventiveCreateFormView({
   }, [open]);
 
   useEffect(() => {
-    if (!open || form.clientMode !== "existing" || !form.clientId) {
+    const needsCatalog =
+      form.entryMode === "existing" || (form.entryMode === "temporary" && form.useExistingClient);
+    if (!open || !needsCatalog || !form.clientId) {
       setEquipments([]);
       return;
     }
@@ -290,7 +300,7 @@ export function PreventiveCreateFormView({
     return () => {
       cancelled = true;
     };
-  }, [open, form.clientId, form.clientMode]);
+  }, [open, form.clientId, form.entryMode, form.useExistingClient]);
 
   function patchForm<K extends keyof FormSnapshot>(key: K, value: FormSnapshot[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -302,24 +312,33 @@ export function PreventiveCreateFormView({
     setError("");
 
     if (!form.serviceId) {
-      setError("Selecione um contrato (serviço) com periodicidade cadastrada.");
+      setError("Selecione o tipo de serviço preventivo.");
       return;
     }
 
-    if (form.clientMode === "existing") {
+    const isTemporary = form.entryMode === "temporary";
+    const usesExistingClient = !isTemporary || form.useExistingClient;
+
+    if (usesExistingClient) {
       if (!form.clientId) {
         setError("Selecione um cliente.");
         return;
       }
     } else {
-      if (!form.newClientName.trim()) {
+      if (!form.clientName.trim()) {
         setError("Informe o nome do cliente.");
         return;
       }
-      if (!form.newClientPhone.trim() && !form.newClientWhatsapp.trim()) {
-        setError("Informe telefone ou WhatsApp do novo cliente.");
+      if (!form.clientPhone.trim() && !form.clientWhatsapp.trim()) {
+        setError("Informe telefone ou WhatsApp.");
         return;
       }
+    }
+
+    const equipmentLabel = form.equipmentLabel.trim();
+    if (!form.equipmentId && !equipmentLabel) {
+      setError("Informe o apelido do aparelho (ex.: Split sala, Mercado).");
+      return;
     }
 
     if (form.reminderSend === "scheduled" && !form.reminderLocalDate) {
@@ -328,15 +347,19 @@ export function PreventiveCreateFormView({
     }
 
     const noteParts: string[] = [];
-    if (selectedEquipment) noteParts.push(`Equipamento: ${equipmentLabel(selectedEquipment)}`);
+    if (isTemporary && equipmentLabel) {
+      noteParts.push(`Cadastro temporário — aparelho: ${equipmentLabel}`);
+    }
     if (form.notes.trim()) noteParts.push(form.notes.trim());
 
     const common = {
+      entry_mode: form.entryMode,
       service_id: Number(form.serviceId),
       data_realizacao: form.dataRealizacao,
       notes: noteParts.length ? noteParts.join("\n") : null,
       reminder_send: form.reminderSend,
       ...(form.equipmentId ? { equipment_id: Number(form.equipmentId) } : {}),
+      ...(!form.equipmentId && equipmentLabel ? { equipment_label: equipmentLabel } : {}),
       promo_image_url: preventiveSettings?.preventive_promo_image_url ?? null,
       technical_problem_hint: preventiveSettings?.preventive_technical_problem_hint ?? null,
       ...(form.reminderSend === "scheduled"
@@ -349,20 +372,19 @@ export function PreventiveCreateFormView({
 
     setSubmitting(true);
     try {
-      const out =
-        form.clientMode === "existing"
-          ? await registerPreventiveEntry({
-              ...common,
-              client_id: Number(form.clientId),
-            })
-          : await registerPreventiveEntry({
-              ...common,
-              new_client: {
-                name: form.newClientName.trim(),
-                phone: form.newClientPhone.trim() || null,
-                whatsapp: form.newClientWhatsapp.trim() || null,
-              },
-            });
+      const out = usesExistingClient
+        ? await registerPreventiveEntry({
+            ...common,
+            client_id: Number(form.clientId),
+          })
+        : await registerPreventiveEntry({
+            ...common,
+            new_client: {
+              name: form.clientName.trim(),
+              phone: form.clientPhone.trim() || null,
+              whatsapp: form.clientWhatsapp.trim() || null,
+            },
+          });
 
       await onCreated(out);
       onClose();
@@ -374,6 +396,8 @@ export function PreventiveCreateFormView({
   }
 
   if (!open) return null;
+
+  const isTemporary = form.entryMode === "temporary";
 
   return (
     <div
@@ -392,10 +416,12 @@ export function PreventiveCreateFormView({
       >
         <header className={styles.panelHeader}>
           <h2 id="preventive-create-title" className={styles.panelTitle}>
-            Novo registro preventivo
+            {isTemporary ? "Lembrete preventivo temporário" : "Registrar preventiva"}
           </h2>
           <p className={styles.panelLead}>
-            Cadastre a última realização do contrato e, se quiser, envie ou agende o lembrete por WhatsApp.
+            {isTemporary
+              ? "Para clientes que já fizeram serviço antes do Climaris. Cria um cadastro mínimo e calcula o próximo vencimento na listagem mensal."
+              : "Registre a última realização em um cliente e equipamento já cadastrados."}
           </p>
         </header>
 
@@ -407,43 +433,96 @@ export function PreventiveCreateFormView({
           <div className={styles.formStack}>
             <Card>
               <CardHeader>
-                <CardTitle>Cliente e equipamento</CardTitle>
-                <CardDescription>Selecione o cliente e, opcionalmente, o equipamento vinculado.</CardDescription>
+                <CardTitle>Tipo de cadastro</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className={styles.modeRow}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={isTemporary ? "default" : "outline"}
+                    onClick={() => {
+                      patchForm("entryMode", "temporary");
+                      patchForm("equipmentId", "");
+                    }}
+                  >
+                    Lembrete temporário
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={!isTemporary ? "default" : "outline"}
+                    onClick={() => {
+                      patchForm("entryMode", "existing");
+                      patchForm("useExistingClient", true);
+                      patchForm("clientName", "");
+                      patchForm("clientPhone", "");
+                      patchForm("clientWhatsapp", "");
+                    }}
+                  >
+                    Cliente já cadastrado
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Cliente e aparelho</CardTitle>
+                <CardDescription>
+                  {isTemporary
+                    ? "Nome e contato bastam; o aparelho pode ser só um apelido (ex.: Loja centro)."
+                    : "Selecione cliente e equipamento do cadastro."}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className={`${styles.grid} ${styles.gridMd2}`}>
-                  <Field label="Modo de cadastro" className={styles.span2}>
-                    <div className={styles.modeRow}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={form.clientMode === "existing" ? "default" : "outline"}
-                        onClick={() => {
-                          patchForm("clientMode", "existing");
-                          patchForm("newClientName", "");
-                          patchForm("newClientPhone", "");
-                          patchForm("newClientWhatsapp", "");
-                        }}
-                      >
-                        Cliente existente
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={form.clientMode === "new" ? "default" : "outline"}
-                        onClick={() => {
-                          patchForm("clientMode", "new");
-                          patchForm("clientId", "");
-                          patchForm("equipmentId", "");
-                          setEquipments([]);
-                        }}
-                      >
-                        Novo cliente
-                      </Button>
-                    </div>
-                  </Field>
-
-                  {form.clientMode === "existing" ? (
+                  {isTemporary && !form.useExistingClient ? (
+                    <>
+                      <Field label="Nome do cliente" className={styles.span2}>
+                        <Input
+                          value={form.clientName}
+                          onChange={(ev) => patchForm("clientName", ev.target.value)}
+                          placeholder="Ex.: Zingarelli"
+                        />
+                      </Field>
+                      <Field label="Telefone">
+                        <Input
+                          value={form.clientPhone}
+                          onChange={(ev) => patchForm("clientPhone", ev.target.value)}
+                          placeholder="Telefone"
+                        />
+                      </Field>
+                      <Field label="WhatsApp">
+                        <Input
+                          value={form.clientWhatsapp}
+                          onChange={(ev) => patchForm("clientWhatsapp", ev.target.value)}
+                          placeholder="WhatsApp"
+                        />
+                      </Field>
+                      <Field label="Apelido do aparelho" className={styles.span2}>
+                        <Input
+                          value={form.equipmentLabel}
+                          onChange={(ev) => patchForm("equipmentLabel", ev.target.value)}
+                          placeholder="Ex.: Split sala, Mercado, Escritório"
+                        />
+                      </Field>
+                      <Field label=" " className={styles.span2}>
+                        <button
+                          type="button"
+                          className={styles.linkBtn}
+                          onClick={() => {
+                            patchForm("useExistingClient", true);
+                            patchForm("clientName", "");
+                            patchForm("clientPhone", "");
+                            patchForm("clientWhatsapp", "");
+                          }}
+                        >
+                          Usar cliente já cadastrado no sistema
+                        </button>
+                      </Field>
+                    </>
+                  ) : (
                     <>
                       <Field label="Cliente" className={styles.span2}>
                         <ClientCombobox
@@ -455,69 +534,74 @@ export function PreventiveCreateFormView({
                           }}
                           disabled={clientsLoading}
                           placeholder={clientsLoading ? "Carregando clientes…" : "Selecione o cliente"}
-                          searchPlaceholder="Pesquisar cliente (A-Z)…"
+                          searchPlaceholder="Pesquisar cliente…"
                         />
                       </Field>
 
-                      <Field label="Equipamento / localização">
-                        {form.clientId ? (
-                          selectedEquipment ? (
-                            <div className={styles.selectedRow}>
-                              <div className={styles.selectedMain}>
-                                <span className={styles.selectedTitle}>{equipmentLabel(selectedEquipment)}</span>
+                      {!isTemporary ? (
+                        <Field label="Equipamento">
+                          {form.clientId ? (
+                            form.equipmentId ? (
+                              <div className={styles.selectedRow}>
+                                <div className={styles.selectedMain}>
+                                  <span className={styles.selectedTitle}>
+                                    {equipmentItems.find((e) => e.id === form.equipmentId)?.name ?? "Equipamento"}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className={styles.linkBtn}
+                                  onClick={() => patchForm("equipmentId", "")}
+                                >
+                                  Trocar
+                                </button>
                               </div>
-                              <button
-                                type="button"
-                                className={styles.linkBtn}
-                                onClick={() => patchForm("equipmentId", "")}
-                              >
-                                Trocar
-                              </button>
-                            </div>
+                            ) : (
+                              <CatalogCombobox
+                                items={equipmentItems}
+                                onPick={(id) => patchForm("equipmentId", id)}
+                                disabled={equipmentsLoading}
+                                placeholder={
+                                  equipmentsLoading ? "Carregando…" : "Selecionar equipamento (opcional)"
+                                }
+                                searchPlaceholder="Pesquisar equipamento…"
+                                emptyMessage={
+                                  equipments.length === 0
+                                    ? "Nenhum equipamento ativo — informe apelido abaixo."
+                                    : "Nenhum equipamento encontrado."
+                                }
+                              />
+                            )
                           ) : (
-                            <CatalogCombobox
-                              items={equipmentItems}
-                              onPick={(id) => patchForm("equipmentId", id)}
-                              disabled={equipmentsLoading}
-                              placeholder={
-                                equipmentsLoading ? "Carregando equipamentos…" : "Selecionar equipamento (opcional)"
-                              }
-                              searchPlaceholder="Pesquisar equipamento…"
-                              emptyMessage={
-                                equipments.length === 0
-                                  ? "Nenhum equipamento ativo neste cliente."
-                                  : "Nenhum equipamento encontrado."
-                              }
-                            />
-                          )
-                        ) : (
-                          <div className={styles.readOnlyValue}>Selecione um cliente primeiro</div>
-                        )}
-                      </Field>
-                    </>
-                  ) : (
-                    <>
-                      <Field label="Nome completo">
+                            <div className={styles.readOnlyValue}>Selecione um cliente primeiro</div>
+                          )}
+                        </Field>
+                      ) : null}
+
+                      <Field label={isTemporary ? "Apelido do aparelho" : "Apelido (se não houver equipamento)"} className={isTemporary ? styles.span2 : undefined}>
                         <Input
-                          value={form.newClientName}
-                          onChange={(ev) => patchForm("newClientName", ev.target.value)}
-                          placeholder="Nome do cliente"
+                          value={form.equipmentLabel}
+                          onChange={(ev) => patchForm("equipmentLabel", ev.target.value)}
+                          placeholder="Ex.: Split sala, Mercado"
+                          disabled={Boolean(form.equipmentId)}
                         />
                       </Field>
-                      <Field label="Telefone">
-                        <Input
-                          value={form.newClientPhone}
-                          onChange={(ev) => patchForm("newClientPhone", ev.target.value)}
-                          placeholder="Telefone"
-                        />
-                      </Field>
-                      <Field label="WhatsApp" className={styles.span2}>
-                        <Input
-                          value={form.newClientWhatsapp}
-                          onChange={(ev) => patchForm("newClientWhatsapp", ev.target.value)}
-                          placeholder="WhatsApp (se diferente do telefone)"
-                        />
-                      </Field>
+
+                      {isTemporary ? (
+                        <Field label=" " className={styles.span2}>
+                          <button
+                            type="button"
+                            className={styles.linkBtn}
+                            onClick={() => {
+                              patchForm("useExistingClient", false);
+                              patchForm("clientId", "");
+                              patchForm("equipmentId", "");
+                            }}
+                          >
+                            Cadastrar cliente novo (pré-sistema)
+                          </button>
+                        </Field>
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -526,25 +610,19 @@ export function PreventiveCreateFormView({
 
             <Card>
               <CardHeader>
-                <CardTitle>Contrato e periodicidade</CardTitle>
-                <CardDescription>Serviço preventivo com intervalo cadastrado em Serviços.</CardDescription>
+                <CardTitle>Serviço e prazos</CardTitle>
+                <CardDescription>Serviço com gestão preventiva ativa em Serviços.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className={`${styles.grid} ${styles.gridMd2}`}>
-                  <Field label="Contrato (serviço)" className={styles.span2}>
+                  <Field label="Serviço preventivo" className={styles.span2}>
                     {selectedService ? (
                       <div className={styles.selectedRow}>
                         <div className={styles.selectedMain}>
                           <span className={styles.selectedTitle}>{selectedService.name}</span>
-                          <span className={styles.selectedMeta}>
-                            Periodicidade: {selectedService.periodicidade_meses} meses
-                          </span>
+                          <span className={styles.selectedMeta}>Periodicidade: {serviceIntervalLabel(selectedService)}</span>
                         </div>
-                        <button
-                          type="button"
-                          className={styles.linkBtn}
-                          onClick={() => patchForm("serviceId", "")}
-                        >
+                        <button type="button" className={styles.linkBtn} onClick={() => patchForm("serviceId", "")}>
                           Trocar
                         </button>
                       </div>
@@ -553,13 +631,9 @@ export function PreventiveCreateFormView({
                         items={serviceItems}
                         onPick={(id) => patchForm("serviceId", id)}
                         disabled={servicesLoading}
-                        placeholder={servicesLoading ? "Carregando contratos…" : "Selecionar contrato"}
+                        placeholder={servicesLoading ? "Carregando serviços…" : "Selecionar serviço"}
                         searchPlaceholder="Pesquisar serviço…"
-                        emptyMessage={
-                          servicesWithPeriod.length === 0
-                            ? "Nenhum serviço ativo com periodicidade (6 ou 12 meses)."
-                            : "Nenhum serviço encontrado."
-                        }
+                        emptyMessage="Nenhum serviço com gestão preventiva ativa."
                       />
                     )}
                     {servicesErr ? <p className={styles.msgErr}>{servicesErr}</p> : null}
@@ -578,7 +652,7 @@ export function PreventiveCreateFormView({
                     />
                   </Field>
 
-                  <Field label="Próxima manutenção (estimada)" hint="Calculada a partir da última realização e da periodicidade.">
+                  <Field label="Próximo vencimento (estimado)" hint="Aparecerá na Gestão Preventiva no mês correspondente.">
                     <div className={styles.readOnlyValue}>{nextMaintenanceLabel}</div>
                   </Field>
                 </div>
@@ -587,7 +661,7 @@ export function PreventiveCreateFormView({
 
             <Card>
               <CardHeader>
-                <CardTitle>Lembrete e observações</CardTitle>
+                <CardTitle>Observações e WhatsApp</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className={`${styles.grid} ${styles.gridMd2}`}>
@@ -628,6 +702,7 @@ export function PreventiveCreateFormView({
                       value={form.notes}
                       onChange={(ev) => patchForm("notes", ev.target.value)}
                       rows={3}
+                      placeholder="Ex.: fez limpeza em mar/2025, antes de entrar no Climaris"
                     />
                   </Field>
                 </div>
@@ -641,11 +716,9 @@ export function PreventiveCreateFormView({
             <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
-            {isDirty ? (
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Salvando…" : "Criar preventiva"}
-              </Button>
-            ) : null}
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Salvando…" : isTemporary ? "Salvar lembrete" : "Registrar preventiva"}
+            </Button>
           </footer>
         </form>
       </div>

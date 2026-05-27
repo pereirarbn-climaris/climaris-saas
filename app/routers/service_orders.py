@@ -14,6 +14,7 @@ from app.database import get_db
 from app.pagination import clamp_limit
 from app.limiter import limiter
 from app.dependencies import get_current_user, require_roles
+from app.services.service_preventive_config import apply_preventive_config_to_service
 from app.schemas import (
     EquipmentUsageReportRowOut,
     RescheduleOptionOut,
@@ -207,6 +208,8 @@ def _reconcile_service_item_equipments(
         total_qty = sum(max(int(row.quantity or 1), 1) for row in rows_for_service) or max(
             int(anchor.quantity or 1), 1
         )
+        if len(unique_eq) > total_qty:
+            total_qty = len(unique_eq)
         unique_eq = unique_eq[:total_qty]
 
         _validate_equipment_ids_for_client(db, client_id=order.client_id, equipment_ids=unique_eq)
@@ -844,6 +847,35 @@ def _ensure_unique_service_product_inputs(product_inputs: list[ServiceProductInp
         seen.add(item.product_id)
 
 
+def _apply_service_preventive_payload(service: Service, payload: ServiceCreate | ServiceUpdate) -> None:
+    fields_set = payload.model_fields_set
+    has_new = (
+        "preventive_enabled" in fields_set
+        or "preventive_interval_type" in fields_set
+        or "preventive_interval_value" in fields_set
+    )
+    if has_new:
+        enabled = bool(payload.preventive_enabled) if payload.preventive_enabled is not None else False
+        apply_preventive_config_to_service(
+            service,
+            enabled=enabled,
+            interval_type=payload.preventive_interval_type,
+            interval_value=payload.preventive_interval_value,
+        )
+        return
+    if "periodicidade_meses" in fields_set:
+        per = payload.periodicidade_meses
+        if per is None:
+            apply_preventive_config_to_service(service, enabled=False)
+        else:
+            apply_preventive_config_to_service(
+                service,
+                enabled=True,
+                interval_type="months",
+                interval_value=int(per),
+            )
+
+
 @router.post(
     "/services",
     response_model=ServiceOut,
@@ -890,8 +922,8 @@ def create_service(
         is_active=payload.is_active,
         nfse_codigo_tributacao_nacional=(payload.nfse_codigo_tributacao_nacional or "").strip() or None,
         nfse_codigo_nbs=(payload.nfse_codigo_nbs or "").strip() or None,
-        periodicidade_meses=payload.periodicidade_meses,
     )
+    _apply_service_preventive_payload(service, payload)
     db.add(service)
     db.flush()
     for input_item in payload.product_inputs:
@@ -1019,8 +1051,13 @@ def update_service(
         service.nfse_codigo_tributacao_nacional = (payload.nfse_codigo_tributacao_nacional or "").strip() or None
     if "nfse_codigo_nbs" in payload.model_fields_set:
         service.nfse_codigo_nbs = (payload.nfse_codigo_nbs or "").strip() or None
-    if "periodicidade_meses" in payload.model_fields_set:
-        service.periodicidade_meses = payload.periodicidade_meses
+    if (
+        "preventive_enabled" in payload.model_fields_set
+        or "preventive_interval_type" in payload.model_fields_set
+        or "preventive_interval_value" in payload.model_fields_set
+        or "periodicidade_meses" in payload.model_fields_set
+    ):
+        _apply_service_preventive_payload(service, payload)
     if payload.product_inputs is not None:
         _ensure_unique_service_product_inputs(payload.product_inputs)
         for row in list(service.product_inputs):

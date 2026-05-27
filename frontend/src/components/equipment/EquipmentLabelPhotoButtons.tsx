@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { extractEquipmentLabelFromPhotos } from "../../api/equipmentCatalogAi";
 import { prepareImageForVision, revokePreparedPreview } from "../../lib/prepareImageForVision";
-import type { EquipmentLabelExtractionOut } from "../../api/equipmentCatalogAi";
+import type { EquipmentLabelExtractionOut, EquipmentLabelKind } from "../../api/equipmentCatalogAi";
 import styles from "./EquipmentLabelPhotoButtons.module.css";
 
 type SlotKey = "evaporator" | "condenser";
@@ -13,6 +13,8 @@ type SlotState = {
 
 type Props = {
   disabled?: boolean;
+  /** split_ac: evaporadora + condensadora; climatizador: etiqueta única */
+  variant?: "split_ac" | "climatizador";
   onExtracted: (data: EquipmentLabelExtractionOut) => void;
   onError?: (message: string) => void;
 };
@@ -31,7 +33,14 @@ const IconSpark = () => (
   </svg>
 );
 
-export function EquipmentLabelPhotoButtons({ disabled, onExtracted, onError }: Props) {
+export function EquipmentLabelPhotoButtons({
+  disabled,
+  variant = "split_ac",
+  onExtracted,
+  onError,
+}: Props) {
+  const isClimatizador = variant === "climatizador";
+  const equipmentKind: EquipmentLabelKind = isClimatizador ? "climatizador" : "ar_condicionado";
   const evapInputRef = useRef<HTMLInputElement>(null);
   const condInputRef = useRef<HTMLInputElement>(null);
   const [slots, setSlots] = useState<Record<SlotKey, SlotState>>({
@@ -66,7 +75,10 @@ export function EquipmentLabelPhotoButtons({ disabled, onExtracted, onError }: P
   };
 
   const handleExtract = async () => {
-    if (!slots.evaporator.file && !slots.condenser.file) {
+    const hasPhoto = isClimatizador
+      ? Boolean(slots.evaporator.file)
+      : Boolean(slots.evaporator.file || slots.condenser.file);
+    if (!hasPhoto) {
       const msg = "Envie ao menos uma foto da etiqueta.";
       setError(msg);
       onError?.(msg);
@@ -76,8 +88,10 @@ export function EquipmentLabelPhotoButtons({ disabled, onExtracted, onError }: P
     setError(null);
     try {
       const result = await extractEquipmentLabelFromPhotos({
-        evaporatorImage: slots.evaporator.file,
-        condenserImage: slots.condenser.file,
+        equipmentKind,
+        evaporatorImage: isClimatizador ? undefined : slots.evaporator.file,
+        condenserImage: isClimatizador ? undefined : slots.condenser.file,
+        labelImage: isClimatizador ? slots.evaporator.file : undefined,
       });
       onExtracted(result);
     } catch (e) {
@@ -152,14 +166,20 @@ export function EquipmentLabelPhotoButtons({ disabled, onExtracted, onError }: P
         <div>
           <h3 className={styles.title}>Cadastrar via Foto da Etiqueta</h3>
           <p className={styles.subtitle}>
-            Ideal para o técnico em campo: fotografe a placa de especificações e a IA preenche o formulário.
+            {isClimatizador
+              ? "Fotografe a placa do climatizador e a IA preenche marca, modelo, vazão e demais dados."
+              : "Ideal para o técnico em campo: fotografe a placa de especificações e a IA preenche o formulário."}
           </p>
         </div>
       </div>
 
-      <div className={styles.grid}>
-        {renderSlot("evaporator", "Etiqueta da Evaporadora", evapInputRef)}
-        {renderSlot("condenser", "Etiqueta da Condensadora", condInputRef)}
+      <div className={isClimatizador ? styles.gridSingle : styles.grid}>
+        {renderSlot(
+          "evaporator",
+          isClimatizador ? "Etiqueta do Climatizador" : "Etiqueta da Evaporadora",
+          evapInputRef,
+        )}
+        {!isClimatizador ? renderSlot("condenser", "Etiqueta da Condensadora", condInputRef) : null}
       </div>
 
       {loading ? (
@@ -171,7 +191,10 @@ export function EquipmentLabelPhotoButtons({ disabled, onExtracted, onError }: P
         <button
           type="button"
           className={styles.btnPrimary}
-          disabled={disabled || (!slots.evaporator.file && !slots.condenser.file)}
+          disabled={
+            disabled ||
+            (isClimatizador ? !slots.evaporator.file : !slots.evaporator.file && !slots.condenser.file)
+          }
           onClick={() => void handleExtract()}
         >
           <IconSpark />

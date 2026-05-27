@@ -118,9 +118,19 @@ export function ServiceOrderSchedulingPanel({
       }}
     >
       <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Agendamento</h3>
-      <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
-        Adicione ao menos um serviço para liberar data, hora e sugestões inteligentes de agenda.
-      </p>
+      {!schedulingEnabled ? (
+        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+          Adicione ao menos um serviço para liberar data, hora e sugestões inteligentes de agenda.
+        </p>
+      ) : !canEditScheduling ? (
+        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+          Agendamento registrado nesta OS. Apenas administradores podem alterar técnico, data e horário.
+        </p>
+      ) : (
+        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+          Defina técnico, data e horário do atendimento ou use as sugestões inteligentes de agenda.
+        </p>
+      )}
 
       <p
         style={{
