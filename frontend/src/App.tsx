@@ -53,6 +53,7 @@ import { PmocNewPage } from "./pages/pmoc/PmocNewPage";
 import { TrustedDevicesPage } from "./pages/security/TrustedDevicesPage";
 import { NfsePage } from "./pages/fiscal/NfsePage";
 import { PreventiveMaintenancePage } from "./pages/preventive/PreventiveMaintenancePage";
+import { AirConditionerFormDemoPage } from "./pages/demo/AirConditionerFormDemoPage";
 
 function RootRedirect() {
   if (!getAccessToken()) {
@@ -74,6 +75,7 @@ export default function App() {
       <SessionMaintenance />
       <Routes>
       <Route path="/p/e/:token" element={<PublicEquipmentPage />} />
+      <Route path="/demo/ar-condicionado" element={<AirConditionerFormDemoPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
