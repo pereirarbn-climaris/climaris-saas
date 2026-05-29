@@ -219,6 +219,10 @@ export interface ServiceOrderFormViewProps {
   canCompleteOrder?: boolean
   onCompleteOrder?: () => void | Promise<void>
   isCompletingOrder?: boolean
+  /** Rótulo do badge financeiro no header (ex.: Pago, Pendente). */
+  financePaymentLabel?: string | null
+  /** Seção "Gestão Financeira" (OS concluída). */
+  financeSection?: React.ReactNode
 }
 
 // ============================================================================
@@ -1112,6 +1116,8 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   canCompleteOrder = false,
   onCompleteOrder,
   isCompletingOrder = false,
+  financePaymentLabel = null,
+  financeSection = null,
 }) => {
   const clientLocked = mode === 'edit' && Boolean(serviceOrder?.id ?? orderId)
   // Form state
@@ -1545,6 +1551,50 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                   >
                     {SERVICE_TYPE_CONFIG[formData.tipoServico].label}
                   </span>
+                  {financePaymentLabel ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: `0 var(--badge-padding-x)`,
+                        height: 'var(--badge-height)',
+                        fontSize: 'var(--badge-font-size)',
+                        fontWeight: 'var(--font-weight-medium)',
+                        color:
+                          financePaymentLabel === 'Pago'
+                            ? 'var(--color-success, #15803d)'
+                            : financePaymentLabel === 'Parcial'
+                              ? 'var(--color-warning, #b45309)'
+                              : 'var(--color-text-muted, #64748b)',
+                        backgroundColor:
+                          financePaymentLabel === 'Pago'
+                            ? 'rgba(21, 128, 61, 0.1)'
+                            : financePaymentLabel === 'Parcial'
+                              ? 'rgba(180, 83, 9, 0.12)'
+                              : 'rgba(100, 116, 139, 0.12)',
+                        borderRadius: 'var(--badge-radius)',
+                      }}
+                    >
+                      Financeiro: {financePaymentLabel}
+                    </span>
+                  ) : null}
+                  {financePaymentLabel === 'Pago' && formData.status === 'concluida' ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: `0 var(--badge-padding-x)`,
+                        height: 'var(--badge-height)',
+                        fontSize: 'var(--badge-font-size)',
+                        fontWeight: 'var(--font-weight-medium)',
+                        color: 'var(--color-success, #15803d)',
+                        backgroundColor: 'rgba(21, 128, 61, 0.1)',
+                        borderRadius: 'var(--badge-radius)',
+                      }}
+                    >
+                      Recebida
+                    </span>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -1872,6 +1922,8 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               </div>
             </div>
           </FormCard>
+
+          {formData.status === 'concluida' && financeSection ? financeSection : null}
             </div>
           </TabsContent>
 

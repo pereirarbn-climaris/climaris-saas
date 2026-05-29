@@ -202,7 +202,7 @@ export function FinanceSettingsPage() {
           <h1 className={styles.title}>Configurações do Financeiro</h1>
           <p className={styles.lead}>Ative o módulo, organize cadastros e acompanhe o fluxo de caixa em um só lugar.</p>
         </div>
-        <Link to="/app/finance" className={styles.backLink}>
+        <Link to="/app/finance/dashboard" className={styles.backLink}>
           ← Voltar ao Financeiro
         </Link>
       </header>

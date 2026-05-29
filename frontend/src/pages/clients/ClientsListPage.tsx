@@ -5,7 +5,7 @@ import {
   countClients,
   exportClientsCsv,
   importClientsCsv,
-  listClientsAll,
+  listClients,
   type ClientOut,
   type ClientStatusFilter,
 } from "../../api/clients";
@@ -20,23 +20,7 @@ import tableStyles from "../listTableCommon.module.css";
 import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import styles from "./ClientsListPage.module.css";
 
-function compareText(a: string, b: string, dir: ClientListSortDir): number {
-  const c = a.localeCompare(b, "pt-BR", { sensitivity: "base" });
-  return dir === "asc" ? c : -c;
-}
-
-function compareDigits(a: string | null | undefined, b: string | null | undefined, dir: ClientListSortDir): number {
-  const da = (a ?? "").replace(/\D/g, "");
-  const db = (b ?? "").replace(/\D/g, "");
-  if (da === db) return 0;
-  if (!da) return 1;
-  if (!db) return -1;
-  const maxLen = Math.max(da.length, db.length);
-  const na = da.padStart(maxLen, "0");
-  const nb = db.padStart(maxLen, "0");
-  const cmp = na < nb ? -1 : na > nb ? 1 : 0;
-  return dir === "asc" ? cmp : -cmp;
-}
+const CLIENTS_PAGE_SIZE = 20;
 
 export function ClientsListPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -50,6 +34,8 @@ export function ClientsListPage() {
   const [sortDir, setSortDir] = useState<ClientListSortDir>("asc");
   const [statusFilter, setStatusFilter] = useState<ClientStatusFilter>("active");
   const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState({ total: 0, empresas: 0, pessoas: 0, ativos: 0 });
+  const [page, setPage] = useState(1);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importSource, setImportSource] = useState<"climaris" | "minha_agenda" | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -61,53 +47,54 @@ export function ClientsListPage() {
     return () => window.clearTimeout(t);
   }, [input]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [q, statusFilter, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTS_PAGE_SIZE));
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    const safePage = Math.max(1, page);
+    const skip = (safePage - 1) * CLIENTS_PAGE_SIZE;
     try {
-      const [list, total] = await Promise.all([
-        listClientsAll({ q: q || undefined, status: statusFilter }),
+      const [list, counts] = await Promise.all([
+        listClients({
+          q: q || undefined,
+          status: statusFilter,
+          skip,
+          limit: CLIENTS_PAGE_SIZE,
+          sortKey,
+          sortDir,
+        }),
         countClients({ q: q || undefined, status: statusFilter }),
       ]);
       setClients(list);
-      setTotalCount(total);
+      setTotalCount(counts.total);
+      setStats({
+        total: counts.total,
+        empresas: counts.empresas,
+        pessoas: counts.pessoas,
+        ativos: counts.ativos,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao carregar clientes.");
       setClients([]);
       setTotalCount(0);
+      setStats({ total: 0, empresas: 0, pessoas: 0, ativos: 0 });
     } finally {
       setIsLoading(false);
     }
-  }, [q, statusFilter]);
+  }, [q, statusFilter, sortKey, sortDir, page]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  const sortedClients = useMemo(() => {
-    const list = [...clients];
-    list.sort((a, b) => {
-      switch (sortKey) {
-        case "name":
-          return compareText(a.name.trim(), b.name.trim(), sortDir);
-        case "email":
-          return compareText((a.email ?? "").trim(), (b.email ?? "").trim(), sortDir);
-        case "whatsapp":
-          return compareDigits(a.whatsapp, b.whatsapp, sortDir);
-        default:
-          return 0;
-      }
-    });
-    return list;
-  }, [clients, sortKey, sortDir]);
-
-  const stats = useMemo(() => {
-    const total = totalCount;
-    const empresas = clients.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length;
-    const pessoas = clients.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length;
-    const ativos = clients.filter((c) => c.is_active).length;
-    return { total, empresas, pessoas, ativos };
-  }, [clients, totalCount]);
 
   function onSortHeader(key: ClientListSortKey) {
     if (sortKey === key) {
@@ -117,6 +104,17 @@ export function ClientsListPage() {
       setSortDir("asc");
     }
   }
+
+  const pagination = useMemo(
+    () => ({
+      currentPage: page,
+      totalPages,
+      totalItems: totalCount,
+      itemsPerPage: CLIENTS_PAGE_SIZE,
+      onPageChange: setPage,
+    }),
+    [page, totalPages, totalCount],
+  );
 
   async function onExportCsv() {
     setError(null);
@@ -141,6 +139,7 @@ export function ClientsListPage() {
       const r = await importClientsCsv(file);
       const extra = r.errors.length ? `\nAvisos: ${r.errors.slice(0, 5).join("; ")}` : "";
       window.alert(`Importação concluída.\nCriados: ${r.created}\nAtualizados: ${r.updated}\nIgnorados: ${r.skipped}${extra}`);
+      setPage(1);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro na importação.");
@@ -339,7 +338,7 @@ export function ClientsListPage() {
   return (
     <div className={listStyles.wrap}>
       <ClientsListView
-        clients={sortedClients}
+        clients={clients}
         isLoading={isLoading}
         error={error}
         stats={stats}
@@ -350,6 +349,7 @@ export function ClientsListPage() {
         onRowClick={(id) => navigate(`/app/clients/${id}`)}
         toolbar={toolbar}
         footerExtra={importModal}
+        pagination={pagination}
       />
     </div>
   );

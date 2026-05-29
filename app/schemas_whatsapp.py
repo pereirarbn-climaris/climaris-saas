@@ -134,6 +134,7 @@ class WhatsappReminderRulesPatch(BaseModel):
     offset_1d: bool | None = None
     custom_enabled: bool | None = None
     custom_minutes: int | None = Field(default=None, ge=1, le=60 * 24 * 30)
+    dispatch_scheduled_at: datetime | None = None
 
 
 class WhatsappReminderRulesOut(BaseModel):
@@ -144,6 +145,7 @@ class WhatsappReminderRulesOut(BaseModel):
     custom_enabled: bool
     custom_minutes: int | None = None
     active_offsets_minutes: list[int]
+    dispatch_scheduled_at: datetime | None = None
 
 
 class WhatsappTenantConnectionConfigureRequest(BaseModel):

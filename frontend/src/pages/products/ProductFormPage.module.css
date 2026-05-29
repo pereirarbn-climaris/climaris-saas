@@ -185,10 +185,63 @@
   cursor: not-allowed;
 }
 
-.msgOk {
-  font-size: 0.875rem;
-  color: var(--color-success);
+.modalRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.modalBackdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+
+.modalCard {
+  position: relative;
+  z-index: 1;
+  width: min(28rem, calc(100% - 2rem));
+  margin: min(18vh, 8rem) auto 0;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 20px 40px -12px rgba(2, 6, 23, 0.4);
+  padding: 1.25rem;
+}
+
+.modalTitle {
   margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.modalText {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.modalImagePreview {
+  display: block;
+  width: 100%;
+  max-width: 12rem;
+  margin: 0.85rem auto 0;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.modalActions {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .msgErr {

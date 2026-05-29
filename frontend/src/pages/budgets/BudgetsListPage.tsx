@@ -106,7 +106,9 @@ export function BudgetsListPage() {
         listClients({ limit: 200 }),
       ]);
       setAllRows(budgets);
-      setStorageAlerts(storage_alerts);
+      setStorageAlerts(
+        storage_alerts.filter((alert) => alert.startsWith("Orçamento ")),
+      );
       setClientsMap(new Map(clients.map((c) => [c.id, c.name])));
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao carregar orçamentos." });

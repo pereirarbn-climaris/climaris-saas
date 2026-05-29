@@ -65,6 +65,71 @@
   color: var(--muted, #64748b);
 }
 
+.clientStatusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.statusCell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.statusEmpty {
+  color: #94a3b8;
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.statusChip_agenda {
+  background: rgba(11, 127, 175, 0.12);
+  color: #0b7faf;
+  border: 1px solid rgba(11, 127, 175, 0.28);
+}
+
+.statusChip_mensagem_enviada {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+  border: 1px solid rgba(22, 163, 74, 0.28);
+}
+
+.statusChip_lembrete_antecipado {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  border: 1px solid rgba(59, 130, 246, 0.28);
+}
+
+.statusChip_lembrete_vencimento {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+  border: 1px solid rgba(22, 163, 74, 0.28);
+}
+
+.statusChip_vencida {
+  background: rgba(248, 113, 113, 0.15);
+  color: #b91c1c;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+}
+
+.statusChipLink {
+  text-decoration: none;
+}
+
+.statusChipLink:hover {
+  background: rgba(11, 127, 175, 0.18);
+}
+
 .badges {
   display: flex;
   align-items: center;
@@ -261,6 +326,51 @@
 .btnSend:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.actionsCol {
+  width: 4.5rem;
+  white-space: nowrap;
+}
+
+.actionsCell {
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.rowActionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.rowActionBtn:hover {
+  background: #f8fafc;
+}
+
+.rowActionBtnDanger {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.rowActionBtnDanger:hover {
+  background: #fee2e2;
 }
 
 @media (max-width: 720px) {

@@ -1,5 +1,7 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ServiceOut } from "../../api/services";
+import { ClientPhoneContactActions } from "../../components/ClientPhoneContactActions";
+import { buildClientPhoneContactRows, googleMapsSearchUrl, wazeSearchUrl } from "../../lib/clientContactDisplay";
 import { formatDurationMinutes } from "../../lib/formatDuration";
 import { equipmentCardTitle } from "../../lib/equipmentDisplay";
 import type {
@@ -55,6 +57,9 @@ function formatScheduleTime(iso: string): string {
 export type TechnicianServiceOrderViewProps = {
   order: ServiceOrderOut;
   clientName: string;
+  clientAddress: string | null;
+  clientPhone: string | null;
+  clientWhatsapp: string | null;
   productNameById: Map<number, string>;
   servicesCatalog: ServiceOut[];
   completedServiceIds: Set<number>;
@@ -69,6 +74,9 @@ export type TechnicianServiceOrderViewProps = {
 export function TechnicianServiceOrderView({
   order,
   clientName,
+  clientAddress,
+  clientPhone,
+  clientWhatsapp,
   productNameById,
   servicesCatalog,
   completedServiceIds,
@@ -81,6 +89,17 @@ export function TechnicianServiceOrderView({
 }: TechnicianServiceOrderViewProps) {
   const [addDialogCard, setAddDialogCard] = useState<ServiceOrderEquipmentCardOut | null>(null);
   const [addingServiceId, setAddingServiceId] = useState<number | null>(null);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 768px)").matches : false,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const totalMinutes = order.total_duration_minutes ?? 0;
   const actualMinutes = order.actual_duration_minutes ?? null;
@@ -97,6 +116,10 @@ export function TechnicianServiceOrderView({
   }, [cards]);
 
   const canExecute = !readOnly && order.status !== "done" && order.status !== "cancelled";
+  const phoneContactRows = useMemo(
+    () => buildClientPhoneContactRows(clientPhone, clientWhatsapp),
+    [clientPhone, clientWhatsapp],
+  );
 
   const handlePickService = async (serviceId: number) => {
     if (!addDialogCard || busy) return;
@@ -150,10 +173,49 @@ export function TechnicianServiceOrderView({
         OS #{order.id}
         <span className={`${styles.statusBadge} ${statusClass(order.status)}`}>{STATUS_LABELS[order.status]}</span>
       </h1>
-      <p className={styles.osMeta}>
-        <strong>{clientName}</strong>
-        {order.title ? ` · ${order.title}` : null}
-      </p>
+      <div className={styles.osClientBlock}>
+        <p className={styles.osMeta}>
+          <strong>{clientName}</strong>
+          {order.title ? ` · ${order.title}` : null}
+        </p>
+        {clientAddress?.trim() ? (
+          <p className={`${styles.osMeta} ${styles.osAddressRow}`} title={clientAddress}>
+            <span className={styles.osMetaLabel}>Endereço: </span>
+            {isMobile ? (
+              <>
+                <a
+                  href={googleMapsSearchUrl(clientAddress)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.osAddressLink}
+                >
+                  {clientAddress}
+                </a>
+                <span className={styles.osAddressSep} aria-hidden>
+                  {" · "}
+                </span>
+                <a
+                  href={wazeSearchUrl(clientAddress)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.osAddressLinkAlt}
+                >
+                  Waze
+                </a>
+              </>
+            ) : (
+              clientAddress
+            )}
+          </p>
+        ) : null}
+        {phoneContactRows.length > 0 ? (
+          <div className={styles.osPhoneList}>
+            {phoneContactRows.map((row) => (
+              <ClientPhoneContactActions key={`${row.label}-${row.raw}`} label={row.label} phone={row.raw} />
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       <h2 className={styles.sectionTitle}>Equipamentos e serviços</h2>
       <div className={styles.cardsGrid}>

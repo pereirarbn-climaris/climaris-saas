@@ -1,0 +1,320 @@
+.page {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding-bottom: 2rem;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 300px) 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.main {
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.rowMeta {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.cashFlowStrip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f0fdfa 0%, #f8fafc 100%);
+  border: 1px solid #ccfbf1;
+}
+
+.cashFlowItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.cashFlowLabel {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cashFlowValue {
+  font-size: 1.125rem;
+  color: var(--color-text, #0f172a);
+}
+
+.cashFlowValueAccent {
+  font-size: 1.125rem;
+  color: #0d9488;
+}
+
+.cashFlowDivider {
+  width: 1px;
+  height: 2.5rem;
+  background: #cbd5e1;
+}
+
+.dateCell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.liquidityBadge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.liquidityAvailable {
+  background: rgba(21, 128, 61, 0.12);
+  color: #15803d;
+}
+
+.liquidityPending {
+  background: rgba(180, 83, 9, 0.15);
+  color: #b45309;
+}
+
+.liquidityCancelled {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+}
+
+.liquidityNeutral {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.field label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.upgradeBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.875rem;
+}
+
+.upgradeBanner a {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.alert {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.alertTitle {
+  margin: 0 0 0.2rem;
+  font-weight: 700;
+}
+
+.alert p {
+  margin: 0;
+}
+
+.empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.skeletonRow {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.5rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.skeletonCell {
+  height: 1rem;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-border) 60%, transparent) 25%,
+    color-mix(in srgb, var(--color-border) 30%, transparent) 50%,
+    color-mix(in srgb, var(--color-border) 60%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.modal {
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--color-surface-elevated, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 1.25rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.modalHeader h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.formGrid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.previewBox {
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 1px dashed #99f6e4;
+  background: #f0fdfa;
+  font-size: 0.85rem;
+  color: #0f766e;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.previewBox strong {
+  font-size: 1rem;
+  color: #047857;
+}
+
+.previewHint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.amountPositive {
+  color: #047857;
+  font-weight: 600;
+}
+
+.amountNegative {
+  color: #b42318;
+  font-weight: 600;
+}

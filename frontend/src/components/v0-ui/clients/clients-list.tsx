@@ -323,6 +323,52 @@ export function ClientsListTable({
   );
 }
 
+export interface ClientsListPagination {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  itemsPerPage: number;
+  onPageChange: (page: number) => void;
+}
+
+function ClientsListPaginationBar({ pagination }: { pagination: ClientsListPagination }) {
+  const { currentPage, totalPages, totalItems, itemsPerPage, onPageChange } = pagination;
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
+  const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+
+  return (
+    <div className={styles.listFootPagination}>
+      <span>
+        Mostrando <strong>{startItem}</strong> a <strong>{endItem}</strong> de <strong>{totalItems}</strong> cliente
+        {totalItems === 1 ? "" : "s"}
+      </span>
+      <div className={styles.pagerBtns}>
+        <button
+          type="button"
+          className={styles.pagerBtn}
+          disabled={currentPage <= 1}
+          onClick={() => onPageChange(currentPage - 1)}
+          aria-label="Página anterior"
+        >
+          ‹
+        </button>
+        <span className={styles.pagerBtnActive}>
+          {currentPage} / {totalPages}
+        </span>
+        <button
+          type="button"
+          className={styles.pagerBtn}
+          disabled={currentPage >= totalPages}
+          onClick={() => onPageChange(currentPage + 1)}
+          aria-label="Próxima página"
+        >
+          ›
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export interface ClientsListViewProps {
   clients: ClientListItem[];
   isLoading?: boolean;
@@ -335,6 +381,7 @@ export interface ClientsListViewProps {
   onRowClick: (clientId: number) => void;
   toolbar: ReactNode;
   footerExtra?: ReactNode;
+  pagination?: ClientsListPagination;
 }
 
 export function ClientsListView({
@@ -349,6 +396,7 @@ export function ClientsListView({
   onRowClick,
   toolbar,
   footerExtra,
+  pagination,
 }: ClientsListViewProps) {
   return (
     <>
@@ -371,12 +419,10 @@ export function ClientsListView({
         onRowClick={onRowClick}
       />
 
-      {!isLoading && !error && clients.length > 0 ? (
-        <p className={styles.listFoot}>
-          <span>
-            Mostrando {clients.length} de {totalCount} cliente{totalCount === 1 ? "" : "s"}
-          </span>
-        </p>
+      {!isLoading && !error && totalCount > 0 && pagination ? (
+        <div className={styles.listFoot}>
+          <ClientsListPaginationBar pagination={pagination} />
+        </div>
       ) : null}
 
       {footerExtra}

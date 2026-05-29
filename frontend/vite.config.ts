@@ -19,9 +19,15 @@ export default defineConfig({
             if (norm.includes("node_modules/@capacitor")) return "vendor-capacitor";
             if (norm.includes("node_modules/qrcode")) return "vendor-qrcode";
             if (norm.includes("node_modules/zod")) return "vendor-zod";
-            if (norm.includes("node_modules/react-dom")) return "vendor-react-dom";
+            // React + react-dom + scheduler no mesmo chunk (evita "unstable_now" em runtime).
+            if (
+              norm.includes("node_modules/react-dom")
+              || norm.includes("node_modules/react/")
+              || norm.includes("node_modules/scheduler/")
+            ) {
+              return "vendor-react";
+            }
             if (norm.includes("node_modules/react-router")) return "vendor-react-router";
-            if (norm.includes("node_modules/react/")) return "vendor-react";
             return "vendor";
           }
           if (norm.includes("/src/pages/finance/")) return "chunk-finance-pages";

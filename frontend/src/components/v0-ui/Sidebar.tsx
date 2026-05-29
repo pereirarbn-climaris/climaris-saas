@@ -14,7 +14,7 @@ import {
     type ComponentPropsWithoutRef,
     type MouseEvent,
   } from "react";
-  import { NavLink } from "react-router-dom";
+  import { NavLink, useLocation } from "react-router-dom";
   import {
     NavIconChevronLeft,
     NavIconChevronRight,
@@ -436,8 +436,14 @@ import {
     href?: string;
     to?: string;
     end?: boolean;
+    /** Mantém o item ativo em sub-rotas (ex.: `/app/finance/settings`). */
+    matchPrefix?: string;
     title?: string;
     onClick?: (e: MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => void;
+  }
+
+  function pathnameMatchesPrefix(pathname: string, prefix: string): boolean {
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
   }
   
   function itemStyles(
@@ -471,10 +477,13 @@ import {
     href,
     to,
     end = false,
+    matchPrefix,
     title,
     onClick,
   }: SidebarItemProps) {
     const { expanded, mobileOpen, setMobileOpen } = useSidebarContext();
+    const { pathname } = useLocation();
+    const prefixActive = matchPrefix ? pathnameMatchesPrefix(pathname, matchPrefix) : false;
     const showLabel = expanded || mobileOpen;
   
     const handleClick = (e: MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
@@ -522,7 +531,7 @@ import {
             end={end}
             title={title}
             onClick={handleClick}
-            style={({ isActive }) => itemStyles(showLabel, isActive)}
+            style={({ isActive }) => itemStyles(showLabel, matchPrefix ? prefixActive : isActive)}
             aria-current={undefined}
           >
             {content}

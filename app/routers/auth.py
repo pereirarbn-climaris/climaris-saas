@@ -980,11 +980,13 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
 def get_my_tenant(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> Tenant:
+) -> TenantOut:
+    from app.tenant_out import tenant_out_enriched
+
     tenant = db.get(Tenant, current_user.tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
-    return tenant
+    return tenant_out_enriched(db, tenant)
 
 
 @router.patch("/me/tenant/fiscal", response_model=TenantOut)

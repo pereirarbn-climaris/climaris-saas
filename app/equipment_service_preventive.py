@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.equipment_preventive_rules import compute_next_due_datetime, get_tenant_equipment
@@ -18,11 +18,14 @@ from models import (
     Equipment,
     EquipmentServicePreventiveOverride,
     EquipmentServicePreventiveSchedule,
+    HistoricoServico,
     OrderStatus,
     Service,
     ServiceOrder,
     ServiceOrderEquipmentService,
     Tenant,
+    WhatsappMessageJob,
+    WhatsappMessageStatus,
 )
 
 
@@ -666,6 +669,8 @@ def _schedule_to_preventive_item(
     return {
         "historico_servico_id": 0,
         "rule_id": None,
+        "preventive_schedule_id": int(schedule.id),
+        "is_manual_reminder": _schedule_is_manual_reminder(schedule),
         "client_id": client.id,
         "client_name": client.name,
         "service_id": int(service.id),
@@ -688,6 +693,281 @@ def _schedule_to_preventive_item(
         "ultimo_whatsapp_erro": None,
         "ultimo_whatsapp_em": None,
     }
+
+
+def _schedule_is_manual_reminder(schedule: EquipmentServicePreventiveSchedule) -> bool:
+    """Lembrete cadastrado manualmente (Nova Preventiva), sem vínculo com OS concluída."""
+    return schedule.last_service_order_id is None and schedule.last_performed_at is not None
+
+
+def _load_manual_schedule(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule_id: int,
+) -> tuple[EquipmentServicePreventiveSchedule, Equipment, Client, Service]:
+    row = db.execute(
+        select(EquipmentServicePreventiveSchedule, Equipment, Client, Service)
+        .join(Equipment, Equipment.id == EquipmentServicePreventiveSchedule.equipment_id)
+        .join(Client, Client.id == Equipment.client_id)
+        .join(Service, Service.id == EquipmentServicePreventiveSchedule.service_id)
+        .where(
+            EquipmentServicePreventiveSchedule.id == schedule_id,
+            Client.tenant_id == tenant_id,
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lembrete não encontrado.")
+    schedule, equipment, client, service = row
+    if not _schedule_is_manual_reminder(schedule):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Este registro foi gerado por ordem de serviço e não pode ser editado aqui.",
+        )
+    return schedule, equipment, client, service
+
+
+def _performed_date_from_schedule(schedule: EquipmentServicePreventiveSchedule) -> date | None:
+    last_at = schedule.last_performed_at
+    if last_at is None:
+        return None
+    if last_at.tzinfo is None:
+        last_at = last_at.replace(tzinfo=timezone.utc)
+    return last_at.date()
+
+
+def _find_manual_historico_for_schedule(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_id: int,
+    service_id: int,
+    performed_date: date | None,
+) -> HistoricoServico | None:
+    if performed_date is None:
+        return None
+    return db.execute(
+        select(HistoricoServico)
+        .where(
+            HistoricoServico.tenant_id == tenant_id,
+            HistoricoServico.client_id == client_id,
+            HistoricoServico.service_id == service_id,
+            HistoricoServico.service_order_id.is_(None),
+            HistoricoServico.data_realizacao == performed_date,
+        )
+        .order_by(HistoricoServico.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _cancel_queued_preventive_jobs_for_historico(
+    db: Session,
+    *,
+    tenant_id: int,
+    historico_id: int,
+) -> None:
+    jobs = db.execute(
+        select(WhatsappMessageJob).where(
+            WhatsappMessageJob.tenant_id == tenant_id,
+            WhatsappMessageJob.reference_type == "preventive_historico",
+            WhatsappMessageJob.reference_id == historico_id,
+            WhatsappMessageJob.status == WhatsappMessageStatus.QUEUED,
+        )
+    ).scalars().all()
+    for job in jobs:
+        job.status = WhatsappMessageStatus.FAILED
+        job.failed_at = datetime.now(timezone.utc)
+        job.error_message = "Lembrete removido ou alterado."
+
+
+def _equipment_is_temporary_preventive(equipment: Equipment) -> bool:
+    ident = (equipment.identificacao or "").strip().lower()
+    if "cadastro temporário" in ident or "cadastro temporario" in ident:
+        return True
+    return (
+        not (equipment.fabricante or "").strip()
+        and not (equipment.modelo or "").strip()
+        and not (equipment.serial or "").strip()
+        and not (equipment.capacidade_btu or 0)
+    )
+
+
+def get_manual_preventive_reminder(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule_id: int,
+) -> dict[str, Any]:
+    schedule, equipment, client, service = _load_manual_schedule(
+        db, tenant_id=tenant_id, schedule_id=schedule_id
+    )
+    performed = _performed_date_from_schedule(schedule)
+    hist = _find_manual_historico_for_schedule(
+        db,
+        tenant_id=tenant_id,
+        client_id=client.id,
+        service_id=service.id,
+        performed_date=performed,
+    )
+    pending_job = None
+    if hist is not None:
+        pending_job = db.execute(
+            select(WhatsappMessageJob)
+            .where(
+                WhatsappMessageJob.tenant_id == tenant_id,
+                WhatsappMessageJob.reference_type == "preventive_historico",
+                WhatsappMessageJob.reference_id == hist.id,
+                WhatsappMessageJob.status == WhatsappMessageStatus.QUEUED,
+                WhatsappMessageJob.scheduled_for.isnot(None),
+            )
+            .order_by(WhatsappMessageJob.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    return {
+        "preventive_schedule_id": schedule.id,
+        "client_id": client.id,
+        "client_name": client.name,
+        "service_id": service.id,
+        "equipment_id": equipment.id,
+        "equipment_label": (equipment.identificacao or "").strip(),
+        "data_realizacao": performed,
+        "notes": hist.notes if hist else None,
+        "historico_servico_id": hist.id if hist else None,
+        "reminder_send": "scheduled" if pending_job and pending_job.scheduled_for else "none",
+        "reminder_local_date": None,
+        "reminder_local_time": None,
+        "is_temporary_equipment": _equipment_is_temporary_preventive(equipment),
+    }
+
+
+def update_manual_preventive_reminder(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule_id: int,
+    service_id: int,
+    data_realizacao: date,
+    equipment_label: str | None = None,
+    notes: str | None = None,
+) -> EquipmentServicePreventiveSchedule:
+    schedule, equipment, client, service = _load_manual_schedule(
+        db, tenant_id=tenant_id, schedule_id=schedule_id
+    )
+    old_performed = _performed_date_from_schedule(schedule)
+    hist = _find_manual_historico_for_schedule(
+        db,
+        tenant_id=tenant_id,
+        client_id=client.id,
+        service_id=service.id,
+        performed_date=old_performed,
+    )
+
+    new_service = db.execute(
+        select(Service).where(Service.id == service_id, Service.tenant_id == tenant_id)
+    ).scalar_one_or_none()
+    if new_service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Serviço não encontrado.")
+
+    if int(new_service.id) != int(schedule.service_id):
+        duplicate = db.execute(
+            select(EquipmentServicePreventiveSchedule).where(
+                EquipmentServicePreventiveSchedule.equipment_id == equipment.id,
+                EquipmentServicePreventiveSchedule.service_id == new_service.id,
+                EquipmentServicePreventiveSchedule.id != schedule.id,
+            )
+        ).scalar_one_or_none()
+        if duplicate is not None:
+            duplicate.is_active = False
+            db.add(duplicate)
+
+    label = (equipment_label or "").strip()
+    if label and _equipment_is_temporary_preventive(equipment):
+        equipment.identificacao = label[:120]
+
+    performed_at = _performed_date_to_utc(data_realizacao)
+    schedule.service_id = new_service.id
+    schedule.last_performed_at = performed_at
+    schedule.last_service_order_id = None
+    override = db.execute(
+        select(EquipmentServicePreventiveOverride).where(
+            EquipmentServicePreventiveOverride.equipment_id == equipment.id,
+            EquipmentServicePreventiveOverride.service_id == new_service.id,
+            EquipmentServicePreventiveOverride.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+    schedule.interval_value, schedule.interval_type = _effective_interval(new_service, override)
+    schedule.next_due_at = _compute_next_due(
+        performed_at,
+        schedule.interval_value,
+        schedule.interval_type,
+    )
+    schedule.is_active = True
+    db.add(schedule)
+
+    if hist is not None:
+        if hist.id and old_performed != data_realizacao:
+            _cancel_queued_preventive_jobs_for_historico(db, tenant_id=tenant_id, historico_id=hist.id)
+        hist.service_id = new_service.id
+        hist.data_realizacao = data_realizacao
+        if notes is not None:
+            hist.notes = notes
+        db.add(hist)
+    elif notes:
+        db.add(
+            HistoricoServico(
+                tenant_id=tenant_id,
+                client_id=client.id,
+                service_id=new_service.id,
+                data_realizacao=data_realizacao,
+                service_order_id=None,
+                notes=notes,
+            )
+        )
+
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+def delete_manual_preventive_reminder(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule_id: int,
+) -> None:
+    schedule, equipment, client, service = _load_manual_schedule(
+        db, tenant_id=tenant_id, schedule_id=schedule_id
+    )
+    performed = _performed_date_from_schedule(schedule)
+    hist = _find_manual_historico_for_schedule(
+        db,
+        tenant_id=tenant_id,
+        client_id=client.id,
+        service_id=service.id,
+        performed_date=performed,
+    )
+    if hist is not None:
+        _cancel_queued_preventive_jobs_for_historico(db, tenant_id=tenant_id, historico_id=hist.id)
+        db.delete(hist)
+
+    schedule.is_active = False
+    db.add(schedule)
+
+    other_active = db.execute(
+        select(func.count())
+        .select_from(EquipmentServicePreventiveSchedule)
+        .where(
+            EquipmentServicePreventiveSchedule.equipment_id == equipment.id,
+            EquipmentServicePreventiveSchedule.is_active.is_(True),
+            EquipmentServicePreventiveSchedule.id != schedule.id,
+        )
+    ).scalar_one()
+    if int(other_active or 0) == 0 and _equipment_is_temporary_preventive(equipment):
+        equipment.ativo = False
+        db.add(equipment)
+
+    db.commit()
 
 
 def list_preventive_items_by_equipment_month(
@@ -744,6 +1024,17 @@ def list_preventive_items_by_equipment_month(
                 today=today,
             )
         )
+
+    from app.preventive_maintenance import enrich_preventive_items_campaign_status
+
+    tenant_row = db.get(Tenant, tenant_id)
+    enrich_preventive_items_campaign_status(
+        db,
+        tenant_id=tenant_id,
+        items=flat,
+        advance_days=int(tenant_row.preventive_auto_remind_days_before or 0) if tenant_row else 0,
+        tenant_tz=(tenant_row.timezone if tenant_row and tenant_row.timezone else "UTC"),
+    )
 
     flat.sort(
         key=lambda row: (
@@ -836,6 +1127,17 @@ def list_schedule_preventive_items_in_window(
                 today=today,
             )
         )
+
+    from app.preventive_maintenance import enrich_preventive_items_campaign_status
+
+    tenant_row = db.get(Tenant, tenant_id)
+    enrich_preventive_items_campaign_status(
+        db,
+        tenant_id=tenant_id,
+        items=flat,
+        advance_days=int(tenant_row.preventive_auto_remind_days_before or 0) if tenant_row else 0,
+        tenant_tz=(tenant_row.timezone if tenant_row and tenant_row.timezone else "UTC"),
+    )
 
     flat.sort(
         key=lambda row: (

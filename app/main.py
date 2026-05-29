@@ -62,6 +62,8 @@ from app.routers.system import router as system_router
 from app.routers.qrcodes import router as qrcodes_router
 from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.routers.whatsapp_broadcast_campaigns import router as whatsapp_broadcast_campaigns_router
+from app.routers.whatsapp_campaigns import router as whatsapp_campaigns_router
+from app.campaign_scheduler import start_campaign_scheduler_worker, stop_campaign_scheduler_worker
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -427,6 +429,7 @@ app.include_router(nfse_router, prefix=API_V1_PREFIX)
 app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_broadcast_campaigns_router, prefix=API_V1_PREFIX)
+app.include_router(whatsapp_campaigns_router, prefix=API_V1_PREFIX)
 app.include_router(system_router, prefix=API_V1_PREFIX)
 app.include_router(qrcodes_router, prefix=API_V1_PREFIX)
 
@@ -434,6 +437,7 @@ app.include_router(qrcodes_router, prefix=API_V1_PREFIX)
 @app.on_event("startup")
 def _startup_workers() -> None:
     start_whatsapp_reminder_worker()
+    start_campaign_scheduler_worker()
     try:
         from app.database import SessionLocal
         from app.storage_integrity import run_startup_storage_validation
@@ -450,3 +454,4 @@ def _startup_workers() -> None:
 @app.on_event("shutdown")
 def _shutdown_workers() -> None:
     stop_whatsapp_reminder_worker()
+    stop_campaign_scheduler_worker()

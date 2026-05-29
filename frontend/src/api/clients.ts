@@ -347,15 +347,29 @@ function jsonHeaders(): HeadersInit {
 
 export type ClientStatusFilter = "active" | "inactive" | "all";
 
+export type ClientListSortKey = "name" | "email" | "whatsapp";
+export type ClientListSortDir = "asc" | "desc";
+
+export type ClientCountResult = {
+  total: number;
+  empresas: number;
+  pessoas: number;
+  ativos: number;
+};
+
 export async function listClients(params?: {
   q?: string;
   skip?: number;
   limit?: number;
   status?: ClientStatusFilter;
+  sortKey?: ClientListSortKey;
+  sortDir?: ClientListSortDir;
 }): Promise<ClientOut[]> {
   if (isDemoMode()) {
     const q = params?.q?.trim().toLowerCase();
     const st = params?.status ?? "active";
+    const sortKey = params?.sortKey ?? "name";
+    const sortDir = params?.sortDir ?? "asc";
     let filtered = demoListClients();
     if (st === "active") filtered = filtered.filter((c) => c.is_active !== false);
     else if (st === "inactive") filtered = filtered.filter((c) => c.is_active === false);
@@ -367,7 +381,18 @@ export async function listClients(params?: {
           (c.contact_person_name?.toLowerCase().includes(q) ?? false),
       );
     }
-    return Promise.resolve(filtered);
+    filtered.sort((a, b) => {
+      const pick = (row: ClientOut) => {
+        if (sortKey === "email") return (row.email ?? "").trim();
+        if (sortKey === "whatsapp") return (row.whatsapp ?? "").replace(/\D/g, "");
+        return row.name.trim();
+      };
+      const cmp = pick(a).localeCompare(pick(b), "pt-BR", { sensitivity: "base", numeric: true });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    const skip = params?.skip ?? 0;
+    const limit = params?.limit ?? 20;
+    return Promise.resolve(filtered.slice(skip, skip + limit));
   }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
@@ -376,6 +401,8 @@ export async function listClients(params?: {
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
   if (params?.status) sp.set("status", params.status);
+  if (params?.sortKey) sp.set("sort_key", params.sortKey);
+  if (params?.sortDir) sp.set("sort_dir", params.sortDir);
   if (q) sp.set("q", q);
   const response = await fetch(apiUrl(`/api/v1/clients?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -434,10 +461,18 @@ export type ClientImportSummaryOut = {
   errors: string[];
 };
 
-export async function countClients(params?: { q?: string; status?: ClientStatusFilter }): Promise<number> {
+export async function countClients(params?: {
+  q?: string;
+  status?: ClientStatusFilter;
+}): Promise<ClientCountResult> {
   if (isDemoMode()) {
     const rows = await listClients({ q: params?.q, status: params?.status ?? "active", limit: 10000 });
-    return Promise.resolve(rows.length);
+    return Promise.resolve({
+      total: rows.length,
+      empresas: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length,
+      pessoas: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length,
+      ativos: rows.filter((c) => c.is_active).length,
+    });
   }
   const sp = new URLSearchParams();
   if (params?.q?.trim()) sp.set("q", params.q.trim());
@@ -445,7 +480,13 @@ export async function countClients(params?: { q?: string; status?: ClientStatusF
   const response = await fetch(apiUrl(`/api/v1/clients/count?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível contar clientes.", response.status));
-  return (body as { total: number }).total;
+  const data = body as ClientCountResult;
+  return {
+    total: data.total,
+    empresas: data.empresas ?? 0,
+    pessoas: data.pessoas ?? 0,
+    ativos: data.ativos ?? 0,
+  };
 }
 
 export async function exportClientsCsv(params?: { status?: ClientStatusFilter }): Promise<Blob> {

@@ -15,7 +15,13 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.preventive_message_ai import polish_preventive_whatsapp_message
 from app.schemas_preventive import PreventivePreviewOut, PreventiveQuickClientCreate, PreventiveSettingsPatch
+from app.tenant_business_calendar import (
+    effective_preventive_reminder_day,
+    is_within_tenant_work_hours,
+    load_tenant_holiday_dates,
+)
 from app.whatsapp import (
     append_event,
     create_message_job,
@@ -34,6 +40,7 @@ from models import (
     PreventiveInterestLead,
     Service,
     ServiceOrder,
+    ServiceOrderEquipmentService,
     ServiceOrderServiceItem,
     Tenant,
     User,
@@ -114,18 +121,19 @@ def build_preventive_reminder_send_bundle(
         brand_model=None,
         intervalo_label=intervalo,
     )
+    body = _finalize_preventive_whatsapp_body(
+        db,
+        tenant_id=tenant_id,
+        tenant=tenant,
+        rendered_body=body,
+        client_name=cli.name,
+    )
 
-    url = (promo_image_url or "").strip() or (tenant.preventive_promo_image_url or "").strip() or None
-    b64 = (promo_image_base64 or "").strip() or None
-    if b64 and len(b64) > 350_000:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Imagem Base64 muito grande; use uma URL ou reduza o arquivo.",
-        )
-    mimetype = (
-        (promo_image_mimetype or "").strip()
-        or (tenant.preventive_promo_image_mimetype or "").strip()
-        or "image/jpeg"
+    url, b64, mimetype = _resolve_preventive_promo_media(
+        tenant,
+        promo_image_url=promo_image_url,
+        promo_image_base64=promo_image_base64,
+        promo_image_mimetype=promo_image_mimetype,
     )
 
     instance_name = _resolve_tenant_instance(db, tenant_id)
@@ -349,6 +357,50 @@ def client_whatsapp_destination(client: Client | None) -> tuple[bool, str | None
         return False, None
 
 
+def _finalize_preventive_whatsapp_body(
+    db: Session,
+    *,
+    tenant_id: int,
+    tenant: Tenant,
+    rendered_body: str,
+    client_name: str,
+) -> str:
+    return polish_preventive_whatsapp_message(
+        db,
+        tenant=tenant,
+        tenant_id=tenant_id,
+        rendered_body=rendered_body,
+        client_name=client_name,
+        template_pattern=tenant.preventive_message_template,
+    )
+
+
+def _resolve_preventive_promo_media(
+    tenant: Tenant,
+    *,
+    promo_image_url: str | None = None,
+    promo_image_base64: str | None = None,
+    promo_image_mimetype: str | None = None,
+) -> tuple[str | None, str | None, str]:
+    url = (promo_image_url or "").strip() or None
+    b64 = (promo_image_base64 or "").strip() or None
+    if not url and not b64:
+        if not bool(getattr(tenant, "preventive_promo_image_enabled", False)):
+            return None, None, "image/jpeg"
+        url = (tenant.preventive_promo_image_url or "").strip() or None
+    if b64 and len(b64) > 350_000:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Imagem Base64 muito grande; use upload ou reduza o arquivo.",
+        )
+    mimetype = (
+        (promo_image_mimetype or "").strip()
+        or (tenant.preventive_promo_image_mimetype or "").strip()
+        or "image/jpeg"
+    )
+    return url, b64, mimetype
+
+
 def load_tenant_settings_row(db: Session, tenant_id: int) -> Tenant:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
@@ -359,10 +411,13 @@ def load_tenant_settings_row(db: Session, tenant_id: int) -> Tenant:
 def get_preventive_settings(db: Session, tenant_id: int) -> dict[str, Any]:
     t = load_tenant_settings_row(db, tenant_id)
     image_url = t.preventive_promo_image_url
+    has_banner = bool((getattr(t, "preventive_promo_image_s3_key", None) or "").strip())
     return {
         "preventive_promo_image_url": image_url,
         "preventive_image_url": image_url,
+        "preventive_has_banner": has_banner,
         "preventive_promo_image_mimetype": t.preventive_promo_image_mimetype or "image/jpeg",
+        "preventive_promo_image_enabled": bool(getattr(t, "preventive_promo_image_enabled", False)),
         "preventive_technical_problem_hint": t.preventive_technical_problem_hint,
         "preventive_button_more_text": t.preventive_button_more_text,
         "preventive_button_schedule_text": t.preventive_button_schedule_text,
@@ -420,6 +475,13 @@ def build_grouped_preview(
         client_name=str(group["client_name"]),
         items=items,
         problem_hint=override_problem,
+    )
+    text = _finalize_preventive_whatsapp_body(
+        db,
+        tenant_id=tenant_id,
+        tenant=tenant,
+        rendered_body=text,
+        client_name=str(group["client_name"]),
     )
     count = len(items)
     return PreventivePreviewOut(
@@ -488,6 +550,235 @@ def _latest_preventive_whatsapp_jobs_by_historico(
     return {int(j.reference_id): j for j in jobs if j.reference_id is not None}
 
 
+_WHATSAPP_SENT_STATUSES = frozenset(
+    {
+        WhatsappMessageStatus.SENT,
+        WhatsappMessageStatus.DELIVERED,
+        WhatsappMessageStatus.READ,
+    }
+)
+
+
+def _latest_preventive_whatsapp_jobs_by_client(
+    db: Session, *, tenant_id: int, client_ids: list[int]
+) -> dict[int, WhatsappMessageJob]:
+    """Último job preventivo agrupado por cliente (envio manual/automático por mês)."""
+    if not client_ids:
+        return {}
+    subq = (
+        select(
+            WhatsappMessageJob.reference_id.label("cid"),
+            func.max(WhatsappMessageJob.id).label("jid"),
+        )
+        .where(
+            WhatsappMessageJob.tenant_id == tenant_id,
+            WhatsappMessageJob.template_key == "preventive_maintenance",
+            WhatsappMessageJob.reference_type == "preventive_client",
+            WhatsappMessageJob.reference_id.in_(client_ids),
+        )
+        .group_by(WhatsappMessageJob.reference_id)
+    ).subquery()
+    jobs = db.execute(select(WhatsappMessageJob).join(subq, WhatsappMessageJob.id == subq.c.jid)).scalars().all()
+    return {int(j.reference_id): j for j in jobs if j.reference_id is not None}
+
+
+def _pending_preventive_order_ids_by_equipment_service(
+    db: Session,
+    *,
+    tenant_id: int,
+    equipment_ids: list[int],
+) -> dict[tuple[int, int], int]:
+    """Mapa (equipment_id, service_id) → OS preventiva em aberto/agendada."""
+    if not equipment_ids:
+        return {}
+    rows = db.execute(
+        select(
+            ServiceOrderEquipmentService.equipment_id,
+            ServiceOrderEquipmentService.service_id,
+            ServiceOrder.id,
+        )
+        .join(ServiceOrder, ServiceOrder.id == ServiceOrderEquipmentService.service_order_id)
+        .join(Service, Service.id == ServiceOrderEquipmentService.service_id)
+        .where(
+            ServiceOrder.tenant_id == tenant_id,
+            ServiceOrderEquipmentService.equipment_id.in_(equipment_ids),
+            ServiceOrder.status.in_(
+                (
+                    OrderStatus.OPEN,
+                    OrderStatus.SCHEDULED,
+                    OrderStatus.APPROVED,
+                    OrderStatus.IN_PROGRESS,
+                )
+            ),
+            Service.preventive_enabled.is_(True),
+        )
+        .order_by(ServiceOrder.id.desc())
+    ).all()
+    out: dict[tuple[int, int], int] = {}
+    for eq_id, svc_id, order_id in rows:
+        if eq_id is None or svc_id is None:
+            continue
+        key = (int(eq_id), int(svc_id))
+        if key not in out:
+            out[key] = int(order_id)
+    return out
+
+
+def _whatsapp_job_is_sent(job: WhatsappMessageJob | None) -> bool:
+    if job is None:
+        return False
+    st = job.status.value if isinstance(job.status, WhatsappMessageStatus) else str(job.status)
+    try:
+        return WhatsappMessageStatus(st) in _WHATSAPP_SENT_STATUSES
+    except ValueError:
+        return st.lower() in {"sent", "delivered", "read"}
+
+
+def _preventive_item_due_date(item: dict[str, Any]) -> date:
+    due = item["data_proximo_vencimento"]
+    if isinstance(due, datetime):
+        return due.date()
+    return due
+
+
+def _preventive_sent_reminders_by_client(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_ids: list[int],
+    tenant_tz: str,
+    lookback_days: int = 120,
+) -> dict[int, list[tuple[date, str | None]]]:
+    """Jobs preventivos enviados por cliente → [(data civil envio, reminder_kind ou None)]."""
+    if not client_ids:
+        return {}
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, lookback_days))
+    rows = db.execute(
+        select(WhatsappMessageJob, LembretePreventivo.reminder_kind)
+        .outerjoin(LembretePreventivo, LembretePreventivo.whatsapp_job_id == WhatsappMessageJob.id)
+        .where(
+            WhatsappMessageJob.tenant_id == tenant_id,
+            WhatsappMessageJob.template_key == "preventive_maintenance",
+            WhatsappMessageJob.reference_type == "preventive_client",
+            WhatsappMessageJob.reference_id.in_(client_ids),
+            WhatsappMessageJob.status.in_(tuple(_WHATSAPP_SENT_STATUSES)),
+            WhatsappMessageJob.created_at >= since,
+        )
+        .order_by(WhatsappMessageJob.id.desc())
+    ).all()
+    out: dict[int, list[tuple[date, str | None]]] = {cid: [] for cid in client_ids}
+    for job, kind in rows:
+        cid = int(job.reference_id or 0)
+        if cid not in out:
+            continue
+        sent_at = job.sent_at or job.created_at
+        if sent_at is None:
+            continue
+        out[cid].append((tenant_local_date(sent_at, tenant_tz), kind))
+    return out
+
+
+def enrich_preventive_items_campaign_status(
+    db: Session,
+    *,
+    tenant_id: int,
+    items: list[dict[str, Any]],
+    advance_days: int = 0,
+    tenant_tz: str = "UTC",
+) -> None:
+    """Preenche status: agenda (OS), lembrete WhatsApp automático/manual e vencida."""
+    if not items:
+        return
+
+    client_ids = sorted({int(i["client_id"]) for i in items if i.get("client_id")})
+    equipment_ids = sorted({int(i["equipment_id"]) for i in items if i.get("equipment_id")})
+    advance_days = max(0, int(advance_days or 0))
+    tenant = db.get(Tenant, tenant_id)
+    holidays = load_tenant_holiday_dates(db, tenant_id) if tenant else set()
+
+    wa_by_client = _latest_preventive_whatsapp_jobs_by_client(db, tenant_id=tenant_id, client_ids=client_ids)
+    sent_by_client = _preventive_sent_reminders_by_client(
+        db,
+        tenant_id=tenant_id,
+        client_ids=client_ids,
+        tenant_tz=tenant_tz,
+    )
+    pending_os = _pending_preventive_order_ids_by_equipment_service(
+        db,
+        tenant_id=tenant_id,
+        equipment_ids=equipment_ids,
+    )
+
+    for item in items:
+        cid = int(item.get("client_id") or 0)
+        eid = int(item.get("equipment_id") or 0)
+        sid = int(item.get("service_id") or 0)
+        dias = int(item.get("dias_ate_vencimento") or 0)
+        due = _preventive_item_due_date(item)
+
+        order_id = pending_os.get((eid, sid)) if eid > 0 and sid > 0 else None
+        job = wa_by_client.get(cid) if cid > 0 else None
+        if job is None and int(item.get("historico_servico_id") or 0) > 0:
+            hist_job = _latest_preventive_whatsapp_jobs_by_historico(
+                db,
+                tenant_id=tenant_id,
+                historico_ids=[int(item["historico_servico_id"])],
+            ).get(int(item["historico_servico_id"]))
+            job = hist_job
+
+        if tenant:
+            reminder_target = effective_preventive_reminder_day(tenant, due, advance_days, holidays)
+        else:
+            reminder_target = due - timedelta(days=advance_days) if advance_days > 0 else due
+        auto_reminder_sent = False
+        for sent_day, kind in sent_by_client.get(cid, []):
+            if sent_day == reminder_target:
+                auto_reminder_sent = True
+                break
+            if advance_days > 0 and kind == REMINDER_KIND_AUTO_ADVANCE:
+                auto_reminder_sent = True
+                break
+            if advance_days == 0 and kind == REMINDER_KIND_AUTO_DUE:
+                auto_reminder_sent = True
+                break
+
+        mensagem_enviada = auto_reminder_sent or _whatsapp_job_is_sent(job)
+        if not mensagem_enviada and item.get("ultimo_whatsapp_status"):
+            try:
+                mensagem_enviada = WhatsappMessageStatus(str(item["ultimo_whatsapp_status"])) in _WHATSAPP_SENT_STATUSES
+            except ValueError:
+                mensagem_enviada = str(item["ultimo_whatsapp_status"]).lower() in {"sent", "delivered", "read"}
+
+        status_agenda = order_id is not None
+        status_vencida = dias < 0
+
+        item["pending_service_order_id"] = order_id
+        item["status_agenda"] = status_agenda
+        item["status_lembrete_antecipado"] = False
+        item["status_lembrete_vencimento"] = False
+        item["status_mensagem_enviada"] = mensagem_enviada
+        item["status_vencida"] = status_vencida
+
+        if status_agenda:
+            item["campaign_status"] = "agenda"
+        elif mensagem_enviada:
+            item["campaign_status"] = "mensagem_enviada"
+        elif status_vencida:
+            item["campaign_status"] = "vencida"
+        else:
+            item["campaign_status"] = None
+
+        if job is not None and item.get("ultimo_whatsapp_status") is None:
+            st = job.status.value if isinstance(job.status, WhatsappMessageStatus) else str(job.status)
+            item["ultimo_whatsapp_status"] = st
+            err = (job.error_message or "").strip()
+            if job.status == WhatsappMessageStatus.FAILED and err:
+                item["ultimo_whatsapp_erro"] = err[:400] + ("…" if len(err) > 400 else "")
+            else:
+                item["ultimo_whatsapp_erro"] = None
+            item["ultimo_whatsapp_em"] = job.failed_at or job.sent_at or job.created_at
+
+
 def list_preventive_items(db: Session, *, tenant_id: int, window_days: int) -> list[dict[str, Any]]:
     """Lista preventivas vencidas ou na janela — regras por equipamento + histórico legado."""
     from app.equipment_preventive_rules import (
@@ -508,7 +799,16 @@ def list_preventive_items(db: Session, *, tenant_id: int, window_days: int) -> l
         window_days=window_days,
     )
     merged = _merge_equipment_and_historico_preventive_items(equipment_items, historico_items)
-    return _merge_equipment_and_historico_preventive_items(merged, schedule_items)
+    merged = _merge_equipment_and_historico_preventive_items(merged, schedule_items)
+    tenant = load_tenant_settings_row(db, tenant_id)
+    enrich_preventive_items_campaign_status(
+        db,
+        tenant_id=tenant_id,
+        items=merged,
+        advance_days=int(tenant.preventive_auto_remind_days_before or 0),
+        tenant_tz=tenant.timezone or "UTC",
+    )
+    return merged
 
 
 def _merge_equipment_and_historico_preventive_items(
@@ -1143,6 +1443,7 @@ def _deliver_preventive_evolution_message(
             payload={
                 "historico_servico_id": historico_servico_id,
                 "client_id": client_id,
+                "reminder_kind": reminder_kind,
                 "media": bool(url or b64),
             },
             job_id=job.id,
@@ -1339,17 +1640,18 @@ def build_preventive_grouped_send_bundle(
         items=items,
         problem_hint=technical_problem_hint,
     )
-    url = (promo_image_url or "").strip() or (tenant.preventive_promo_image_url or "").strip() or None
-    b64 = (promo_image_base64 or "").strip() or None
-    if b64 and len(b64) > 350_000:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Imagem Base64 muito grande; use uma URL ou reduza o arquivo.",
-        )
-    mimetype = (
-        (promo_image_mimetype or "").strip()
-        or (tenant.preventive_promo_image_mimetype or "").strip()
-        or "image/jpeg"
+    body = _finalize_preventive_whatsapp_body(
+        db,
+        tenant_id=tenant_id,
+        tenant=tenant,
+        rendered_body=body,
+        client_name=cli.name,
+    )
+    url, b64, mimetype = _resolve_preventive_promo_media(
+        tenant,
+        promo_image_url=promo_image_url,
+        promo_image_base64=promo_image_base64,
+        promo_image_mimetype=promo_image_mimetype,
     )
     instance_name = _resolve_tenant_instance(db, tenant_id)
     anchor_historico_id = _resolve_group_anchor_historico_id(items)
@@ -1768,13 +2070,6 @@ def register_manual_preventive_entry(
     return hist, job
 
 
-def _preventive_item_due_date(item: dict[str, Any]) -> date:
-    due = item["data_proximo_vencimento"]
-    if isinstance(due, datetime):
-        return due.date()
-    return due
-
-
 def _group_already_sent_auto_reminder_today(
     db: Session,
     *,
@@ -1832,32 +2127,28 @@ def _collect_auto_reminder_groups_for_tenant(
     tenant: Tenant,
     local_today: date,
     advance_days: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Separa grupos (cliente + mês) para vencimento hoje e lembrete antecipado."""
+    holidays: set[date],
+) -> list[dict[str, Any]]:
+    """Grupos (cliente + mês) cujo lembrete automático cai no dia civil local (ajustado a dias úteis)."""
     window_days = max(advance_days, 1)
     rows = list_preventive_items(db, tenant_id=tenant.id, window_days=window_days)
     eligible = [r for r in rows if r.get("whatsapp_valido")]
 
-    due_matching: list[dict[str, Any]] = []
-    advance_matching: list[dict[str, Any]] = []
+    matching: list[dict[str, Any]] = []
     for row in eligible:
         due = _preventive_item_due_date(row)
-        if due == local_today:
-            due_matching.append(row)
-        if advance_days > 0 and due == local_today + timedelta(days=advance_days):
-            advance_matching.append(row)
+        effective = effective_preventive_reminder_day(tenant, due, advance_days, holidays)
+        if effective == local_today:
+            matching.append(row)
 
-    return (
-        group_preventive_items_by_client_and_due_month(due_matching),
-        group_preventive_items_by_client_and_due_month(advance_matching),
-    )
+    return group_preventive_items_by_client_and_due_month(matching)
 
 
 def dispatch_preventive_due_today(
     *,
     now_utc: datetime | None = None,
 ) -> dict[str, int]:
-    """Automático: vencimento no dia civil do tenant e opcionalmente N dias antes (agrupado por cliente+mês)."""
+    """Automático: um lembrete por cliente — no dia do vencimento (0 dias) ou N dias antes, em dias úteis e no expediente."""
     now = now_utc or datetime.now(timezone.utc)
     now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
     checked = 0
@@ -1873,25 +2164,30 @@ def dispatch_preventive_due_today(
             if not bool(getattr(tenant, "preventive_auto_whatsapp_enabled", False)):
                 continue
             tz_name = tenant.timezone or "UTC"
+            holidays = load_tenant_holiday_dates(db, tenant.id)
+            if not is_within_tenant_work_hours(tenant, now, holidays):
+                continue
             local_today = tenant_local_date(now, tz_name)
             advance_days = max(0, int(tenant.preventive_auto_remind_days_before or 0))
 
             window_days = max(advance_days, 1)
             checked += len(list_preventive_items(db, tenant_id=tenant.id, window_days=window_days))
 
-            due_groups, advance_groups = _collect_auto_reminder_groups_for_tenant(
+            auto_groups = _collect_auto_reminder_groups_for_tenant(
                 db,
                 tenant=tenant,
                 local_today=local_today,
                 advance_days=advance_days,
+                holidays=holidays,
             )
+            auto_kind = REMINDER_KIND_AUTO_ADVANCE if advance_days > 0 else REMINDER_KIND_AUTO_DUE
 
-            for group in due_groups:
+            for group in auto_groups:
                 if _group_already_sent_auto_reminder_today(
                     db,
                     tenant_id=tenant.id,
                     group=group,
-                    reminder_kind=REMINDER_KIND_AUTO_DUE,
+                    reminder_kind=auto_kind,
                     tenant_tz=tz_name,
                     tenant_local_day=local_today,
                 ):
@@ -1902,46 +2198,20 @@ def dispatch_preventive_due_today(
                         tenant_id=tenant.id,
                         created_by_user=None,
                         items=group["items"],
-                        reminder_kind=REMINDER_KIND_AUTO_DUE,
+                        reminder_kind=auto_kind,
                     )
-                    sent_due += 1
+                    if advance_days > 0:
+                        sent_advance += 1
+                    else:
+                        sent_due += 1
                 except Exception:
                     logger.exception(
-                        "preventive auto due reminder failed tenant_id=%s client_id=%s due=%s-%02d",
+                        "preventive auto reminder failed tenant_id=%s client_id=%s due=%s-%02d kind=%s",
                         tenant.id,
                         group.get("client_id"),
                         group.get("due_year"),
                         group.get("due_month"),
-                    )
-                    db.rollback()
-                    continue
-
-            for group in advance_groups:
-                if _group_already_sent_auto_reminder_today(
-                    db,
-                    tenant_id=tenant.id,
-                    group=group,
-                    reminder_kind=REMINDER_KIND_AUTO_ADVANCE,
-                    tenant_tz=tz_name,
-                    tenant_local_day=local_today,
-                ):
-                    continue
-                try:
-                    dispatch_preventive_grouped_reminder(
-                        db,
-                        tenant_id=tenant.id,
-                        created_by_user=None,
-                        items=group["items"],
-                        reminder_kind=REMINDER_KIND_AUTO_ADVANCE,
-                    )
-                    sent_advance += 1
-                except Exception:
-                    logger.exception(
-                        "preventive auto advance reminder failed tenant_id=%s client_id=%s due=%s-%02d",
-                        tenant.id,
-                        group.get("client_id"),
-                        group.get("due_year"),
-                        group.get("due_month"),
+                        auto_kind,
                     )
                     db.rollback()
                     continue
@@ -2209,14 +2479,18 @@ def spawn_preventive_reminders_bulk_thread(
 
 
 def list_interest_leads(db: Session, *, tenant_id: int, limit: int = 100) -> list[PreventiveInterestLead]:
+    from sqlalchemy.orm import joinedload
+
     return (
         db.execute(
             select(PreventiveInterestLead)
+            .options(joinedload(PreventiveInterestLead.client))
             .where(PreventiveInterestLead.tenant_id == tenant_id)
             .order_by(PreventiveInterestLead.id.desc())
             .limit(limit)
         )
         .scalars()
+        .unique()
         .all()
     )
 

@@ -20,7 +20,9 @@ export type {
 export type PreventiveSettings = {
   preventive_promo_image_url: string | null;
   preventive_image_url: string | null;
+  preventive_has_banner?: boolean;
   preventive_promo_image_mimetype: string | null;
+  preventive_promo_image_enabled?: boolean;
   preventive_technical_problem_hint: string | null;
   preventive_button_more_text: string;
   preventive_button_schedule_text: string;
@@ -32,12 +34,23 @@ export type PreventiveSettings = {
 
 export type PreventiveTemplatePayload = {
   preventive_message_template: string | null;
-  preventive_image_url: string | null;
+  preventive_promo_image_enabled?: boolean;
 };
+
+/** URL para prévia do banner no painel. */
+export function preventiveBannerPreviewUrl(settings: PreventiveSettings | null | undefined): string {
+  if (!settings?.preventive_has_banner) return "";
+  const direct =
+    settings.preventive_promo_image_url?.trim() || settings.preventive_image_url?.trim() || "";
+  if (direct) return direct;
+  return apiUrl("/api/v1/preventive-maintenance/banner-image/file");
+}
 
 export type PreventiveItem = {
   historico_servico_id: number;
   rule_id?: number | null;
+  preventive_schedule_id?: number | null;
+  is_manual_reminder?: boolean;
   client_id: number;
   client_name: string;
   service_id: number;
@@ -56,6 +69,13 @@ export type PreventiveItem = {
   ultimo_whatsapp_status?: string | null;
   ultimo_whatsapp_erro?: string | null;
   ultimo_whatsapp_em?: string | null;
+  pending_service_order_id?: number | null;
+  status_agenda?: boolean;
+  status_mensagem_enviada?: boolean;
+  status_lembrete_antecipado?: boolean;
+  status_lembrete_vencimento?: boolean;
+  status_vencida?: boolean;
+  campaign_status?: "agenda" | "mensagem_enviada" | "lembrete_antecipado" | "lembrete_vencimento" | "vencida" | null;
 };
 
 export type PreventiveClientGroup = {
@@ -88,6 +108,7 @@ export type PreventiveLead = {
   id: number;
   tenant_id: number;
   client_id: number;
+  client_name?: string | null;
   historico_servico_id: number | null;
   whatsapp_digits: string;
   interest_kind: "more" | "schedule";
@@ -232,9 +253,33 @@ export async function patchPreventiveTemplateSettings(
 ): Promise<PreventiveSettings> {
   return patchPreventiveSettings({
     preventive_message_template: payload.preventive_message_template?.trim() || null,
-    preventive_image_url: payload.preventive_image_url?.trim() || null,
-    preventive_promo_image_url: payload.preventive_image_url?.trim() || null,
+    preventive_promo_image_enabled: payload.preventive_promo_image_enabled,
   });
+}
+
+export async function uploadPreventiveBannerImage(file: File): Promise<PreventiveSettings> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Sessão expirada.");
+  const fd = new FormData();
+  fd.set("file", file);
+  const response = await fetch(apiUrl("/api/v1/preventive-maintenance/banner-image"), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível enviar o banner."));
+  return body as PreventiveSettings;
+}
+
+export async function deletePreventiveBannerImage(): Promise<PreventiveSettings> {
+  const response = await fetch(apiUrl("/api/v1/preventive-maintenance/banner-image"), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível remover o banner."));
+  return body as PreventiveSettings;
 }
 
 export async function patchPreventiveSettings(payload: Partial<PreventiveSettings>): Promise<PreventiveSettings> {
@@ -334,6 +379,65 @@ export async function registerPreventiveFromServiceOrder(
     );
   }
   return body as HistoricoServicoOut[];
+}
+
+export type PreventiveManualReminderDetail = {
+  preventive_schedule_id: number;
+  client_id: number;
+  client_name: string;
+  service_id: number;
+  equipment_id: number;
+  equipment_label: string;
+  data_realizacao: string | null;
+  notes: string | null;
+  historico_servico_id: number | null;
+  reminder_send: "none" | "now" | "scheduled";
+  reminder_local_date: string | null;
+  reminder_local_time: string | null;
+  is_temporary_equipment: boolean;
+};
+
+export async function fetchManualPreventiveReminder(scheduleId: number): Promise<PreventiveManualReminderDetail> {
+  const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/manual-reminders/${scheduleId}`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(apiFailureMessage(body, response.status, "Não foi possível carregar o lembrete."));
+  }
+  return body as PreventiveManualReminderDetail;
+}
+
+export async function updateManualPreventiveReminder(
+  scheduleId: number,
+  payload: {
+    service_id: number;
+    data_realizacao: string;
+    equipment_label?: string | null;
+    notes?: string | null;
+  },
+): Promise<PreventiveManualReminderDetail> {
+  const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/manual-reminders/${scheduleId}`), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(apiFailureMessage(body, response.status, "Não foi possível atualizar o lembrete."));
+  }
+  return body as PreventiveManualReminderDetail;
+}
+
+export async function deleteManualPreventiveReminder(scheduleId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/manual-reminders/${scheduleId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(apiFailureMessage(body, response.status, "Não foi possível excluir o lembrete."));
+  }
 }
 
 export async function registerPreventiveEntry(payload: PreventiveRegisterEntryPayload): Promise<PreventiveRegisterEntryOut> {

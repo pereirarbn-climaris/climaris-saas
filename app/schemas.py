@@ -735,6 +735,8 @@ class TenantOut(BaseModel):
     cnpj: str
     tax_id_kind: Literal["cnpj", "cpf", "pending"]
     active_plan: str
+    # Nome exibível do plano (catálogo SaaS); active_plan permanece a chave técnica.
+    active_plan_label: str | None = None
     finance_enabled: bool
     finance_mode: Literal["basic", "intermediate", "management"]
     timezone: str
@@ -1105,6 +1107,9 @@ class ClientAuditEntryOut(BaseModel):
 
 class ClientCountOut(BaseModel):
     total: int
+    empresas: int = 0
+    pessoas: int = 0
+    ativos: int = 0
 
 
 class ClientImportSummaryOut(BaseModel):
@@ -2314,6 +2319,17 @@ class FinanceSettingsOut(BaseModel):
     requires_marketplace_slug: str | None = None
 
 
+class FinanceEntitlementsOut(BaseModel):
+    """Feature flags do financeiro (plano SaaS + modo efetivo + marketplace)."""
+
+    plan_key: str
+    plan_label: str
+    effective_finance_mode: Literal["basic", "intermediate", "management"]
+    max_finance_mode: Literal["basic", "intermediate", "management"]
+    features: dict[str, bool]
+    blocked_reasons: dict[str, str]
+
+
 class FinanceSettingsUpdate(BaseModel):
     finance_enabled: bool
     finance_mode: Literal["basic", "intermediate", "management"]
@@ -2587,6 +2603,48 @@ class FinanceOfxMatchItem(BaseModel):
 
 class FinanceOfxApplyMatches(BaseModel):
     matches: list[FinanceOfxMatchItem] = Field(..., min_length=1, max_length=200)
+
+
+class FinanceGatewayReconciliationFeedLineOut(BaseModel):
+    id: str
+    provider: Literal["mercadopago", "stone"]
+    external_id: str
+    description: str
+    amount: float
+    settlement_date: date
+    status: Literal["pending", "processed", "divergent"]
+    matched_entry_id: int | None = None
+
+
+class FinanceGatewayReconciliationEntryOut(BaseModel):
+    id: int
+    description: str
+    amount: float
+    settlement_date: date
+    status: Literal["pending", "reconciled", "divergent"]
+    payment_provider: str | None = None
+    gateway_payment_id: str | None = None
+    finance_account_id: int | None = None
+    entry_status: str
+
+
+class FinanceGatewayReconciliationMatchSuggestionOut(BaseModel):
+    feed_id: str
+    entry_id: int
+    confidence: Literal["high", "medium"]
+
+
+class FinanceGatewayReconciliationDashboardOut(BaseModel):
+    feed_lines: list[FinanceGatewayReconciliationFeedLineOut]
+    climaris_entries: list[FinanceGatewayReconciliationEntryOut]
+    suggestions: list[FinanceGatewayReconciliationMatchSuggestionOut]
+    providers_loaded: list[str]
+    fetch_errors: list[str] = Field(default_factory=list)
+
+
+class FinanceGatewayReconciliationMatchIn(BaseModel):
+    feed_id: str = Field(..., min_length=3, max_length=80)
+    finance_entry_id: int = Field(..., ge=1)
 
 
 class FinanceEntryAsaasChargeCreate(BaseModel):

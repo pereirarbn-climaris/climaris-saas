@@ -29,6 +29,10 @@ import {
   demoUpsertFinanceGatewayMercadoPago,
   isDemoMode,
 } from "../lib/demoMode";
+import { resolveFinanceEntitlements } from "../lib/financeEntitlements";
+import type { FinanceEntitlements } from "../schemas/financeCore";
+
+export type { FinanceEntitlements, FinanceFeatureKey } from "../schemas/financeCore";
 
 export type FinanceEntryType = "income" | "expense";
 export type FinanceEntryStatus = "pending" | "paid" | "overdue" | "cancelled";
@@ -907,6 +911,17 @@ export async function getFinanceSettings(): Promise<FinanceSettingsOut> {
   return body as FinanceSettingsOut;
 }
 
+export async function getFinanceEntitlements(): Promise<FinanceEntitlements> {
+  if (isDemoMode()) {
+    const settings = await demoGetFinanceSettings();
+    return resolveFinanceEntitlements({ settings, planKey: "professional", planLabel: "Professional (demo)" });
+  }
+  const response = await fetch(apiUrl("/api/v1/finance/entitlements"), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar permissões do financeiro."));
+  return body as FinanceEntitlements;
+}
+
 export async function updateFinanceSettings(payload: {
   finance_enabled: boolean;
   finance_mode: "basic" | "intermediate" | "management";
@@ -1327,4 +1342,81 @@ export async function sendFinanceDueReminders(params: {
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível enviar lembretes."));
   return body as { status: string; sent: number; eligible: number; due_date: string };
+}
+
+export type ReconciliationFeedStatus = "pending" | "processed" | "divergent";
+export type ReconciliationEntryStatus = "pending" | "reconciled" | "divergent";
+
+export type FinanceReconciliationFeedLine = {
+  id: string;
+  provider: "mercadopago" | "stone";
+  external_id: string;
+  description: string;
+  amount: number;
+  settlement_date: string;
+  status: ReconciliationFeedStatus;
+  matched_entry_id: number | null;
+};
+
+export type FinanceReconciliationEntry = {
+  id: number;
+  description: string;
+  amount: number;
+  settlement_date: string;
+  status: ReconciliationEntryStatus;
+  payment_provider: string | null;
+  gateway_payment_id: string | null;
+  finance_account_id: number | null;
+  entry_status: string;
+};
+
+export type FinanceReconciliationSuggestion = {
+  feed_id: string;
+  entry_id: number;
+  confidence: "high" | "medium";
+};
+
+export type FinanceReconciliationDashboard = {
+  feed_lines: FinanceReconciliationFeedLine[];
+  climaris_entries: FinanceReconciliationEntry[];
+  suggestions: FinanceReconciliationSuggestion[];
+  providers_loaded: string[];
+  fetch_errors: string[];
+};
+
+export async function getFinanceReconciliationDashboard(params: {
+  start_date: string;
+  end_date: string;
+  finance_account_id?: number;
+  provider?: "mercadopago" | "stone" | "all";
+}): Promise<FinanceReconciliationDashboard> {
+  const sp = new URLSearchParams({
+    start_date: params.start_date,
+    end_date: params.end_date,
+  });
+  if (params.finance_account_id != null) {
+    sp.set("finance_account_id", String(params.finance_account_id));
+  }
+  if (params.provider && params.provider !== "all") {
+    sp.set("provider", params.provider);
+  }
+  const response = await fetch(apiUrl(`/api/v1/finance/reconciliation/dashboard?${sp.toString()}`), {
+    headers: bearer(),
+  });
+  const body = await parseResponseOrApiError(response, "Não foi possível carregar a conciliação.");
+  return body as FinanceReconciliationDashboard;
+}
+
+export async function postFinanceReconciliationMatch(payload: {
+  feed_id: string;
+  finance_entry_id: number;
+}): Promise<{ status: string; finance_entry_id: number; feed_id: string; reconciliation_status: string }> {
+  const response = await fetch(apiUrl("/api/v1/finance/reconciliation/match"), {
+    method: "POST",
+    headers: bearer(true),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível conciliar."));
+  return body as { status: string; finance_entry_id: number; feed_id: string; reconciliation_status: string };
 }

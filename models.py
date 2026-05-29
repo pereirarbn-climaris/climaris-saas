@@ -256,6 +256,9 @@ class Tenant(Base):
     whatsapp_appointment_cancel_reply: Mapped[str | None] = mapped_column(Text, nullable=True)
     whatsapp_reminder_offsets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     whatsapp_reminder_custom_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    whatsapp_agenda_dispatch_scheduled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     whatsapp_automation_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     logo_s3_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -263,7 +266,9 @@ class Tenant(Base):
     logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     pdf_primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#0B7FAF")
     preventive_promo_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    preventive_promo_image_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     preventive_promo_image_mimetype: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    preventive_promo_image_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     preventive_technical_problem_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
     preventive_button_more_text: Mapped[str] = mapped_column(String(80), nullable=False, default="Sim, quero saber mais")
     preventive_button_schedule_text: Mapped[str] = mapped_column(String(80), nullable=False, default="Agendar agora")
@@ -1713,7 +1718,7 @@ class Service(Base):
 
     @property
     def estimated_material_cost(self) -> float:
-        return float(sum(float(item.unit_cost) * float(item.quantity) for item in self.product_inputs))
+        return float(sum(item.total_cost for item in self.product_inputs))
 
     @property
     def estimated_profit(self) -> float:
@@ -2222,8 +2227,15 @@ class ServiceProductInput(Base):
     product: Mapped["Product"] = relationship(back_populates="service_inputs")
 
     @property
+    def effective_unit_cost(self) -> float:
+        """Custo unitário atual: preço de compra do produto (fallback no snapshot salvo)."""
+        if self.product is not None:
+            return float(self.product.purchase_price)
+        return float(self.unit_cost)
+
+    @property
     def total_cost(self) -> float:
-        return float(self.unit_cost) * float(self.quantity)
+        return self.effective_unit_cost * float(self.quantity)
 
 
 class Schedule(Base):
@@ -2876,6 +2888,93 @@ class WhatsappBroadcastCampaignRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     campaign: Mapped["WhatsappBroadcastCampaign"] = relationship(back_populates="runs")
+
+
+class Campaign(Base):
+    __tablename__ = "campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    message_template: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft", index=True)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    segment_kind: Mapped[str] = mapped_column(String(40), nullable=False, default="inactive_since")
+    segment_params_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("campaign_assets.id", ondelete="SET NULL"), nullable=True)
+    total_contacts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    asset: Mapped["CampaignAsset | None"] = relationship(foreign_keys=[asset_id])
+    logs: Mapped[list["CampaignLog"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
+    interactions: Mapped[list["CampaignInteraction"]] = relationship(
+        back_populates="campaign", cascade="all, delete-orphan"
+    )
+
+
+class CampaignLog(Base):
+    __tablename__ = "campaign_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    external_lead_id: Mapped[int | None] = mapped_column(
+        ForeignKey("campaign_external_leads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    recipient_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    campaign: Mapped["Campaign"] = relationship(back_populates="logs")
+    client: Mapped["Client | None"] = relationship()
+    external_lead: Mapped["CampaignExternalLead | None"] = relationship()
+
+
+class CampaignExternalLead(Base):
+    __tablename__ = "campaign_external_leads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    import_batch_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    source_filename: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CampaignInteraction(Base):
+    __tablename__ = "campaign_interactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    interaction_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    campaign: Mapped["Campaign"] = relationship(back_populates="interactions")
+    client: Mapped["Client | None"] = relationship()
+
+
+class CampaignAsset(Base):
+    __tablename__ = "campaign_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String(600), nullable=False)
+    s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class TechnicianWorkWindow(Base):

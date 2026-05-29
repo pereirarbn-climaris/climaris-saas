@@ -370,6 +370,9 @@ def render_appointment_reminder_message(
     )
 
 
+_REMINDER_DISPATCH_SCHEDULE_UNSET: Any = object()
+
+
 def get_tenant_reminder_rules(db: Session, *, tenant_id: int) -> dict[str, Any]:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
@@ -392,6 +395,8 @@ def get_tenant_reminder_rules(db: Session, *, tenant_id: int) -> dict[str, Any]:
     if bool(rules.get("custom_enabled")) and isinstance(rules.get("custom_minutes"), int) and int(rules["custom_minutes"]) > 0:
         active_offsets.append(int(rules["custom_minutes"]))
     rules["active_offsets_minutes"] = sorted(set(active_offsets))
+    scheduled_at = getattr(tenant, "whatsapp_agenda_dispatch_scheduled_at", None)
+    rules["dispatch_scheduled_at"] = scheduled_at
     return rules
 
 
@@ -405,10 +410,31 @@ def update_tenant_reminder_rules(
     offset_1d: bool | None = None,
     custom_enabled: bool | None = None,
     custom_minutes: int | None = None,
+    dispatch_scheduled_at: datetime | None | Any = _REMINDER_DISPATCH_SCHEDULE_UNSET,
 ) -> dict[str, Any]:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    if dispatch_scheduled_at is not _REMINDER_DISPATCH_SCHEDULE_UNSET:
+        if dispatch_scheduled_at is None:
+            tenant.whatsapp_agenda_dispatch_scheduled_at = None
+        else:
+            dt = dispatch_scheduled_at
+            if not isinstance(dt, datetime):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Data de agendamento inválida.",
+                )
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            if dt <= datetime.now(timezone.utc):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="A data de agendamento deve ser posterior ao momento atual.",
+                )
+            tenant.whatsapp_agenda_dispatch_scheduled_at = dt
     current = get_tenant_reminder_rules(db, tenant_id=tenant_id)
     next_rules = dict(current)
     if offset_15m is not None:
@@ -734,14 +760,25 @@ def _evolution_request(method: str, path: str, payload: dict[str, Any] | None = 
     return data
 
 
-def _evolution_send_text(instance_name: str, number: str, message: str) -> ProviderSendResult:
-    payload = {
+def _evolution_send_text(
+    instance_name: str,
+    number: str,
+    message: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> ProviderSendResult:
+    options: dict[str, Any] = {"delay": 0, "presence": "composing"}
+    if metadata:
+        options["externalAttributes"] = metadata
+    payload: dict[str, Any] = {
         "number": number,
         # Compatibilidade com variações da Evolution API que exigem `text` no root.
         "text": message,
-        "options": {"delay": 0, "presence": "composing"},
+        "options": options,
         "textMessage": {"text": message},
     }
+    if metadata:
+        payload["metadata"] = metadata
     data = _evolution_request("POST", f"/message/sendText/{instance_name}", payload)
 
     key_data = data.get("key") if isinstance(data, dict) else {}
@@ -762,6 +799,7 @@ def evolution_send_media_message(
     media_base64: str | None = None,
     mimetype: str = "image/jpeg",
     filename: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> ProviderSendResult:
     """POST /message/sendMedia/{instance} — imagem por URL ou Base64 (Evolution API)."""
     media = (media_url or "").strip() or (media_base64 or "").strip()
@@ -780,6 +818,8 @@ def evolution_send_media_message(
     }
     if filename:
         payload["fileName"] = filename
+    if metadata:
+        payload["metadata"] = metadata
     data = _evolution_request("POST", f"/message/sendMedia/{instance_name}", payload)
     key_data = data.get("key") if isinstance(data, dict) else {}
     message_id = None
@@ -1108,6 +1148,7 @@ def dispatch_plain_whatsapp(
     reference_type: str | None = None,
     reference_id: int | None = None,
     scheduled_for: datetime | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> WhatsappMessageJob:
     """Envia texto livre (campanhas, avisos) com o mesmo fluxo de job/eventos do template."""
     instance_name = _resolve_tenant_instance(db, tenant_id)
@@ -1134,7 +1175,7 @@ def dispatch_plain_whatsapp(
         return job
 
     try:
-        send_result = _evolution_send_text(instance_name, recipient, body)
+        send_result = _evolution_send_text(instance_name, recipient, body, metadata=metadata)
         job.status = WhatsappMessageStatus.SENT
         job.provider_message_id = send_result.get("message_id")
         job.sent_at = datetime.now(timezone.utc)
@@ -1473,6 +1514,11 @@ def dispatch_due_appointment_reminders(*, now_utc: datetime | None = None) -> di
         for tenant in tenants:
             if not tenant_whatsapp_automation_active(tenant):
                 continue
+            gate_at = getattr(tenant, "whatsapp_agenda_dispatch_scheduled_at", None)
+            if gate_at is not None:
+                gate = gate_at if gate_at.tzinfo is not None else gate_at.replace(tzinfo=timezone.utc)
+                if gate > now:
+                    continue
             rules = get_tenant_reminder_rules(db, tenant_id=tenant.id)
             offsets = _collect_active_reminder_offsets(rules)
             if not offsets:
@@ -2200,14 +2246,30 @@ def consume_whatsapp_webhook_agenda(
             )
         ).scalar_one_or_none()
     if job is not None:
+        from app.campaign_analytics import process_evolution_campaign_webhook
+
         lowered = event_name.lower()
         now = datetime.now(timezone.utc)
-        if "delivery" in lowered or "delivered" in lowered:
-            job.status = WhatsappMessageStatus.DELIVERED
-            job.delivered_at = now
-        elif "read" in lowered:
+        interaction = process_evolution_campaign_webhook(
+            db,
+            tenant_id=tenant_id,
+            payload=data,
+            job_reference_type=job.reference_type,
+            job_reference_id=job.reference_id,
+            recipient_whatsapp=job.recipient_whatsapp,
+        )
+        if interaction == "read":
             job.status = WhatsappMessageStatus.READ
             job.read_at = now
+        elif interaction == "delivered":
+            job.status = WhatsappMessageStatus.DELIVERED
+            job.delivered_at = now
+        elif "read" in lowered and "unread" not in lowered:
+            job.status = WhatsappMessageStatus.READ
+            job.read_at = now
+        elif "delivery" in lowered or "delivered" in lowered:
+            job.status = WhatsappMessageStatus.DELIVERED
+            job.delivered_at = now
         elif "fail" in lowered:
             job.status = WhatsappMessageStatus.FAILED
             job.failed_at = now

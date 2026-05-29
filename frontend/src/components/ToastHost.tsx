@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { subscribeToast, type ToastPayload } from "../lib/toast";
+import { subscribeToast, clearPendingToast, type ToastPayload } from "../lib/toast";
 import styles from "./ToastHost.module.css";
 
 const AUTO_DISMISS_MS = 4500;
@@ -11,7 +11,10 @@ export function ToastHost() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), AUTO_DISMISS_MS);
+    const t = window.setTimeout(() => {
+      setToast(null);
+      clearPendingToast();
+    }, AUTO_DISMISS_MS);
     return () => window.clearTimeout(t);
   }, [toast]);
 
@@ -32,7 +35,10 @@ export function ToastHost() {
         <button
           type="button"
           className={styles.dismiss}
-          onClick={() => setToast(null)}
+          onClick={() => {
+            setToast(null);
+            clearPendingToast();
+          }}
           aria-label="Fechar notificação"
         >
           ×

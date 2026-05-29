@@ -516,7 +516,7 @@ export function AdminPage() {
                 <Link className={styles.btnPrimary} to="/app/finance/settings/accounts?gateway=stone">
                   Abrir Contas e carteiras (configurar Pagar.me)
                 </Link>
-                <Link className={styles.btnGhost} to="/app/finance">
+                <Link className={styles.btnGhost} to="/app/finance/dashboard">
                   Lançamentos financeiros
                 </Link>
               </div>

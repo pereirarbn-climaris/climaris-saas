@@ -4,7 +4,7 @@ from secrets import compare_digest
 from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Path, Query, Response, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,9 +15,12 @@ from app.dependencies import get_current_user, require_roles
 from app.marketplace_util import tenant_has_marketplace_app
 from app.plan_rules import get_plan_definition
 from app.equipment_service_preventive import (
+    delete_manual_preventive_reminder,
+    get_manual_preventive_reminder,
     list_equipment_service_preventive_schedules,
     list_preventive_items_by_equipment_month,
     reset_equipment_service_preventive_override,
+    update_manual_preventive_reminder,
     upsert_equipment_service_preventive_override,
 )
 from app.equipment_preventive_rules import (
@@ -27,6 +30,7 @@ from app.equipment_preventive_rules import (
     update_equipment_preventive_rule,
     upsert_equipment_preventive_rule,
 )
+from app.preventive_promo_image import clear_preventive_promo_image, upload_preventive_promo_image
 from app.preventive_maintenance import (
     build_grouped_preview,
     build_preventive_grouped_send_bundle,
@@ -58,6 +62,8 @@ from app.schemas_preventive import (
     PreventiveClientGroupOut,
     PreventiveItemsListOut,
     PreventiveLeadOut,
+    PreventiveManualReminderOut,
+    PreventiveManualReminderUpdate,
     PreventivePreviewOut,
     PreventiveRegisterEntryCreate,
     PreventiveRegisterEntryOut,
@@ -134,6 +140,76 @@ def patch_settings(
     if not payload.model_fields_set:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nada para atualizar.")
     return patch_preventive_settings(db, current_user.tenant_id, payload)
+
+
+@router.post(
+    "/banner-image",
+    response_model=PreventiveSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+async def upload_preventive_banner_image(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: UploadFile = File(...),
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    raw = await file.read()
+    try:
+        upload_preventive_promo_image(
+            db,
+            tenant_id=current_user.tenant_id,
+            file_bytes=raw,
+            source_filename=file.filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha ao enviar banner: {exc}",
+        ) from exc
+    return get_preventive_settings(db, current_user.tenant_id)
+
+
+@router.delete(
+    "/banner-image",
+    response_model=PreventiveSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_preventive_banner_image(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    _require_whatsapp_module(db, current_user.tenant_id)
+    try:
+        clear_preventive_promo_image(db, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return get_preventive_settings(db, current_user.tenant_id)
+
+
+@router.get("/banner-image/file")
+def get_preventive_banner_image_file(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Proxy same-origin do banner preventivo (prévia no painel)."""
+    from app.tenant_logo import fetch_s3_image_bytes
+
+    _require_whatsapp_module(db, current_user.tenant_id)
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    s3_key = (tenant.preventive_promo_image_s3_key or "").strip()
+    if not s3_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Banner não cadastrado.")
+    try:
+        data, content_type = fetch_s3_image_bytes(s3_key, db=db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(content=data, media_type=content_type, headers={"Cache-Control": "private, max-age=300"})
 
 
 def _rule_out(rule) -> EquipmentPreventiveRuleOut:
@@ -495,6 +571,58 @@ def post_register_entry(
     )
 
 
+@router.get(
+    "/manual-reminders/{schedule_id}",
+    response_model=PreventiveManualReminderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_manual_reminder(
+    schedule_id: Annotated[int, Path(ge=1)],
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PreventiveManualReminderOut:
+    data = get_manual_preventive_reminder(db, tenant_id=current_user.tenant_id, schedule_id=schedule_id)
+    return PreventiveManualReminderOut.model_validate(data)
+
+
+@router.patch(
+    "/manual-reminders/{schedule_id}",
+    response_model=PreventiveManualReminderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def patch_manual_reminder(
+    schedule_id: Annotated[int, Path(ge=1)],
+    payload: PreventiveManualReminderUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PreventiveManualReminderOut:
+    update_manual_preventive_reminder(
+        db,
+        tenant_id=current_user.tenant_id,
+        schedule_id=schedule_id,
+        service_id=payload.service_id,
+        data_realizacao=payload.data_realizacao,
+        equipment_label=payload.equipment_label,
+        notes=payload.notes,
+    )
+    data = get_manual_preventive_reminder(db, tenant_id=current_user.tenant_id, schedule_id=schedule_id)
+    return PreventiveManualReminderOut.model_validate(data)
+
+
+@router.delete(
+    "/manual-reminders/{schedule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def remove_manual_reminder(
+    schedule_id: Annotated[int, Path(ge=1)],
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    delete_manual_preventive_reminder(db, tenant_id=current_user.tenant_id, schedule_id=schedule_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/leads", response_model=list[PreventiveLeadOut])
 def list_leads(
     db: Annotated[Session, Depends(get_db)],
@@ -503,7 +631,12 @@ def list_leads(
 ) -> list[PreventiveLeadOut]:
     _require_whatsapp_module(db, current_user.tenant_id)
     rows = list_interest_leads(db, tenant_id=current_user.tenant_id, limit=limit)
-    return [PreventiveLeadOut.model_validate(r) for r in rows]
+    out: list[PreventiveLeadOut] = []
+    for row in rows:
+        base = PreventiveLeadOut.model_validate(row)
+        client_name = row.client.name if row.client is not None else None
+        out.append(base.model_copy(update={"client_name": client_name}))
+    return out
 
 
 @router.post(

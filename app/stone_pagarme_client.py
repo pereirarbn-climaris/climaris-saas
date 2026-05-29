@@ -74,6 +74,33 @@ def pagarme_api_json(
         return False, "Resposta JSON inválida do Pagar.me.", None
 
 
+def list_pagarme_orders(
+    secret_key: str,
+    *,
+    page: int = 1,
+    size: int = 30,
+    timeout: float = 25.0,
+) -> tuple[bool, str | None, list[dict[str, Any]]]:
+    """Lista pedidos Pagar.me (paginação). Filtragem por data no chamador."""
+    pg = max(1, int(page))
+    sz = max(1, min(int(size), 50))
+    ok, err, data = pagarme_api_json(
+        "GET",
+        f"/orders?page={pg}&size={sz}",
+        secret_key=secret_key,
+        timeout=timeout,
+    )
+    if not ok:
+        return False, err or "Falha ao listar pedidos.", []
+    if isinstance(data, dict):
+        raw = data.get("data")
+        if isinstance(raw, list):
+            return True, None, [o for o in raw if isinstance(o, dict)]
+    if isinstance(data, list):
+        return True, None, [o for o in data if isinstance(o, dict)]
+    return True, None, []
+
+
 def test_pagarme_secret_key(secret_key: str, *, timeout: float = 18.0) -> tuple[bool, str | None, dict[str, Any]]:
     """Valida sk_test_* / sk_live_* consultando pedidos (endpoint leve com paginação)."""
     ok, err, data = pagarme_api_json("GET", "/orders?page=1&size=1", secret_key=secret_key, timeout=timeout)

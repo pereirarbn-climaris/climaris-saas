@@ -41,6 +41,10 @@ import {
   computeDiscountAmountFromView,
   computeOrderTotalFromView,
 } from "../../lib/serviceOrderDiscount";
+import {
+  ServiceOrderFinanceIntegration,
+  useServiceOrderFinanceBadge,
+} from "./ServiceOrderFinanceIntegration";
 import { ToastHost } from "../../components/ToastHost";
 import {
   syncServiceOrderItems,
@@ -95,6 +99,26 @@ export function ServiceOrderFormPage() {
   const canEditLaudo = isAdmin || isAssignedTech;
   const canSave = canEditGeneral || isAssignedTech;
   const linesReadOnly = orderRow?.status === "done";
+  const isOrderDone = orderRow?.status === "done";
+
+  const orderTotalForFinance = useMemo(() => {
+    if (orderRow) return orderGrandTotal(orderRow);
+    if (serviceOrder) return computeOrderTotalFromView(serviceOrder as ServiceOrderData);
+    return 0;
+  }, [orderRow, serviceOrder]);
+
+  const clientLabelForFinance = useMemo(() => {
+    const cid = serviceOrder?.clienteId ?? (orderRow ? String(orderRow.client_id) : "");
+    const found = clientes.find((c) => c.id === cid);
+    if (found?.nome) return found.nome;
+    return `Cliente #${orderRow?.client_id ?? cid}`;
+  }, [serviceOrder?.clienteId, orderRow, clientes]);
+
+  const financePaymentLabel = useServiceOrderFinanceBadge({
+    serviceOrderId: idNum,
+    orderTotal: orderTotalForFinance,
+    enabled: isOrderDone && !isNew && Number.isFinite(idNum),
+  });
 
   const canStartAttendance = useMemo(
     () =>
@@ -682,6 +706,19 @@ export function ServiceOrderFormPage() {
         canCompleteOrder={canCompleteOrder}
         onCompleteOrder={handleCompleteOrder}
         isCompletingOrder={isCompleting}
+        financePaymentLabel={financePaymentLabel}
+        financeSection={
+          isOrderDone && Number.isFinite(idNum) && orderRow ? (
+            <ServiceOrderFinanceIntegration
+              serviceOrderId={idNum}
+              clientId={orderRow.client_id}
+              clientLabel={clientLabelForFinance}
+              orderTotal={orderTotalForFinance}
+              orderNumber={serviceOrder?.numero ?? String(orderRow.id)}
+              enabled
+            />
+          ) : null
+        }
         onGeneratePDF={
           !isNew && orderRow
             ? async (osId) => {

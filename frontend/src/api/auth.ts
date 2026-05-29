@@ -37,6 +37,7 @@ export type TenantOut = {
   tax_id_kind: TaxIdKind;
   tax_document: string;
   active_plan: string;
+  active_plan_label?: string | null;
   finance_enabled: boolean;
   finance_mode: "basic" | "intermediate" | "management";
   timezone: string;

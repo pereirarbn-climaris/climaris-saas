@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   getMercadoLivreProductLink,
@@ -14,9 +14,12 @@ import {
   updateProduct,
   type ProductCreatePayload,
   type ProductImageOut,
+  type ProductOut,
   type ProductUpdatePayload,
 } from "../../api/products";
 import { formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
+import { toast } from "../../lib/toast";
+import { ToastHost } from "../../components/ToastHost";
 import type { DashboardOutletContext } from "../dashboardContext";
 import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
@@ -51,18 +54,37 @@ function emptyForm(): FormState {
 }
 
 function serializeProductFormSnapshot(f: FormState): string {
+  const stockRaw = String(f.stock_quantity).trim().replace(",", ".");
+  const stock = Number(stockRaw);
+  const btuMinRaw = f.btu_min.trim();
+  const btuMaxRaw = f.btu_max.trim();
   return JSON.stringify({
     name: f.name.trim(),
     sku: f.sku.trim(),
-    purchase_price: f.purchase_price.trim(),
-    sale_price: f.sale_price.trim(),
-    stock_quantity: f.stock_quantity.trim(),
+    purchase_price: parseBrlInputToNumber(f.purchase_price),
+    sale_price: parseBrlInputToNumber(f.sale_price),
+    stock_quantity: Number.isFinite(stock) ? stock : 0,
     compatible_equipment_tags: f.compatible_equipment_tags.trim(),
-    btu_min: f.btu_min.trim(),
-    btu_max: f.btu_max.trim(),
+    btu_min: btuMinRaw ? Number(btuMinRaw) : null,
+    btu_max: btuMaxRaw ? Number(btuMaxRaw) : null,
     application_scope: f.application_scope.trim(),
     is_active: f.is_active,
   });
+}
+
+function productToFormState(p: ProductOut): FormState {
+  return {
+    name: p.name,
+    sku: p.sku,
+    purchase_price: numberToBrlInput(Number(p.purchase_price || 0)),
+    sale_price: numberToBrlInput(Number(p.sale_price || p.unit_price || 0)),
+    stock_quantity: String(p.stock_quantity ?? 0),
+    compatible_equipment_tags: p.compatible_equipment_tags ?? "",
+    btu_min: p.btu_min != null ? String(p.btu_min) : "",
+    btu_max: p.btu_max != null ? String(p.btu_max) : "",
+    application_scope: p.application_scope ?? "",
+    is_active: p.is_active,
+  };
 }
 
 function normalizeSkuBase(name: string): string {
@@ -105,58 +127,41 @@ export function ProductFormPage() {
   const [deleting, setDeleting] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [loadErr, setLoadErr] = useState("");
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [imageToRemove, setImageToRemove] = useState<ProductImageOut | null>(null);
   const [productImages, setProductImages] = useState<ProductImageOut[]>([]);
   const [imgBusy, setImgBusy] = useState(false);
   const [mlAddon, setMlAddon] = useState(false);
   const [mlCategoryId, setMlCategoryId] = useState("");
   const [mlListingType, setMlListingType] = useState("gold_special");
   const [mlBusy, setMlBusy] = useState(false);
-  const savedSnapshotRef = useRef("");
+  const [formReady, setFormReady] = useState(isNew);
+  const [savedSnapshot, setSavedSnapshot] = useState("");
 
   const parsedPurchasePrice = useMemo(() => parseBrlInputToNumber(form.purchase_price), [form.purchase_price]);
   const parsedSalePrice = useMemo(() => parseBrlInputToNumber(form.sale_price), [form.sale_price]);
   const parsedStockQty = useMemo(() => Number(String(form.stock_quantity).replace(",", ".")), [form.stock_quantity]);
 
   const isDirty = useMemo(() => {
-    if (isNew) return false;
-    return serializeProductFormSnapshot(form) !== savedSnapshotRef.current;
-  }, [form, isNew]);
+    if (isNew || !formReady) return false;
+    return serializeProductFormSnapshot(form) !== savedSnapshot;
+  }, [form, formReady, isNew, savedSnapshot]);
 
   useEffect(() => {
     if (isNew || !productId || !Number.isFinite(idNum) || idNum < 1) return;
     let cancelled = false;
     void (async () => {
       setLoading(true);
+      setFormReady(false);
       setLoadErr("");
       try {
         const p = await getProduct(idNum);
         if (!cancelled) {
-          setForm({
-            name: p.name,
-            sku: p.sku,
-            purchase_price: numberToBrlInput(Number(p.purchase_price || 0)),
-            sale_price: numberToBrlInput(Number(p.sale_price || p.unit_price || 0)),
-            stock_quantity: String(p.stock_quantity ?? 0),
-            compatible_equipment_tags: p.compatible_equipment_tags ?? "",
-            btu_min: p.btu_min != null ? String(p.btu_min) : "",
-            btu_max: p.btu_max != null ? String(p.btu_max) : "",
-            application_scope: p.application_scope ?? "",
-            is_active: p.is_active,
-          });
-          savedSnapshotRef.current = serializeProductFormSnapshot({
-            name: p.name,
-            sku: p.sku,
-            purchase_price: numberToBrlInput(Number(p.purchase_price || 0)),
-            sale_price: numberToBrlInput(Number(p.sale_price || p.unit_price || 0)),
-            stock_quantity: String(p.stock_quantity ?? 0),
-            compatible_equipment_tags: p.compatible_equipment_tags ?? "",
-            btu_min: p.btu_min != null ? String(p.btu_min) : "",
-            btu_max: p.btu_max != null ? String(p.btu_max) : "",
-            application_scope: p.application_scope ?? "",
-            is_active: p.is_active,
-          });
+          const loadedForm = productToFormState(p);
+          setForm(loadedForm);
+          setSavedSnapshot(serializeProductFormSnapshot(loadedForm));
           setProductImages(p.images ?? []);
+          setFormReady(true);
         }
       } catch (e) {
         if (!cancelled) setLoadErr(e instanceof Error ? e.message : "Erro ao carregar.");
@@ -205,41 +210,40 @@ export function ProductFormPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setMsg(null);
     if (readOnly) return;
 
     if (!form.name.trim()) {
-      setMsg({ kind: "err", text: "Informe o nome do produto." });
+      toast.error("Informe o nome do produto.");
       return;
     }
     if (!form.sku.trim()) {
-      setMsg({ kind: "err", text: "Informe o SKU do produto." });
+      toast.error("Informe o SKU do produto.");
       return;
     }
     if (!Number.isFinite(parsedPurchasePrice) || parsedPurchasePrice < 0) {
-      setMsg({ kind: "err", text: "Informe um valor de compra válido (maior ou igual a zero)." });
+      toast.error("Informe um valor de compra válido (maior ou igual a zero).");
       return;
     }
     if (!Number.isFinite(parsedSalePrice) || parsedSalePrice < 0) {
-      setMsg({ kind: "err", text: "Informe um valor de venda válido (maior ou igual a zero)." });
+      toast.error("Informe um valor de venda válido (maior ou igual a zero).");
       return;
     }
     if (!Number.isFinite(parsedStockQty) || parsedStockQty < 0) {
-      setMsg({ kind: "err", text: "Informe uma quantidade em estoque válida (maior ou igual a zero)." });
+      toast.error("Informe uma quantidade em estoque válida (maior ou igual a zero).");
       return;
     }
     const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
     const parsedBtuMax = form.btu_max.trim() ? Number(form.btu_max) : null;
     if (parsedBtuMin != null && (!Number.isFinite(parsedBtuMin) || parsedBtuMin < 0)) {
-      setMsg({ kind: "err", text: "BTU mínimo inválido." });
+      toast.error("BTU mínimo inválido.");
       return;
     }
     if (parsedBtuMax != null && (!Number.isFinite(parsedBtuMax) || parsedBtuMax < 0)) {
-      setMsg({ kind: "err", text: "BTU máximo inválido." });
+      toast.error("BTU máximo inválido.");
       return;
     }
     if (parsedBtuMin != null && parsedBtuMax != null && parsedBtuMin > parsedBtuMax) {
-      setMsg({ kind: "err", text: "BTU mínimo não pode ser maior que BTU máximo." });
+      toast.error("BTU mínimo não pode ser maior que BTU máximo.");
       return;
     }
 
@@ -259,6 +263,7 @@ export function ProductFormPage() {
           is_active: form.is_active,
         };
         const created = await createProduct(payload);
+        toast.success("Produto cadastrado com sucesso!");
         navigate(`/app/products/${created.id}`, { replace: true });
       } else {
         const payload: ProductUpdatePayload = {
@@ -274,30 +279,29 @@ export function ProductFormPage() {
           is_active: form.is_active,
         };
         await updateProduct(idNum, payload);
-        savedSnapshotRef.current = serializeProductFormSnapshot(form);
-        setMsg({ kind: "ok", text: "Produto atualizado." });
+        setSavedSnapshot(serializeProductFormSnapshot(form));
+        toast.success("Alterações salvas com sucesso!");
       }
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao salvar." });
+      toast.error(err instanceof Error ? err.message : "Erro ao salvar.");
     } finally {
       setSaving(false);
     }
   }
 
   async function onDuplicate() {
-    setMsg(null);
     if (readOnly || isNew) return;
 
     if (!form.name.trim()) {
-      setMsg({ kind: "err", text: "Informe o nome do produto para duplicar." });
+      toast.error("Informe o nome do produto para duplicar.");
       return;
     }
     if (!Number.isFinite(parsedPurchasePrice) || parsedPurchasePrice < 0) {
-      setMsg({ kind: "err", text: "Informe um valor de compra válido (maior ou igual a zero)." });
+      toast.error("Informe um valor de compra válido (maior ou igual a zero).");
       return;
     }
     if (!Number.isFinite(parsedSalePrice) || parsedSalePrice < 0) {
-      setMsg({ kind: "err", text: "Informe um valor de venda válido (maior ou igual a zero)." });
+      toast.error("Informe um valor de venda válido (maior ou igual a zero).");
       return;
     }
     const parsedBtuMin = form.btu_min.trim() ? Number(form.btu_min) : null;
@@ -318,26 +322,26 @@ export function ProductFormPage() {
         is_active: form.is_active,
       });
       navigate(`/app/products/${created.id}`);
+      toast.success("Produto duplicado com sucesso!");
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao duplicar." });
+      toast.error(err instanceof Error ? err.message : "Erro ao duplicar.");
     } finally {
       setDuplicating(false);
     }
   }
 
   async function onDelete() {
-    if (!canDelete || isNew || !window.confirm("Excluir este produto permanentemente? Esta ação não pode ser desfeita.")) {
-      return;
-    }
+    if (!canDelete || isNew) return;
     setDeleting(true);
-    setMsg(null);
     try {
       await deleteProduct(idNum);
+      toast.success("Produto excluído.");
       navigate("/app/products", { replace: true });
     } catch (err) {
-      setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao excluir." });
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir.");
     } finally {
       setDeleting(false);
+      setShowDeleteModal(false);
     }
   }
 
@@ -354,48 +358,46 @@ export function ProductFormPage() {
   async function onPickImages(files: FileList | null) {
     if (!files?.length || readOnly || isNew || !canEdit) return;
     setImgBusy(true);
-    setMsg(null);
     try {
       for (let i = 0; i < files.length; i++) {
         const f = files[i]!;
         await uploadProductImage(idNum, f);
       }
       await refreshImages();
-      setMsg({ kind: "ok", text: "Imagens enviadas." });
+      toast.success("Imagens enviadas.");
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Falha no upload." });
+      toast.error(e instanceof Error ? e.message : "Falha no upload.");
     } finally {
       setImgBusy(false);
     }
   }
 
-  async function onRemoveImage(imageId: number) {
-    if (!canEdit || isNew) return;
-    if (!window.confirm("Remover esta imagem?")) return;
+  async function onRemoveImage() {
+    if (!canEdit || isNew || !imageToRemove) return;
     setImgBusy(true);
-    setMsg(null);
     try {
-      await deleteProductImage(idNum, imageId);
+      await deleteProductImage(idNum, imageToRemove.id);
       await refreshImages();
+      toast.success("Imagem removida.");
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao remover." });
+      toast.error(e instanceof Error ? e.message : "Erro ao remover.");
     } finally {
       setImgBusy(false);
+      setImageToRemove(null);
     }
   }
 
   async function onSaveMlLink() {
     if (!canEdit || isNew || !mlAddon) return;
     setMlBusy(true);
-    setMsg(null);
     try {
       await upsertMercadoLivreLink(idNum, {
         ml_category_id: mlCategoryId.trim() || null,
         listing_type_id: mlListingType.trim() || null,
       });
-      setMsg({ kind: "ok", text: "Vinculação Mercado Livre salva." });
+      toast.success("Vinculação Mercado Livre salva.");
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao salvar vínculo." });
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar vínculo.");
     } finally {
       setMlBusy(false);
     }
@@ -404,15 +406,14 @@ export function ProductFormPage() {
   async function onPublishMl() {
     if (!canEdit || isNew || !mlAddon) return;
     setMlBusy(true);
-    setMsg(null);
     try {
       await publishMercadoLivreProduct(idNum, {
         ml_category_id: mlCategoryId.trim() || undefined,
         listing_type_id: mlListingType.trim() || undefined,
       });
-      setMsg({ kind: "ok", text: "Publicação enviada ao Mercado Livre." });
+      toast.success("Publicação enviada ao Mercado Livre.");
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao publicar." });
+      toast.error(e instanceof Error ? e.message : "Erro ao publicar.");
     } finally {
       setMlBusy(false);
     }
@@ -433,7 +434,7 @@ export function ProductFormPage() {
       );
       setProductImages(ordered);
     } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao reordenar." });
+      toast.error(e instanceof Error ? e.message : "Erro ao reordenar.");
     } finally {
       setImgBusy(false);
     }
@@ -466,6 +467,7 @@ export function ProductFormPage() {
 
   return (
     <div className={styles.wrap}>
+      <ToastHost />
       <h1 className={styles.title}>{isNew ? "Novo produto" : "Editar produto"}</h1>
       <p className={styles.lead}>Cadastre os produtos com valor de compra e valor de venda para cálculo de margem.</p>
 
@@ -676,7 +678,12 @@ export function ProductFormPage() {
                         <button type="button" className={styles.imageBtn} disabled={imgBusy} onClick={() => void moveImage(im.id, 1)}>
                           ↓
                         </button>
-                        <button type="button" className={styles.imageBtnDanger} disabled={imgBusy} onClick={() => void onRemoveImage(im.id)}>
+                        <button
+                          type="button"
+                          className={styles.imageBtnDanger}
+                          disabled={imgBusy}
+                          onClick={() => setImageToRemove(im)}
+                        >
                           Remover
                         </button>
                       </div>
@@ -752,9 +759,6 @@ export function ProductFormPage() {
           </div>
         ) : null}
 
-        {msg?.kind === "ok" ? <p className={styles.msgOk}>{msg.text}</p> : null}
-        {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
-
       </form>
 
       <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">
@@ -776,7 +780,7 @@ export function ProductFormPage() {
             <button
               type="button"
               className={styles.btnDanger}
-              onClick={() => void onDelete()}
+              onClick={() => setShowDeleteModal(true)}
               disabled={saving || deleting || duplicating}
             >
               {deleting ? "Excluindo…" : "Excluir produto"}
@@ -795,6 +799,74 @@ export function ProductFormPage() {
           {!canEdit ? <p className={styles.readOnlyHint}>Visualização somente leitura.</p> : null}
         </div>
       </div>
+
+      {showDeleteModal ? (
+        <div className={styles.modalRoot} role="presentation">
+          <button
+            type="button"
+            className={styles.modalBackdrop}
+            aria-label="Fechar"
+            onClick={() => setShowDeleteModal(false)}
+          />
+          <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby="delete-product-title">
+            <h3 id="delete-product-title" className={styles.modalTitle}>
+              Excluir produto
+            </h3>
+            <p className={styles.modalText}>
+              Excluir <strong>{form.name.trim() || "este produto"}</strong> permanentemente? Esta ação não pode ser
+              desfeita. Se o item estiver em ordens de serviço ou orçamentos, prefira desmarcar &quot;Produto
+              ativo&quot;.
+            </p>
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={deleting}>
+                {deleting ? "Excluindo…" : "Confirmar exclusão"}
+              </button>
+              <button
+                type="button"
+                className={styles.btnSecondary}
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {imageToRemove ? (
+        <div className={styles.modalRoot} role="presentation">
+          <button
+            type="button"
+            className={styles.modalBackdrop}
+            aria-label="Fechar"
+            onClick={() => setImageToRemove(null)}
+          />
+          <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby="remove-image-title">
+            <h3 id="remove-image-title" className={styles.modalTitle}>
+              Remover imagem
+            </h3>
+            <p className={styles.modalText}>
+              Remover esta foto do produto <strong>{form.name.trim() || "sem nome"}</strong>? Ela deixa de aparecer na
+              vitrine e no Mercado Livre.
+            </p>
+            <img src={imageToRemove.public_url} alt="" className={styles.modalImagePreview} />
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.btnDanger} onClick={() => void onRemoveImage()} disabled={imgBusy}>
+                {imgBusy ? "Removendo…" : "Confirmar remoção"}
+              </button>
+              <button
+                type="button"
+                className={styles.btnSecondary}
+                onClick={() => setImageToRemove(null)}
+                disabled={imgBusy}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

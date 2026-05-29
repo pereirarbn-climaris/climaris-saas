@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AppSidebar } from "../components/dashboard/AppSidebar";
 import { Sidebar } from "../components/v0-ui/Sidebar";
@@ -12,7 +13,9 @@ import {
   type UserOut,
   type UserRole,
 } from "../api/auth";
+import { financeQueryKeys } from "../features/finance/hooks/financeQueryKeys";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
+import { getPlanDisplayLabel } from "../lib/planRules";
 import { digitsOnlyPhoneForApi, formatPhoneBrInput } from "../lib/brMask";
 import {
   NavIconBuilding,
@@ -61,7 +64,9 @@ function tenantInitial(name: string): string {
 export function DashboardPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const navId = useId();
+  const tenantPlanKeyRef = useRef<string | null>(null);
   const [checkingTenant, setCheckingTenant] = useState(true);
   const [tenant, setTenant] = useState<TenantOut | null>(null);
   const [user, setUser] = useState<UserOut | null>(null);
@@ -143,6 +148,19 @@ export function DashboardPage() {
           : "Painel";
   const unreadNotifications = (user?.must_change_password ? 1 : 0) + (prefAutoCollapseSidebar ? 0 : 1);
 
+  const applyTenantUpdate = useCallback(
+    (t: TenantOut) => {
+      const prevPlan = tenantPlanKeyRef.current;
+      const nextPlan = t.active_plan;
+      tenantPlanKeyRef.current = nextPlan;
+      setTenant(t);
+      if (prevPlan != null && prevPlan !== nextPlan) {
+        void queryClient.invalidateQueries({ queryKey: financeQueryKeys.all });
+      }
+    },
+    [queryClient],
+  );
+
   const refreshWorkspace = useCallback(async () => {
     try {
       const t = await fetchCurrentTenant();
@@ -150,7 +168,7 @@ export function DashboardPage() {
         navigate("/complete-registration", { replace: true });
         return;
       }
-      setTenant(t);
+      applyTenantUpdate(t);
       const u = await fetchCurrentUser();
       setUser(u);
     } catch {
@@ -158,7 +176,17 @@ export function DashboardPage() {
       clearAccessToken();
       navigate("/login", { replace: true });
     }
-  }, [navigate]);
+  }, [applyTenantUpdate, navigate]);
+
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible" && getAccessToken()) {
+        void refreshWorkspace();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [refreshWorkspace]);
 
   useEffect(() => {
     try {
@@ -227,7 +255,8 @@ export function DashboardPage() {
           navigate("/complete-registration", { replace: true });
           return;
         }
-        setTenant(t);
+        tenantPlanKeyRef.current = t.active_plan;
+        applyTenantUpdate(t);
         setUser(u);
       } catch {
         if (!cancelled) {
@@ -354,7 +383,7 @@ export function DashboardPage() {
       ["orçamento", "/app/budgets"],
       ["config financeiro", "/app/finance/settings"],
       ["configuração financeiro", "/app/finance/settings"],
-      ["financeiro", "/app/finance"],
+      ["financeiro", "/app/finance/dashboard"],
       ["nfs", "/app/fiscal/nfse"],
       ["nfse", "/app/fiscal/nfse"],
       ["nota fiscal", "/app/fiscal/nfse"],
@@ -774,7 +803,12 @@ export function DashboardPage() {
               <div className={styles.accountDrawerProfileText}>
                 <span className={styles.accountDrawerProfileName}>{tenant?.name ?? "—"}</span>
                 <span className={styles.accountDrawerProfileEmail}>
-                  Plano <strong>{tenant?.active_plan ?? "—"}</strong>
+                  Plano{" "}
+                  <strong>
+                    {tenant
+                      ? getPlanDisplayLabel(tenant.active_plan, tenant.active_plan_label)
+                      : "—"}
+                  </strong>
                 </span>
               </div>
             </div>

@@ -172,6 +172,10 @@ export function ServiceFormPage() {
       }, 0),
     [form.product_inputs, products],
   );
+  const productsSorted = useMemo(
+    () => [...products].sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" })),
+    [products],
+  );
   const estimatedProfit = useMemo(() => parsedPrice - estimatedMaterialCost, [parsedPrice, estimatedMaterialCost]);
 
   const preventivePayload = useMemo(() => buildPreventivePayload(form), [form]);
@@ -800,7 +804,7 @@ export function ServiceFormPage() {
                           disabled={readOnly}
                         >
                           <option value="">Selecione</option>
-                          {products.map((p) => (
+                          {productsSorted.map((p) => (
                             <option key={p.id} value={String(p.id)}>
                               {p.name}
                             </option>

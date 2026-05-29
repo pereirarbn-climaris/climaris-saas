@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  createFinanceAccount,
   deleteFinanceAccount,
   deleteFinanceGatewayAsaas,
   deleteFinanceGatewayMercadoPago,
@@ -28,46 +27,16 @@ import {
   type FinanceGatewayMercadoPagoProducts,
   type FinanceGatewaysOut,
 } from "../../api/finance";
-import {
-  FALLBACK_BANK_PICK,
-  FinanceAccountBankMark,
-  MP_BANK,
-  SLUG_LOGOS,
-  financeAccountConfigProvider,
-  pickerImgSrc,
-  type BankPickerEntry,
-} from "../../components/finance/FinanceAccountBankMark";
+import { AccountRegistrationWizard } from "../../components/finance/AccountRegistrationWizard";
+import { FinanceAccountCard } from "../../components/finance/FinanceAccountCard";
+import { financeAccountConfigProvider } from "../../components/finance/FinanceAccountBankMark";
+import { Button } from "../../components/ui/button";
+import { Plus } from "lucide-react";
 import formLayout from "../formLayout.module.css";
 import styles from "./FinanceAccountsPage.module.css";
 
-type AccountKind = "checking" | "savings" | "investment" | "digital_wallet" | "cash" | "other";
-
-type TypePickerKey = AccountKind | "mercadopago_integration";
-
-type WizardFlow = "idle" | "pick_type" | "pick_bank" | "mp_creds" | "mp_products";
-
-const KIND_LABEL: Record<AccountKind, string> = {
-  checking: "Conta corrente",
-  savings: "Conta poupança",
-  investment: "Conta de investimento",
-  digital_wallet: "Carteira digital",
-  cash: "Caixa / dinheiro",
-  other: "Outros",
-};
-
-const TYPE_ORDER: TypePickerKey[] = [
-  "checking",
-  "savings",
-  "investment",
-  "digital_wallet",
-  "mercadopago_integration",
-  "cash",
-  "other",
-];
-
-function typeLabel(k: TypePickerKey): string {
-  if (k === "mercadopago_integration") return "Mercado Pago";
-  return KIND_LABEL[k];
+function money(v: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
 }
 
 const MP_PRODUCTS_DEFAULT: FinanceGatewayMercadoPagoProducts = {
@@ -78,28 +47,12 @@ const MP_PRODUCTS_DEFAULT: FinanceGatewayMercadoPagoProducts = {
   payment_link: false,
 };
 
-function money(v: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
-}
-
-function sparklinePoints(seed: number): string {
-  const base = Math.max(8, Math.min(72, seed));
-  const vals = [12, 12, 13, 12, 14, 15, base];
-  return vals.map((v, i) => `${i * 42},${84 - v}`).join(" ");
-}
-
 export function FinanceAccountsPage() {
   const [accounts, setAccounts] = useState<FinanceBankAccountOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [wizardFlow, setWizardFlow] = useState<WizardFlow>("idle");
-  const [mpEntryPoint, setMpEntryPoint] = useState<"type" | "bank" | null>(null);
-  const [kind, setKind] = useState<AccountKind>("checking");
-  const [bankName, setBankName] = useState("");
-  const [bankPickList, setBankPickList] = useState<BankPickerEntry[]>(FALLBACK_BANK_PICK);
-  const [name, setName] = useState("");
-  const [initialBalance, setInitialBalance] = useState("0");
+  const [accountWizardOpen, setAccountWizardOpen] = useState(false);
   const [reconcileAccount, setReconcileAccount] = useState<FinanceBankAccountOut | null>(null);
   const [reconcileStart, setReconcileStart] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
   const [reconcileEnd, setReconcileEnd] = useState(() => new Date().toISOString().slice(0, 10));
@@ -118,7 +71,7 @@ export function FinanceAccountsPage() {
   const [mpPublicKey, setMpPublicKey] = useState("");
   const [mpAccessToken, setMpAccessToken] = useState("");
   const [mpSandbox, setMpSandbox] = useState(false);
-  const [mpTestOk, setMpTestOk] = useState(false);
+  const [, setMpTestOk] = useState(false);
   const [mpProducts, setMpProducts] = useState<FinanceGatewayMercadoPagoProducts>(MP_PRODUCTS_DEFAULT);
   const [mpWebhookSigSecret, setMpWebhookSigSecret] = useState("");
   const [stoneSecretKey, setStoneSecretKey] = useState("");
@@ -163,98 +116,12 @@ export function FinanceAccountsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (wizardFlow !== "pick_bank") return;
-    let cancelled = false;
-    void listFinanceBankCatalog()
-      .then((rows) => {
-        if (cancelled) return;
-        setBankPickList(
-          rows.map((r) => ({
-            bank: r.bank_name,
-            label: r.slug === "stone" ? "Stone / Pagar.me" : r.display_label,
-            slug: r.slug,
-            logoUrl: r.logo_url,
-            Logo: SLUG_LOGOS[r.slug] ?? SLUG_LOGOS.outros,
-          })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setBankPickList(FALLBACK_BANK_PICK);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [wizardFlow]);
-
   const cards = useMemo(() => accounts.sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [accounts]);
 
   function openNew() {
-    setWizardFlow("pick_type");
-    setMpEntryPoint(null);
-    setKind("checking");
-    setBankName("");
-    setName("");
-    setInitialBalance("0");
-    setMpPublicKey("");
-    setMpAccessToken("");
-    setMpSandbox(false);
-    setMpTestOk(false);
-    setMpProducts({ ...MP_PRODUCTS_DEFAULT });
+    setAccountWizardOpen(true);
     setMsg(null);
     setError(null);
-  }
-
-  function closeWizard() {
-    setWizardFlow("idle");
-    setMpEntryPoint(null);
-  }
-
-  async function submitAccount(ev: FormEvent) {
-    ev.preventDefault();
-    try {
-      await createFinanceAccount({
-        name: name.trim() || `${KIND_LABEL[kind]} ${bankName}`.trim(),
-        bank_name: bankName.trim() || null,
-        account_type: kind === "other" ? "other" : kind,
-        initial_balance: Number(initialBalance || "0"),
-        is_active: true,
-      });
-      closeWizard();
-      setMsg("Conta cadastrada.");
-      await loadAccounts();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao criar conta.");
-    }
-  }
-
-  async function submitMpIntegration(ev: FormEvent) {
-    ev.preventDefault();
-    try {
-      const acc = await createFinanceAccount({
-        name: name.trim() || "Conta Mercado Pago",
-        bank_name: MP_BANK,
-        account_type: "digital_wallet",
-        initial_balance: Number(initialBalance || "0"),
-        is_active: true,
-      });
-      const res = await upsertFinanceGatewayMercadoPago({
-        access_token: mpAccessToken.trim(),
-        public_key: mpPublicKey.trim(),
-        sandbox: mpSandbox,
-        finance_bank_account_id: acc.id,
-        products: mpProducts,
-      });
-      setGateways((g) => (g ? { ...g, asaas: res.asaas, mercadopago: res.mercadopago, stone: res.stone } : g));
-      closeWizard();
-      setMsg("Conta Mercado Pago conectada.");
-      setMpPublicKey("");
-      setMpAccessToken("");
-      setMpTestOk(false);
-      await loadAccounts();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao salvar integração Mercado Pago.");
-    }
   }
 
   async function removeAccount(row: FinanceBankAccountOut) {
@@ -600,300 +467,61 @@ export function FinanceAccountsPage() {
 
   return (
     <section className={styles.page}>
-      <header className={styles.header}>
-        <h1>Contas e carteiras</h1>
+      <header className={styles.pageHeader}>
+        <div className={styles.pageHeaderText}>
+          <h1 className={styles.pageTitle}>Contas e carteiras</h1>
+          <p className={styles.pageSubtitle}>Gerencie bancos, gateways e saldos do seu caixa.</p>
+        </div>
         <div className={styles.headerActions}>
-          <button type="button" onClick={openNew}>
-            + adicionar
-          </button>
-          <Link to="/app/finance/settings">Voltar às configurações</Link>
+          <Link to="/app/finance/settings" className={styles.backLink}>
+            Voltar às configurações
+          </Link>
+          <Button type="button" onClick={openNew}>
+            <Plus size={18} strokeWidth={2.25} aria-hidden />
+            Adicionar conta
+          </Button>
         </div>
       </header>
 
       {error && !configAccount ? <p className={styles.error}>{error}</p> : null}
       {msg && !configAccount ? <p className={styles.msg}>{msg}</p> : null}
 
-      {loading ? <p>Carregando contas...</p> : null}
-      {!loading ? (
-        <div className={styles.cards}>
-          {cards.map((a) => (
-            <article key={a.id} className={styles.card}>
-              <div className={styles.cardMain}>
-                <div className={styles.cardHead}>
-                  <FinanceAccountBankMark account={a} gateways={gateways} catalog={bankCatalog} />
-                  <div>
-                    <h3>{a.name}</h3>
-                    <p>{a.bank_name || "Sem banco informado"}</p>
-                  </div>
-                </div>
-                <strong>{money(Number(a.initial_balance || 0))}</strong>
-                <span className={styles.smallLink}>Ver extrato</span>
-                <svg className={styles.sparkline} viewBox="0 0 252 84" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline fill="none" stroke="currentColor" strokeWidth="2.5" points={sparklinePoints(Number(a.initial_balance || 0))} />
-                </svg>
-              </div>
-              <div className={styles.cardActions}>
-                <button type="button" className={styles.btnGhost} onClick={() => openReconcile(a)}>
-                  Conciliar
-                </button>
-                <button type="button" className={styles.btnGhost} onClick={() => openConfig(a)}>
-                  Configurar conta
-                </button>
-                {a.name.trim().toLowerCase() !== "caixa" ? (
-                  <button type="button" className={styles.btnDanger} onClick={() => void removeAccount(a)}>
-                    Excluir
-                  </button>
-                ) : (
-                  <span className={styles.badge}>Obrigatória</span>
-                )}
-              </div>
-            </article>
+      {loading ? (
+        <div className={styles.cardsGrid} aria-busy="true" aria-label="Carregando contas">
+          {Array.from({ length: 8 }, (_, i) => (
+            <div key={i} className={styles.cardSkeleton} />
           ))}
         </div>
       ) : null}
-
-      {wizardFlow === "pick_type" ? (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modal}>
-            <header>
-              <h2>Tipo de conta</h2>
-              <button type="button" onClick={closeWizard}>
-                x
-              </button>
-            </header>
-            <div className={styles.typeList}>
-              {TYPE_ORDER.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={styles.typeBtn}
-                  onClick={() => {
-                    if (k === "mercadopago_integration") {
-                      setKind("digital_wallet");
-                      setBankName(MP_BANK);
-                      setMpEntryPoint("type");
-                      setWizardFlow("mp_creds");
-                      setName("");
-                      setInitialBalance("0");
-                      return;
-                    }
-                    setKind(k);
-                    setWizardFlow("pick_bank");
-                  }}
-                >
-                  {typeLabel(k)}
-                </button>
-              ))}
-            </div>
-          </div>
+      {!loading ? (
+        <div className={styles.cardsGrid}>
+          {cards.map((a) => {
+            const provider = financeAccountConfigProvider(a, gateways);
+            return (
+              <FinanceAccountCard
+                key={a.id}
+                account={a}
+                gateways={gateways}
+                catalog={bankCatalog}
+                showGatewayReconciliation={provider === "mercadopago" || provider === "stone"}
+                onReconcile={() => openReconcile(a)}
+                onConfigure={() => openConfig(a)}
+                onDelete={() => void removeAccount(a)}
+              />
+            );
+          })}
         </div>
       ) : null}
 
-      {wizardFlow === "pick_bank" ? (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modal}>
-            <header>
-              <h2>Selecione o banco</h2>
-              <button type="button" onClick={() => setWizardFlow("pick_type")}>
-                x
-              </button>
-            </header>
-            <form className={`${formLayout.stack} ${styles.form}`} onSubmit={submitAccount}>
-              <div className={styles.bankGrid}>
-                {bankPickList.map(({ bank, label, slug, Logo, logoUrl }) => (
-                  <button
-                    key={slug}
-                    type="button"
-                    className={`${styles.bankItem} ${bankName === bank ? styles.bankItemActive : ""}`}
-                    aria-pressed={bankName === bank}
-                    onClick={() => {
-                      setBankName(bank);
-                      if (bank === MP_BANK && kind === "digital_wallet") {
-                        setMpEntryPoint("bank");
-                        setWizardFlow("mp_creds");
-                      }
-                    }}
-                  >
-                    <span className={styles.bankItemLogo} aria-hidden="true">
-                      {pickerImgSrc(logoUrl) ? (
-                        <img src={pickerImgSrc(logoUrl)} alt="" className={styles.bankItemImg} />
-                      ) : (
-                        <Logo />
-                      )}
-                    </span>
-                    <span className={styles.bankItemLabel}>{label}</span>
-                  </button>
-                ))}
-              </div>
-              <div className={formLayout.field}>
-                <label className={styles.fieldLabel} htmlFor="pick-bank-account-name">
-                  Nome da conta (opcional)
-                </label>
-              <input id="pick-bank-account-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da conta (opcional)" />
-              </div>
-              <div className={formLayout.field}>
-                <label className={styles.fieldLabel} htmlFor="pick-bank-initial-balance">
-                  Saldo inicial
-                </label>
-              <input
-                id="pick-bank-initial-balance"
-                type="number"
-                step="0.01"
-                value={initialBalance}
-                onChange={(e) => setInitialBalance(e.target.value)}
-                placeholder="Saldo inicial"
-              />
-              </div>
-              <button type="submit">Salvar conta</button>
-            </form>
-          </div>
-        </div>
-      ) : null}
-
-      {wizardFlow === "mp_creds" ? (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modal}>
-            <header>
-              <h2>Credenciais Mercado Pago</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  if (mpEntryPoint === "bank") setWizardFlow("pick_bank");
-                  else setWizardFlow("pick_type");
-                }}
-              >
-                x
-              </button>
-            </header>
-            <form
-              className={`${formLayout.stack} ${styles.form}`}
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!mpTestOk) {
-                  setError("Valide as credenciais com o botão “Testar credenciais” antes de continuar.");
-                  return;
-                }
-                setWizardFlow("mp_products");
-              }}
-            >
-              <p className={styles.smallMuted}>
-                As chaves ficam cifradas no servidor. A validação usa a API do Mercado Pago (usuário autenticado).
-              </p>
-              <div className={formLayout.field}>
-                <label className={styles.fieldLabel} htmlFor="mp-wizard-public-key">
-                  Public Key
-                </label>
-              <input
-                id="mp-wizard-public-key"
-                value={mpPublicKey}
-                onChange={(e) => {
-                  setMpPublicKey(e.target.value);
-                  setMpTestOk(false);
-                }}
-                placeholder="APP_USR-… ou TEST-…"
-                autoComplete="off"
-              />
-              </div>
-              <div className={formLayout.field}>
-                <label className={styles.fieldLabel} htmlFor="mp-wizard-access-token">
-                  Access Token
-                </label>
-              <input
-                id="mp-wizard-access-token"
-                type="password"
-                value={mpAccessToken}
-                onChange={(e) => {
-                  setMpAccessToken(e.target.value);
-                  setMpTestOk(false);
-                }}
-                placeholder="Access token de produção ou teste"
-                autoComplete="off"
-              />
-              </div>
-              <label className={styles.smallLink}>
-                <input type="checkbox" checked={mpSandbox} onChange={(e) => setMpSandbox(e.target.checked)} /> Ambiente de testes
-                (sandbox)
-              </label>
-              <div className={formLayout.field}>
-                <label className={styles.fieldLabel} htmlFor="mp-wizard-account-name">
-                  Nome da conta
-                </label>
-              <input id="mp-wizard-account-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome da conta (ex.: Conta Mercado Pago)" />
-              </div>
-              <div className={formLayout.field}>
-                <label className={styles.fieldLabel} htmlFor="mp-wizard-initial-balance">
-                  Saldo inicial (opcional)
-                </label>
-              <input
-                id="mp-wizard-initial-balance"
-                type="number"
-                step="0.01"
-                value={initialBalance}
-                onChange={(e) => setInitialBalance(e.target.value)}
-                placeholder="Saldo inicial (opcional)"
-              />
-              </div>
-              <div className={styles.rowActions}>
-                <button type="button" onClick={() => void testMpCredentials()}>
-                  Testar credenciais
-                </button>
-                <button type="submit" disabled={!mpTestOk}>
-                  Continuar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
-
-      {wizardFlow === "mp_products" ? (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modal}>
-            <header>
-              <h2>Ativação de produtos</h2>
-              <button type="button" onClick={() => setWizardFlow("mp_creds")}>
-                x
-              </button>
-            </header>
-            <form className={`${formLayout.stack} ${styles.form}`} onSubmit={(e) => void submitMpIntegration(e)}>
-              <p className={styles.smallMuted}>Escolha quais fluxos de pagamento deseja habilitar neste workspace.</p>
-              <label className={styles.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={mpProducts.checkout_pro}
-                  onChange={(e) => setMpProducts((p) => ({ ...p, checkout_pro: e.target.checked }))}
-                />
-                Checkout Pro / Transparente
-              </label>
-              <label className={styles.toggleRow}>
-                <input type="checkbox" checked={mpProducts.pix} onChange={(e) => setMpProducts((p) => ({ ...p, pix: e.target.checked }))} />
-                Recebimento via Pix
-              </label>
-              <label className={styles.toggleRow}>
-                <input type="checkbox" checked={mpProducts.boleto} onChange={(e) => setMpProducts((p) => ({ ...p, boleto: e.target.checked }))} />
-                Boleto bancário
-              </label>
-              <label className={styles.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={mpProducts.subscriptions}
-                  onChange={(e) => setMpProducts((p) => ({ ...p, subscriptions: e.target.checked }))}
-                />
-                Assinaturas (recorrência)
-              </label>
-              <label className={styles.toggleRow}>
-                <input
-                  type="checkbox"
-                  checked={mpProducts.payment_link}
-                  onChange={(e) => setMpProducts((p) => ({ ...p, payment_link: e.target.checked }))}
-                />
-                Link de pagamento
-              </label>
-              <button type="submit">Salvar e conectar</button>
-            </form>
-          </div>
-        </div>
-      ) : null}
+      <AccountRegistrationWizard
+        open={accountWizardOpen}
+        accounts={accounts}
+        onClose={() => setAccountWizardOpen(false)}
+        onSaved={(message) => setMsg(message)}
+        onError={setError}
+        onGatewaysChange={(patch) => setGateways((g) => (g ? { ...g, ...patch } : g))}
+        reloadAccounts={loadAccounts}
+      />
 
       {reconcileAccount ? (
         <div className={styles.modalOverlay}>

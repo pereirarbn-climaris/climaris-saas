@@ -156,8 +156,9 @@ WHATSAPP_WEBHOOK_ENABLED: bool = _env_bool("WHATSAPP_WEBHOOK_ENABLED", False)
 WHATSAPP_INTERACTIVE_BUTTONS_ENABLED: bool = _env_bool("WHATSAPP_INTERACTIVE_BUTTONS_ENABLED", False)
 WHATSAPP_REMINDER_WORKER_ENABLED: bool = _env_bool("WHATSAPP_REMINDER_WORKER_ENABLED", True)
 WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS: int = int(os.getenv("WHATSAPP_REMINDER_WORKER_INTERVAL_SECONDS", "60"))
-# Lembrete preventivo automático (vencimento = hoje), mesmo ciclo do worker de agenda.
-WHATSAPP_PREVENTIVE_WORKER_ENABLED: bool = _env_bool("WHATSAPP_PREVENTIVE_WORKER_ENABLED", False)
+# Lembrete preventivo automático (vencimento = hoje + N dias antes), mesmo ciclo do worker de agenda.
+WHATSAPP_PREVENTIVE_WORKER_ENABLED: bool = _env_bool("WHATSAPP_PREVENTIVE_WORKER_ENABLED", True)
+PREVENTIVE_AI_MESSAGE_ENABLED: bool = _env_bool("PREVENTIVE_AI_MESSAGE_ENABLED", True)
 
 # Opcional: permite chamar POST /api/v1/preventive-maintenance/run-due-cron com header
 # X-Preventive-Cron-Secret (mesmo valor) sem JWT — útil para cron externo.

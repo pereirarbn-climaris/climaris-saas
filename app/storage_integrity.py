@@ -93,6 +93,16 @@ def get_storage_alerts(tenant_id: int) -> list[str]:
     return list(_startup_alerts_by_tenant.get(tenant_id, []))
 
 
+def get_budget_storage_alerts(tenant_id: int) -> list[str]:
+    """Alertas de PDF de orçamento — não inclui etiquetas QR."""
+    return [msg for msg in get_storage_alerts(tenant_id) if msg.startswith("Orçamento ")]
+
+
+def get_qrcode_storage_alerts(tenant_id: int) -> list[str]:
+    """Alertas de etiquetas QR ausentes no S3."""
+    return [msg for msg in get_storage_alerts(tenant_id) if msg.startswith("Etiqueta QR ")]
+
+
 def _cache_key(bucket: str, key: str) -> str:
     return f"{bucket}:{key}"
 

@@ -466,16 +466,17 @@ def patch_reminder_rules(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     _require_whatsapp_module(db, current_user.tenant_id)
-    return update_tenant_reminder_rules(
-        db,
-        tenant_id=current_user.tenant_id,
-        offset_15m=payload.offset_15m,
-        offset_30m=payload.offset_30m,
-        offset_1h=payload.offset_1h,
-        offset_1d=payload.offset_1d,
-        custom_enabled=payload.custom_enabled,
-        custom_minutes=payload.custom_minutes,
-    )
+    kwargs: dict = {
+        "offset_15m": payload.offset_15m,
+        "offset_30m": payload.offset_30m,
+        "offset_1h": payload.offset_1h,
+        "offset_1d": payload.offset_1d,
+        "custom_enabled": payload.custom_enabled,
+        "custom_minutes": payload.custom_minutes,
+    }
+    if "dispatch_scheduled_at" in payload.model_fields_set:
+        kwargs["dispatch_scheduled_at"] = payload.dispatch_scheduled_at
+    return update_tenant_reminder_rules(db, tenant_id=current_user.tenant_id, **kwargs)
 
 
 @router.post(

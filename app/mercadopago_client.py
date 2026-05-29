@@ -128,6 +128,40 @@ def fetch_mercadopago_merchant_order(*, access_token: str, order_id: str, timeou
     return True, None, data
 
 
+def search_mercadopago_payments_in_range(
+    *,
+    access_token: str,
+    begin_date: str,
+    end_date: str,
+    range_field: str = "money_release_date",
+    limit: int = 50,
+    offset: int = 0,
+    timeout: float = 25.0,
+) -> tuple[bool, str | None, list[dict[str, Any]]]:
+    """GET /v1/payments/search com intervalo de datas (ex.: money_release_date)."""
+    begin = (begin_date or "").strip()
+    end = (end_date or "").strip()
+    if not begin or not end:
+        return False, "Intervalo de datas inválido.", []
+    rf = (range_field or "money_release_date").strip()
+    lim = max(1, min(int(limit), 50))
+    off = max(0, int(offset))
+    path = (
+        "/v1/payments/search?sort=date_created&criteria=desc"
+        f"&range={urllib.parse.quote(rf, safe='')}"
+        f"&begin_date={urllib.parse.quote(begin, safe='')}"
+        f"&end_date={urllib.parse.quote(end, safe='')}"
+        f"&limit={lim}&offset={off}"
+    )
+    ok, err, data = mercadopago_api_json("GET", path, access_token=access_token, timeout=timeout)
+    if not ok or not isinstance(data, dict):
+        return False, err or "Falha na busca de pagamentos.", []
+    raw = data.get("results")
+    if not isinstance(raw, list):
+        return True, None, []
+    return True, None, [p for p in raw if isinstance(p, dict) and p.get("id") is not None]
+
+
 def search_mercadopago_payments_by_external_reference(
     *, access_token: str, external_reference: str, timeout: float = 25.0
 ) -> tuple[bool, str | None, list[dict[str, Any]]]:

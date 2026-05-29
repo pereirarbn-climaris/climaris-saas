@@ -1,0 +1,68 @@
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+  max-width: 28rem;
+  margin: 0 auto;
+}
+
+.stepItem {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.stepDot {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.stepDotActive {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.stepDotDone {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
+  color: var(--color-primary);
+}
+
+.stepLabel {
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stepLabelActive {
+  color: var(--color-text);
+}
+
+.stepLine {
+  flex: 1;
+  height: 2px;
+  background: var(--color-border);
+  margin: 0 0.3rem;
+  min-width: 0.35rem;
+}
+
+.stepLineDone {
+  background: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+}

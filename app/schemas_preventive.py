@@ -15,7 +15,9 @@ class PreventiveSettingsOut(BaseModel):
 
     preventive_promo_image_url: str | None = None
     preventive_image_url: str | None = None
+    preventive_has_banner: bool = False
     preventive_promo_image_mimetype: str | None = Field(default="image/jpeg", max_length=80)
+    preventive_promo_image_enabled: bool = False
     preventive_technical_problem_hint: str | None = None
     preventive_button_more_text: str = Field(default="Sim, quero saber mais", max_length=80)
     preventive_button_schedule_text: str = Field(default="Agendar agora", max_length=80)
@@ -29,6 +31,7 @@ class PreventiveSettingsPatch(BaseModel):
     preventive_promo_image_url: str | None = Field(default=None, max_length=500)
     preventive_image_url: str | None = Field(default=None, max_length=500)
     preventive_promo_image_mimetype: str | None = Field(default=None, max_length=80)
+    preventive_promo_image_enabled: bool | None = None
     preventive_technical_problem_hint: str | None = None
     preventive_button_more_text: str | None = Field(default=None, max_length=80)
     preventive_button_schedule_text: str | None = Field(default=None, max_length=80)
@@ -68,6 +71,8 @@ class HistoricoServicoOut(BaseModel):
 class PreventiveItemOut(BaseModel):
     historico_servico_id: int = 0
     rule_id: int | None = None
+    preventive_schedule_id: int | None = None
+    is_manual_reminder: bool = False
     client_id: int
     client_name: str
     service_id: int = 0
@@ -86,6 +91,15 @@ class PreventiveItemOut(BaseModel):
     ultimo_whatsapp_status: str | None = None
     ultimo_whatsapp_erro: str | None = None
     ultimo_whatsapp_em: datetime | None = None
+    pending_service_order_id: int | None = None
+    status_agenda: bool = False
+    status_mensagem_enviada: bool = False
+    status_lembrete_antecipado: bool = False
+    status_lembrete_vencimento: bool = False
+    status_vencida: bool = False
+    campaign_status: Literal[
+        "agenda", "mensagem_enviada", "lembrete_antecipado", "lembrete_vencimento", "vencida"
+    ] | None = None
 
 
 class PreventiveClientGroupOut(BaseModel):
@@ -285,12 +299,36 @@ class PreventiveRegisterEntryOut(BaseModel):
     whatsapp_job: WhatsappMessageJobOut | None = None
 
 
+class PreventiveManualReminderOut(BaseModel):
+    preventive_schedule_id: int
+    client_id: int
+    client_name: str
+    service_id: int
+    equipment_id: int
+    equipment_label: str
+    data_realizacao: date | None = None
+    notes: str | None = None
+    historico_servico_id: int | None = None
+    reminder_send: Literal["none", "now", "scheduled"] = "none"
+    reminder_local_date: date | None = None
+    reminder_local_time: str | None = None
+    is_temporary_equipment: bool = False
+
+
+class PreventiveManualReminderUpdate(BaseModel):
+    service_id: int = Field(ge=1)
+    data_realizacao: date
+    equipment_label: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
 class PreventiveLeadOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
     id: int
     tenant_id: int
     client_id: int
+    client_name: str | None = None
     historico_servico_id: int | None = None
     whatsapp_digits: str
     interest_kind: Literal["more", "schedule"]

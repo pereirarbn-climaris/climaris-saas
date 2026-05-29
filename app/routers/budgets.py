@@ -14,7 +14,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
 from app.schemas import BudgetCreate, BudgetRejectRequest, BudgetSendRequest
-from app.storage_integrity import get_storage_alerts, normalize_budget_status, verify_budget_storage
+from app.storage_integrity import get_budget_storage_alerts, normalize_budget_status, verify_budget_storage
 from app.storage_integrity import upload_budget_pdf_to_s3 as _upload_budget_pdf_to_s3
 from app.tenant_logo import generate_tenant_logo_presigned_url
 from models import (
@@ -124,7 +124,7 @@ def list_budgets(
         db.commit()
     payload = [_budget_to_out(row) for row in rows]
     if include_storage_alerts:
-        panel_alerts = get_storage_alerts(current_user.tenant_id)
+        panel_alerts = get_budget_storage_alerts(current_user.tenant_id)
         return JSONResponse(content=jsonable_encoder({"items": payload, "storage_alerts": panel_alerts}))
     return JSONResponse(content=jsonable_encoder(payload))
 
@@ -332,6 +332,21 @@ def approve_budget(
     budget.approved_at = datetime.now(timezone.utc)
     if budget.sent_at is None:
         budget.sent_at = budget.approved_at
+
+    from app.campaign_analytics import INTERACTION_BUDGET_CREATED, INTERACTION_OS_CLOSED, link_conversion_to_campaign
+
+    link_conversion_to_campaign(
+        db,
+        client_id=budget.client_id,
+        interaction_type=INTERACTION_BUDGET_CREATED,
+        tenant_id=current_user.tenant_id,
+    )
+    link_conversion_to_campaign(
+        db,
+        client_id=budget.client_id,
+        interaction_type=INTERACTION_OS_CLOSED,
+        tenant_id=current_user.tenant_id,
+    )
 
     db.commit()
     return {

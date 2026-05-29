@@ -152,7 +152,9 @@ export function PlatformTenantsPage() {
       setDetailsById((prev) => ({ ...prev, [planModalTenantId]: updated }));
       setPlanDraft(updated.active_plan);
       setPlanHistory(updated.plan_change_logs ?? []);
-      setSuccess("Plano atualizado com sucesso.");
+      setSuccess(
+        "Plano atualizado no banco. O cliente vê a mudança ao recarregar o app ou ao voltar à aba (atualização automática).",
+      );
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Não foi possível atualizar o plano.");

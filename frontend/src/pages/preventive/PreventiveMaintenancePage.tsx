@@ -2,15 +2,17 @@
  * PreventiveMaintenancePage — vencimentos por equipamento, filtrados por mês e agrupados por cliente.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { useOutletContext } from "react-router-dom";
 import {
   currentPreventiveMonthValue,
+  deleteManualPreventiveReminder,
   fetchPreventiveSettings,
   listPreventiveItemsGrouped,
   parsePreventiveMonthValue,
   patchPreventiveSettings,
   sendPreventiveReminder,
   type PreventiveClientGroup,
+  type PreventiveItem,
   type PreventiveSettings,
 } from "../../api/preventiveMaintenance";
 import type { DashboardOutletContext } from "../dashboardContext";
@@ -49,6 +51,7 @@ export function PreventiveMaintenancePage() {
   const [searchInput, setSearchInput] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [editScheduleId, setEditScheduleId] = useState<number | null>(null);
   const [sendingClientId, setSendingClientId] = useState<number | null>(null);
   const [savingAutoSetting, setSavingAutoSetting] = useState(false);
 
@@ -135,9 +138,12 @@ export function PreventiveMaintenancePage() {
         ...(enabling && autoWhatsappDays <= 0 ? { preventive_auto_remind_days_before: 7 } : {}),
       });
       setSettings(updated);
+      const days = updated.preventive_auto_remind_days_before;
       toast.success(
         enabling
-          ? `Envio automático ativado${updated.preventive_auto_remind_days_before > 0 ? ` (${updated.preventive_auto_remind_days_before} dias antes)` : ""}.`
+          ? days > 0
+            ? `Envio automático ativado (${days} dias antes do vencimento).`
+            : "Envio automático ativado (no dia do vencimento)."
           : "Envio automático desativado.",
       );
     } catch (e) {
@@ -188,6 +194,28 @@ export function PreventiveMaintenancePage() {
     [canEdit, parsedMonth, settings],
   );
 
+  const handleDeleteManualReminder = useCallback(
+    async (row: PreventiveItem) => {
+      if (!canEdit || !row.preventive_schedule_id) return;
+      const label = row.equipment_identificacao || row.service_name || "este lembrete";
+      if (
+        !window.confirm(
+          `Excluir o lembrete de "${label}"?\n\nO registro sai da listagem mensal. Lembretes de WhatsApp ainda na fila serão cancelados.`,
+        )
+      ) {
+        return;
+      }
+      try {
+        await deleteManualPreventiveReminder(row.preventive_schedule_id);
+        await refreshList();
+        toast.success("Lembrete excluído.");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Não foi possível excluir o lembrete.");
+      }
+    },
+    [canEdit, refreshList],
+  );
+
   return (
     <div className={styles.wrap}>
       <ToastHost />
@@ -203,7 +231,10 @@ export function PreventiveMaintenancePage() {
           <button
             type="button"
             className={tableStyles.listToolbarBtnPrimary}
-            onClick={() => setCreateOpen(true)}
+            onClick={() => {
+              setEditScheduleId(null);
+              setCreateOpen(true);
+            }}
           >
             <svg
               viewBox="0 0 24 24"
@@ -222,11 +253,6 @@ export function PreventiveMaintenancePage() {
         ) : null}
       </header>
 
-      <p className={styles.pageSubtitle} style={{ marginBottom: "1rem" }}>
-        Campanhas WhatsApp e template:{" "}
-        <Link to="/app/integrations/whatsapp">Integrações → WhatsApp → Gestão preventiva</Link>
-      </p>
-
       {canEdit ? (
         <div className={styles.whatsappBar}>
           <label className={styles.autoToggle}>
@@ -240,14 +266,18 @@ export function PreventiveMaintenancePage() {
               <strong>Envio automático WhatsApp</strong>
               <span className={styles.autoToggleHint}>
                 {autoWhatsappEnabled
-                  ? "Lembretes no dia do vencimento e dias antes, para todos os clientes elegíveis."
+                  ? autoWhatsappDays > 0
+                    ? `Um lembrete automático por cliente, ${autoWhatsappDays} dias antes do vencimento (dias úteis, no horário do expediente).`
+                    : "Um lembrete automático por cliente, no dia do vencimento (dias úteis, no horário do expediente)."
                   : "Desligado — use o botão em cada cliente para enviar manualmente."}
               </span>
             </span>
           </label>
           {autoWhatsappEnabled ? (
             <div className={styles.autoDaysField}>
-              <label htmlFor="prev-auto-days">Dias antes</label>
+              <label htmlFor="prev-auto-days" title="0 = no dia do vencimento">
+                Dias antes
+              </label>
               <input
                 id="prev-auto-days"
                 type="number"
@@ -381,14 +411,31 @@ export function PreventiveMaintenancePage() {
         canEdit={canEdit}
         sendingClientId={sendingClientId}
         onSendClient={(clientId) => void handleSendClientReminder(clientId)}
+        onEditManualReminder={(row) => {
+          if (!row.preventive_schedule_id) return;
+          setEditScheduleId(row.preventive_schedule_id);
+          setCreateOpen(true);
+        }}
+        onDeleteManualReminder={(row) => void handleDeleteManualReminder(row)}
       />
 
       <PreventiveCreateFormView
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        editScheduleId={editScheduleId}
+        onClose={() => {
+          setCreateOpen(false);
+          setEditScheduleId(null);
+        }}
         preventiveSettings={settings}
+        onUpdated={async () => {
+          setCreateOpen(false);
+          setEditScheduleId(null);
+          await refreshList();
+          toast.success("Lembrete atualizado.");
+        }}
         onCreated={async (out) => {
           setCreateOpen(false);
+          setEditScheduleId(null);
           await refreshList();
           if (out.whatsapp_job?.scheduled_for) {
             toast.success(

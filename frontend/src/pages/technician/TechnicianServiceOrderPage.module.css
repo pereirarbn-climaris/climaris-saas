@@ -94,11 +94,55 @@
   color: var(--color-text);
 }
 
-.osMeta {
+.osClientBlock {
   margin: 0 0 1.25rem;
+}
+
+.osMeta {
+  margin: 0;
   font-size: 0.85rem;
   color: var(--color-text-muted);
   line-height: 1.45;
+}
+
+.osMeta + .osMeta {
+  margin-top: 0.25rem;
+}
+
+.osPhoneList > * + * {
+  margin-top: 0.25rem;
+}
+
+.osMetaLabel {
+  color: var(--color-text-muted);
+}
+
+.osAddressRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0;
+}
+
+.osAddressSep {
+  color: var(--color-text-subtle, #94a3b8);
+}
+
+.osAddressLink,
+.osAddressLinkAlt {
+  color: #0284c7;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.osAddressLink:hover,
+.osAddressLinkAlt:hover {
+  color: #0369a1;
+}
+
+.osAddressLinkAlt {
+  font-size: 0.8rem;
 }
 
 .statusBadge {

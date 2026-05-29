@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { SessionMaintenance } from "./components/SessionMaintenance";
 import { SmartHomeRedirect } from "./components/SmartHomeRedirect";
@@ -33,7 +34,14 @@ import { TechnicianServiceOrderPage } from "./pages/technician/TechnicianService
 import { ServiceFormPage } from "./pages/services/ServiceFormPage";
 import { ServicesListPage } from "./pages/services/ServicesListPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
-import { FinancePage } from "./pages/finance/FinancePage";
+const FinanceDashboard = lazy(() =>
+  import("./features/finance/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })),
+);
+const ReconciliationDashboard = lazy(() =>
+  import("./features/finance/reconciliation/ReconciliationDashboard").then((m) => ({
+    default: m.ReconciliationDashboard,
+  })),
+);
 import { FinanceMpEmbeddedCheckoutPage } from "./pages/finance/FinanceMpEmbeddedCheckoutPage";
 import { FinanceMpWalletBrickPage } from "./pages/finance/FinanceMpWalletBrickPage";
 import { FinanceAccountsPage } from "./pages/finance/FinanceAccountsPage";
@@ -122,7 +130,23 @@ export default function App() {
         <Route path="budgets" element={<BudgetsListPage />} />
         <Route path="budgets/new" element={<BudgetFormPage />} />
         <Route path="budgets/:budgetId" element={<BudgetFormPage />} />
-        <Route path="finance" element={<FinancePage />} />
+        <Route path="finance" element={<Navigate to="/app/finance/dashboard" replace />} />
+        <Route
+          path="finance/dashboard"
+          element={
+            <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Carregando financeiro…</div>}>
+              <FinanceDashboard />
+            </Suspense>
+          }
+        />
+        <Route
+          path="finance/reconciliation"
+          element={
+            <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Carregando conciliação…</div>}>
+              <ReconciliationDashboard />
+            </Suspense>
+          }
+        />
         <Route path="finance/mercadopago-checkout" element={<FinanceMpEmbeddedCheckoutPage />} />
         <Route path="finance/mercadopago-wallet" element={<FinanceMpWalletBrickPage />} />
         <Route path="finance/settings" element={<FinanceSettingsPage />} />

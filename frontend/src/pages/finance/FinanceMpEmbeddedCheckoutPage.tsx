@@ -19,7 +19,7 @@ export function FinanceMpEmbeddedCheckoutPage() {
 
   return (
     <div className={styles.wrap}>
-      <Link to="/app/finance" className={styles.back}>
+      <Link to="/app/finance/dashboard" className={styles.back}>
         ← Voltar ao financeiro
       </Link>
       <h1 className={styles.title}>Checkout Mercado Pago</h1>

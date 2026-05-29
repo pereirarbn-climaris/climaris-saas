@@ -1,0 +1,192 @@
+.wrap {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.chartsLayout {
+  display: grid;
+  grid-template-columns: 1fr minmax(240px, 30%);
+  gap: 1.25rem;
+  align-items: stretch;
+}
+
+@media (max-width: 1024px) {
+  .chartsLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chartCard {
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface-elevated, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 1.25rem 1rem 1rem;
+  min-width: 0;
+}
+
+.chartHeader {
+  margin-bottom: 1rem;
+}
+
+.chartTitle {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text, #0f172a);
+}
+
+.chartSubtitle {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.summaryCard {
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface-elevated, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 1rem 1.1rem;
+}
+
+.summaryLabel {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted, #64748b);
+  margin-bottom: 0.35rem;
+}
+
+.summaryValue {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--color-text, #0f172a);
+  line-height: 1.2;
+}
+
+.summaryValueBlue {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #2563eb;
+}
+
+.summaryValueGreen {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #059669;
+}
+
+.roiCard {
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid #a7f3d0;
+  background: linear-gradient(160deg, #ecfdf5 0%, #fff 55%);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 1rem 1.1rem 0.75rem;
+  flex: 1;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+}
+
+.roiValue {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #047857;
+  margin: 0.15rem 0 0.5rem;
+}
+
+.roiHint {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.roiChart {
+  flex: 1;
+  min-height: 56px;
+  margin: 0 -0.25rem;
+}
+
+.tooltip {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.75rem;
+  max-width: 280px;
+}
+
+.tooltipDate {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 0.8125rem;
+}
+
+.tooltipRow {
+  margin: 0.35rem 0 0;
+  padding-top: 0.35rem;
+  border-top: 1px solid #f1f5f9;
+  color: #334155;
+}
+
+.tooltipRow strong {
+  color: #0f172a;
+}
+
+.tooltipType {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tooltipTypePrevisto {
+  color: #2563eb;
+}
+
+.tooltipTypeRecebido {
+  color: #059669;
+}
+
+.emptyChart {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.875rem;
+}

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { TenantOut, UserOut } from "../../api/auth";
+import { getPlanDisplayLabel } from "../../lib/planRules";
 import {
   NavIconAirCompliance,
   NavIconBox,
@@ -103,7 +104,12 @@ export function AppSidebar({
           <Sidebar.Item to="/app/budgets" title="Orcamentos" icon={<NavIconFileQuote />}>
             Orçamentos
           </Sidebar.Item>
-          <Sidebar.Item to="/app/finance" title="Financeiro" icon={<NavIconWallet />}>
+          <Sidebar.Item
+            to="/app/finance/dashboard"
+            matchPrefix="/app/finance"
+            title="Financeiro"
+            icon={<NavIconWallet />}
+          >
             Financeiro
           </Sidebar.Item>
           <Sidebar.Item to="/app/fiscal/nfse" title="NFS-e" icon={<NavIconFileQuote />}>
@@ -191,7 +197,10 @@ export function AppSidebar({
             <p className={styles.workspaceName}>{tenant?.name ?? "—"}</p>
           )}
           <p className={styles.planLine}>
-            Plano <span className={styles.planBadge}>{tenant?.active_plan ?? "—"}</span>
+            Plano{" "}
+            <span className={styles.planBadge}>
+              {tenant ? getPlanDisplayLabel(tenant.active_plan, tenant.active_plan_label) : "—"}
+            </span>
           </p>
           {user?.role === "admin" ? (
             <Link

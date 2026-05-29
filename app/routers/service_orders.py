@@ -91,6 +91,20 @@ from models import (
 
 router = APIRouter(tags=["service-orders"])
 
+
+def _service_product_inputs_options():
+    return selectinload(Service.product_inputs).selectinload(ServiceProductInput.product)
+
+
+def _fetch_service_with_inputs(db: Session, *, service_id: int, tenant_id: int) -> Service:
+    service = db.execute(
+        select(Service)
+        .where(Service.id == service_id, Service.tenant_id == tenant_id)
+        .options(_service_product_inputs_options())
+    ).scalar_one()
+    return service
+
+
 WORKDAY_START = os.getenv("WORKDAY_START", "08:00")
 WORKDAY_END = os.getenv("WORKDAY_END", "18:00")
 SCHEDULE_BUFFER_MINUTES = int(os.getenv("SCHEDULE_BUFFER_MINUTES", "15"))
@@ -943,8 +957,7 @@ def create_service(
             )
         )
     db.commit()
-    db.refresh(service)
-    return service
+    return _fetch_service_with_inputs(db, service_id=service.id, tenant_id=current_user.tenant_id)
 
 
 @router.get(
@@ -960,7 +973,7 @@ def list_services(
     limit: Annotated[int, Query(ge=1)] = 20,
 ) -> list[Service]:
     limit = clamp_limit(limit)
-    query = select(Service).where(Service.tenant_id == current_user.tenant_id).options(selectinload(Service.product_inputs))
+    query = select(Service).where(Service.tenant_id == current_user.tenant_id).options(_service_product_inputs_options())
     if q:
         term = f"%{q}%"
         query = query.where(or_(Service.name.ilike(term), Service.description.ilike(term)))
@@ -980,7 +993,7 @@ def get_service(
     service = db.execute(
         select(Service)
         .where(Service.id == service_id, Service.tenant_id == current_user.tenant_id)
-        .options(selectinload(Service.product_inputs))
+        .options(_service_product_inputs_options())
     ).scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
@@ -1003,7 +1016,7 @@ def update_service(
     service = db.execute(
         select(Service)
         .where(Service.id == service_id, Service.tenant_id == current_user.tenant_id)
-        .options(selectinload(Service.product_inputs))
+        .options(_service_product_inputs_options())
     ).scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
@@ -1081,8 +1094,7 @@ def update_service(
             )
 
     db.commit()
-    db.refresh(service)
-    return service
+    return _fetch_service_with_inputs(db, service_id=service.id, tenant_id=current_user.tenant_id)
 
 
 @router.delete(
@@ -1117,7 +1129,8 @@ def _service_order_detail_options(*, for_stock: bool = False):
         return (
             selectinload(ServiceOrder.service_items)
             .selectinload(ServiceOrderServiceItem.service)
-            .selectinload(Service.product_inputs),
+            .selectinload(Service.product_inputs)
+            .selectinload(ServiceProductInput.product),
             selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.equipment),
             selectinload(ServiceOrder.product_items),
             schedule_techs,
@@ -1528,6 +1541,14 @@ def create_service_order(
         )
         _sync_stock_after_order_change(
             db, tenant_id=current_user.tenant_id, order=order_for_stock, old_demand={}
+        )
+        from app.campaign_analytics import INTERACTION_OS_CLOSED, link_conversion_to_campaign
+
+        link_conversion_to_campaign(
+            db,
+            client_id=payload.client_id,
+            interaction_type=INTERACTION_OS_CLOSED,
+            tenant_id=current_user.tenant_id,
         )
         db.commit()
     except HTTPException:

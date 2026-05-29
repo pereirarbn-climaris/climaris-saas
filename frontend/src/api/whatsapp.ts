@@ -60,6 +60,7 @@ export type WhatsappReminderRules = {
   custom_enabled: boolean;
   custom_minutes: number | null;
   active_offsets_minutes: number[];
+  dispatch_scheduled_at: string | null;
 };
 
 export type WhatsappTemplate = {
@@ -301,6 +302,7 @@ export async function patchWhatsappReminderRules(patch: {
   offset_1d?: boolean;
   custom_enabled?: boolean;
   custom_minutes?: number | null;
+  dispatch_scheduled_at?: string | null;
 }): Promise<WhatsappReminderRules> {
   const response = await fetch(apiUrl("/api/v1/whatsapp/reminder-rules"), {
     method: "PATCH",
@@ -312,6 +314,24 @@ export async function patchWhatsappReminderRules(patch: {
     throw new Error(errorMessage(body, "Não foi possível salvar as regras."));
   }
   return body as WhatsappReminderRules;
+}
+
+export type WhatsappDispatchDueRemindersResult = {
+  checked: number;
+  sent: number;
+};
+
+/** Dispara o ciclo de lembretes de agenda agora (mesmo worker; útil para teste). */
+export async function dispatchWhatsappDueReminders(): Promise<WhatsappDispatchDueRemindersResult> {
+  const response = await fetch(apiUrl("/api/v1/whatsapp/dispatch-due-reminders"), {
+    method: "POST",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível executar o disparo de teste."));
+  }
+  return body as WhatsappDispatchDueRemindersResult;
 }
 
 export async function listWhatsappTemplates(): Promise<WhatsappTemplate[]> {

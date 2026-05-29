@@ -1,174 +1,198 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { createFinancePaymentFee, deleteFinancePaymentFee, listFinancePaymentFees, type FinancePaymentFeeOut } from "../../api/finance";
-import formLayout from "../formLayout.module.css";
+import { CreditCard, Plus, Settings2 } from "lucide-react";
+import {
+  createFinancePaymentFee,
+  deleteFinancePaymentFee,
+  listFinancePaymentFees,
+  type FinancePaymentFeeOut,
+} from "../../api/finance";
+import {
+  configFromPaymentFees,
+  configToFeeRows,
+  PLANO_META,
+} from "../../lib/financeMaquininhaUtils";
+import type { MaquininhaConfig } from "../../schemas/financeMaquininha";
+import { MachineRatesEditor } from "./MachineRatesEditor";
 import styles from "./FinanceMachinesPage.module.css";
+
+type MachineSummary = {
+  name: string;
+  planCount: number;
+  hasRates: boolean;
+};
+
+function summarizeMachine(name: string, fees: FinancePaymentFeeOut[]): MachineSummary {
+  const rows = fees.filter((f) => f.provider_name.trim().toLowerCase() === name.trim().toLowerCase());
+  const config = configFromPaymentFees(name, rows);
+  const hasRates = Object.values(config.planos).some(
+    (p) => p.taxaDebito > 0 || Object.values(p.taxasCredito).some((t) => t > 0),
+  );
+  return { name, planCount: 3, hasRates };
+}
 
 export function FinanceMachinesPage() {
   const [fees, setFees] = useState<FinancePaymentFeeOut[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [newMachineName, setNewMachineName] = useState("");
-  const [machineModalOpen, setMachineModalOpen] = useState(false);
-  const [machineName, setMachineName] = useState("");
-  const [machineReceivableLabel, setMachineReceivableLabel] = useState("1 dia util");
-  const [machineDebitFee, setMachineDebitFee] = useState("0");
-  const [machineCreditFees, setMachineCreditFees] = useState<string[]>(Array.from({ length: 12 }, () => "0"));
+  const [editorConfig, setEditorConfig] = useState<MaquininhaConfig | null>(null);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setError(null);
     try {
       setFees(await listFinancePaymentFees());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao carregar maquininhas.");
+    } finally {
+      setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void loadData();
-  }, []);
+  }, [loadData]);
 
   const machineNames = useMemo(
-    () => Array.from(new Set(fees.map((f) => f.provider_name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    () =>
+      Array.from(new Set(fees.map((f) => f.provider_name.trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b, "pt-BR"),
+      ),
     [fees],
   );
 
-  function openMachineModal(name: string) {
-    const machineFees = fees.filter((f) => f.provider_name.trim().toLowerCase() === name.trim().toLowerCase());
-    const debit = machineFees.find((f) => f.payment_method === "debit_card" && f.installments === 1);
-    const receivable = machineFees.find((f) => f.payment_method.startsWith("receivable_"));
-    const credit = Array.from({ length: 12 }, (_, i) => {
-      const row = machineFees.find((f) => f.payment_method === "credit_card" && f.installments === i + 1);
-      return row ? String(row.fee_percent) : "0";
-    });
-    setMachineName(name);
-    setMachineDebitFee(debit ? String(debit.fee_percent) : "0");
-    setMachineReceivableLabel(receivable ? receivable.payment_method.replace("receivable_", "").replaceAll("_", " ") : "1 dia util");
-    setMachineCreditFees(credit);
-    setMachineModalOpen(true);
+  const summaries = useMemo(
+    () => machineNames.map((name) => summarizeMachine(name, fees)),
+    [machineNames, fees],
+  );
+
+  function openEditor(name: string) {
+    const config = configFromPaymentFees(name, fees);
+    setEditorConfig(config);
+    setMsg(null);
+    setError(null);
   }
 
-  async function saveMachineRates(ev: FormEvent) {
-    ev.preventDefault();
-    const provider = machineName.trim();
+  function openNewEditor() {
+    const name = newMachineName.trim();
+    if (!name) return;
+    openEditor(name);
+    setNewMachineName("");
+  }
+
+  async function persistConfig(config: MaquininhaConfig) {
+    const provider = config.nomeMaquininha.trim();
     if (!provider) return;
+    setSaving(true);
+    setError(null);
     try {
       const existing = fees.filter((f) => f.provider_name.trim().toLowerCase() === provider.toLowerCase());
       for (const row of existing) await deleteFinancePaymentFee(row.id);
-      await createFinancePaymentFee({ provider_name: provider, payment_method: "debit_card", installments: 1, fee_percent: Number(machineDebitFee || "0"), fee_fixed_amount: 0, is_active: true });
-      for (let i = 0; i < 12; i += 1) {
-        await createFinancePaymentFee({
-          provider_name: provider,
-          payment_method: "credit_card",
-          installments: i + 1,
-          fee_percent: Number(machineCreditFees[i] || "0"),
-          fee_fixed_amount: 0,
-          is_active: true,
-        });
+      const payloads = configToFeeRows(config);
+      for (const payload of payloads) {
+        await createFinancePaymentFee(payload);
       }
-      const modeKey = `receivable_${machineReceivableLabel.trim().toLowerCase().replaceAll(" ", "_").slice(0, 28) || "padrao"}`;
-      await createFinancePaymentFee({ provider_name: provider, payment_method: modeKey, installments: 1, fee_percent: 0, fee_fixed_amount: 0, is_active: true });
       await loadData();
-      setMachineModalOpen(false);
-      setMsg(`Taxas salvas para ${provider}.`);
+      setEditorConfig(null);
+      setMsg(`Taxas salvas para ${provider} (${Object.keys(PLANO_META).length} planos de recebimento).`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao salvar taxas.");
+      throw e;
+    } finally {
+      setSaving(false);
     }
   }
 
   return (
     <section className={styles.page}>
-      <header className={styles.header}>
+      <header className={`${styles.header} flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between`}>
         <div>
-          <h1>Maquininhas de cartão</h1>
-          <p className={styles.subtitle}>Cadastre a maquininha e configure taxas de débito e crédito (1x a 12x).</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Maquininhas de cartão</h1>
+          <p className={styles.subtitle}>
+            Gestão profissional de taxas por plano de recebimento (D+0, D+1 e parcelado 30 dias).
+          </p>
         </div>
-        <div className={styles.actions}>
-          <Link to="/app/finance/settings/accounts">Contas</Link>
-          <Link to="/app/finance/settings/cards">Cartões</Link>
-          <Link to="/app/finance/settings">Voltar às configurações</Link>
-        </div>
+        <nav className={`${styles.actions} flex flex-wrap gap-2`}>
+          <Link to="/app/finance/settings/accounts" className={styles.linkBtn}>
+            Contas
+          </Link>
+          <Link to="/app/finance/settings/cards" className={styles.linkBtn}>
+            Cartões
+          </Link>
+          <Link to="/app/finance/settings" className={styles.linkBtn}>
+            Configurações
+          </Link>
+        </nav>
       </header>
+
       {error ? <p className={styles.error}>{error}</p> : null}
       {msg ? <p className={styles.msg}>{msg}</p> : null}
 
       <section className={styles.card}>
-        <h2>Nova maquininha</h2>
+        <div className={styles.cardHead}>
+          <Plus size={18} className="text-teal-700" aria-hidden />
+          <h2>Nova maquininha</h2>
+        </div>
         <form
-          className={styles.row}
+          className={`${styles.row} flex flex-col gap-3 sm:flex-row sm:items-center`}
           onSubmit={(ev) => {
             ev.preventDefault();
-            const name = newMachineName.trim();
-            if (!name) return;
-            openMachineModal(name);
-            setNewMachineName("");
+            openNewEditor();
           }}
         >
-          <input value={newMachineName} onChange={(e) => setNewMachineName(e.target.value)} placeholder="Nome da maquininha (ex.: Stone)" />
-          <button type="submit">Criar e configurar taxas</button>
+          <input
+            className={`${styles.textInput} flex-1 min-w-0`}
+            value={newMachineName}
+            onChange={(e) => setNewMachineName(e.target.value)}
+            placeholder="Nome da maquininha (ex.: Stone)"
+          />
+          <button type="submit" className={styles.btnPrimary} disabled={!newMachineName.trim()}>
+            Criar e configurar taxas
+          </button>
         </form>
       </section>
 
       <section className={styles.card}>
-        <h2>Maquininhas cadastradas</h2>
-        <ul className={styles.list}>
-          {machineNames.map((name) => (
-            <li key={name}>
-              <span>{name}</span>
-              <button type="button" onClick={() => openMachineModal(name)}>
-                Configurar taxas
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className={styles.cardHead}>
+          <CreditCard size={18} className="text-teal-700" aria-hidden />
+          <h2>Maquininhas cadastradas</h2>
+        </div>
+        {loading ? (
+          <p className={styles.hint}>Carregando…</p>
+        ) : summaries.length === 0 ? (
+          <p className={styles.hint}>Nenhuma maquininha cadastrada. Crie a primeira acima.</p>
+        ) : (
+          <ul className={styles.machineList}>
+            {summaries.map((m) => (
+              <li key={m.name} className={styles.machineRow}>
+                <div className={styles.machineInfo}>
+                  <strong>{m.name}</strong>
+                  <span className={styles.hint}>
+                    {m.hasRates
+                      ? `${m.planCount} planos de recebimento configurados`
+                      : "Taxas ainda não configuradas"}
+                  </span>
+                </div>
+                <button type="button" className={styles.btnSecondary} onClick={() => openEditor(m.name)}>
+                  <Settings2 size={16} />
+                  Gerenciar taxas
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
-      {machineModalOpen ? (
-        <div className={styles.modalOverlay}>
-          <form className={`${formLayout.stack} ${styles.modal}`} onSubmit={saveMachineRates}>
-            <header>
-              <h2>Taxas da maquininha</h2>
-              <button type="button" onClick={() => setMachineModalOpen(false)}>
-                x
-              </button>
-            </header>
-            <label className={`${formLayout.field} ${styles.field}`}>
-              <span>Nome da maquininha</span>
-              <input value={machineName} onChange={(e) => setMachineName(e.target.value)} />
-            </label>
-            <label className={`${formLayout.field} ${styles.field}`}>
-              <span>Forma de recebimento</span>
-              <input value={machineReceivableLabel} onChange={(e) => setMachineReceivableLabel(e.target.value)} placeholder="Ex.: 1 dia util" />
-            </label>
-            <label className={`${formLayout.field} ${styles.field}`}>
-              <span>Débito (%)</span>
-              <input type="number" min="0" step="0.01" value={machineDebitFee} onChange={(e) => setMachineDebitFee(e.target.value)} />
-            </label>
-            <div className={styles.grid}>
-              {machineCreditFees.map((value, idx) => (
-                <label key={`cfee-${idx + 1}`} className={`${formLayout.field} ${styles.field}`}>
-                  <span>Crédito {idx + 1}x (%)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={value}
-                    onChange={(e) =>
-                      setMachineCreditFees((prev) => {
-                        const next = [...prev];
-                        next[idx] = e.target.value;
-                        return next;
-                      })
-                    }
-                  />
-                </label>
-              ))}
-            </div>
-            <button type="submit">Salvar taxas</button>
-          </form>
-        </div>
+      {editorConfig ? (
+        <MachineRatesEditor
+          initial={editorConfig}
+          saving={saving}
+          onClose={() => setEditorConfig(null)}
+          onSave={persistConfig}
+        />
       ) : null}
     </section>
   );
 }
-

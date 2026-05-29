@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useOutletContext, useParams } from "react-router-dom";
 import { getClient } from "../../api/clients";
+import { formatClientScheduleAddress } from "../../lib/clientContactDisplay";
 import { listProducts } from "../../api/products";
 import { listServices } from "../../api/services";
 import {
@@ -25,6 +26,9 @@ export function TechnicianServiceOrderPage() {
 
   const [order, setOrder] = useState<ServiceOrderOut | null>(null);
   const [clientName, setClientName] = useState("");
+  const [clientAddress, setClientAddress] = useState<string | null>(null);
+  const [clientPhone, setClientPhone] = useState<string | null>(null);
+  const [clientWhatsapp, setClientWhatsapp] = useState<string | null>(null);
   const [productNameById, setProductNameById] = useState<Map<number, string>>(new Map());
   const [servicesCatalog, setServicesCatalog] = useState<Awaited<ReturnType<typeof listServices>>>([]);
   const [completedIds, setCompletedIds] = useState<Set<number>>(() => new Set());
@@ -56,8 +60,14 @@ export function TechnicianServiceOrderPage() {
         try {
           const client = await getClient(row.client_id);
           setClientName(client.name?.trim() || client.trade_name?.trim() || `Cliente #${row.client_id}`);
+          setClientAddress(formatClientScheduleAddress(client));
+          setClientPhone(client.phone?.trim() || null);
+          setClientWhatsapp(client.whatsapp?.trim() || null);
         } catch {
           setClientName(`Cliente #${row.client_id}`);
+          setClientAddress(null);
+          setClientPhone(null);
+          setClientWhatsapp(null);
         }
       } catch (e) {
         if (!cancelled) {
@@ -179,6 +189,9 @@ export function TechnicianServiceOrderPage() {
       <TechnicianServiceOrderView
         order={order}
         clientName={clientName}
+        clientAddress={clientAddress}
+        clientPhone={clientPhone}
+        clientWhatsapp={clientWhatsapp}
         productNameById={productNameById}
         servicesCatalog={servicesCatalog}
         completedServiceIds={completedIds}

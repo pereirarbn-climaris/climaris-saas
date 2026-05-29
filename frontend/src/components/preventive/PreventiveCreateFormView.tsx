@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { listClientHvacEquipments, listClientsAll, type ClientOut, type EquipmentOut } from "../../api/clients";
 import {
+  fetchManualPreventiveReminder,
   registerPreventiveEntry,
+  updateManualPreventiveReminder,
   type PreventiveRegisterEntryOut,
   type PreventiveSettings,
 } from "../../api/preventiveMaintenance";
@@ -39,6 +41,9 @@ export type PreventiveCreateFormViewProps = {
   onClose: () => void;
   onCreated: (result: PreventiveRegisterEntryOut) => void | Promise<void>;
   preventiveSettings: PreventiveSettings | null;
+  /** Quando informado, abre o formulário em modo edição de lembrete manual. */
+  editScheduleId?: number | null;
+  onUpdated?: () => void | Promise<void>;
 };
 
 function todayIsoDate(): string {
@@ -151,15 +156,26 @@ function Field({
   );
 }
 
+function isoDateOnly(value: string | null | undefined): string {
+  if (!value) return todayIsoDate();
+  return value.includes("T") ? value.split("T")[0]! : value.slice(0, 10);
+}
+
 export function PreventiveCreateFormView({
   open,
   onClose,
   onCreated,
   preventiveSettings,
+  editScheduleId = null,
+  onUpdated,
 }: PreventiveCreateFormViewProps) {
+  const isEditMode = editScheduleId != null && editScheduleId > 0;
   const [form, setForm] = useState<FormSnapshot>(emptySnapshot);
   const [, setBaseline] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [loadingEdit, setLoadingEdit] = useState(false);
+  const [editClientName, setEditClientName] = useState("");
+  const [editTemporaryEquipment, setEditTemporaryEquipment] = useState(false);
   const [error, setError] = useState("");
 
   const [clients, setClients] = useState<ClientOut[]>([]);
@@ -219,8 +235,50 @@ export function PreventiveCreateFormView({
 
   useEffect(() => {
     if (!open) return;
-    resetForm();
-  }, [open, resetForm]);
+    if (!isEditMode) resetForm();
+  }, [open, isEditMode, resetForm]);
+
+  useEffect(() => {
+    if (!open || !isEditMode || !editScheduleId) return;
+    let cancelled = false;
+    setLoadingEdit(true);
+    setError("");
+    void (async () => {
+      try {
+        const detail = await fetchManualPreventiveReminder(editScheduleId);
+        if (cancelled) return;
+        setEditClientName(detail.client_name);
+        setEditTemporaryEquipment(detail.is_temporary_equipment);
+        const next: FormSnapshot = {
+          entryMode: detail.is_temporary_equipment ? "temporary" : "existing",
+          useExistingClient: true,
+          clientId: String(detail.client_id),
+          clientName: "",
+          clientPhone: "",
+          clientWhatsapp: "",
+          equipmentId: String(detail.equipment_id),
+          equipmentLabel: detail.equipment_label,
+          serviceId: String(detail.service_id),
+          dataRealizacao: isoDateOnly(detail.data_realizacao),
+          reminderSend: "none",
+          reminderLocalDate: isoDateOnly(detail.data_realizacao),
+          reminderLocalTime: "09:00",
+          notes: detail.notes ?? "",
+        };
+        setForm(next);
+        setBaseline(serializeSnapshot(next));
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Não foi possível carregar o lembrete.");
+        }
+      } finally {
+        if (!cancelled) setLoadingEdit(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isEditMode, editScheduleId]);
 
   useEffect(() => {
     if (!open) return;
@@ -316,6 +374,30 @@ export function PreventiveCreateFormView({
       return;
     }
 
+    if (isEditMode && editScheduleId) {
+      const equipmentLabel = form.equipmentLabel.trim();
+      if (editTemporaryEquipment && !equipmentLabel) {
+        setError("Informe o apelido do aparelho.");
+        return;
+      }
+      setSubmitting(true);
+      try {
+        await updateManualPreventiveReminder(editScheduleId, {
+          service_id: Number(form.serviceId),
+          data_realizacao: form.dataRealizacao,
+          equipment_label: editTemporaryEquipment ? equipmentLabel : undefined,
+          notes: form.notes.trim() || null,
+        });
+        await onUpdated?.();
+        onClose();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Falha ao atualizar.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     const isTemporary = form.entryMode === "temporary";
     const usesExistingClient = !isTemporary || form.useExistingClient;
 
@@ -398,6 +480,7 @@ export function PreventiveCreateFormView({
   if (!open) return null;
 
   const isTemporary = form.entryMode === "temporary";
+  const formBusy = submitting || loadingEdit;
 
   return (
     <div
@@ -416,12 +499,18 @@ export function PreventiveCreateFormView({
       >
         <header className={styles.panelHeader}>
           <h2 id="preventive-create-title" className={styles.panelTitle}>
-            {isTemporary ? "Lembrete preventivo temporário" : "Registrar preventiva"}
+            {isEditMode
+              ? "Editar lembrete preventivo"
+              : isTemporary
+                ? "Lembrete preventivo temporário"
+                : "Registrar preventiva"}
           </h2>
           <p className={styles.panelLead}>
-            {isTemporary
-              ? "Para clientes que já fizeram serviço antes do Climaris. Cria um cadastro mínimo e calcula o próximo vencimento na listagem mensal."
-              : "Registre a última realização em um cliente e equipamento já cadastrados."}
+            {isEditMode
+              ? "Altere serviço, data da última realização ou observações. O envio automático de WhatsApp segue a configuração da Gestão Preventiva."
+              : isTemporary
+                ? "Para clientes que já fizeram serviço antes do Climaris. Cria um cadastro mínimo e calcula o próximo vencimento na listagem mensal."
+                : "Registre a última realização em um cliente e equipamento já cadastrados."}
           </p>
         </header>
 
@@ -431,6 +520,36 @@ export function PreventiveCreateFormView({
           className={styles.panelBody}
         >
           <div className={styles.formStack}>
+            {loadingEdit ? <p className={styles.hint}>Carregando lembrete…</p> : null}
+            {isEditMode ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Cliente e aparelho</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className={`${styles.grid} ${styles.gridMd2}`}>
+                    <Field label="Cliente" className={styles.span2}>
+                      <div className={styles.readOnlyValue}>{editClientName || "—"}</div>
+                    </Field>
+                    {editTemporaryEquipment ? (
+                      <Field label="Apelido do aparelho" className={styles.span2}>
+                        <Input
+                          value={form.equipmentLabel}
+                          onChange={(ev) => patchForm("equipmentLabel", ev.target.value)}
+                          required
+                        />
+                      </Field>
+                    ) : (
+                      <Field label="Equipamento" className={styles.span2}>
+                        <div className={styles.readOnlyValue}>{form.equipmentLabel || "—"}</div>
+                      </Field>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+            {!isEditMode ? (
+            <>
             <Card>
               <CardHeader>
                 <CardTitle>Tipo de cadastro</CardTitle>
@@ -607,6 +726,8 @@ export function PreventiveCreateFormView({
                 </div>
               </CardContent>
             </Card>
+            </>
+            ) : null}
 
             <Card>
               <CardHeader>
@@ -661,10 +782,11 @@ export function PreventiveCreateFormView({
 
             <Card>
               <CardHeader>
-                <CardTitle>Observações e WhatsApp</CardTitle>
+                <CardTitle>{isEditMode ? "Observações" : "Observações e WhatsApp"}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className={`${styles.grid} ${styles.gridMd2}`}>
+                  {!isEditMode ? (
                   <Field label="Lembrete WhatsApp">
                     <Select
                       value={form.reminderSend}
@@ -675,8 +797,9 @@ export function PreventiveCreateFormView({
                       <option value="scheduled">Agendar envio</option>
                     </Select>
                   </Field>
+                  ) : null}
 
-                  {form.reminderSend === "scheduled" ? (
+                  {!isEditMode && form.reminderSend === "scheduled" ? (
                     <>
                       <Field label="Data do envio">
                         <Input
@@ -716,8 +839,14 @@ export function PreventiveCreateFormView({
             <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Salvando…" : isTemporary ? "Salvar lembrete" : "Registrar preventiva"}
+            <Button type="submit" disabled={formBusy || loadingEdit}>
+              {submitting
+                ? "Salvando…"
+                : isEditMode
+                  ? "Salvar alterações"
+                  : isTemporary
+                    ? "Salvar lembrete"
+                    : "Registrar preventiva"}
             </Button>
           </footer>
         </form>

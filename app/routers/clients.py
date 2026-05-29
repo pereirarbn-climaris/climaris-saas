@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.pagination import clamp_limit
 from app.dependencies import get_current_user, require_roles
+from app.campaign_processor import list_segmented_clients
 from app.routers.equipment_documents import serialize_equipment_document_out
 from app.client_cnpj import (
     CNPJ_COMMERCIAL_COOLDOWN_DAYS,
@@ -162,6 +163,48 @@ def _apply_status_filter(query, status_filter: Literal["active", "inactive", "al
     return query
 
 
+def _apply_client_search_filter(query, q: str | None):
+    if not q:
+        return query
+    term = f"%{q}%"
+    return query.where(
+        or_(
+            Client.name.ilike(term),
+            Client.document.ilike(term),
+            Client.email.ilike(term),
+            Client.phone.ilike(term),
+            Client.whatsapp.ilike(term),
+            Client.contact_person_name.ilike(term),
+        )
+    )
+
+
+def _client_list_base_query(
+    tenant_id: int,
+    status_filter: Literal["active", "inactive", "all"],
+    q: str | None,
+):
+    query = select(Client).where(Client.tenant_id == tenant_id)
+    query = _apply_status_filter(query, status_filter)
+    return _apply_client_search_filter(query, q)
+
+
+def _apply_client_list_order(
+    query,
+    sort_key: Literal["name", "email", "whatsapp"],
+    sort_dir: Literal["asc", "desc"],
+):
+    cols = {
+        "name": Client.name,
+        "email": Client.email,
+        "whatsapp": Client.whatsapp,
+    }
+    col = cols.get(sort_key, Client.name)
+    if sort_dir == "desc":
+        return query.order_by(col.desc(), Client.id.desc())
+    return query.order_by(col.asc(), Client.id.asc())
+
+
 def _delete_blockers(db: Session, tenant_id: int, client_id: int) -> list[str]:
     reasons: list[str] = []
     n_os = db.scalar(
@@ -237,23 +280,15 @@ def list_clients(
     status_filter: Annotated[
         Literal["active", "inactive", "all"], Query(alias="status", description="Cadastro ativo/inativo")
     ] = "active",
+    sort_key: Annotated[
+        Literal["name", "email", "whatsapp"], Query(description="Coluna de ordenação")
+    ] = "name",
+    sort_dir: Annotated[Literal["asc", "desc"], Query(description="Direção da ordenação")] = "asc",
 ) -> list[Client]:
     limit = clamp_limit(limit)
-    query = select(Client).where(Client.tenant_id == current_user.tenant_id)
-    query = _apply_status_filter(query, status_filter)
-    if q:
-        term = f"%{q}%"
-        query = query.where(
-            or_(
-                Client.name.ilike(term),
-                Client.document.ilike(term),
-                Client.email.ilike(term),
-                Client.phone.ilike(term),
-                Client.whatsapp.ilike(term),
-                Client.contact_person_name.ilike(term),
-            )
-        )
-    return db.execute(query.order_by(Client.id.desc()).offset(skip).limit(limit)).scalars().all()
+    query = _client_list_base_query(current_user.tenant_id, status_filter, q)
+    query = _apply_client_list_order(query, sort_key, sort_dir)
+    return db.execute(query.offset(skip).limit(limit)).scalars().all()
 
 
 @router.get("/count", response_model=ClientCountOut)
@@ -265,22 +300,41 @@ def count_clients(
         Literal["active", "inactive", "all"], Query(alias="status", description="Cadastro ativo/inativo")
     ] = "active",
 ) -> ClientCountOut:
-    query = select(func.count(Client.id)).where(Client.tenant_id == current_user.tenant_id)
-    query = _apply_status_filter(query, status_filter)
-    if q:
-        term = f"%{q}%"
-        query = query.where(
-            or_(
-                Client.name.ilike(term),
-                Client.document.ilike(term),
-                Client.email.ilike(term),
-                Client.phone.ilike(term),
-                Client.whatsapp.ilike(term),
-                Client.contact_person_name.ilike(term),
-            )
-        )
-    total = db.scalar(query)
-    return ClientCountOut(total=int(total or 0))
+    def count_filtered(*extra) -> int:
+        query = select(func.count(Client.id)).where(Client.tenant_id == current_user.tenant_id)
+        query = _apply_status_filter(query, status_filter)
+        query = _apply_client_search_filter(query, q)
+        for clause in extra:
+            query = query.where(clause)
+        return int(db.scalar(query) or 0)
+
+    return ClientCountOut(
+        total=count_filtered(),
+        empresas=count_filtered(Client.tax_id_kind == "cnpj"),
+        pessoas=count_filtered(Client.tax_id_kind == "cpf"),
+        ativos=count_filtered(Client.is_active.is_(True)),
+    )
+
+
+@router.get(
+    "/segmentation",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def segment_clients(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    inactive_days: Annotated[int, Query(ge=1, le=3650, description="Clientes sem atendimento há mais de N dias")] = 180,
+    respect_opt_out: Annotated[bool, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, Any]:
+    """Segmentação para campanhas: clientes elegíveis por data do último serviço."""
+    return list_segmented_clients(
+        db,
+        tenant_id=current_user.tenant_id,
+        segment_kind="inactive_since",
+        segment_params={"inactive_days": inactive_days, "respect_preventive_opt_out": respect_opt_out},
+        limit=limit,
+    )
 
 
 @router.get(

@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import {
   fetchPreventiveSettings,
   listPreventiveLeads,
-  patchPreventiveSettings,
-  patchPreventiveTemplateSettings,
   type PreventiveLead,
   type PreventiveSettings,
 } from "../../api/preventiveMaintenance";
@@ -16,8 +14,6 @@ import {
   getWhatsappReminderRules,
   getWhatsappWebhookInfo,
   listWhatsappJobs,
-  patchWhatsappMessageSettings,
-  patchWhatsappReminderRules,
   patchWhatsappAutomationSettings,
   setupWhatsappConnection,
   syncWhatsappWebhookEvolutionRouter,
@@ -29,10 +25,16 @@ import {
   type WhatsappWebhookInfo,
 } from "../../api/whatsapp";
 import { ToastHost } from "../../components/ToastHost";
-import { PreventiveTemplateSettings } from "../../components/v0-ui/preventive";
-import type { TemplateData } from "../../components/v0-ui/preventive/PreventiveTemplateSettings";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
+import { WhatsappAgendaTab } from "./WhatsappAgendaTab";
+import { WhatsappCampaignsTab } from "./WhatsappCampaignsTab";
+import { WhatsappPreventiveTab } from "./WhatsappPreventiveTab";
+import {
+  formatWhatsappScheduledAt,
+  whatsappJobShowsScheduledBadge,
+} from "./campaignDashboardUtils";
+import dashStyles from "./CampaignDashboard.module.css";
 import styles from "./WhatsappIntegrationPage.module.css";
 
 /** Evolution às vezes envia base64 puro, data URL completa ou URL — evita prefixo duplicado que quebra o <img>. */
@@ -84,7 +86,7 @@ function jobStatusPt(s: string): string {
   return m[s] ?? s;
 }
 
-type WaTab = "conexao" | "agenda" | "preventiva";
+type WaTab = "conexao" | "agenda" | "preventiva" | "campanhas";
 
 export function WhatsappIntegrationPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -105,21 +107,6 @@ export function WhatsappIntegrationPage() {
   const [busy, setBusy] = useState(false);
   const [instanceOverride, setInstanceOverride] = useState("");
 
-  const [tplBody, setTplBody] = useState("");
-  const [kwConfirm, setKwConfirm] = useState("");
-  const [kwReschedule, setKwReschedule] = useState("");
-  const [replyConfirm, setReplyConfirm] = useState("");
-  const [replyReschedule, setReplyReschedule] = useState("");
-  const [replyCancel, setReplyCancel] = useState("");
-  const [savingMsg, setSavingMsg] = useState(false);
-
-  const [r15, setR15] = useState(false);
-  const [r30, setR30] = useState(false);
-  const [r1h, setR1h] = useState(false);
-  const [r1d, setR1d] = useState(false);
-  const [rCustomOn, setRCustomOn] = useState(false);
-  const [rCustomMin, setRCustomMin] = useState<number | "">("");
-  const [savingRules, setSavingRules] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   /** Mantém o último QR retornado pelo setup — o GET /connection não devolve base64 de novo. */
   const [qrRawForModal, setQrRawForModal] = useState<string | null>(null);
@@ -133,7 +120,6 @@ export function WhatsappIntegrationPage() {
     preventive_button_schedule_text: "",
     preventive_auto_remind_days_before: 0,
   });
-  const [savingPreventiveSettings, setSavingPreventiveSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [syncingWebhook, setSyncingWebhook] = useState(false);
   const [savingAutomation, setSavingAutomation] = useState(false);
@@ -163,12 +149,6 @@ export function WhatsappIntegrationPage() {
           listPreventiveLeads(80),
         ]);
         setMsgSettings(ms);
-        setTplBody(ms.template_body);
-        setKwConfirm(ms.confirm_keyword);
-        setKwReschedule(ms.reschedule_keyword);
-        setReplyConfirm(ms.confirm_reply);
-        setReplyReschedule(ms.reschedule_reply);
-        setReplyCancel(ms.cancel_reply);
         setRules(rs);
         setWebhookInfo(wh);
         setPreventiveSettings(prevSt);
@@ -179,12 +159,6 @@ export function WhatsappIntegrationPage() {
           preventive_button_schedule_text: prevSt.preventive_button_schedule_text,
           preventive_auto_remind_days_before: prevSt.preventive_auto_remind_days_before ?? 0,
         });
-        setR15(rs.offset_15m);
-        setR30(rs.offset_30m);
-        setR1h(rs.offset_1h);
-        setR1d(rs.offset_1d);
-        setRCustomOn(rs.custom_enabled);
-        setRCustomMin(rs.custom_minutes ?? "");
         setJobs(jb);
       } else {
         setMsgSettings(null);
@@ -290,43 +264,6 @@ export function WhatsappIntegrationPage() {
     }
   }
 
-  async function onSaveAgendaSettings() {
-    if (!canConfigure) return;
-    setSavingMsg(true);
-    setSavingRules(true);
-    setErr("");
-    try {
-      const minutes =
-        rCustomOn && rCustomMin !== "" && typeof rCustomMin === "number" && rCustomMin > 0 ? rCustomMin : null;
-      const [ms, rs] = await Promise.all([
-        patchWhatsappMessageSettings({
-          template_body: tplBody.trim(),
-          confirm_keyword: kwConfirm.trim(),
-          reschedule_keyword: kwReschedule.trim(),
-          confirm_reply: replyConfirm.trim(),
-          reschedule_reply: replyReschedule.trim(),
-          cancel_reply: replyCancel.trim(),
-        }),
-        patchWhatsappReminderRules({
-          offset_15m: r15,
-          offset_30m: r30,
-          offset_1h: r1h,
-          offset_1d: r1d,
-          custom_enabled: rCustomOn,
-          custom_minutes: minutes,
-        }),
-      ]);
-      setMsgSettings(ms);
-      setRules(rs);
-      toast.success("Configurações da agenda salvas com sucesso.");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Falha ao salvar configurações da agenda.");
-    } finally {
-      setSavingMsg(false);
-      setSavingRules(false);
-    }
-  }
-
   async function copyWebhookUrl(url: string | null | undefined) {
     if (!url) return;
     try {
@@ -381,61 +318,6 @@ export function WhatsappIntegrationPage() {
       setErr(e instanceof Error ? e.message : "Falha ao atualizar automação WhatsApp.");
     } finally {
       setSavingAutomation(false);
-    }
-  }
-
-  const preventiveTemplateInitialData = useMemo((): TemplateData | undefined => {
-    if (!preventiveSettings) return undefined;
-    const fallback =
-      preventiveSettings.default_message_template?.trim() ||
-      "Olá, {cliente}! Notamos que faz {intervalo} desde a última manutenção do seu {equipamento} ({marca_modelo}). Vamos agendar a próxima preventiva?";
-    return {
-      messageBody: preventiveSettings.preventive_message_template?.trim() || fallback,
-      imageUrl: preventiveSettings.preventive_image_url ?? preventiveSettings.preventive_promo_image_url ?? "",
-    };
-  }, [preventiveSettings]);
-
-  async function onSavePreventiveTemplate(data: TemplateData) {
-    try {
-      const next = await patchPreventiveTemplateSettings({
-        preventive_message_template: data.messageBody.trim() || null,
-        preventive_image_url: data.imageUrl.trim() || null,
-      });
-      setPreventiveSettings(next);
-      toast.success("Template de alerta salvo com sucesso.");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar o template.");
-      throw e;
-    }
-  }
-
-  function onRestorePreventiveTemplateDefault() {
-    const fallback =
-      preventiveSettings?.default_message_template?.trim() ||
-      "Olá, {cliente}! Notamos que faz {intervalo} desde a última manutenção do seu {equipamento} ({marca_modelo}). Vamos agendar a próxima preventiva?";
-    void onSavePreventiveTemplate({ messageBody: fallback, imageUrl: "" }).catch(() => undefined);
-  }
-
-  async function onSavePreventiveSettings() {
-    if (!canConfigure) return;
-    setSavingPreventiveSettings(true);
-    setErr("");
-    try {
-      const next = await patchPreventiveSettings({
-        preventive_technical_problem_hint: preventiveSettingsDraft.preventive_technical_problem_hint.trim() || null,
-        preventive_button_more_text: preventiveSettingsDraft.preventive_button_more_text.trim() || undefined,
-        preventive_button_schedule_text: preventiveSettingsDraft.preventive_button_schedule_text.trim() || undefined,
-        preventive_auto_remind_days_before: Math.min(
-          90,
-          Math.max(0, Math.floor(Number(preventiveSettingsDraft.preventive_auto_remind_days_before) || 0)),
-        ),
-      });
-      setPreventiveSettings(next);
-      toast.success("Configurações de preventiva salvas com sucesso.");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Falha ao salvar configurações preventiva.");
-    } finally {
-      setSavingPreventiveSettings(false);
     }
   }
 
@@ -499,17 +381,35 @@ export function WhatsappIntegrationPage() {
                 </tr>
               </thead>
               <tbody>
-                {jobs.map((j) => (
-                  <tr key={j.id}>
-                    <td className={styles.mono}>{new Date(j.created_at).toLocaleString()}</td>
-                    <td>{j.recipient_whatsapp}</td>
-                    <td>{jobStatusPt(j.status)}</td>
-                    <td>
-                      {j.rendered_message.slice(0, 120)}
-                      {j.rendered_message.length > 120 ? "…" : ""}
-                    </td>
-                  </tr>
-                ))}
+                {jobs.map((j) => {
+                  const scheduled = whatsappJobShowsScheduledBadge(j);
+                  const whenLabel = scheduled && j.scheduled_for
+                    ? formatWhatsappScheduledAt(j.scheduled_for)
+                    : new Date(j.created_at).toLocaleString("pt-BR");
+                  return (
+                    <tr key={j.id}>
+                      <td className={styles.mono}>{whenLabel}</td>
+                      <td>{j.recipient_whatsapp}</td>
+                      <td>
+                        <div className={dashStyles.statusCellStack}>
+                          <span>{jobStatusPt(j.status)}</span>
+                          {scheduled && j.scheduled_for ? (
+                            <span
+                              className={`${dashStyles.badge} ${dashStyles.badgeInfo}`}
+                              title={`Disparo programado para ${formatWhatsappScheduledAt(j.scheduled_for)}`}
+                            >
+                              Agendado · {formatWhatsappScheduledAt(j.scheduled_for)}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>
+                        {j.rendered_message.slice(0, 120)}
+                        {j.rendered_message.length > 120 ? "…" : ""}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -577,6 +477,15 @@ export function WhatsappIntegrationPage() {
                   onClick={() => setActiveTab("preventiva")}
                 >
                   Gestão preventiva
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === "campanhas"}
+                  className={`${styles.tab} ${activeTab === "campanhas" ? styles.tabActive : ""}`}
+                  onClick={() => setActiveTab("campanhas")}
+                >
+                  Campanhas
                 </button>
               </div>
               <div className={styles.historyBar}>
@@ -777,327 +686,43 @@ export function WhatsappIntegrationPage() {
             </section>
           ) : null}
 
-          {activeTab === "agenda" && canViewMessaging && msgSettings && rules ? (
-            <>
-              {webhookInfo && !webhookInfo.automation_active ? (
-                <div className={styles.errBox} style={{ marginBottom: "1rem" }}>
-                  Automação WhatsApp desativada — lembretes automáticos e respostas (confirmar/remarcar) não serão
-                  processados. Envios manuais continuam disponíveis. Ative em Conexão → Automação WhatsApp.
-                </div>
-              ) : null}
-              <section className={styles.card} style={{ marginBottom: "1.25rem" }}>
-                <h2 className={styles.cardTitle}>Lembretes automáticos</h2>
-                <p className={styles.hint}>
-                  Escolha quanto tempo antes do horário agendado o sistema envia o lembrete via WhatsApp. Ativos agora
-                  (minutos): {rules.active_offsets_minutes.length ? rules.active_offsets_minutes.join(", ") : "—"}
-                </p>
-                <div className={styles.checkGrid}>
-                  <label className={styles.checkRow}>
-                    <input type="checkbox" checked={r15} onChange={(e) => setR15(e.target.checked)} disabled={!canConfigure} />
-                    15 minutos antes
-                  </label>
-                  <label className={styles.checkRow}>
-                    <input type="checkbox" checked={r30} onChange={(e) => setR30(e.target.checked)} disabled={!canConfigure} />
-                    30 minutos antes
-                  </label>
-                  <label className={styles.checkRow}>
-                    <input type="checkbox" checked={r1h} onChange={(e) => setR1h(e.target.checked)} disabled={!canConfigure} />
-                    1 hora antes
-                  </label>
-                  <label className={styles.checkRow}>
-                    <input type="checkbox" checked={r1d} onChange={(e) => setR1d(e.target.checked)} disabled={!canConfigure} />
-                    1 dia antes
-                  </label>
-                  <label className={styles.checkRow}>
-                    <input
-                      type="checkbox"
-                      checked={rCustomOn}
-                      onChange={(e) => setRCustomOn(e.target.checked)}
-                      disabled={!canConfigure}
-                    />
-                    Personalizado (minutos antes)
-                  </label>
-                </div>
-                {rCustomOn ? (
-                  <>
-                    <label className={styles.fieldLabel} htmlFor="wa-custom-min">
-                      Minutos personalizados
-                    </label>
-                    <input
-                      id="wa-custom-min"
-                      type="number"
-                      min={1}
-                      className={styles.textInput}
-                      value={rCustomMin}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setRCustomMin(v === "" ? "" : Number(v));
-                      }}
-                      disabled={!canConfigure}
-                    />
-                  </>
-                ) : null}
-
-                <div className={styles.sectionDivider}>
-                  <h3 className={styles.subsectionTitle}>Mensagem de lembrete (envio)</h3>
-                  <p className={styles.hint}>
-                    Variáveis permitidas: {msgSettings.allowed_variables.join(", ")}
-                  </p>
-                </div>
-                <label className={styles.fieldLabel} htmlFor="wa-tpl">
-                  Corpo do template
-                </label>
-                <textarea
-                  id="wa-tpl"
-                  className={styles.textarea}
-                  value={tplBody}
-                  onChange={(e) => setTplBody(e.target.value)}
-                  disabled={!canConfigure}
-                />
-                <label className={styles.fieldLabel} htmlFor="wa-kw1">
-                  Palavra para confirmar
-                </label>
-                <input
-                  id="wa-kw1"
-                  className={styles.textInput}
-                  value={kwConfirm}
-                  onChange={(e) => setKwConfirm(e.target.value)}
-                  disabled={!canConfigure}
-                />
-                <label className={styles.fieldLabel} htmlFor="wa-kw2">
-                  Palavra para reagendar
-                </label>
-                <input
-                  id="wa-kw2"
-                  className={styles.textInput}
-                  value={kwReschedule}
-                  onChange={(e) => setKwReschedule(e.target.value)}
-                  disabled={!canConfigure}
-                />
-                <p className={styles.hint}>
-                  O sistema também reconhece respostas como SIM, OK, REAGENDAR e CANCELAR (este último não aparece no
-                  template).
-                </p>
-
-                <div className={styles.sectionDivider}>
-                  <h3 className={styles.subsectionTitle}>Mensagens de resposta (agradecimento)</h3>
-                  <p className={styles.hint}>
-                    Enviadas automaticamente quando o cliente confirma, reagenda ou cancela pelo WhatsApp.
-                  </p>
-                </div>
-                <label className={styles.fieldLabel} htmlFor="wa-reply-confirm">
-                  Após confirmar
-                </label>
-                <textarea
-                  id="wa-reply-confirm"
-                  className={styles.textarea}
-                  style={{ minHeight: "4.5rem" }}
-                  value={replyConfirm}
-                  onChange={(e) => setReplyConfirm(e.target.value)}
-                  disabled={!canConfigure}
-                />
-                <label className={styles.fieldLabel} htmlFor="wa-reply-reschedule">
-                  Após reagendar (variável: {"{data_hora}"})
-                </label>
-                <textarea
-                  id="wa-reply-reschedule"
-                  className={styles.textarea}
-                  style={{ minHeight: "4.5rem" }}
-                  value={replyReschedule}
-                  onChange={(e) => setReplyReschedule(e.target.value)}
-                  disabled={!canConfigure}
-                />
-                <label className={styles.fieldLabel} htmlFor="wa-reply-cancel">
-                  Após cancelar
-                </label>
-                <textarea
-                  id="wa-reply-cancel"
-                  className={styles.textarea}
-                  style={{ minHeight: "4.5rem" }}
-                  value={replyCancel}
-                  onChange={(e) => setReplyCancel(e.target.value)}
-                  disabled={!canConfigure}
-                />
-
-                {canConfigure ? (
-                  <div className={styles.actions}>
-                    <button
-                      type="button"
-                      className={styles.btnPrimary}
-                      disabled={savingMsg || savingRules}
-                      onClick={() => void onSaveAgendaSettings()}
-                    >
-                      {savingMsg || savingRules ? "Salvando…" : "Salvar configurações da agenda"}
-                    </button>
-                  </div>
-                ) : null}
-              </section>
-            </>
+          {activeTab === "agenda" && canViewMessaging ? (
+            <WhatsappAgendaTab
+              canConfigure={canConfigure}
+              loading={loading}
+              automationActive={webhookInfo?.automation_active !== false}
+              msgSettings={msgSettings}
+              rules={rules}
+              onSaved={(ms, rs) => {
+                setMsgSettings(ms);
+                setRules(rs);
+              }}
+            />
           ) : null}
 
-          {activeTab === "preventiva" && canViewMessaging && preventiveSettings ? (
-            <>
-              {webhookInfo && !webhookInfo.automation_active ? (
-                <div className={styles.errBox} style={{ marginBottom: "1rem" }}>
-                  Automação WhatsApp desativada — lembretes automáticos de preventiva e respostas MAIS/AGENDAR não
-                  serão processados. Envios manuais continuam disponíveis. Ative em Conexão → Automação WhatsApp.
-                </div>
-              ) : null}
-              <section className={styles.card} style={{ marginBottom: "1.25rem" }}>
-                <h2 className={styles.cardTitle}>Webhook preventiva</h2>
-                <p className={styles.hint}>
-                  Respostas aos botões &quot;Quero saber mais&quot; e &quot;Agendar&quot; das campanhas de manutenção
-                  preventiva. Na prática, use o roteador Evolution na aba Conexão — ele encaminha agenda e preventiva.
-                </p>
-                {webhookInfo?.webhook_preventiva_url_with_tenant ? (
-                  <>
-                    <label className={styles.fieldLabel} htmlFor="wa-webhook-preventiva-url">
-                      URL webhook preventiva (com tenant)
-                    </label>
-                    <input
-                      id="wa-webhook-preventiva-url"
-                      className={styles.textInput}
-                      readOnly
-                      value={webhookInfo.webhook_preventiva_url_with_tenant}
-                    />
-                    <div className={styles.actions}>
-                      <button
-                        type="button"
-                        className={styles.btnGhost}
-                        onClick={() => void copyWebhookUrl(webhookInfo.webhook_preventiva_url_with_tenant)}
-                      >
-                        Copiar URL
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-                <p className={styles.hint} style={{ marginTop: "0.75rem" }}>
-                  <Link to="/app/preventive-maintenance">Abrir gestão preventiva</Link> para enviar lembretes e
-                  acompanhar contratos.
-                </p>
-              </section>
+          {activeTab === "preventiva" && canViewMessaging ? (
+            <WhatsappPreventiveTab
+              canConfigure={canConfigure}
+              loading={loading}
+              automationActive={webhookInfo?.automation_active !== false}
+              settings={preventiveSettings}
+              leads={preventiveLeads}
+              settingsDraft={preventiveSettingsDraft}
+              onSettingsDraftChange={(patch) => setPreventiveSettingsDraft((s) => ({ ...s, ...patch }))}
+              onSettingsSaved={(next) => {
+                setPreventiveSettings(next);
+                setPreventiveSettingsDraft({
+                  preventive_technical_problem_hint: next.preventive_technical_problem_hint ?? "",
+                  preventive_button_more_text: next.preventive_button_more_text,
+                  preventive_button_schedule_text: next.preventive_button_schedule_text,
+                  preventive_auto_remind_days_before: next.preventive_auto_remind_days_before ?? 0,
+                });
+              }}
+            />
+          ) : null}
 
-              {canConfigure && preventiveTemplateInitialData ? (
-                <section className={styles.card} style={{ marginBottom: "1.25rem" }}>
-                  <h2 className={styles.cardTitle}>Template de mensagem</h2>
-                  <p className={styles.hint}>
-                    Texto e imagem enviados nos alertas de vencimento de manutenção preventiva.
-                  </p>
-                  <PreventiveTemplateSettings
-                    initialData={preventiveTemplateInitialData}
-                    isLoading={loading}
-                    onSave={onSavePreventiveTemplate}
-                    onRestoreDefault={onRestorePreventiveTemplateDefault}
-                  />
-                </section>
-              ) : null}
-
-              {canConfigure ? (
-                <section className={styles.card} style={{ marginBottom: "1.25rem" }}>
-                  <h2 className={styles.cardTitle}>Botões e lembrete automático</h2>
-                  <p className={styles.hint}>
-                    Rótulos dos botões interativos e antecedência do lembrete automático (fuso da empresa).
-                  </p>
-                  <label className={styles.fieldLabel} htmlFor="wa-prev-hint">
-                    Problema técnico (tag {"{problema}"} em templates legados)
-                  </label>
-                  <textarea
-                    id="wa-prev-hint"
-                    className={styles.textarea}
-                    value={preventiveSettingsDraft.preventive_technical_problem_hint}
-                    onChange={(e) =>
-                      setPreventiveSettingsDraft((s) => ({
-                        ...s,
-                        preventive_technical_problem_hint: e.target.value,
-                      }))
-                    }
-                    placeholder="Ex.: perdas de eficiência energética e PMOC"
-                  />
-                  <label className={styles.fieldLabel} htmlFor="wa-prev-btn-more">
-                    Rótulo botão &quot;saber mais&quot;
-                  </label>
-                  <input
-                    id="wa-prev-btn-more"
-                    className={styles.textInput}
-                    value={preventiveSettingsDraft.preventive_button_more_text}
-                    onChange={(e) =>
-                      setPreventiveSettingsDraft((s) => ({ ...s, preventive_button_more_text: e.target.value }))
-                    }
-                  />
-                  <label className={styles.fieldLabel} htmlFor="wa-prev-btn-schedule">
-                    Rótulo botão agendar
-                  </label>
-                  <input
-                    id="wa-prev-btn-schedule"
-                    className={styles.textInput}
-                    value={preventiveSettingsDraft.preventive_button_schedule_text}
-                    onChange={(e) =>
-                      setPreventiveSettingsDraft((s) => ({ ...s, preventive_button_schedule_text: e.target.value }))
-                    }
-                  />
-                  <label className={styles.fieldLabel} htmlFor="wa-prev-auto-days">
-                    Lembrete automático (dias antes do vencimento; 0 = só no dia)
-                  </label>
-                  <input
-                    id="wa-prev-auto-days"
-                    className={styles.textInput}
-                    type="number"
-                    min={0}
-                    max={90}
-                    value={preventiveSettingsDraft.preventive_auto_remind_days_before}
-                    onChange={(e) =>
-                      setPreventiveSettingsDraft((s) => ({
-                        ...s,
-                        preventive_auto_remind_days_before: Number(e.target.value),
-                      }))
-                    }
-                  />
-                  <div className={styles.actions}>
-                    <button
-                      type="button"
-                      className={styles.btnPrimary}
-                      disabled={savingPreventiveSettings}
-                      onClick={() => void onSavePreventiveSettings()}
-                    >
-                      {savingPreventiveSettings ? "Salvando…" : "Salvar configurações preventiva"}
-                    </button>
-                  </div>
-                </section>
-              ) : null}
-
-              <section className={styles.card}>
-                <h2 className={styles.cardTitle}>Interessados (respostas WhatsApp)</h2>
-                <p className={styles.hint}>
-                  Clientes que responderam aos botões da campanha ou enviaram MAIS / AGENDAR em texto.
-                </p>
-                {preventiveLeads.length === 0 ? (
-                  <p className={styles.hint}>Nenhuma resposta registrada ainda.</p>
-                ) : (
-                  <div className={styles.tableWrap}>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Quando</th>
-                          <th>Cliente ID</th>
-                          <th>Tipo</th>
-                          <th>WhatsApp</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {preventiveLeads.map((l) => (
-                          <tr key={l.id}>
-                            <td className={styles.mono}>{new Date(l.created_at).toLocaleString("pt-BR")}</td>
-                            <td>{l.client_id}</td>
-                            <td>{l.interest_kind === "more" ? "Quero saber mais" : "Agendar"}</td>
-                            <td>{l.whatsapp_digits}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-            </>
+          {activeTab === "campanhas" && canViewMessaging ? (
+            <WhatsappCampaignsTab canConfigure={canConfigure} />
           ) : null}
 
           {historySection}

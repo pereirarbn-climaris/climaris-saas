@@ -14,6 +14,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 export interface TemplateData {
   messageBody: string;
   imageUrl: string;
+  sendImage: boolean;
 }
 
 export interface DynamicTag {
@@ -25,10 +26,24 @@ export interface DynamicTag {
 export interface PreventiveTemplateSettingsProps {
   /** Dados iniciais do template */
   initialData?: TemplateData;
+  /** Modo controlado (compartilha estado entre seções / prévia lateral) */
+  data?: TemplateData;
+  onDataChange?: (data: TemplateData) => void;
+  /** standalone = card completo; embedded = bloco dentro do painel Campanhas */
+  variant?: "standalone" | "embedded";
+  /** Seção visível no modo embedded */
+  activeSection?: "template" | "attachments" | "all";
+  /** Prévia inline no componente (false = painel pai renderiza PreventiveWhatsAppPreview) */
+  showInlinePreview?: boolean;
+  showFooter?: boolean;
   /** Callback ao salvar */
   onSave?: (data: TemplateData) => Promise<void>;
   /** Callback ao restaurar padrão */
   onRestoreDefault?: () => void;
+  /** Upload do banner para S3 */
+  onUploadBanner?: (file: File) => Promise<string>;
+  /** Remove banner do S3 */
+  onRemoveBanner?: () => Promise<void>;
   /** Estado de loading externo */
   isLoading?: boolean;
 }
@@ -155,7 +170,7 @@ interface WhatsAppPreviewProps {
   imageUrl: string;
 }
 
-const WhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ message, imageUrl }) => {
+export const PreventiveWhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ message, imageUrl }) => {
   // Substitui as tags por valores de exemplo para o preview
   const previewMessage = message
     .replace(/{cliente}/g, 'João Silva')
@@ -182,28 +197,28 @@ const WhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ message, imageUrl }) 
   };
 
   return (
-    <div className="flex flex-col items-center">
-      {/* Smartphone Frame */}
-      <div className="relative w-[280px] h-[560px] bg-slate-900 rounded-[40px] p-2 shadow-2xl">
+    <div className="flex flex-col items-center scale-[0.92] origin-top">
+      {/* Smartphone Frame — mini */}
+      <div className="relative w-[148px] h-[268px] bg-slate-900 rounded-[20px] p-1 shadow-md">
         {/* Notch */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-slate-900 rounded-b-2xl z-10" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-14 h-3 bg-slate-900 rounded-b-lg z-10" />
         
         {/* Screen */}
-        <div className="w-full h-full bg-[#e5ddd5] rounded-[32px] overflow-hidden flex flex-col">
+        <div className="w-full h-full bg-[#e5ddd5] rounded-[16px] overflow-hidden flex flex-col">
           {/* WhatsApp Header */}
-          <div className="bg-[#075e54] px-3 py-2 flex items-center gap-3 pt-8">
-            <div className="w-8 h-8 rounded-full bg-slate-300 flex items-center justify-center">
-              <span className="text-xs font-semibold text-slate-600">AC</span>
+          <div className="bg-[#075e54] px-1.5 py-1 flex items-center gap-1.5 pt-4">
+            <div className="w-5 h-5 rounded-full bg-slate-300 flex items-center justify-center shrink-0">
+              <span className="text-[7px] font-semibold text-slate-600">AC</span>
             </div>
-            <div className="flex-1">
-              <p className="text-white text-sm font-medium">Ar Condicionado Pro</p>
-              <p className="text-green-200 text-xs">online</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-[9px] font-medium truncate leading-tight">Empresa</p>
+              <p className="text-green-200 text-[7px] leading-tight">online</p>
             </div>
           </div>
 
           {/* Chat Background Pattern */}
           <div 
-            className="flex-1 p-3 overflow-y-auto"
+            className="flex-1 p-1.5 overflow-y-auto min-h-0"
             style={{
               backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c5baaf' fill-opacity='0.15'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
             }}
@@ -212,55 +227,45 @@ const WhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ message, imageUrl }) 
             <div className="max-w-[90%] ml-auto">
               {/* Image Preview */}
               {imageUrl && (
-                <div className="mb-1 rounded-lg overflow-hidden bg-white shadow-sm">
-                  <img 
-                    src={imageUrl} 
-                    alt="Banner promocional"
-                    className="w-full h-auto max-h-32 object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
+                <div className="mb-1 flex justify-end">
+                  <div className="w-[30%] max-w-full rounded-md overflow-hidden bg-white shadow-sm">
+                    <img
+                      src={imageUrl}
+                      alt="Banner promocional"
+                      className="w-full h-auto object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
                 </div>
               )}
               
               {/* Text Bubble */}
-              <div className="bg-[#dcf8c6] rounded-lg rounded-tr-none p-2.5 shadow-sm relative">
-                <p className="text-[13px] text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
+              <div className="bg-[#dcf8c6] rounded-md rounded-tr-none p-1.5 shadow-sm relative">
+                <p className="text-[9px] text-slate-800 leading-tight whitespace-pre-wrap break-words">
                   {formatMessage(previewMessage)}
                 </p>
                 <div className="flex items-center justify-end gap-1 mt-1">
-                  <span className="text-[10px] text-slate-500">14:32</span>
+                  <span className="text-[8px] text-slate-500">14:32</span>
                   {/* Double check mark */}
-                  <svg className="w-4 h-3 text-[#53bdeb]" viewBox="0 0 16 11" fill="currentColor">
+                  <svg className="w-3 h-2.5 text-[#53bdeb]" viewBox="0 0 16 11" fill="currentColor">
                     <path d="M11.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-2.405-2.272a.463.463 0 0 0-.336-.136.47.47 0 0 0-.323.136l-.883.882a.479.479 0 0 0-.141.34.474.474 0 0 0 .141.34l3.56 3.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
                     <path d="M15.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-1.405-1.272-.883.882 2.56 2.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
                   </svg>
                 </div>
                 {/* Bubble tail */}
-                <div className="absolute top-0 -right-2 w-4 h-4 overflow-hidden">
-                  <div className="absolute top-0 left-0 w-4 h-4 bg-[#dcf8c6] transform rotate-45 translate-x-[-50%]" />
+                <div className="absolute top-0 -right-1.5 w-3 h-3 overflow-hidden">
+                  <div className="absolute top-0 left-0 w-3 h-3 bg-[#dcf8c6] transform rotate-45 translate-x-[-50%]" />
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Input Bar */}
-          <div className="bg-[#f0f0f0] px-2 py-2 flex items-center gap-2">
-            <div className="flex-1 bg-white rounded-full px-4 py-2 text-xs text-slate-400">
-              Mensagem
-            </div>
-            <div className="w-9 h-9 rounded-full bg-[#00a884] flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 14.95q-.2 0-.375-.063a.877.877 0 0 1-.325-.212L6.675 10.05a.894.894 0 0 1-.263-.663.93.93 0 0 1 .288-.662.948.948 0 0 1 .675-.275q.4 0 .675.275L12 12.675l3.95-3.95a.894.894 0 0 1 .663-.263.93.93 0 0 1 .662.288.948.948 0 0 1 .275.675q0 .4-.275.675l-4.625 4.625a.877.877 0 0 1-.325.212.987.987 0 0 1-.375.063z" transform="rotate(-90 12 12)" />
-              </svg>
             </div>
           </div>
         </div>
       </div>
 
-      <p className="mt-4 text-xs text-[hsl(var(--muted-foreground))] text-center">
-        Preview em tempo real da mensagem
+      <p className="mt-1 text-[9px] text-[hsl(var(--muted-foreground))] text-center">
+        Prévia
       </p>
     </div>
   );
@@ -272,21 +277,50 @@ const WhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ message, imageUrl }) 
 
 export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProps> = ({
   initialData,
+  data: controlledData,
+  onDataChange,
+  variant = "standalone",
+  activeSection = "all",
+  showInlinePreview = true,
+  showFooter = true,
   onSave,
   onRestoreDefault,
+  onUploadBanner,
+  onRemoveBanner,
   isLoading = false,
 }) => {
   const [messageBody, setMessageBody] = useState(initialData?.messageBody || DEFAULT_MESSAGE);
-  const [imageUrl, setImageUrl] = useState(initialData?.imageUrl || '');
+  const [imageUrl, setImageUrl] = useState(initialData?.imageUrl || "");
+  const [sendImage, setSendImage] = useState(initialData?.sendImage ?? false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
 
+  const isControlled = controlledData != null && onDataChange != null;
+  const draft = isControlled
+    ? controlledData
+    : { messageBody, imageUrl, sendImage };
+
+  const patchDraft = useCallback(
+    (patch: Partial<TemplateData>) => {
+      const next = { ...draft, ...patch };
+      if (isControlled) {
+        onDataChange!(next);
+      } else {
+        if (patch.messageBody !== undefined) setMessageBody(patch.messageBody);
+        if (patch.imageUrl !== undefined) setImageUrl(patch.imageUrl);
+        if (patch.sendImage !== undefined) setSendImage(patch.sendImage);
+      }
+    },
+    [draft, isControlled, onDataChange],
+  );
+
   useEffect(() => {
-    if (initialData) {
-      setMessageBody(initialData.messageBody || DEFAULT_MESSAGE);
-      setImageUrl(initialData.imageUrl || '');
-    }
-  }, [initialData?.messageBody, initialData?.imageUrl]);
+    if (isControlled || !initialData) return;
+    setMessageBody(initialData.messageBody || DEFAULT_MESSAGE);
+    setImageUrl(initialData.imageUrl || "");
+    setSendImage(initialData.sendImage ?? false);
+  }, [initialData?.messageBody, initialData?.imageUrl, initialData?.sendImage, isControlled]);
 
   const handleTagCopy = useCallback((tag: string) => {
     setCopiedTag(tag);
@@ -297,23 +331,184 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
     if (!onSave) return;
     setIsSaving(true);
     try {
-      await onSave({ messageBody, imageUrl });
+      await onSave(draft);
     } finally {
       setIsSaving(false);
     }
-  }, [onSave, messageBody, imageUrl]);
+  }, [onSave, draft]);
 
   const handleRestoreDefault = useCallback(() => {
-    setMessageBody(DEFAULT_MESSAGE);
-    setImageUrl('');
+    patchDraft({ messageBody: DEFAULT_MESSAGE, imageUrl: "", sendImage: false });
     onRestoreDefault?.();
-  }, [onRestoreDefault]);
+  }, [onRestoreDefault, patchDraft]);
 
-  const loading = isLoading || isSaving;
+  const handleBannerUpload = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file || !onUploadBanner) return;
+      setIsUploading(true);
+      try {
+        const url = await onUploadBanner(file);
+        patchDraft({ imageUrl: url, sendImage: true });
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [onUploadBanner, patchDraft],
+  );
+
+  const handleRemoveBanner = useCallback(async () => {
+    if (!onRemoveBanner) {
+      patchDraft({ imageUrl: "", sendImage: false });
+      return;
+    }
+    setIsUploading(true);
+    try {
+      await onRemoveBanner();
+      patchDraft({ imageUrl: "", sendImage: false });
+    } finally {
+      setIsUploading(false);
+    }
+  }, [onRemoveBanner, patchDraft]);
+
+  const loading = isLoading || isSaving || isUploading;
+  const showTemplate = activeSection === "all" || activeSection === "template";
+  const showAttachments = activeSection === "all" || activeSection === "attachments";
+  const embedded = variant === "embedded";
+
+  const body = (
+    <div className={embedded ? "space-y-6" : "p-6"}>
+      <div
+        className={
+          showInlinePreview && !embedded
+            ? "grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 items-start"
+            : "space-y-6"
+        }
+      >
+        <div className="space-y-6">
+          {showTemplate ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-3">
+                  Variaveis dinamicas
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {DYNAMIC_TAGS.map((tag) => (
+                    <TagBadge key={tag.tag} tag={tag} onCopy={handleTagCopy} />
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
+                  Clique em uma tag para copiar. O sistema substitui automaticamente pelos dados reais do cliente.
+                </p>
+                {copiedTag ? (
+                  <p className="mt-2 text-xs text-green-600 flex items-center gap-1">
+                    <CheckIcon className="w-3.5 h-3.5" />
+                    Tag {copiedTag} copiada!
+                  </p>
+                ) : null}
+              </div>
+
+              <div>
+                <label
+                  htmlFor="messageBody"
+                  className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-2"
+                >
+                  Corpo da mensagem
+                </label>
+                <textarea
+                  id="messageBody"
+                  value={draft.messageBody}
+                  onChange={(e) => patchDraft({ messageBody: e.target.value })}
+                  placeholder="Ola, {cliente}! Notamos que faz {intervalo} desde a ultima higienizacao..."
+                  rows={embedded ? 10 : 12}
+                  className="w-full px-4 py-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]
+                  text-[hsl(var(--foreground))] text-sm leading-relaxed
+                  placeholder:text-[hsl(var(--muted-foreground))]
+                  focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] focus:border-transparent
+                  resize-none font-mono"
+                  disabled={loading}
+                />
+                <p className="mt-1.5 text-xs text-[hsl(var(--muted-foreground))]">
+                  Use *texto* para negrito. Emojis sao suportados.
+                </p>
+              </div>
+            </>
+          ) : null}
+
+          {showAttachments ? (
+            <div>
+              <label className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-2">
+                Banner promocional (opcional)
+              </label>
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] text-sm font-medium cursor-pointer hover:bg-[hsl(var(--muted))]">
+                    <ImagePlusIcon className="w-4 h-4" />
+                    {isUploading ? "Enviando…" : "Escolher imagem"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      disabled={loading || !onUploadBanner}
+                      onChange={(e) => void handleBannerUpload(e)}
+                    />
+                  </label>
+                  {draft.imageUrl ? (
+                    <span className="text-xs text-green-700 font-medium">Banner salvo</span>
+                  ) : null}
+                </div>
+                {draft.imageUrl ? (
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={draft.imageUrl}
+                      alt="Banner preventiva"
+                      className="h-16 w-auto rounded border border-[hsl(var(--border))] object-cover"
+                    />
+                    <button
+                      type="button"
+                      className="text-sm text-red-600 hover:underline"
+                      disabled={loading}
+                      onClick={() => void handleRemoveBanner()}
+                    >
+                      Remover banner
+                    </button>
+                  </div>
+                ) : null}
+                <label className="inline-flex items-center gap-2 text-sm text-[hsl(var(--card-foreground))]">
+                  <input
+                    type="checkbox"
+                    checked={draft.sendImage}
+                    disabled={loading || !draft.imageUrl}
+                    onChange={(e) => patchDraft({ sendImage: e.target.checked })}
+                  />
+                  Enviar banner junto com a mensagem
+                </label>
+              </div>
+              <p className="mt-1.5 text-xs text-[hsl(var(--muted-foreground))]">
+                A imagem fica salva no armazenamento da empresa (S3). Marque a opcao acima para anexar nos lembretes.
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {showInlinePreview && !embedded ? (
+          <div className="flex flex-col items-center justify-start lg:sticky lg:top-4">
+            <div className="bg-[hsl(var(--muted)/0.25)] rounded-lg p-2 flex justify-center">
+              <PreventiveWhatsAppPreview message={draft.messageBody} imageUrl={draft.imageUrl} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return body;
+  }
 
   return (
     <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl shadow-sm overflow-hidden">
-      {/* Header */}
       <div className="px-6 py-5 border-b border-[hsl(var(--border))]">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[hsl(var(--primary)/0.1)]">
@@ -324,135 +519,44 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
               Configuracao da Mensagem de Alerta (WhatsApp)
             </h2>
             <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
-              Defina o texto padrao e a imagem que o sistema usara para notificar os clientes sobre manutencoes preventivas vencidas.
+              Defina o padrao do texto. Na hora do envio, a IA reescreve a mensagem dentro desse modelo.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Form Column */}
-          <div className="space-y-6">
-            {/* Dynamic Tags */}
-            <div>
-              <label className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-3">
-                Variaveis Dinamicas
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {DYNAMIC_TAGS.map((tag) => (
-                  <TagBadge key={tag.tag} tag={tag} onCopy={handleTagCopy} />
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
-                Clique em uma tag acima para copiar ou use-a no texto para que o sistema substitua automaticamente pelos dados reais.
-              </p>
-              {copiedTag && (
-                <p className="mt-2 text-xs text-green-600 flex items-center gap-1">
-                  <CheckIcon className="w-3.5 h-3.5" />
-                  Tag {copiedTag} copiada!
-                </p>
-              )}
-            </div>
+      {body}
 
-            {/* Message Body */}
-            <div>
-              <label 
-                htmlFor="messageBody"
-                className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-2"
-              >
-                Corpo da Mensagem
-              </label>
-              <textarea
-                id="messageBody"
-                value={messageBody}
-                onChange={(e) => setMessageBody(e.target.value)}
-                placeholder="Ola, {cliente}! Notamos que faz {intervalo} desde a ultima higienizacao do seu {equipamento}..."
-                rows={12}
-                className="w-full px-4 py-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]
-                  text-[hsl(var(--foreground))] text-sm leading-relaxed
-                  placeholder:text-[hsl(var(--muted-foreground))]
-                  focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] focus:border-transparent
-                  resize-none font-mono"
-                disabled={loading}
-              />
-              <p className="mt-1.5 text-xs text-[hsl(var(--muted-foreground))]">
-                Use *texto* para negrito. Emojis sao suportados.
-              </p>
-            </div>
-
-            {/* Image URL */}
-            <div>
-              <label 
-                htmlFor="imageUrl"
-                className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-2"
-              >
-                URL da Imagem/Banner (Opcional)
-              </label>
-              <div className="relative">
-                <ImagePlusIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[hsl(var(--muted-foreground))]" />
-                <input
-                  type="url"
-                  id="imageUrl"
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  placeholder="https://exemplo.com/banner-promocional.jpg"
-                  className="w-full pl-11 pr-4 py-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]
-                    text-[hsl(var(--foreground))] text-sm
-                    placeholder:text-[hsl(var(--muted-foreground))]
-                    focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] focus:border-transparent"
-                  disabled={loading}
-                />
-              </div>
-              <p className="mt-1.5 text-xs text-[hsl(var(--muted-foreground))]">
-                Adicione um banner promocional ou imagem institucional para enviar junto com a mensagem.
-              </p>
-            </div>
-          </div>
-
-          {/* Preview Column */}
-          <div className="flex flex-col items-center justify-start lg:sticky lg:top-6">
-            <div className="bg-[hsl(var(--muted)/0.3)] rounded-2xl p-6 w-full flex justify-center">
-              <WhatsAppPreview message={messageBody} imageUrl={imageUrl} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer Actions */}
-      <div className="px-6 py-4 border-t border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.2)] flex flex-col sm:flex-row items-center justify-end gap-3">
-        <button
-          type="button"
-          onClick={handleRestoreDefault}
-          disabled={loading}
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
+      {showFooter ? (
+        <div className="px-6 py-4 border-t border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.2)] flex flex-col sm:flex-row items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={handleRestoreDefault}
+            disabled={loading}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
             border border-[hsl(var(--border))] bg-[hsl(var(--background))]
             text-sm font-medium text-[hsl(var(--foreground))]
             hover:bg-[hsl(var(--muted))] transition-colors
             disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <RotateCcwIcon className="w-4 h-4" />
-          Restaurar Padrao
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={loading}
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg
+          >
+            <RotateCcwIcon className="w-4 h-4" />
+            Restaurar padrao
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={loading}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg
             bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]
             text-sm font-medium shadow-sm
             hover:bg-[hsl(var(--primary)/0.9)] transition-colors
             disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? (
-            <SpinnerIcon className="w-4 h-4 animate-spin" />
-          ) : (
-            <SaveIcon className="w-4 h-4" />
-          )}
-          {loading ? 'Salvando...' : 'Salvar Template'}
-        </button>
-      </div>
+          >
+            {loading ? <SpinnerIcon className="w-4 h-4 animate-spin" /> : <SaveIcon className="w-4 h-4" />}
+            {loading ? "Salvando..." : "Salvar template"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };

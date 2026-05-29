@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 from datetime import datetime, timezone
@@ -61,6 +62,15 @@ def s3_bucket_for(cfg: TenantS3RuntimeConfig, purpose: S3BucketPurpose = "defaul
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+def s3_metadata_ascii(value: str | None, *, default: str = "upload", max_len: int = 120) -> str:
+    """Metadados S3 aceitam apenas ASCII — remove acentos do nome do arquivo."""
+    raw = (value or default).strip() or default
+    folded = unicodedata.normalize("NFKD", raw)
+    ascii_only = folded.encode("ascii", "ignore").decode("ascii")
+    safe = ascii_only.replace("/", "-").replace("\\", "-").strip()
+    return (safe or default)[:max_len]
 
 
 def _build_public_url(bucket: str, region: str, endpoint_url: str, key: str) -> str:
@@ -208,7 +218,7 @@ def process_and_upload_tenant_logo(
             "CacheControl": "public, max-age=31536000, immutable",
             "Metadata": {
                 "tenant_id": str(tenant_id),
-                "source_name": (source_filename or "upload").strip()[:120],
+                "source_name": s3_metadata_ascii(source_filename),
             },
             **({"ACL": acl} if acl else {}),
         }

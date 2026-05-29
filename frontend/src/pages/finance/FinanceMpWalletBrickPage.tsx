@@ -106,7 +106,7 @@ export function FinanceMpWalletBrickPage() {
 
   return (
     <div className={styles.wrap}>
-      <Link to="/app/finance" className={styles.back}>
+      <Link to="/app/finance/dashboard" className={styles.back}>
         ← Voltar ao financeiro
       </Link>
       <h1 className={styles.title}>Pagar com Mercado Pago (checkout no site)</h1>

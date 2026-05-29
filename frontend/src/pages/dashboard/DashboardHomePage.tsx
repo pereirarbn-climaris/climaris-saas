@@ -202,7 +202,7 @@ export function DashboardHomePage() {
           </h2>
           <p className={styles.heroLead}>Aqui está o resumo das suas operações.</p>
         </div>
-        <button type="button" className={styles.heroBtn} onClick={() => navigate("/app/finance")}>
+        <button type="button" className={styles.heroBtn} onClick={() => navigate("/app/finance/dashboard")}>
           <span className={styles.heroBtnIcon} aria-hidden>
             <svg viewBox="0 0 24 24">
               <polyline points="16 6 21 6 21 11" />
@@ -259,7 +259,7 @@ export function DashboardHomePage() {
                 icon={<MetricIconRevenue />}
                 variant="default"
                 subtitle={periodSubtitle}
-                onClick={() => navigate("/app/finance")}
+                onClick={() => navigate("/app/finance/dashboard")}
               />
               <MetricCard
                 title="Tempo médio de atendimento"

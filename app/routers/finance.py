@@ -58,6 +58,10 @@ from app.finance_entry_payer_hints import (
 )
 from app.finance_stone_constants import STONE_FINANCE_EXTERNAL_REF_PREFIX
 from app.finance_stone_service import ensure_stone_webhook_secrets
+from app.finance_gateway_reconciliation import (
+    apply_gateway_reconciliation_match,
+    build_reconciliation_dashboard,
+)
 from app.stone_pagarme_client import (
     account_label_from_pagarme_orders_payload,
     boleto_due_at_iso_from_entry_due,
@@ -72,8 +76,9 @@ from app.stone_pagarme_client import (
     fetch_pagarme_order,
     test_pagarme_secret_key,
 )
+from app.finance_entitlements import require_finance_feature, resolve_finance_entitlements
 from app.marketplace_util import tenant_has_marketplace_app
-from app.plan_rules import normalize_plan_key
+from app.plan_rules import get_plan_definition, normalize_plan_key
 from app.ofx_parser import parse_ofx_statement_transactions
 from app.saas_plan_effective import effective_finance_max_mode
 from app.security import decrypt_platform_secret, encrypt_platform_secret
@@ -113,6 +118,9 @@ from app.schemas import (
     FinanceEntryStoneCardChargeCreate,
     FinanceEntryStoneChargeCreate,
     FinanceOfxApplyMatches,
+    FinanceGatewayReconciliationDashboardOut,
+    FinanceGatewayReconciliationMatchIn,
+    FinanceEntitlementsOut,
     FinanceSettingsOut,
     FinanceSettingsUpdate,
     FinanceEntryUpdate,
@@ -144,6 +152,8 @@ router = APIRouter(tags=["finance"])
 
 
 def _is_professional_plan(active_plan: str) -> bool:
+    if get_plan_definition(active_plan).is_beta_internal:
+        return True
     normalized = active_plan.strip().lower()
     return any(token in normalized for token in ("pro", "professional", "premium", "enterprise"))
 
@@ -1153,6 +1163,7 @@ def create_mercadopago_boleto_charge_for_entry(
     del request
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     _require_finance_enabled(db, tenant)
+    require_finance_feature(db, tenant, "payment_pix_boleto")
     entry = db.execute(
         select(FinanceEntry).where(
             FinanceEntry.id == entry_id,
@@ -2266,6 +2277,7 @@ async def upload_finance_ofx_import(
     del request
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     _require_finance_enabled(db, tenant)
+    require_finance_feature(db, tenant, "auto_reconciliation")
     acc = _get_finance_bank_account_or_404(db, current_user.tenant_id, account_id)
     raw_name = (file.filename or "extrato.ofx").strip() or "extrato.ofx"
     if not raw_name.lower().endswith(".ofx"):
@@ -2477,6 +2489,72 @@ def apply_finance_ofx_matches(
         db.refresh(ent)
         _safe_send_whatsapp_for_finance_status(db, current_user, ent)
     return {"status": "ok", "applied": applied}
+
+
+@router.get(
+    "/finance/reconciliation/dashboard",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    response_model=FinanceGatewayReconciliationDashboardOut,
+)
+def get_finance_gateway_reconciliation_dashboard(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    start_date: date = Query(..., description="Início do período (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="Fim do período (YYYY-MM-DD)"),
+    finance_account_id: int | None = Query(default=None, ge=1),
+    provider: str | None = Query(default=None, description="mercadopago | stone | all"),
+) -> dict[str, Any]:
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    require_finance_feature(db, tenant, "payment_gateways")
+    if end_date < start_date:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data final anterior à inicial.")
+    prov = (provider or "all").strip().lower() or "all"
+    if prov not in ("mercadopago", "stone", "all"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider inválido.")
+    if finance_account_id is not None:
+        _get_finance_bank_account_or_404(db, current_user.tenant_id, finance_account_id)
+    return build_reconciliation_dashboard(
+        db,
+        tenant_id=current_user.tenant_id,
+        finance_account_id=finance_account_id,
+        start=start_date,
+        end=end_date,
+        provider=None if prov == "all" else prov,
+    )
+
+
+@router.post(
+    "/finance/reconciliation/match",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("60/minute")
+def post_finance_gateway_reconciliation_match(
+    request: Request,
+    payload: FinanceGatewayReconciliationMatchIn,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    require_finance_feature(db, tenant, "payment_gateways")
+    try:
+        entry = apply_gateway_reconciliation_match(
+            db,
+            tenant_id=current_user.tenant_id,
+            feed_id=payload.feed_id.strip(),
+            finance_entry_id=payload.finance_entry_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    _safe_send_whatsapp_for_finance_status(db, current_user, entry)
+    return {
+        "status": "ok",
+        "finance_entry_id": entry.id,
+        "feed_id": payload.feed_id.strip(),
+        "reconciliation_status": "reconciled",
+    }
 
 
 @router.get(
@@ -2753,6 +2831,27 @@ def get_finance_balance_snapshot(
         "projected_balance_total": initial_total + projected_flow_total,
         "accounts": account_rows,
     }
+
+
+@router.get(
+    "/finance/entitlements",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+    response_model=FinanceEntitlementsOut,
+)
+def get_finance_entitlements(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> FinanceEntitlementsOut:
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    ent = resolve_finance_entitlements(db, tenant)
+    return FinanceEntitlementsOut(
+        plan_key=ent.plan_key,
+        plan_label=ent.plan_label,
+        effective_finance_mode=ent.effective_finance_mode,
+        max_finance_mode=ent.max_finance_mode,
+        features=ent.features,
+        blocked_reasons=ent.blocked_reasons,
+    )
 
 
 @router.get(
