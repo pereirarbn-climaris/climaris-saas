@@ -4,6 +4,14 @@ import { FinanceServiceError, mapToFinanceServiceError } from './financeErrors';
 import { fetchPlanoUsuarioFromApi } from './financeAdapter';
 import { AccountService, assertPodeUsarConta } from './accountService';
 import { TransactionService, type CreateTransacaoApiOptions } from './transactionService';
+import type { PlanoRecebimento } from '../../schemas/financeMaquininha';
+import type { PaymentMethodFlow } from './financeCalculator';
+import {
+  resolveMaquininhaLiquidation,
+  resolveMaquininhaReceiptSettlement,
+  type MaquininhaFeeResult,
+  type MaquininhaSettlementContext,
+} from './financeCalculator';
 import {
   SimulacaoVendaSchema,
   type CalculateLiquidoParams,
@@ -88,4 +96,46 @@ export function calculateLiquidoFromSimulacao(
     throw new FinanceServiceError('Parâmetros de simulação inválidos.', 'VALIDACAO');
   }
   return calculateLiquido(parsed.data);
+}
+
+/** Liquidação maquininha (D0/D1 antecipado vs cronograma padrão). */
+export function resolveMaquininhaSettlementForSale(options: {
+  plan: PlanoRecebimento;
+  saleDate: Date;
+  installmentCount: number;
+  gross: number;
+  feeResult: MaquininhaFeeResult | null;
+}): MaquininhaSettlementContext {
+  return resolveMaquininhaReceiptSettlement(options);
+}
+
+/** Atalho: maquininha + plano antecipado → liquidação única na venda. */
+export function resolveMaquininhaSettlementForPaymentFlow(
+  paymentFlow: PaymentMethodFlow,
+  plan: PlanoRecebimento,
+  options: {
+    saleDate: Date;
+    installmentCount: number;
+    gross: number;
+    feeResult: MaquininhaFeeResult | null;
+  },
+): MaquininhaSettlementContext | null {
+  return resolveMaquininhaLiquidation(paymentFlow, plan, options);
+}
+
+/** Saldo disponível menos faturas de cartão em aberto. */
+export function computeProjectedAvailableBalance(
+  bankBalanceTotal: number,
+  openCreditCardInvoicesTotal: number,
+): number {
+  return Math.round((bankBalanceTotal - openCreditCardInvoicesTotal) * 100) / 100;
+}
+
+/** `parent_id` da série recorrente no domínio (= recurring_transaction_id na API). */
+export function transacaoParentSeriesId(row: Transacao): number | undefined {
+  return row.parentSeriesId ?? row.recurringTransactionId;
+}
+
+export function transacaoIsRecurring(row: Transacao): boolean {
+  return row.isRecurring ?? Boolean(row.recurringTransactionId);
 }

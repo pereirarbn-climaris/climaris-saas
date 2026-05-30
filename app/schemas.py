@@ -2186,6 +2186,26 @@ class FinanceCategoryUpdate(BaseModel):
     color: str | None = Field(default=None, max_length=7)
 
 
+class FinanceRecurringSpec(BaseModel):
+    frequency: Literal["weekly", "monthly"]
+    day_of_month: int | None = Field(default=None, ge=1, le=28)
+    weekday: int | None = Field(
+        default=None,
+        ge=0,
+        le=6,
+        description="0=segunda … 6=domingo (date.weekday())",
+    )
+    end_date: date | None = Field(default=None, description="Null = sem término")
+
+    @model_validator(mode="after")
+    def _frequency_fields(self) -> FinanceRecurringSpec:
+        if self.frequency == "monthly" and self.day_of_month is None:
+            raise ValueError("day_of_month é obrigatório para recorrência mensal.")
+        if self.frequency == "weekly" and self.weekday is None:
+            raise ValueError("weekday é obrigatório para recorrência semanal.")
+        return self
+
+
 class FinanceEntryCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=180)
     entry_type: FinanceEntryType
@@ -2213,6 +2233,15 @@ class FinanceEntryCreate(BaseModel):
     status: FinanceEntryStatus = FinanceEntryStatus.PENDING
     notes: str | None = None
     service_order_id: int | None = Field(default=None, ge=1)
+    reason_for_loss: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Obrigatório quando despesa vinculada à OS resulta em margem negativa.",
+    )
+    recurring: FinanceRecurringSpec | None = Field(
+        default=None,
+        description="Regra de recorrência; gera apenas com parcela única.",
+    )
 
     @field_validator("recipient_whatsapp", mode="after")
     @classmethod
@@ -2230,6 +2259,7 @@ class FinanceEntryUpdate(BaseModel):
     finance_account_id: int | None = Field(default=None, ge=1)
     credit_card_id: int | None = Field(default=None, ge=1)
     edit_scope: Literal["single", "future", "all"] = "single"
+    force_edit_locked: bool = False
     fee_fixed_amount: float | None = Field(default=None, ge=0)
     fee_percent: float | None = Field(default=None, ge=0)
     fee_amount: float | None = Field(default=None, ge=0)
@@ -2293,6 +2323,7 @@ class FinanceEntryOut(BaseModel):
     linked_payer_email: str | None = None
     linked_payer_name: str | None = None
     linked_payer_document: str | None = None
+    recurring_transaction_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -2308,6 +2339,23 @@ class FinanceSummaryOut(BaseModel):
     pending_count: int
     overdue_count: int
     total_count: int
+
+
+class MonthlyDREOut(BaseModel):
+    month: int = Field(ge=1, le=12)
+    year: int = Field(ge=2000, le=2100)
+    receita_bruta: float
+    custos_variaveis: float
+    margem_contribuicao: float
+    custos_fixos: float
+    lucro_liquido: float
+
+
+class FinanceDREReportOut(BaseModel):
+    month: int = Field(ge=1, le=12)
+    year: int = Field(ge=2000, le=2100)
+    current: MonthlyDREOut
+    history: list[MonthlyDREOut]
 
 
 class FinanceSettingsOut(BaseModel):
@@ -2835,6 +2883,8 @@ class FinanceBalanceSnapshotOut(BaseModel):
     initial_balance_total: float
     current_balance_total: float
     projected_balance_total: float
+    open_credit_card_invoices_total: float = 0
+    projected_available_balance: float = 0
     accounts: list[FinanceAccountBalanceRowOut]
 
 

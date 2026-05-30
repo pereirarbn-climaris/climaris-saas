@@ -1,6 +1,10 @@
 import { Link } from 'react-router-dom';
+import { filterContasBancarias } from '../accountService';
 import type { Conta } from '../account.types';
 import type { FinanceUpcomingSummary } from '../hooks/useFinanceUpcoming';
+import type { FinanceCreditCardInvoiceSummaryRow } from '../../../api/finance';
+import { computeProjectedAvailableBalance } from '../financeService';
+import { CreditCardInvoicesSection } from './CreditCardInvoicesSection';
 import styles from './FinanceSummarySidebar.module.css';
 
 function money(v: number): string {
@@ -14,15 +18,42 @@ function formatShortDate(d: Date): string {
 type Props = {
   contas: Conta[];
   upcoming: FinanceUpcomingSummary;
+  creditCardInvoices?: FinanceCreditCardInvoiceSummaryRow[];
+  creditCardInvoicesLoading?: boolean;
+  /** Total de faturas abertas (API); se omitido, soma dos cards. */
+  openInvoicesTotalOverride?: number;
   selectedContaId?: string;
   onSelectConta?: (contaId: string) => void;
 };
 
-export function FinanceSummarySidebar({ contas, upcoming, selectedContaId, onSelectConta }: Props) {
-  const activeContas = contas.filter((c) => c.status === 'ATIVA');
+export function FinanceSummarySidebar({
+  contas,
+  upcoming,
+  creditCardInvoices = [],
+  creditCardInvoicesLoading,
+  openInvoicesTotalOverride,
+  selectedContaId,
+  onSelectConta,
+}: Props) {
+  const activeContas = filterContasBancarias(contas);
+  const bankBalanceTotal = activeContas.reduce((s, c) => s + (c.saldoAtual ?? 0), 0);
+  const openInvoicesTotal =
+    openInvoicesTotalOverride ??
+    creditCardInvoices.reduce((s, c) => s + c.invoice_total, 0);
+  const projectedAvailable = computeProjectedAvailableBalance(bankBalanceTotal, openInvoicesTotal);
 
   return (
     <aside className={styles.aside} aria-label="Resumo financeiro">
+      <section className={styles.block}>
+        <div className={styles.blockHead}>
+          <h2 className={styles.blockTitle}>Saldo projetado</h2>
+        </div>
+        <p className={styles.projectedAvailable}>{money(projectedAvailable)}</p>
+        <p className={styles.muted}>
+          Disponível {money(bankBalanceTotal)} − faturas abertas {money(openInvoicesTotal)}
+        </p>
+      </section>
+
       <section className={styles.block}>
         <h2 className={styles.blockTitle}>Contas bancárias</h2>
         <ul className={styles.accountList}>
@@ -47,6 +78,8 @@ export function FinanceSummarySidebar({ contas, upcoming, selectedContaId, onSel
           Gerenciar contas
         </Link>
       </section>
+
+      <CreditCardInvoicesSection cards={creditCardInvoices} isLoading={creditCardInvoicesLoading} />
 
       <section className={styles.block}>
         <div className={styles.blockHead}>

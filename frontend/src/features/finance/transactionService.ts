@@ -50,7 +50,10 @@ function buildTransactionNotes(
     options?.settlementDate != null &&
     options.netValue != null &&
     options.feeApplied != null
-      ? buildSettlementPayloadMeta(options.settlementDate, options.netValue, options.feeApplied)
+      ? buildSettlementPayloadMeta(options.settlementDate, options.netValue, options.feeApplied, {
+          settlement_type: options.settlementType,
+          installment_count: options.installmentCount,
+        })
       : undefined;
 
   return mergeEntryNotes(Object.keys(base).length ? base : null, settlement);
@@ -186,7 +189,10 @@ export const TransactionService = {
       const transacao = await createTransacaoViaApi(input, {
         ...options,
         taxaPercentualMaquininha: taxaPercentual,
-        serviceOrderId: input.kind === 'RECEBIMENTO' ? input.ordemServicoId : undefined,
+        serviceOrderId:
+          input.kind === 'RECEBIMENTO'
+            ? input.ordemServicoId ?? options?.serviceOrderId
+            : options?.serviceOrderId,
         notes,
       });
       const cached = financeCache.getTransacoes();

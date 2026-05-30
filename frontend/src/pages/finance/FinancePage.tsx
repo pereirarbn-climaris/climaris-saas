@@ -47,6 +47,14 @@ import {
   parseCurrencyBrlInput,
   whatsappMeUrl,
 } from "../../lib/brMask";
+import { EditSeriesScopeField } from "../../features/finance/components/EditSeriesScopeField";
+import {
+  detectEditSeriesKindFromOut,
+  entryIsEditLocked,
+  needsEditScopePrompt,
+  toApiEditScope,
+  type EditSeriesScope,
+} from "../../features/finance/financeEntryEdit";
 import formLayout from "../formLayout.module.css";
 import styles from "./FinancePage.module.css";
 
@@ -300,6 +308,8 @@ export function FinancePage() {
     sandbox: boolean;
   } | null>(null);
   const [editingEntry, setEditingEntry] = useState<FinanceEntryOut | null>(null);
+  const [editScopeUi, setEditScopeUi] = useState<EditSeriesScope | null>(null);
+  const [editScopeTouched, setEditScopeTouched] = useState(false);
   const [editDeletePhase, setEditDeletePhase] = useState<"idle" | "choose-scope">("idle");
   const [editDescription, setEditDescription] = useState("");
   const [editAmountDisplay, setEditAmountDisplay] = useState("");
@@ -312,7 +322,6 @@ export function FinancePage() {
   const [editCreditCardId, setEditCreditCardId] = useState("");
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editNotes, setEditNotes] = useState("");
-  const [editScope, setEditScope] = useState<"single" | "future" | "all">("single");
   const [editStoneBoletoBusy, setEditStoneBoletoBusy] = useState(false);
   const [editStoneBoletoErr, setEditStoneBoletoErr] = useState<string | null>(null);
   const [editStoneBoletoData, setEditStoneBoletoData] = useState<{
@@ -618,9 +627,22 @@ export function FinancePage() {
     setEditStoneBoletoCopyLineHint("");
   }
 
+  function beginEdit(entry: FinanceEntryOut) {
+    if (entryIsEditLocked(entry.status, entry.notes)) {
+      setError(
+        "Este lançamento está pago ou conciliado. Estorne a liquidação antes de editar, ou edite apenas parcelas pendentes da série.",
+      );
+      return;
+    }
+    openEditModal(entry);
+  }
+
   function openEditModal(entry: FinanceEntryOut) {
     setEditDeletePhase("idle");
     setEditingEntry(entry);
+    const kind = detectEditSeriesKindFromOut(entry);
+    setEditScopeUi(needsEditScopePrompt(kind) ? null : "single");
+    setEditScopeTouched(false);
     setEditDescription(entry.description ?? "");
     setEditAmountDisplay(amountToCurrencyBrlInput(Number(entry.amount ?? 0)));
     setEditDueDate(entry.due_date);
@@ -632,7 +654,6 @@ export function FinancePage() {
     setEditCreditCardId(entry.credit_card_id != null ? String(entry.credit_card_id) : "");
     setEditCategoryId(entry.category_id != null ? String(entry.category_id) : "");
     setEditNotes(entry.notes?.trim() ?? "");
-    setEditScope("single");
     setEditStoneBoletoBusy(false);
     setEditStoneBoletoErr(null);
     setEditStoneBoletoData(null);
@@ -668,8 +689,8 @@ export function FinancePage() {
 
   function handleDeleteClick() {
     if (!editingEntry) return;
-    const total = editingEntry.installment_total ?? 1;
-    if (total <= 1) {
+    const kind = detectEditSeriesKindFromOut(editingEntry);
+    if (!needsEditScopePrompt(kind)) {
       if (!window.confirm(`Excluir "${editingEntry.description}"? Esta ação não pode ser desfeita.`)) return;
       void runDeleteWithScope("single");
       return;
@@ -692,6 +713,12 @@ export function FinancePage() {
   async function submitEditEntry(ev: FormEvent) {
     ev.preventDefault();
     if (!editingEntry || editDeletePhase === "choose-scope") return;
+    const seriesKind = detectEditSeriesKindFromOut(editingEntry);
+    if (needsEditScopePrompt(seriesKind) && editScopeUi == null) {
+      setEditScopeTouched(true);
+      setError("Selecione qual parte da série será alterada.");
+      return;
+    }
     const amt = parseCurrencyBrlInput(editAmountDisplay);
     if (!(amt > 0)) {
       setError("Informe um valor válido.");
@@ -712,7 +739,7 @@ export function FinancePage() {
         category_id: editCategoryId ? Number(editCategoryId) : null,
         recipient_whatsapp: null,
         notes: editNotes.trim() || null,
-        edit_scope: editScope,
+        edit_scope: toApiEditScope(editScopeUi ?? "single"),
       });
       closeEditModal();
       await loadAll();
@@ -1538,7 +1565,7 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                           <button
                             type="button"
                             className={styles.entryClickArea}
-                            onClick={() => openEditModal(e)}
+                            onClick={() => beginEdit(e)}
                             aria-label={`Editar lançamento: ${e.description}`}
                           >
                             <div className={styles.entryMain}>
@@ -2647,19 +2674,37 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
             <header className={styles.modalHeader}>
               <div className={styles.modalTitleBlock}>
                 <h3>Editar lançamento</h3>
-                {(editingEntry.installment_total ?? 1) > 1 ? (
-                  <p className={styles.modalSubtitle}>
-                    Parcela {editingEntry.installment_number ?? 1} de {editingEntry.installment_total}
-                  </p>
-                ) : (
-                  <p className={styles.modalSubtitle}>Altere os campos e salve.</p>
-                )}
+                <p className={styles.modalSubtitle}>
+                  {needsEditScopePrompt(detectEditSeriesKindFromOut(editingEntry))
+                    ? editingEntry.recurring_transaction_id
+                      ? "Série recorrente — escolha o alcance abaixo"
+                      : `Parcela ${editingEntry.installment_number ?? 1} de ${editingEntry.installment_total ?? 1}`
+                    : "Altere os campos e salve."}
+                </p>
               </div>
               <button type="button" className={styles.modalIconClose} onClick={closeEditModal} aria-label="Fechar">
                 <NavIconX />
               </button>
             </header>
             <form className={styles.modalFormFinance} onSubmit={submitEditEntry}>
+              {needsEditScopePrompt(detectEditSeriesKindFromOut(editingEntry)) ? (
+                <div className={styles.modalSection}>
+                  <EditSeriesScopeField
+                    seriesKind={detectEditSeriesKindFromOut(editingEntry)}
+                    value={editScopeUi}
+                    onChange={(scope) => {
+                      setEditScopeUi(scope);
+                      setEditScopeTouched(false);
+                    }}
+                    hint={
+                      editingEntry.recurring_transaction_id
+                        ? "Lançamento da série recorrente"
+                        : `Parcela ${editingEntry.installment_number ?? 1} de ${editingEntry.installment_total ?? 1}`
+                    }
+                    invalid={editScopeTouched && editScopeUi == null}
+                  />
+                </div>
+              ) : null}
               <div className={styles.modalSection}>
                 <div className={styles.modalSectionLabel}>Lançamento</div>
                 <label className={`${formLayout.field} ${styles.modalField}`}>
@@ -2956,19 +3001,6 @@ function entryDateForListBasis(e: FinanceEntryOut, basis: FinanceEntryDateBasis)
                   placeholder="Opcional"
                 />
               </label>
-
-              {(editingEntry.installment_total ?? 1) > 1 ? (
-                <div className={styles.modalScopeBanner}>
-                  <label className={`${formLayout.field} ${styles.modalField}`} style={{ margin: 0 }}>
-                    <span>Alterações aplicam a</span>
-                    <select value={editScope} onChange={(e) => setEditScope(e.target.value as "single" | "future" | "all")}>
-                      <option value="single">Somente esta parcela</option>
-                      <option value="future">Esta e parcelas futuras</option>
-                      <option value="all">Todas as parcelas</option>
-                    </select>
-                  </label>
-                </div>
-              ) : null}
 
               {editDeletePhase === "choose-scope" ? (
                 <div className={styles.modalDeleteScope}>

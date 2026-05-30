@@ -1,0 +1,164 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.card {
+  width: min(28rem, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: var(--radius-xl, 0.75rem);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  padding: 1.25rem 1.5rem 1.5rem;
+  box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.35);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.forceEditLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-md, 0.375rem);
+  border: 1px solid var(--color-border);
+  font-size: 0.875rem;
+}
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.moneyInputWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.65rem;
+  border-radius: var(--radius-md, 0.375rem);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface, #fff);
+}
+
+.moneyInputWrap input {
+  flex: 1;
+  border: none;
+  padding: 0.5rem 0;
+  min-width: 0;
+  font-size: 0.875rem;
+  background: transparent;
+}
+
+.moneyInputWrap input:focus {
+  outline: none;
+}
+
+.moneyPrefix {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: var(--color-danger, #dc2626);
+}
+
+.lockBanner {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: var(--radius-lg, 0.5rem);
+  border: 1px solid color-mix(in srgb, #d97706 35%, transparent);
+  background: color-mix(in srgb, #fef3c7 80%, var(--color-surface));
+}
+
+.lockBannerIcon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: #b45309;
+}
+
+.lockBanner strong {
+  display: block;
+  font-size: 0.875rem;
+  margin-bottom: 0.35rem;
+  color: var(--color-text);
+}
+
+.lockBanner p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.lockBannerLink {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-primary, #2563eb);
+  text-decoration: none;
+}
+
+.lockBannerLink:hover {
+  text-decoration: underline;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}

@@ -1,4 +1,10 @@
-import { effectiveReceivableAmount, formatDateOnly, startOfDay } from './financeCalculator';
+import {
+  effectiveReceivableAmount,
+  entryCountsForOSProfitability,
+  formatDateOnly,
+  startOfDay,
+} from './financeCalculator';
+import { isVariableCostCategory } from './osVariableCost';
 import type { Transacao } from './transaction.types';
 
 export const CHART_COLORS = {
@@ -147,16 +153,19 @@ export function buildFinancialChartsSummary(
       }
       if (row.status === 'LIQUIDADO') {
         totalDisponivel += liquido;
-        if (row.ordemServicoId) totalRecebidoOs += liquido;
+        if (row.ordemServicoId && entryCountsForOSProfitability(row)) {
+          totalRecebidoOs += liquido;
+        }
       }
     }
 
-    if (row.kind === 'PAGAMENTO' && row.status === 'LIQUIDADO') {
-      const cat = `${row.categoria} ${row.descricao}`.toLowerCase();
-      const isInsumo =
-        /insumo|pe[cç]a|material|estoque|fornecedor/.test(cat) ||
-        Boolean(row.ordemServicoId);
-      if (isInsumo) totalInsumosOs += row.valor;
+    if (
+      row.kind === 'PAGAMENTO' &&
+      row.ordemServicoId &&
+      entryCountsForOSProfitability(row) &&
+      isVariableCostCategory(row.categoria)
+    ) {
+      totalInsumosOs += row.valor;
     }
   }
 

@@ -41,6 +41,8 @@ import {
   computeDiscountAmountFromView,
   computeOrderTotalFromView,
 } from "../../lib/serviceOrderDiscount";
+import { ServiceOrderProfitabilityBadge } from "../../features/finance/components/ServiceOrderProfitabilityBadge";
+import { useServiceOrderFinanceEntries } from "../../features/finance/hooks";
 import {
   ServiceOrderFinanceIntegration,
   useServiceOrderFinanceBadge,
@@ -100,6 +102,10 @@ export function ServiceOrderFormPage() {
   const canSave = canEditGeneral || isAssignedTech;
   const linesReadOnly = orderRow?.status === "done";
   const isOrderDone = orderRow?.status === "done";
+  const showOsFinanceProfitability =
+    !isNew &&
+    orderRow != null &&
+    (orderRow.status === "done" || orderRow.status === "in_progress");
 
   const orderTotalForFinance = useMemo(() => {
     if (orderRow) return orderGrandTotal(orderRow);
@@ -119,6 +125,11 @@ export function ServiceOrderFormPage() {
     orderTotal: orderTotalForFinance,
     enabled: isOrderDone && !isNew && Number.isFinite(idNum),
   });
+
+  const { data: osFinanceEntries = [] } = useServiceOrderFinanceEntries(
+    Number.isFinite(idNum) ? idNum : undefined,
+    { enabled: showOsFinanceProfitability && Number.isFinite(idNum) },
+  );
 
   const canStartAttendance = useMemo(
     () =>
@@ -707,15 +718,22 @@ export function ServiceOrderFormPage() {
         onCompleteOrder={handleCompleteOrder}
         isCompletingOrder={isCompleting}
         financePaymentLabel={financePaymentLabel}
+        profitabilityBadge={
+          orderRow?.status === "in_progress" && Number.isFinite(idNum) ? (
+            <ServiceOrderProfitabilityBadge serviceOrderId={idNum} entries={osFinanceEntries} />
+          ) : null
+        }
         financeSection={
-          isOrderDone && Number.isFinite(idNum) && orderRow ? (
+          showOsFinanceProfitability && Number.isFinite(idNum) && orderRow ? (
             <ServiceOrderFinanceIntegration
               serviceOrderId={idNum}
               clientId={orderRow.client_id}
               clientLabel={clientLabelForFinance}
               orderTotal={orderTotalForFinance}
               orderNumber={serviceOrder?.numero ?? String(orderRow.id)}
-              enabled
+              enabled={isOrderDone}
+              showProfitability
+              showProfitabilityWidget={isOrderDone}
             />
           ) : null
         }

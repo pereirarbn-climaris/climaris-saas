@@ -3,6 +3,7 @@ import wizardStyles from '../../../pages/integrations/CampaignDashboard.module.c
 import type { PlanoRecebimento } from '../../../schemas/financeMaquininha';
 import type { Conta } from '../account.types';
 import {
+  buildMaquininhaSettlementContext,
   calculateNetValue,
   calculateSettlementDateFromFlow,
   machinePlanToPlano,
@@ -22,14 +23,11 @@ function formatDateBr(d: Date): string {
   return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function contaTypeLabel(tipo: Conta['tipo']): string {
-  const m: Record<Conta['tipo'], string> = {
-    BANCO: 'Banco',
-    MAQUININHA: 'Maquininha',
-    GATEWAY_PIX: 'Pix',
-    GATEWAY_BOLETO: 'Boleto',
-  };
-  return m[tipo] ?? tipo;
+function formatDateOnlyBr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 const MACHINE_PLAN_OPTIONS: { value: 'D0' | 'D1' | '30D'; label: string }[] = [
@@ -105,7 +103,21 @@ export function PaymentMethodStep({
     return null;
   }, [paymentFlow, feeResult, valorNum]);
 
+  const maquininhaSettlement = useMemo(() => {
+    if (paymentFlow !== 'maquininha' || !selectedMachine || valorNum <= 0) return null;
+    return buildMaquininhaSettlementContext({
+      plan: maquininhaPlano,
+      saleDate,
+      installmentCount: parcelas,
+      gross: valorNum,
+      feeResult: feeResult,
+    });
+  }, [paymentFlow, selectedMachine, maquininhaPlano, saleDate, parcelas, valorNum, feeResult]);
+
   const settlementPreview = useMemo(() => {
+    if (paymentFlow === 'maquininha' && maquininhaSettlement) {
+      return maquininhaSettlement.settlementDate;
+    }
     if (!paymentFlow) return null;
     const boletoDue = boletoVencimento ? new Date(`${boletoVencimento}T12:00:00`) : saleDate;
     return calculateSettlementDateFromFlow(paymentFlow, saleDate, {
@@ -114,7 +126,7 @@ export function PaymentMethodStep({
       installmentCount: parcelas,
       installmentIndex: 1,
     });
-  }, [paymentFlow, parcelas, saleDate, maquininhaPlano, boletoVencimento]);
+  }, [paymentFlow, parcelas, saleDate, maquininhaPlano, boletoVencimento, maquininhaSettlement]);
 
   return (
     <>
@@ -149,19 +161,31 @@ export function PaymentMethodStep({
             onChange={(e) => onContaIdChange(e.target.value)}
             required
           >
-            <option value="">Selecionar conta ativa</option>
+            <option value="">Selecionar conta bancária</option>
             {contas.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.nome} ({contaTypeLabel(c.tipo)}) — saldo {money(c.saldoAtual)}
+                {c.nome} — saldo {money(c.saldoAtual)}
               </option>
             ))}
           </select>
 
           {contas.length === 0 ? (
-            <p className={styles.hint}>Nenhuma conta ativa. Cadastre em Financeiro → Contas.</p>
+            <p className={styles.hint}>Nenhuma conta bancária ativa. Cadastre em Financeiro → Contas.</p>
           ) : null}
 
-          {contaId && settlementPreview && selectedConta ? (
+          {contaId && selectedConta && maquininhaSettlement?.receiptType === 'total_anticipated' ? (
+            <div className={styles.cashFlowFeedback}>
+              <p className={styles.settlementPreviewLine}>
+                💰 Valor total antecipado: <strong>{money(maquininhaSettlement.netValue)}</strong>
+                {' '}(Data: {formatDateOnlyBr(maquininhaSettlement.settlementDate)})
+              </p>
+              <p className={styles.hint} style={{ margin: 0 }}>
+                Conta: <strong>{selectedConta.nome}</strong>
+                {' '}
+                · liquidação única (D0/D1), taxa sobre o valor total da venda
+              </p>
+            </div>
+          ) : contaId && settlementPreview && selectedConta ? (
             <div className={styles.cashFlowFeedback}>
               <p className={styles.settlementPreviewLine}>
                 💰 Entrada prevista no caixa: <strong>{formatDateBr(settlementPreview)}</strong>
@@ -170,7 +194,7 @@ export function PaymentMethodStep({
                 Conta: <strong>{selectedConta.nome}</strong>
                 {paymentFlow === 'pix' ? ' · liquidação D+0' : null}
                 {paymentFlow === 'boleto' ? ' · conforme vencimento do boleto' : null}
-                {paymentFlow === 'maquininha' ? ' · conforme plano da maquininha' : null}
+                {paymentFlow === 'maquininha' ? ' · cronograma por parcela (30/60/90…)' : null}
               </p>
             </div>
           ) : null}
@@ -271,7 +295,13 @@ export function PaymentMethodStep({
             </div>
           ) : null}
 
-          {showOsMaquininhaSummary && feeResult && settlementPreview ? (
+          {showOsMaquininhaSummary && feeResult && maquininhaSettlement?.receiptType === 'total_anticipated' ? (
+            <p className={styles.osSummary}>
+              Resumo OS · Taxa {feeResult.feePercent}% · Valor total antecipado{' '}
+              <strong>{money(maquininhaSettlement.netValue)}</strong> em{' '}
+              {formatDateOnlyBr(maquininhaSettlement.settlementDate)}
+            </p>
+          ) : showOsMaquininhaSummary && feeResult && settlementPreview ? (
             <p className={styles.osSummary}>
               Resumo OS · Taxa {feeResult.feePercent}% · Recebimento estimado em{' '}
               <strong>{formatDateBr(settlementPreview)}</strong>

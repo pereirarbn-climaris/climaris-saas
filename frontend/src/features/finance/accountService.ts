@@ -5,6 +5,11 @@ import { isContaGateway, planoAtendeMinimo } from './financePlanUtils';
 import type { Conta, AccountBalancePatch } from './account.types';
 import type { FinanceServiceContext } from './finance.types';
 
+/** Contas do cadastro bancário (extrato lateral) — exclui maquininha e gateways. */
+export function filterContasBancarias(contas: Conta[]): Conta[] {
+  return contas.filter((c) => c.tipo === 'BANCO' && (c.status ?? 'ATIVA') === 'ATIVA');
+}
+
 export const AccountService = {
   async listFromApi(): Promise<Conta[]> {
     try {

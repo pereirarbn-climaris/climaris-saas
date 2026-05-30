@@ -221,6 +221,8 @@ export interface ServiceOrderFormViewProps {
   isCompletingOrder?: boolean
   /** Rótulo do badge financeiro no header (ex.: Pago, Pendente). */
   financePaymentLabel?: string | null
+  /** Badge de margem de contribuição (insumos vs receita). */
+  profitabilityBadge?: React.ReactNode
   /** Seção "Gestão Financeira" (OS concluída). */
   financeSection?: React.ReactNode
 }
@@ -1117,6 +1119,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   onCompleteOrder,
   isCompletingOrder = false,
   financePaymentLabel = null,
+  profitabilityBadge = null,
   financeSection = null,
 }) => {
   const clientLocked = mode === 'edit' && Boolean(serviceOrder?.id ?? orderId)
@@ -1578,6 +1581,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                       Financeiro: {financePaymentLabel}
                     </span>
                   ) : null}
+                  {profitabilityBadge}
                   {financePaymentLabel === 'Pago' && formData.status === 'concluida' ? (
                     <span
                       style={{

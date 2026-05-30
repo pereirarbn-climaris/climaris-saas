@@ -106,6 +106,7 @@ from app.schemas import (
     FinancePaymentFeeOut,
     FinancePaymentFeeUpdate,
     FinanceEntryOut,
+    FinanceDREReportOut,
     FinanceGatewayAsaasTest,
     FinanceGatewayAsaasUpsert,
     FinanceGatewayMercadoPagoProductsUpdate,
@@ -523,6 +524,8 @@ def _entry_to_out(entry: FinanceEntry, *, linked_payer: dict[str, str | None] | 
         "paid_at": entry.paid_at,
         "notes": entry.notes,
         "service_order_id": entry.service_order_id,
+        "recurring_transaction_id": entry.recurring_transaction_id,
+        "credit_card_invoice_id": entry.credit_card_invoice_id,
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
     }
@@ -558,7 +561,7 @@ def _credit_card_used_limit(db: Session, tenant_id: int, card_id: int) -> float:
             FinanceEntry.tenant_id == tenant_id,
             FinanceEntry.credit_card_id == card_id,
             FinanceEntry.entry_type == FinanceEntryType.EXPENSE,
-            FinanceEntry.status != FinanceEntryStatus.CANCELLED,
+            FinanceEntry.status == FinanceEntryStatus.AWAITING_INVOICE,
         )
     ).scalar_one()
     return float(used or 0)
@@ -692,6 +695,32 @@ def list_finance_entries(
     return JSONResponse(content=jsonable_encoder(_entry_rows_to_out_with_client_hints(db, current_user.tenant_id, list(rows))))
 
 
+@router.get(
+    "/finance/reports/dre",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    response_model=FinanceDREReportOut,
+)
+def get_finance_dre_report(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    month: Annotated[int, Query(ge=1, le=12)],
+    year: Annotated[int, Query(ge=2000, le=2100)],
+    history_months: Annotated[int, Query(ge=1, le=24)] = 6,
+) -> dict:
+    """DRE mensal: receita de OS concluídas, custos variáveis (com OS) e fixos (sem OS)."""
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    from app.finance_dre import build_dre_report
+
+    return build_dre_report(
+        db,
+        current_user.tenant_id,
+        month,
+        year,
+        history_months=history_months,
+    )
+
+
 @router.post(
     "/finance/entries",
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
@@ -714,30 +743,70 @@ def create_finance_entry(
         ).scalar_one_or_none()
         if svc_order is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
-        if svc_order.status != OrderStatus.DONE:
+        if svc_order.status == OrderStatus.CANCELLED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Só é possível lançar no financeiro após a OS estar concluída.",
+                detail="Não é possível vincular lançamentos a uma OS cancelada.",
             )
-        if payload.entry_type != FinanceEntryType.INCOME:
+        if payload.entry_type == FinanceEntryType.INCOME:
+            if svc_order.status != OrderStatus.DONE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Recebimento da OS só pode ser lançado após a ordem estar concluída.",
+                )
+            dup = db.execute(
+                select(func.count())
+                .select_from(FinanceEntry)
+                .where(
+                    FinanceEntry.tenant_id == current_user.tenant_id,
+                    FinanceEntry.service_order_id == payload.service_order_id,
+                    FinanceEntry.entry_type == FinanceEntryType.INCOME,
+                    FinanceEntry.status != FinanceEntryStatus.CANCELLED,
+                )
+            ).scalar_one()
+            if int(dup or 0) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Já existe lançamento financeiro ativo para esta OS.",
+                )
+        elif payload.entry_type == FinanceEntryType.EXPENSE:
+            allowed_expense_os = {
+                OrderStatus.DONE,
+                OrderStatus.IN_PROGRESS,
+                OrderStatus.SCHEDULED,
+                OrderStatus.APPROVED,
+                OrderStatus.OPEN,
+            }
+            if svc_order.status not in allowed_expense_os:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Custos de insumo só podem ser vinculados a OS em andamento ou concluída.",
+                )
+            from app.finance_service import (
+                merge_reason_for_loss_notes,
+                validate_os_expense_loss_justification,
+            )
+
+            validate_os_expense_loss_justification(
+                db,
+                current_user.tenant_id,
+                int(payload.service_order_id),
+                float(payload.amount),
+                payload.reason_for_loss,
+            )
+            if payload.reason_for_loss and payload.reason_for_loss.strip():
+                payload = payload.model_copy(
+                    update={
+                        "notes": merge_reason_for_loss_notes(
+                            payload.notes,
+                            payload.reason_for_loss.strip(),
+                        ),
+                    }
+                )
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Lançamentos vinculados à OS devem ser receitas (entrada).",
-            )
-        dup = db.execute(
-            select(func.count())
-            .select_from(FinanceEntry)
-            .where(
-                FinanceEntry.tenant_id == current_user.tenant_id,
-                FinanceEntry.service_order_id == payload.service_order_id,
-                FinanceEntry.entry_type == FinanceEntryType.INCOME,
-                FinanceEntry.status != FinanceEntryStatus.CANCELLED,
-            )
-        ).scalar_one()
-        if int(dup or 0) > 0:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Já existe lançamento financeiro ativo para esta OS.",
+                detail="Tipo de lançamento inválido para vínculo com OS.",
             )
     if payload.category_id is not None:
         category = db.execute(
@@ -767,16 +836,71 @@ def create_finance_entry(
         ).scalar_one_or_none()
         if card is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cartão de crédito não encontrado.")
+    pm_create = (payload.payment_method or "").strip().lower()
+    is_credit_card_expense = (
+        payload.entry_type == FinanceEntryType.EXPENSE
+        and payload.credit_card_id is not None
+        and pm_create == "credit_card"
+    )
+    if is_credit_card_expense and card is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selecione um cartão de crédito cadastrado.",
+        )
     if payload.entry_type == FinanceEntryType.EXPENSE and payload.credit_card_id is not None:
         used = _credit_card_used_limit(db, current_user.tenant_id, payload.credit_card_id)
         projected = used + float(payload.amount)
         if projected > float(card.limit_amount or 0):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Limite do cartão insuficiente para esta compra parcelada.",
+                detail="Limite do cartão insuficiente para esta compra.",
             )
+    if is_credit_card_expense:
+        if payload.recurring is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recorrência não está disponível para compras no cartão de crédito.",
+            )
+        if payload.service_order_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Compra no cartão não pode ser vinculada à ordem de serviço.",
+            )
+        from app.finance_credit_card_invoice import create_credit_card_expense_entries
+
+        created_cc = create_credit_card_expense_entries(
+            db,
+            tenant_id=current_user.tenant_id,
+            card=card,
+            payload=payload,
+        )
+        db.commit()
+        for row in created_cc:
+            db.refresh(row)
+        purchase = created_cc[0]
+        return JSONResponse(
+            content=jsonable_encoder(_entry_to_out_with_client_hints(db, current_user.tenant_id, purchase))
+        )
     paid_at = datetime.now(timezone.utc) if payload.status == FinanceEntryStatus.PAID else None
     installments = int(payload.installments or 1)
+    if payload.recurring is not None:
+        if installments > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recorrência só é permitida para lançamento único (sem parcelamento).",
+            )
+        if payload.service_order_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recorrência não está disponível para recebimentos vinculados à ordem de serviço.",
+            )
+    if payload.notes and payload.notes.strip():
+        try:
+            notes_data = json.loads(payload.notes)
+            if isinstance(notes_data, dict) and notes_data.get("settlement_type") == "total_anticipated":
+                installments = 1
+        except Exception:
+            pass
     interval_months = int(payload.installment_interval_months or 1)
     group_id = uuid4().hex if installments > 1 else None
     competence = payload.competence_date or payload.due_date
@@ -788,6 +912,23 @@ def create_finance_entry(
     total_fee = float(payload.fee_amount or 0)
     amounts = split_installment_amounts(total_amount, installments)
     fee_parts = split_fee_amounts(total_fee, amounts)
+    recurring_rule = None
+    if payload.recurring is not None:
+        from app.finance_recurring_service import (
+            build_entry_template_from_payload,
+            create_recurring_rule,
+            validate_recurring_spec,
+        )
+
+        validate_recurring_spec(payload.recurring, payload.due_date)
+        template = build_entry_template_from_payload(payload)
+        recurring_rule = create_recurring_rule(
+            db,
+            tenant_id=current_user.tenant_id,
+            spec=payload.recurring,
+            template=template,
+            first_due=payload.due_date,
+        )
     created: list[FinanceEntry] = []
     for idx in range(installments):
         parcel_due = _add_months(payload.due_date, idx * interval_months)
@@ -819,9 +960,14 @@ def create_finance_entry(
             installment_number=idx + 1,
             installment_total=installments,
             service_order_id=payload.service_order_id,
+            recurring_transaction_id=recurring_rule.id if recurring_rule else None,
         )
         db.add(entry)
         created.append(entry)
+    if recurring_rule is not None:
+        from app.finance_recurring_service import materialize_recurring_schedule
+
+        materialize_recurring_schedule(db, recurring_rule)
     db.commit()
     for row in created:
         db.refresh(row)
@@ -891,83 +1037,53 @@ def patch_finance_entry(
         if card is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cartão de crédito não encontrado.")
 
+    from app.finance_entry_edit import apply_update_to_entry, assert_targets_editable, resolve_edit_targets
+
     scope = payload.edit_scope or "single"
-    targets = [entry]
-    if scope != "single":
-        if not entry.installment_group_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lançamento não possui grupo de parcelas.")
-        q = select(FinanceEntry).where(
-            FinanceEntry.tenant_id == current_user.tenant_id,
-            FinanceEntry.installment_group_id == entry.installment_group_id,
-        )
-        if scope == "future":
-            q = q.where(FinanceEntry.installment_number >= entry.installment_number)
-        targets = db.execute(q.order_by(FinanceEntry.installment_number.asc())).scalars().all()
     if scope != "single" and payload.gateway_payment_id is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="gateway_payment_id só pode ser alterado em uma parcela.")
     if scope != "single" and "gateway_preference_id" in payload.model_fields_set:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="gateway_preference_id só pode ser alterado em uma parcela.")
 
-    for row in targets:
-        if payload.description is not None:
-            row.description = payload.description.strip()
-        if payload.amount is not None:
-            row.amount = payload.amount
-        if payload.payment_method is not None:
-            row.payment_method = payload.payment_method.strip().lower() or None
-        if payload.payment_provider is not None:
-            row.payment_provider = payload.payment_provider.strip() or None
-        if payload.finance_account_id is not None:
-            row.finance_account_id = payload.finance_account_id
-        if payload.credit_card_id is not None:
-            row.credit_card_id = payload.credit_card_id
-        if payload.fee_fixed_amount is not None:
-            row.fee_fixed_amount = payload.fee_fixed_amount
-        if payload.fee_percent is not None:
-            row.fee_percent = payload.fee_percent
-        if payload.fee_amount is not None:
-            row.fee_amount = payload.fee_amount
-        if payload.recipient_whatsapp is not None:
-            row.recipient_whatsapp = payload.recipient_whatsapp
-        if payload.gateway_payment_id is not None:
-            row.gateway_payment_id = (payload.gateway_payment_id.strip()[:48] or None) if payload.gateway_payment_id else None
-        if "gateway_preference_id" in payload.model_fields_set:
-            raw_pref = payload.gateway_preference_id
-            if raw_pref is None or (isinstance(raw_pref, str) and not raw_pref.strip()):
-                old_pref = (row.gateway_preference_id or "").strip()
-                if old_pref and (row.payment_provider or "").strip().lower() == "mercadopago":
-                    if not (row.mercadopago_archived_preference_id or "").strip():
-                        row.mercadopago_archived_preference_id = old_pref[:48]
-                row.gateway_preference_id = None
-            else:
-                row.gateway_preference_id = str(raw_pref).strip()[:48] or None
-        if payload.installment_group_id is not None:
-            row.installment_group_id = payload.installment_group_id.strip() or None
-        if payload.installment_number is not None:
-            row.installment_number = payload.installment_number
-        if payload.installment_total is not None:
-            row.installment_total = payload.installment_total
-        if payload.due_date is not None:
-            row.due_date = payload.due_date
-            row.expected_settlement_date = expected_settlement_for_parcel(row.due_date, row.settlement_plan)
-        if payload.competence_date is not None:
-            row.competence_date = payload.competence_date
-        if payload.settlement_plan is not None:
-            row.settlement_plan = normalize_settlement_plan(payload.settlement_plan, default="same_as_due")
-            row.expected_settlement_date = expected_settlement_for_parcel(row.due_date, row.settlement_plan)
-        if payload.notes is not None:
-            row.notes = payload.notes.strip() or None
-        if payload.category_id is not None:
-            row.category_id = payload.category_id
-        if payload.status is not None:
-            row.status = payload.status
-            if payload.status == FinanceEntryStatus.PAID:
-                row.paid_at = row.paid_at or datetime.now(timezone.utc)
-            elif payload.status != FinanceEntryStatus.PAID:
-                row.paid_at = None
-        db.add(row)
+    targets = resolve_edit_targets(
+        db,
+        tenant_id=current_user.tenant_id,
+        entry=entry,
+        scope=scope,
+    )
+    assert_targets_editable(targets, allow_locked=payload.force_edit_locked)
 
-    db.commit()
+    anchor_due = entry.due_date
+    due_delta = (payload.due_date - anchor_due) if payload.due_date is not None else None
+    bulk_edit = scope != "single" and len(targets) > 1
+
+    try:
+        for row in targets:
+            eff_due: date | None = None
+            skip_due = False
+            if payload.due_date is not None:
+                if bulk_edit and due_delta is not None:
+                    if due_delta.days == 0:
+                        skip_due = True
+                    else:
+                        eff_due = row.due_date + due_delta
+                else:
+                    eff_due = payload.due_date
+            apply_update_to_entry(
+                row,
+                payload,
+                effective_due_date=eff_due,
+                skip_due_date=skip_due,
+            )
+            if payload.status == FinanceEntryStatus.PAID:
+                from app.finance_credit_card_invoice import sync_purchases_when_invoice_paid
+
+                sync_purchases_when_invoice_paid(db, row)
+            db.add(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     for row in targets:
         db.refresh(row)
         _safe_send_whatsapp_for_finance_status(db, current_user, row)
@@ -1776,24 +1892,23 @@ def delete_finance_entry(
     if entry is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lançamento não encontrado.")
 
-    targets: list[FinanceEntry] = [entry]
-    if edit_scope != "single":
-        if not entry.installment_group_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Lançamento não possui grupo de parcelas.",
-            )
-        q = select(FinanceEntry).where(
-            FinanceEntry.tenant_id == current_user.tenant_id,
-            FinanceEntry.installment_group_id == entry.installment_group_id,
-        )
-        if edit_scope == "future":
-            q = q.where(FinanceEntry.installment_number >= entry.installment_number)
-        targets = db.execute(q.order_by(FinanceEntry.installment_number.asc())).scalars().all()
+    from app.finance_entry_edit import assert_targets_editable, resolve_edit_targets
 
-    for row in targets:
-        db.delete(row)
-    db.commit()
+    targets = resolve_edit_targets(
+        db,
+        tenant_id=current_user.tenant_id,
+        entry=entry,
+        scope=edit_scope,
+    )
+    assert_targets_editable(targets)
+
+    try:
+        for row in targets:
+            db.delete(row)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return None
 
 
@@ -2576,6 +2691,79 @@ def list_finance_credit_cards(
     return [_credit_card_to_out(db, current_user.tenant_id, row) for row in rows]
 
 
+@router.get(
+    "/finance/credit-cards/invoices-summary",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def list_credit_card_invoices_summary(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Totais de faturas pendentes por cartão (lançamentos de fatura, não compras)."""
+    from models import FinanceCreditCardInvoice, FinanceCreditCardInvoiceStatus
+
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    cards = db.execute(
+        select(FinanceCreditCard)
+        .where(
+            FinanceCreditCard.tenant_id == current_user.tenant_id,
+            FinanceCreditCard.is_active.is_(True),
+        )
+        .order_by(FinanceCreditCard.name.asc())
+    ).scalars().all()
+    invoices = db.execute(
+        select(FinanceCreditCardInvoice).where(
+            FinanceCreditCardInvoice.tenant_id == current_user.tenant_id,
+            FinanceCreditCardInvoice.status.in_(
+                (FinanceCreditCardInvoiceStatus.OPEN, FinanceCreditCardInvoiceStatus.CLOSED)
+            ),
+        )
+    ).scalars().all()
+    purchases = db.execute(
+        select(FinanceEntry).where(
+            FinanceEntry.tenant_id == current_user.tenant_id,
+            FinanceEntry.status == FinanceEntryStatus.AWAITING_INVOICE,
+            FinanceEntry.credit_card_id.isnot(None),
+        )
+    ).scalars().all()
+    by_card: dict[int, dict[str, Any]] = {}
+    for card in cards:
+        by_card[card.id] = {
+            "card_id": card.id,
+            "card_name": card.name,
+            "brand": card.brand,
+            "invoice_total": 0.0,
+            "purchase_awaiting_total": 0.0,
+            "next_due_date": None,
+            "invoice_count": 0,
+            "purchase_count": 0,
+        }
+    for inv in invoices:
+        cid = inv.credit_card_id
+        if cid not in by_card:
+            continue
+        row = by_card[cid]
+        row["invoice_total"] += float(inv.total_amount or 0)
+        row["invoice_count"] += 1
+        nd = inv.due_date
+        if row["next_due_date"] is None or nd < row["next_due_date"]:
+            row["next_due_date"] = nd
+    for entry in purchases:
+        cid = entry.credit_card_id
+        if cid is None or cid not in by_card:
+            continue
+        by_card[cid]["purchase_awaiting_total"] += float(entry.amount or 0)
+        by_card[cid]["purchase_count"] += 1
+    items = []
+    for row in by_card.values():
+        if row["next_due_date"] is not None:
+            row["next_due_date"] = row["next_due_date"].isoformat()
+        items.append(row)
+    open_total = sum(r["invoice_total"] for r in items)
+    return {"cards": items, "open_invoices_total": open_total}
+
+
 @router.post(
     "/finance/credit-cards",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
@@ -2779,9 +2967,13 @@ def get_finance_balance_snapshot(
         )
     ).scalars().all()
 
+    from app.finance_credit_card_invoice import entry_affects_bank_cashflow
+
     current_flow_total = 0.0
     projected_flow_total = 0.0
     for entry in entries:
+        if not entry_affects_bank_cashflow(entry):
+            continue
         bdv = _entry_basis_date_value(entry, basis)
         signed = _entry_signed_cash_flow(entry)
         if entry.status == FinanceEntryStatus.PAID and bdv <= today:
@@ -2806,6 +2998,8 @@ def get_finance_balance_snapshot(
         for entry in entries:
             if not _entry_matches_bank_account(entry, acc):
                 continue
+            if not entry_affects_bank_cashflow(entry):
+                continue
             bdv = _entry_basis_date_value(entry, basis)
             signed = _entry_signed_cash_flow(entry)
             if entry.status == FinanceEntryStatus.PAID and bdv <= today:
@@ -2822,13 +3016,21 @@ def get_finance_balance_snapshot(
             }
         )
 
+    from app.finance_credit_card_invoice import sum_open_invoices_total
+
+    open_invoices_total = sum_open_invoices_total(db, current_user.tenant_id)
+    current_total = initial_total + current_flow_total
+    projected_total = initial_total + projected_flow_total
+
     return {
         "date_basis": basis,
         "period_end": end_date,
         "as_of": today,
         "initial_balance_total": initial_total,
-        "current_balance_total": initial_total + current_flow_total,
-        "projected_balance_total": initial_total + projected_flow_total,
+        "current_balance_total": current_total,
+        "projected_balance_total": projected_total,
+        "open_credit_card_invoices_total": open_invoices_total,
+        "projected_available_balance": current_total - open_invoices_total,
         "accounts": account_rows,
     }
 

@@ -1,3 +1,52 @@
+.lockBanner {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 10px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  font-size: 0.875rem;
+}
+
+.lockBannerLink {
+  display: inline-block;
+  margin-top: 0.35rem;
+  color: var(--color-primary, #0d9488);
+}
+
+.forceEditLabel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.editValueRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.payModeFieldset {
+  border: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.payModeOption {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
 .kindRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
@@ -133,7 +182,65 @@
   margin: 0;
 }
 
+.anticipatedHighlight {
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  color: #065f46;
+}
+
+.reviewMeta {
+  font-weight: 500;
+  color: #047857;
+}
+
+.recurringBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.recurringPreview {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
 .invalidHint {
   color: #b45309;
   font-weight: 600;
+}
+
+.moneyInputWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.65rem;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  min-height: 2.5rem;
+}
+
+.moneyPrefix {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.moneyInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  padding: 0.5rem 0;
+  font-size: 0.9375rem;
+  background: transparent;
+  outline: none;
 }

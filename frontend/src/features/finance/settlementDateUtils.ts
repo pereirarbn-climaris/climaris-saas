@@ -7,6 +7,10 @@ export {
   resolveMaquininhaFee as calculateMaquininhaFee,
   resolveMaquininhaPaymentMethod,
   settlementPlanForMaquininhaPlan,
+  buildMaquininhaSettlementContext,
+  isMaquininhaAnticipatedPlan,
+  maquininhaSettlementReceiptType,
+  effectiveInstallmentCountForSettlement,
   startOfDay,
   formatDateOnly,
   parseDateInput,
@@ -15,4 +19,5 @@ export {
   flowToPaymentMethod,
   type PaymentMethodFlow,
   type SettlementPlan,
+  type SettlementReceiptType,
 } from './financeCalculator';

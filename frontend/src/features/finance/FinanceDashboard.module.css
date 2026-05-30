@@ -19,6 +19,17 @@
   min-width: 0;
 }
 
+.recurringIconWrap {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 0.15rem;
+}
+
+.recurringIcon {
+  color: #2563eb;
+  flex-shrink: 0;
+}
+
 .rowMeta {
   display: block;
   font-size: 0.72rem;
@@ -139,6 +150,93 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+
+.filterBar {
+  padding: 0.85rem 1.15rem !important;
+}
+
+.filterBarRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+}
+
+.filterBarTitle {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-text, #0f172a);
+  white-space: nowrap;
+}
+
+.periodPresets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+}
+
+.presetBtn,
+.presetBtnActive {
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  background: transparent;
+  color: #475569;
+}
+
+.presetBtn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.presetBtnActive {
+  background: #fff;
+  color: #0d9488;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.filterDates {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.filterDateInput {
+  width: 10.75rem;
+  max-width: 100%;
+  height: 2.25rem;
+  font-size: 0.875rem;
+}
+
+.filterDateSep {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted, #64748b);
+  user-select: none;
+}
+
+.filterClearConta {
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .filterDates {
+    margin-left: 0;
+    width: 100%;
+  }
 }
 
 .filters {
@@ -317,4 +415,86 @@
 .amountNegative {
   color: #b42318;
   font-weight: 600;
+}
+
+.clickableRow {
+  cursor: pointer;
+}
+
+.clickableRow:hover {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 5%, transparent);
+}
+
+.lockedRow {
+  background: color-mix(in srgb, #f8fafc 90%, #fef3c7);
+}
+
+.lockedRow:hover {
+  background: color-mix(in srgb, #fef3c7 35%, #f8fafc);
+}
+
+.statusCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+.lockedBadge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #b45309;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+
+.clickableRow:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: -2px;
+}
+
+.actionsCol {
+  width: auto;
+  min-width: 5.5rem;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.actionBtnIcon {
+  min-width: 2rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+.actionIconPaid {
+  color: #047857;
+}
+
+.actionIconCancel {
+  color: #b45309;
+}
+
+.actionBtnDelete {
+  color: #dc2626 !important;
+}
+
+.actionBtnDelete:hover {
+  color: #b91c1c !important;
+  background: color-mix(in srgb, #dc2626 10%, transparent) !important;
 }

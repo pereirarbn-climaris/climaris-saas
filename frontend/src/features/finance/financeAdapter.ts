@@ -42,6 +42,7 @@ import type {
   Transacao,
 } from './finance.types';
 import { tipoFromTransactionKind, transactionKindFromTipo } from './transaction.types';
+import type { SettlementReceiptType } from './financeCalculator';
 
 export type CreateTransacaoApiOptions = {
   taxaPercentualMaquininha?: number;
@@ -57,6 +58,17 @@ export type CreateTransacaoApiOptions = {
   paymentProvider?: string | null;
   installments?: number;
   installmentIntervalMonths?: number;
+  settlementType?: SettlementReceiptType;
+  /** Parcelas da venda no cartão (metadado quando antecipação total). */
+  installmentCount?: number;
+  creditCardId?: number;
+  reasonForLoss?: string;
+  recurring?: {
+    frequency: 'weekly' | 'monthly';
+    day_of_month?: number;
+    weekday?: number;
+    end_date?: string | null;
+  };
   cobranca?: {
     payerEmail: string;
     payerName?: string;
@@ -111,6 +123,7 @@ function mapEntryStatus(api: FinanceEntryOut['status']): StatusTransacao {
     paid: 'LIQUIDADO',
     overdue: 'PENDENTE',
     cancelled: 'CANCELADO',
+    awaiting_invoice: 'PENDENTE',
   };
   return m[api] ?? 'PENDENTE';
 }
@@ -176,6 +189,14 @@ export function mapEntryToTransacao(row: FinanceEntryOut): Transacao {
     clienteId: meta.clienteId,
     ordemServicoId: row.service_order_id ?? undefined,
     fornecedor: meta.fornecedor,
+    recurringTransactionId: row.recurring_transaction_id ?? undefined,
+    parentSeriesId: row.recurring_transaction_id ?? undefined,
+    isRecurring: row.recurring_transaction_id != null,
+    creditCardInvoiceId: row.credit_card_invoice_id ?? undefined,
+    installmentNumber: row.installment_number ?? undefined,
+    installmentTotal: row.installment_total ?? undefined,
+    apiStatus: row.status,
+    notes: row.notes ?? undefined,
   };
 }
 
@@ -340,7 +361,13 @@ export async function mapCreateInputToApiPayload(
 ): Promise<Parameters<typeof createFinanceEntry>[0]> {
   const categories = await listFinanceCategories();
   const category_id = await resolveCategoryId(input.categoria, categories);
-  const pay = resolvePaymentFromConta(input.contaId);
+  const pay = options?.creditCardId
+    ? {
+        finance_account_id: null,
+        payment_method: 'credit_card' as const,
+        payment_provider: options?.paymentProvider ?? null,
+      }
+    : resolvePaymentFromConta(input.contaId);
   const feePercent = options?.taxaPercentualMaquininha ?? options?.feePercent ?? 0;
   const feeAmount =
     options?.feeAmount ??
@@ -367,14 +394,17 @@ export async function mapCreateInputToApiPayload(
     category_id,
     notes: options?.notes ?? null,
     service_order_id: options?.serviceOrderId ?? null,
+    reason_for_loss: options?.reasonForLoss?.trim() || undefined,
     finance_account_id: pay.finance_account_id,
     payment_method: options?.paymentMethod ?? pay.payment_method,
     payment_provider: options?.paymentProvider ?? pay.payment_provider,
+    credit_card_id: options?.creditCardId ?? null,
     fee_percent: feePercent,
     fee_amount: feeAmount,
     fee_fixed_amount: 0,
     installments,
     installment_interval_months: options?.installmentIntervalMonths ?? 1,
+    recurring: options?.recurring,
   };
 }
 
@@ -436,7 +466,7 @@ export async function listTransacoesFromApi(params: ListTransacoesParams): Promi
   }
 }
 
-/** Lançamentos de receita vinculados a uma OS (janela ampla de datas). */
+/** Lançamentos (receitas e despesas) vinculados a uma OS. */
 export async function listTransacoesByServiceOrderFromApi(serviceOrderId: number): Promise<Transacao[]> {
   try {
     const now = new Date();
@@ -446,7 +476,6 @@ export async function listTransacoesByServiceOrderFromApi(serviceOrderId: number
       start_date: formatDateOnly(start),
       end_date: formatDateOnly(end),
       date_basis: 'due_date',
-      entry_type: 'income',
       service_order_id: serviceOrderId,
     });
     return rows.map(mapEntryToTransacao);

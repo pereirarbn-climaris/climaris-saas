@@ -94,6 +94,24 @@ class FinanceEntryStatus(str, enum.Enum):
     PAID = "paid"
     OVERDUE = "overdue"
     CANCELLED = "cancelled"
+    AWAITING_INVOICE = "awaiting_invoice"
+
+
+class FinanceCreditCardInvoiceStatus(str, enum.Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+    PAID = "paid"
+
+
+class FinanceRecurringStatus(str, enum.Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    ENDED = "ended"
+
+
+class FinanceRecurringFrequency(str, enum.Enum):
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
 
 
 class FinanceGatewayProvider(str, enum.Enum):
@@ -305,6 +323,9 @@ class Tenant(Base):
         back_populates="tenant", cascade="all, delete-orphan"
     )
     finance_entries: Mapped[list["FinanceEntry"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    finance_recurring_transactions: Mapped[list["FinanceRecurringTransaction"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
     finance_payment_fees: Mapped[list["TenantFinancePaymentFee"]] = relationship(
@@ -2347,6 +2368,12 @@ class FinanceEntry(Base):
     service_order_id: Mapped[int | None] = mapped_column(
         ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    recurring_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_recurring_transactions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    credit_card_invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_credit_card_invoices.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -2361,6 +2388,40 @@ class FinanceEntry(Base):
     service_order: Mapped["ServiceOrder | None"] = relationship(back_populates="finance_entries")
     ofx_line_matches: Mapped[list["FinanceOfxStatementLine"]] = relationship(
         back_populates="matched_entry", foreign_keys="FinanceOfxStatementLine.matched_finance_entry_id"
+    )
+    recurring_transaction: Mapped["FinanceRecurringTransaction | None"] = relationship(
+        back_populates="entries", foreign_keys="FinanceEntry.recurring_transaction_id"
+    )
+    credit_card_invoice: Mapped["FinanceCreditCardInvoice | None"] = relationship(
+        back_populates="entries", foreign_keys="FinanceEntry.credit_card_invoice_id"
+    )
+
+
+class FinanceRecurringTransaction(Base):
+    """Regra de lançamento recorrente (semanal ou mensal)."""
+
+    __tablename__ = "finance_recurring_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=FinanceRecurringStatus.ACTIVE.value)
+    frequency: Mapped[str] = mapped_column(String(16), nullable=False)
+    day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    template_json: Mapped[str] = mapped_column(Text, nullable=False)
+    last_generated_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="finance_recurring_transactions")
+    entries: Mapped[list["FinanceEntry"]] = relationship(
+        back_populates="recurring_transaction",
+        foreign_keys="FinanceEntry.recurring_transaction_id",
     )
 
 
@@ -2462,6 +2523,45 @@ class FinanceOfxStatementLine(Base):
     )
 
 
+class FinanceCreditCardInvoice(Base):
+    """Fatura consolidada por ciclo de vencimento do cartão."""
+
+    __tablename__ = "finance_credit_card_invoices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    credit_card_id: Mapped[int] = mapped_column(
+        ForeignKey("finance_credit_cards.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    status: Mapped[FinanceCreditCardInvoiceStatus] = mapped_column(
+        Enum(
+            FinanceCreditCardInvoiceStatus,
+            name="finance_credit_card_invoice_status",
+            values_callable=lambda items: [item.value for item in items],
+        ),
+        nullable=False,
+        default=FinanceCreditCardInvoiceStatus.OPEN,
+    )
+    total_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    finance_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_entries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    credit_card: Mapped["FinanceCreditCard"] = relationship(back_populates="invoices")
+    entries: Mapped[list["FinanceEntry"]] = relationship(
+        back_populates="credit_card_invoice",
+        foreign_keys="FinanceEntry.credit_card_invoice_id",
+    )
+    bank_entry: Mapped["FinanceEntry | None"] = relationship(
+        foreign_keys=[finance_entry_id],
+    )
+
+
 class FinanceCreditCard(Base):
     __tablename__ = "finance_credit_cards"
 
@@ -2484,6 +2584,7 @@ class FinanceCreditCard(Base):
     tenant: Mapped["Tenant"] = relationship(back_populates="finance_credit_cards")
     billing_account: Mapped["FinanceBankAccount | None"] = relationship(back_populates="credit_cards")
     entries: Mapped[list["FinanceEntry"]] = relationship(back_populates="credit_card")
+    invoices: Mapped[list["FinanceCreditCardInvoice"]] = relationship(back_populates="credit_card")
 
 
 class TenantFinancePaymentFee(Base):

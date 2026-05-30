@@ -12,6 +12,7 @@ const ENTRY_STATUS_TO_TRANSACTION: Record<FinanceEntryStatus, TransactionStatus>
   paid: "settled",
   overdue: "overdue",
   cancelled: "cancelled",
+  awaiting_invoice: "pending",
 };
 
 const TRANSACTION_TO_ENTRY_STATUS: Record<TransactionStatus, FinanceEntryStatus> = {

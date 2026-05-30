@@ -11,6 +11,7 @@ export {
   type UseFinanceAccountsOptions,
 } from './useFinanceAccounts';
 export { useFinanceUpcoming, buildUpcomingFromEntries, type FinanceUpcomingSummary } from './useFinanceUpcoming';
+export { useCreditCardInvoicesSummary } from './useCreditCardInvoicesSummary';
 export {
   useClientOSLinkOptions,
   useDebouncedValue,

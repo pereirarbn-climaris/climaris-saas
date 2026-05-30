@@ -1,0 +1,9 @@
+.wrap {
+  width: 100%;
+}
+
+.hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #64748b);
+}

@@ -64,6 +64,10 @@ from app.routers.whatsapp_bot import router as whatsapp_bot_router
 from app.routers.whatsapp_broadcast_campaigns import router as whatsapp_broadcast_campaigns_router
 from app.routers.whatsapp_campaigns import router as whatsapp_campaigns_router
 from app.campaign_scheduler import start_campaign_scheduler_worker, stop_campaign_scheduler_worker
+from app.finance_recurring_scheduler import (
+    start_finance_recurring_scheduler_worker,
+    stop_finance_recurring_scheduler_worker,
+)
 from app.whatsapp_scheduler import start_whatsapp_reminder_worker, stop_whatsapp_reminder_worker
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -438,20 +442,24 @@ app.include_router(qrcodes_router, prefix=API_V1_PREFIX)
 def _startup_workers() -> None:
     start_whatsapp_reminder_worker()
     start_campaign_scheduler_worker()
+    start_finance_recurring_scheduler_worker()
     try:
         from app.database import SessionLocal
+        from app.finance_recurring_service import process_due_recurring_transactions
         from app.storage_integrity import run_startup_storage_validation
 
         db = SessionLocal()
         try:
             run_startup_storage_validation(db)
+            process_due_recurring_transactions(db)
         finally:
             db.close()
     except Exception:
-        logging.getLogger(__name__).exception("storage_integrity startup hook failed")
+        logging.getLogger(__name__).exception("finance/storage startup hook failed")
 
 
 @app.on_event("shutdown")
 def _shutdown_workers() -> None:
     stop_whatsapp_reminder_worker()
     stop_campaign_scheduler_worker()
+    stop_finance_recurring_scheduler_worker()

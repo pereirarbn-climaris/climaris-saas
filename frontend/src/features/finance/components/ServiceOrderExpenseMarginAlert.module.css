@@ -1,0 +1,53 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #d97706; /* text-amber-600 */
+}
+
+.icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.lossBlock {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+}
+
+.lossHint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  color: #991b1b;
+}
+
+.lossLabel {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #7f1d1d;
+}
+
+.lossInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.8125rem;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  resize: vertical;
+  font-family: inherit;
+}

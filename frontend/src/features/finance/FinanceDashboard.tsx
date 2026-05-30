@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Check, Repeat, Trash2, X } from 'lucide-react';
 import { ToastHost } from '../../components/ToastHost';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -15,14 +16,35 @@ import {
 } from '../../components/ui/table';
 import { FinancialCharts } from './components/FinancialCharts';
 import { FinanceSummarySidebar } from './components/FinanceSummarySidebar';
+import { deleteFinanceEntry, patchFinanceEntry } from '../../api/finance';
+import { toast } from '../../lib/toast';
+import { FinanceDeleteConfirmModal } from './components/FinanceDeleteConfirmModal';
+import { SeriesActionScopeModal } from './components/SeriesActionScopeModal';
 import { TransactionWizardModal } from './components/TransactionWizardModal';
+import {
+  detectEditSeriesKindFromTransacao,
+  needsEditScopePrompt,
+  toApiEditScope,
+  transacaoApiId,
+  transacaoIsEditLocked,
+  transacaoLockReason,
+  type EditSeriesScope,
+  type SeriesBulkAction,
+} from './financeEntryEdit';
 import { chartPeriodBounds } from './financialChartsData';
+import {
+  FINANCE_PERIOD_PRESET_LABELS,
+  detectPeriodPreset,
+  periodRangeForPreset,
+  type FinancePeriodPreset,
+} from './financePeriodPresets';
 import type { Conta } from './account.types';
 import type { StatusTransacao, Transacao } from './transaction.types';
 import {
   useFinanceEntries,
   useFinanceServiceContext,
   useFinanceUpcoming,
+  useCreditCardInvoicesSummary,
 } from './hooks';
 import {
   effectiveReceivableAmount,
@@ -105,19 +127,52 @@ function liquidityBadgeClass(variant: ReturnType<typeof getLiquidityBadge>['vari
   return styles.liquidityNeutral;
 }
 
-function TransacaoRow({ row, contas }: { row: Transacao; contas: Conta[] }) {
+function transacaoScopeHint(row: Transacao): string | undefined {
+  if (row.installmentNumber != null && (row.installmentTotal ?? 1) > 1) {
+    return `Parcela ${row.installmentNumber} de ${row.installmentTotal}`;
+  }
+  if (row.recurringTransactionId) return 'Lançamento da série recorrente';
+  return undefined;
+}
+
+function TransacaoRow({
+  row,
+  contas,
+  onOpenEdit,
+  onAction,
+}: {
+  row: Transacao;
+  contas: Conta[];
+  onOpenEdit: (row: Transacao) => void;
+  onAction: (row: Transacao, action: SeriesBulkAction) => void;
+}) {
   const amountClass = row.kind === 'RECEBIMENTO' ? styles.amountPositive : styles.amountNegative;
   const prefix = row.kind === 'RECEBIMENTO' ? '+' : '−';
   const dataVenda = row.dataCompetencia ?? row.dataPrevista;
   const dataLiquidacao = row.settlementDate ?? row.dataLiquidacaoPrevista ?? row.dataPrevista;
-  const liquidity = getLiquidityBadge(dataLiquidacao, row.status);
+  const liquidity = getLiquidityBadge(dataLiquidacao, row.status, row.kind);
   const displayAmount =
     row.kind === 'RECEBIMENTO'
       ? effectiveReceivableAmount(row.valor, row.netValue, row.taxaDescontada)
       : row.valor;
 
+  const isFinal = row.status === 'LIQUIDADO' || row.status === 'CANCELADO';
+  const locked = transacaoIsEditLocked(row);
+
   return (
-    <TableRow>
+    <TableRow
+      className={`${styles.clickableRow} ${locked ? styles.lockedRow : ''}`}
+      tabIndex={0}
+      role="button"
+      aria-label={locked ? `Ver ${row.descricao}` : `Editar ${row.descricao}`}
+      onClick={() => onOpenEdit(row)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpenEdit(row);
+        }
+      }}
+    >
       <TableCell>{formatDate(dataVenda)}</TableCell>
       <TableCell>
         <div className={styles.dateCell}>
@@ -128,6 +183,11 @@ function TransacaoRow({ row, contas }: { row: Transacao; contas: Conta[] }) {
         </div>
       </TableCell>
       <TableCell>
+        {(row.isRecurring ?? row.recurringTransactionId != null) ? (
+          <span className={styles.recurringIconWrap} title="Série recorrente">
+            <Repeat size={14} className={styles.recurringIcon} aria-label="Série recorrente" />
+          </span>
+        ) : null}{' '}
         {row.descricao}
         {row.kind === 'RECEBIMENTO' && row.ordemServicoId ? (
           <span className={styles.rowMeta}> · OS #{row.ordemServicoId}</span>
@@ -139,13 +199,61 @@ function TransacaoRow({ row, contas }: { row: Transacao; contas: Conta[] }) {
       <TableCell>{row.categoria}</TableCell>
       <TableCell>{contaNome(contas, row.contaId)}</TableCell>
       <TableCell>
-        <Badge variant={statusBadgeVariant(row.status)}>{statusLabel(row.status)}</Badge>
+        <div className={styles.statusCell}>
+          <Badge variant={statusBadgeVariant(row.status)}>{statusLabel(row.status)}</Badge>
+          {locked ? (
+            <span className={styles.lockedBadge} title="Edição bloqueada">
+              Bloqueado
+            </span>
+          ) : null}
+        </div>
       </TableCell>
       <TableCell className={amountClass}>
         {prefix} {money(displayAmount)}
         {row.netValue != null && row.netValue < row.valor ? (
           <span className={styles.rowMeta}> bruto {money(row.valor)}</span>
         ) : null}
+      </TableCell>
+      <TableCell className={styles.actionsCol} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.rowActions}>
+          {row.status !== 'LIQUIDADO' ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={styles.actionBtnIcon}
+              title="Marcar como pago"
+              aria-label="Marcar como pago"
+              onClick={() => onAction(row, 'paid')}
+            >
+              <Check size={16} className={styles.actionIconPaid} />
+            </Button>
+          ) : null}
+          {!isFinal ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={styles.actionBtnIcon}
+              title="Cancelar lançamento"
+              aria-label="Cancelar lançamento"
+              onClick={() => onAction(row, 'cancelled')}
+            >
+              <X size={16} className={styles.actionIconCancel} />
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={`${styles.actionBtnIcon} ${styles.actionBtnDelete}`}
+            title="Excluir lançamento"
+            aria-label="Excluir lançamento"
+            onClick={() => onAction(row, 'delete')}
+          >
+            <Trash2 size={16} />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );
@@ -155,8 +263,91 @@ export function FinanceDashboard() {
   const month = useMemo(() => currentMonthRange(), []);
   const [dataInicio, setDataInicio] = useState(() => toDateInput(month.inicio));
   const [dataFim, setDataFim] = useState(() => toDateInput(month.fim));
+  const [periodPreset, setPeriodPreset] = useState<FinancePeriodPreset | 'custom'>('month');
   const [modalOpen, setModalOpen] = useState(false);
   const [filterContaId, setFilterContaId] = useState<string | undefined>();
+  const [editWizardOpen, setEditWizardOpen] = useState(false);
+  const [editingRow, setEditingRow] = useState<Transacao | null>(null);
+  const [scopeActionOpen, setScopeActionOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{
+    row: Transacao;
+    action: SeriesBulkAction;
+  } | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Transacao | null>(null);
+
+  async function runSeriesAction(
+    row: Transacao,
+    action: SeriesBulkAction,
+    scope: EditSeriesScope,
+  ) {
+    const entryId = transacaoApiId(row);
+    if (entryId == null) return;
+    const apiScope = toApiEditScope(scope);
+    setActionBusy(true);
+    try {
+      if (action === 'delete') {
+        await deleteFinanceEntry(entryId, { edit_scope: apiScope });
+        toast.success('Lançamento(s) excluído(s).');
+      } else {
+        await patchFinanceEntry(entryId, {
+          status: action === 'paid' ? 'paid' : 'cancelled',
+          edit_scope: apiScope,
+        });
+        toast.success(action === 'paid' ? 'Marcado como pago.' : 'Lançamento(s) cancelado(s).');
+      }
+      setScopeActionOpen(false);
+      setPendingAction(null);
+      setDeleteConfirmOpen(false);
+      setPendingDelete(null);
+      if (editingRow?.id === row.id) {
+        setEditWizardOpen(false);
+        setEditingRow(null);
+      }
+      await refetch();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Não foi possível concluir a ação.');
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function requestRowAction(row: Transacao, action: SeriesBulkAction) {
+    if (transacaoLockReason(row) === 'reconciled') {
+      toast.error('Lançamento conciliado. Desfaça a conciliação antes de alterar ou excluir.');
+      return;
+    }
+    const kind = detectEditSeriesKindFromTransacao(row);
+    if (needsEditScopePrompt(kind)) {
+      setPendingAction({ row, action });
+      setScopeActionOpen(true);
+      return;
+    }
+    if (action === 'delete') {
+      setPendingDelete(row);
+      setDeleteConfirmOpen(true);
+      return;
+    }
+    void runSeriesAction(row, action, 'single');
+  }
+
+  function beginEditRow(row: Transacao) {
+    setEditingRow(row);
+    setEditWizardOpen(true);
+  }
+
+  function closeEditWizard() {
+    setEditWizardOpen(false);
+    setEditingRow(null);
+  }
+
+  function applyPeriodPreset(preset: FinancePeriodPreset) {
+    const { inicio, fim } = periodRangeForPreset(preset);
+    setDataInicio(toDateInput(inicio));
+    setDataFim(toDateInput(fim));
+    setPeriodPreset(preset);
+  }
 
   const periodo = useMemo(
     () => ({
@@ -186,7 +377,12 @@ export function FinanceDashboard() {
   });
 
   const contas = ctx?.contas ?? [];
+  const plano = ctx?.planoUsuario ?? 'SIMPLES';
+  const isSimples = plano === 'SIMPLES';
   const upcoming = useFinanceUpcoming(entries);
+  const { data: creditCardInvoicesSummary, isLoading: creditCardInvoicesLoading } =
+    useCreditCardInvoicesSummary(!isSimples);
+  const openInvoicesFromApi = creditCardInvoicesSummary?.open_invoices_total;
 
   const cashFlowSummary = useMemo(() => {
     if (!entries?.length) return { vendido: 0, liquidaHoje: 0 };
@@ -207,9 +403,6 @@ export function FinanceDashboard() {
     return { vendido, liquidaHoje };
   }, [entries]);
 
-  const plano = ctx?.planoUsuario ?? 'SIMPLES';
-  const isSimples = plano === 'SIMPLES';
-
   return (
     <div className={styles.page}>
       <ToastHost />
@@ -226,6 +419,11 @@ export function FinanceDashboard() {
           <Link to="/app/finance/reconciliation" style={{ textDecoration: 'none' }}>
             <Button type="button" variant="outline">
               Conciliação
+            </Button>
+          </Link>
+          <Link to="/app/finance/reports/dre" style={{ textDecoration: 'none' }}>
+            <Button type="button" variant="outline">
+              DRE mensal
             </Button>
           </Link>
           <Button type="button" variant="outline" onClick={() => void refetch()}>
@@ -256,6 +454,9 @@ export function FinanceDashboard() {
         <FinanceSummarySidebar
           contas={contas}
           upcoming={upcoming}
+          creditCardInvoices={creditCardInvoicesSummary?.cards}
+          creditCardInvoicesLoading={creditCardInvoicesLoading}
+          openInvoicesTotalOverride={openInvoicesFromApi}
           selectedContaId={filterContaId}
           onSelectConta={(id) =>
             setFilterContaId((prev) => (prev === id ? undefined : id))
@@ -269,36 +470,68 @@ export function FinanceDashboard() {
           />
 
           <Card>
-            <CardHeader>
-              <CardTitle>Filtros</CardTitle>
-              <CardDescription>Período e conta para a listagem.</CardDescription>
-            </CardHeader>
-            <CardContent className={styles.filters}>
-              <div className={styles.field}>
-                <label htmlFor="filter-inicio">Data início</label>
-                <Input
-                  id="filter-inicio"
-                  type="date"
-                  value={dataInicio}
-                  max={dataFim}
-                  onChange={(e) => setDataInicio(e.target.value)}
-                />
+            <CardContent className={styles.filterBar}>
+              <div className={styles.filterBarRow}>
+                <h2 className={styles.filterBarTitle}>Filtros</h2>
+                <div className={styles.periodPresets} role="group" aria-label="Período rápido">
+                  {(['month', 'quarter', 'semester', 'year'] as const).map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      className={
+                        periodPreset === preset ? styles.presetBtnActive : styles.presetBtn
+                      }
+                      onClick={() => applyPeriodPreset(preset)}
+                    >
+                      {FINANCE_PERIOD_PRESET_LABELS[preset]}
+                    </button>
+                  ))}
+                </div>
+                <div className={styles.filterDates}>
+                  <Input
+                    id="filter-inicio"
+                    type="date"
+                    className={styles.filterDateInput}
+                    value={dataInicio}
+                    max={dataFim}
+                    aria-label="Data início"
+                    onChange={(e) => {
+                      setDataInicio(e.target.value);
+                      setPeriodPreset(
+                        detectPeriodPreset(e.target.value, dataFim),
+                      );
+                    }}
+                  />
+                  <span className={styles.filterDateSep} aria-hidden>
+                    até
+                  </span>
+                  <Input
+                    id="filter-fim"
+                    type="date"
+                    className={styles.filterDateInput}
+                    value={dataFim}
+                    min={dataInicio}
+                    aria-label="Data fim"
+                    onChange={(e) => {
+                      setDataFim(e.target.value);
+                      setPeriodPreset(
+                        detectPeriodPreset(dataInicio, e.target.value),
+                      );
+                    }}
+                  />
+                </div>
+                {filterContaId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={styles.filterClearConta}
+                    onClick={() => setFilterContaId(undefined)}
+                  >
+                    Limpar conta
+                  </Button>
+                ) : null}
               </div>
-              <div className={styles.field}>
-                <label htmlFor="filter-fim">Data fim</label>
-                <Input
-                  id="filter-fim"
-                  type="date"
-                  value={dataFim}
-                  min={dataInicio}
-                  onChange={(e) => setDataFim(e.target.value)}
-                />
-              </div>
-              {filterContaId ? (
-                <Button type="button" variant="outline" onClick={() => setFilterContaId(undefined)}>
-                  Limpar filtro de conta
-                </Button>
-              ) : null}
             </CardContent>
           </Card>
 
@@ -343,11 +576,18 @@ export function FinanceDashboard() {
                       <TableHead>Conta</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Valor</TableHead>
+                      <TableHead className={styles.actionsCol}>Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {entries.map((row) => (
-                      <TransacaoRow key={row.id} row={row} contas={contas} />
+                      <TransacaoRow
+                        key={row.id}
+                        row={row}
+                        contas={contas}
+                        onOpenEdit={beginEditRow}
+                        onAction={requestRowAction}
+                      />
                     ))}
                   </TableBody>
                 </Table>
@@ -367,6 +607,51 @@ export function FinanceDashboard() {
           defaultContaId={filterContaId}
         />
       ) : null}
+
+      {ctx && editingRow ? (
+        <TransactionWizardModal
+          open={editWizardOpen}
+          mode="edit"
+          editTransaction={editingRow}
+          onClose={closeEditWizard}
+          onSaved={() => {
+            closeEditWizard();
+            void refetch();
+          }}
+          ctx={ctx}
+          contas={contas}
+          listParams={listParams}
+        />
+      ) : null}
+
+      {pendingDelete ? (
+        <FinanceDeleteConfirmModal
+          open={deleteConfirmOpen}
+          onOpenChange={(open) => {
+            setDeleteConfirmOpen(open);
+            if (!open) setPendingDelete(null);
+          }}
+          description={`Deseja excluir o lançamento "${pendingDelete.descricao}"?`}
+          busy={actionBusy}
+          onConfirm={() => void runSeriesAction(pendingDelete, 'delete', 'single')}
+        />
+      ) : null}
+
+      {pendingAction ? (
+        <SeriesActionScopeModal
+          open={scopeActionOpen}
+          onOpenChange={(open) => {
+            setScopeActionOpen(open);
+            if (!open) setPendingAction(null);
+          }}
+          action={pendingAction.action}
+          seriesKind={detectEditSeriesKindFromTransacao(pendingAction.row)}
+          hint={transacaoScopeHint(pendingAction.row)}
+          busy={actionBusy}
+          onConfirm={(scope) => void runSeriesAction(pendingAction.row, pendingAction.action, scope)}
+        />
+      ) : null}
+
     </div>
   );
 }

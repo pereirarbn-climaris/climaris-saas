@@ -37,7 +37,10 @@ export function buildUpcomingFromEntries(
   now = new Date(),
 ): FinanceUpcomingSummary {
   const pending = (entries ?? []).filter(
-    (e) => e.status === 'PENDENTE' && isWithinHorizon(settlementDateForEntry(e), now),
+    (e) =>
+      e.status === 'PENDENTE' &&
+      e.apiStatus !== 'awaiting_invoice' &&
+      isWithinHorizon(settlementDateForEntry(e), now),
   );
 
   const aPagar: UpcomingItem[] = [];

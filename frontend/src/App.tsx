@@ -37,6 +37,9 @@ import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 const FinanceDashboard = lazy(() =>
   import("./features/finance/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })),
 );
+const DREDashboardPage = lazy(() =>
+  import("./pages/finance/DREDashboardPage").then((m) => ({ default: m.DREDashboardPage })),
+);
 const ReconciliationDashboard = lazy(() =>
   import("./features/finance/reconciliation/ReconciliationDashboard").then((m) => ({
     default: m.ReconciliationDashboard,
@@ -144,6 +147,14 @@ export default function App() {
           element={
             <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Carregando conciliação…</div>}>
               <ReconciliationDashboard />
+            </Suspense>
+          }
+        />
+        <Route
+          path="finance/reports/dre"
+          element={
+            <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Carregando DRE…</div>}>
+              <DREDashboardPage />
             </Suspense>
           }
         />

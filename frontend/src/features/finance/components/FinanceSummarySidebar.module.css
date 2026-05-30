@@ -20,6 +20,13 @@
   color: var(--color-text-muted);
 }
 
+.projectedAvailable {
+  margin: 0.35rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
 .blockHead {
   display: flex;
   align-items: baseline;

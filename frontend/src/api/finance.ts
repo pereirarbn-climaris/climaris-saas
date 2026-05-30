@@ -35,7 +35,12 @@ import type { FinanceEntitlements } from "../schemas/financeCore";
 export type { FinanceEntitlements, FinanceFeatureKey } from "../schemas/financeCore";
 
 export type FinanceEntryType = "income" | "expense";
-export type FinanceEntryStatus = "pending" | "paid" | "overdue" | "cancelled";
+export type FinanceEntryStatus =
+  | "pending"
+  | "paid"
+  | "overdue"
+  | "cancelled"
+  | "awaiting_invoice";
 
 export type FinanceCategoryOut = {
   id: number;
@@ -79,6 +84,8 @@ export type FinanceEntryOut = {
   paid_at: string | null;
   notes: string | null;
   service_order_id?: number | null;
+  recurring_transaction_id?: number | null;
+  credit_card_invoice_id?: number | null;
   linked_payer_email?: string | null;
   linked_payer_name?: string | null;
   linked_payer_document?: string | null;
@@ -244,6 +251,13 @@ export async function createFinanceEntry(payload: {
   status?: FinanceEntryStatus;
   notes?: string | null;
   service_order_id?: number | null;
+  reason_for_loss?: string | null;
+  recurring?: {
+    frequency: 'weekly' | 'monthly';
+    day_of_month?: number;
+    weekday?: number;
+    end_date?: string | null;
+  };
 }): Promise<FinanceEntryOut> {
   if (isDemoMode()) return Promise.resolve(demoCreateFinanceEntry(payload));
   const response = await fetch(apiUrl("/api/v1/finance/entries"), {
@@ -270,6 +284,7 @@ export async function patchFinanceEntry(
     finance_account_id?: number | null;
     credit_card_id?: number | null;
     edit_scope?: "single" | "future" | "all";
+    force_edit_locked?: boolean;
     fee_fixed_amount?: number;
     fee_percent?: number;
     fee_amount?: number;
@@ -344,6 +359,8 @@ export type FinanceBalanceSnapshotOut = {
   initial_balance_total: number;
   current_balance_total: number;
   projected_balance_total: number;
+  open_credit_card_invoices_total?: number;
+  projected_available_balance?: number;
   accounts: FinanceAccountBalanceRowOut[];
 };
 
@@ -399,11 +416,34 @@ export async function deleteFinanceAccount(accountId: number): Promise<void> {
   }
 }
 
+export type FinanceCreditCardInvoiceSummaryRow = {
+  card_id: number;
+  card_name: string;
+  brand: string;
+  invoice_total: number;
+  purchase_awaiting_total: number;
+  next_due_date: string | null;
+  invoice_count: number;
+  purchase_count: number;
+};
+
 export async function listFinanceCreditCards(): Promise<FinanceCreditCardOut[]> {
   const response = await fetch(apiUrl("/api/v1/finance/credit-cards"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível listar cartões de crédito."));
   return body as FinanceCreditCardOut[];
+}
+
+export async function getFinanceCreditCardInvoicesSummary(): Promise<{
+  cards: FinanceCreditCardInvoiceSummaryRow[];
+  open_invoices_total: number;
+}> {
+  const response = await fetch(apiUrl("/api/v1/finance/credit-cards/invoices-summary"), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar faturas dos cartões."));
+  return body as { cards: FinanceCreditCardInvoiceSummaryRow[]; open_invoices_total: number };
 }
 
 export async function createFinanceCreditCard(payload: {
@@ -464,6 +504,43 @@ export async function getFinanceCashflow(params: { start_date: string; end_date:
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar fluxo de caixa."));
   return body as FinanceCashflowOut;
+}
+
+export type MonthlyDREOut = {
+  month: number;
+  year: number;
+  receita_bruta: number;
+  custos_variaveis: number;
+  margem_contribuicao: number;
+  custos_fixos: number;
+  lucro_liquido: number;
+};
+
+export type FinanceDREReportOut = {
+  month: number;
+  year: number;
+  current: MonthlyDREOut;
+  history: MonthlyDREOut[];
+};
+
+export async function getFinanceDREReport(params: {
+  month: number;
+  year: number;
+  history_months?: number;
+}): Promise<FinanceDREReportOut> {
+  const sp = new URLSearchParams({
+    month: String(params.month),
+    year: String(params.year),
+  });
+  if (params.history_months != null) {
+    sp.set("history_months", String(params.history_months));
+  }
+  const response = await fetch(apiUrl(`/api/v1/finance/reports/dre?${sp.toString()}`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar o DRE."));
+  return body as FinanceDREReportOut;
 }
 
 export async function createFinanceEntryAsaasCharge(

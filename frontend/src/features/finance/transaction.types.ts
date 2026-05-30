@@ -23,6 +23,7 @@ export const RecebimentoTransacaoSchema = TransacaoBaseSchema.extend({
 export const PagamentoTransacaoSchema = TransacaoBaseSchema.extend({
   kind: z.literal('PAGAMENTO'),
   fornecedor: z.string().optional(),
+  ordemServicoId: z.number().int().positive().optional(),
 });
 
 export const TransactionSchema = z.discriminatedUnion('kind', [
@@ -92,6 +93,17 @@ export type Transacao = {
   clienteId?: number;
   ordemServicoId?: number;
   fornecedor?: string;
+  /** Série recorrente no backend (edição em massa "esta e próximas"). */
+  recurringTransactionId?: number;
+  /** Alias de negócio: `parent_id` = recurring_transaction_id. */
+  parentSeriesId?: number;
+  isRecurring?: boolean;
+  creditCardInvoiceId?: number;
+  installmentNumber?: number;
+  installmentTotal?: number;
+  /** Status bruto da API (pending, paid, …). */
+  apiStatus?: import('../../api/finance').FinanceEntryStatus;
+  notes?: string | null;
 };
 
 export type CreateTransacaoInput = CreateTransactionInput;
