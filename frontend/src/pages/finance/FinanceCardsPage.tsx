@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { CreditCard, Plus, Settings2, X } from "lucide-react";
 import {
   createFinanceCreditCard,
   deleteFinanceCreditCard,
@@ -14,8 +14,21 @@ import {
   type FinanceGatewaysOut,
 } from "../../api/finance";
 import { FinanceAccountCombobox } from "../../components/finance/FinanceAccountCombobox";
-import formLayout from "../formLayout.module.css";
+import {
+  FinanceCadastroPageShell,
+  financeCadastroShellStyles as shell,
+} from "../../components/finance/FinanceCadastroPageShell";
 import styles from "./FinanceCardsPage.module.css";
+
+const CADASTRO_NAV = [
+  { to: "/app/finance/settings/accounts", label: "Contas" },
+  { to: "/app/finance/settings/cards", label: "Cartões", active: true },
+  { to: "/app/finance/settings/machines", label: "Maquininhas" },
+];
+
+function money(v: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v ?? 0);
+}
 
 export function FinanceCardsPage() {
   const [cards, setCards] = useState<FinanceCreditCardOut[]>([]);
@@ -89,6 +102,7 @@ export function FinanceCardsPage() {
     try {
       await deleteFinanceCreditCard(row.id);
       await loadData();
+      setMsg("Cartão excluído.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao excluir cartão.");
     }
@@ -121,138 +135,191 @@ export function FinanceCardsPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <header className={styles.header}>
-        <div>
-          <h1>Cartões de crédito</h1>
-          <p className={styles.subtitle}>Cadastre cartões, acompanhe limite e defina fechamento/vencimento da fatura.</p>
+    <FinanceCadastroPageShell
+      breadcrumb="Financeiro · Cadastros · Cartões"
+      title="Cartões de crédito"
+      subtitle="Cadastre cartões, acompanhe limite e defina fechamento e vencimento da fatura."
+      navLinks={CADASTRO_NAV}
+      error={error}
+      msg={msg}
+    >
+      <article className={shell.panel}>
+        <div className={shell.panelHead}>
+          <span className={`${shell.panelIcon} ${shell.panelIconViolet}`}>
+            <Plus aria-hidden />
+          </span>
+          <div className={shell.panelHeadText}>
+            <h2 className={shell.panelTitle}>Novo cartão</h2>
+            <p className={shell.panelDesc}>Informe bandeira, limite e datas de fechamento para previsão correta de gastos.</p>
+          </div>
         </div>
-        <div className={styles.actions}>
-          <Link to="/app/finance/settings/accounts">Contas</Link>
-          <Link to="/app/finance/settings/machines">Maquininhas</Link>
-          <Link to="/app/finance/settings">Voltar às configurações</Link>
-        </div>
-      </header>
-      {error ? <p className={styles.error}>{error}</p> : null}
-      {msg ? <p className={styles.msg}>{msg}</p> : null}
-
-      <section className={styles.card}>
-        <h2>Novo cartão</h2>
-        <form className={styles.grid} onSubmit={addCard}>
-          <label className={`${formLayout.field} ${styles.field}`}>
-            <span>Nome do cartão</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Nubank principal" />
-          </label>
-          <label className={`${formLayout.field} ${styles.field}`}>
-            <span>Bandeira</span>
-            <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Ex.: visa, master" />
-          </label>
-          <label className={`${formLayout.field} ${styles.field}`}>
-            <span>Limite total</span>
-            <input type="number" min="0" step="0.01" value={limitAmount} onChange={(e) => setLimitAmount(e.target.value)} placeholder="0,00" />
-          </label>
-          <label className={`${formLayout.field} ${styles.field}`}>
-            <span>Dia de fechamento</span>
-            <input type="number" min="1" max="31" value={closingDay} onChange={(e) => setClosingDay(e.target.value)} placeholder="1" />
-          </label>
-          <label className={`${formLayout.field} ${styles.field}`}>
-            <span>Dia de vencimento</span>
-            <input type="number" min="1" max="31" value={dueDay} onChange={(e) => setDueDay(e.target.value)} placeholder="10" />
-          </label>
-          <label className={`${formLayout.field} ${styles.field}`}>
-            <span>Conta para pagar a fatura</span>
-            <FinanceAccountCombobox
-              id="fin-card-billing-account"
-              accounts={accounts}
-              value={billingAccountId}
-              onChange={setBillingAccountId}
-              gateways={gateways}
-              catalog={bankCatalog}
-              emptyOption
-              emptyLabel="Não vincular agora"
-            />
-          </label>
-          <button type="submit">Criar cartão</button>
-        </form>
-        <p className={styles.hint}>Use fechamento e vencimento para previsão correta de gastos e pagamento de fatura.</p>
-      </section>
-
-      <div className={styles.cards}>
-        {sortedCards.map((c) => {
-          const used = Number(c.used_limit || 0);
-          const limit = Number(c.limit_amount || 0);
-          const usagePct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-          const usageTone = usagePct >= 85 ? styles.usageHigh : usagePct >= 60 ? styles.usageMedium : styles.usageLow;
-          return (
-          <article key={c.id} className={styles.item}>
-            <div>
-              <h3>{c.name}</h3>
-              <p>Bandeira: {c.brand.toUpperCase()}</p>
-              <strong>Limite: R$ {Number(c.limit_amount || 0).toFixed(2)}</strong>
-              <p>Usado: R$ {Number(c.used_limit || 0).toFixed(2)}</p>
-              <p>Disponível: R$ {Number(c.available_limit || 0).toFixed(2)}</p>
-              <div className={styles.usageWrap}>
-                <div className={styles.usageTrack}>
-                  <div className={`${styles.usageFill} ${usageTone}`} style={{ width: `${usagePct}%` }} />
-                </div>
-                <span className={styles.usageText}>Uso do limite: {usagePct}%</span>
-              </div>
-              <p>
-                Fechamento: dia {c.closing_day} · Vencimento: dia {c.due_day}
-              </p>
-            </div>
-            <div className={styles.row}>
-              <button type="button" onClick={() => openConfig(c)}>
-                Configurar cartão
-              </button>
-              <button type="button" onClick={() => void removeCard(c)}>
-                Excluir
-              </button>
-            </div>
-          </article>
-          );
-        })}
-      </div>
-
-      {configCard ? (
-        <div className={styles.modalOverlay}>
-          <form className={`${formLayout.stack} ${styles.modal}`} onSubmit={saveConfig}>
-            <header>
-              <h2>Configurar {configCard.name}</h2>
-              <button type="button" onClick={() => setConfigCard(null)}>
-                x
-              </button>
-            </header>
-            <label className={`${formLayout.field} ${styles.field}`}>
+        <div className={shell.panelBody}>
+          <form className={styles.formGrid} onSubmit={addCard}>
+            <label className={styles.field}>
+              <span>Nome do cartão</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Nubank principal" required />
+            </label>
+            <label className={styles.field}>
+              <span>Bandeira</span>
+              <input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Ex.: visa, master" />
+            </label>
+            <label className={styles.field}>
               <span>Limite total</span>
-              <input type="number" min="0" step="0.01" value={cfgLimit} onChange={(e) => setCfgLimit(e.target.value)} placeholder="0,00" />
+              <input type="number" min="0" step="0.01" value={limitAmount} onChange={(e) => setLimitAmount(e.target.value)} />
             </label>
-            <label className={`${formLayout.field} ${styles.field}`}>
+            <label className={styles.field}>
               <span>Dia de fechamento</span>
-              <input type="number" min="1" max="31" value={cfgClosing} onChange={(e) => setCfgClosing(e.target.value)} placeholder="1" />
+              <input type="number" min="1" max="31" value={closingDay} onChange={(e) => setClosingDay(e.target.value)} />
             </label>
-            <label className={`${formLayout.field} ${styles.field}`}>
+            <label className={styles.field}>
               <span>Dia de vencimento</span>
-              <input type="number" min="1" max="31" value={cfgDue} onChange={(e) => setCfgDue(e.target.value)} placeholder="10" />
+              <input type="number" min="1" max="31" value={dueDay} onChange={(e) => setDueDay(e.target.value)} />
             </label>
-            <label className={`${formLayout.field} ${styles.field}`}>
-              <span>Conta para pagar fatura</span>
+            <label className={styles.field}>
+              <span>Conta para pagar a fatura</span>
               <FinanceAccountCombobox
-                id="fin-card-config-billing"
+                id="fin-card-billing-account"
                 accounts={accounts}
-                value={cfgAccount}
-                onChange={setCfgAccount}
+                value={billingAccountId}
+                onChange={setBillingAccountId}
                 gateways={gateways}
                 catalog={bankCatalog}
                 emptyOption
                 emptyLabel="Não vincular agora"
               />
             </label>
-            <button type="submit">Salvar configuração</button>
+            <div className={styles.formActions}>
+              <button type="submit" className={shell.btnPrimary}>
+                <Plus aria-hidden />
+                Criar cartão
+              </button>
+            </div>
+          </form>
+        </div>
+      </article>
+
+      <article className={shell.panel}>
+        <div className={shell.panelHead}>
+          <span className={shell.panelIcon}>
+            <CreditCard aria-hidden />
+          </span>
+          <div className={shell.panelHeadText}>
+            <h2 className={shell.panelTitle}>Cartões cadastrados</h2>
+            <p className={shell.panelDesc}>{sortedCards.length} cartão(ões) no workspace.</p>
+          </div>
+        </div>
+        <div className={shell.panelBody}>
+          {sortedCards.length === 0 ? (
+            <div className={styles.emptyState}>
+              <CreditCard aria-hidden />
+              <p>Nenhum cartão cadastrado. Crie o primeiro acima.</p>
+            </div>
+          ) : (
+            <div className={styles.cardsGrid}>
+              {sortedCards.map((c) => {
+                const used = Number(c.used_limit || 0);
+                const limit = Number(c.limit_amount || 0);
+                const usagePct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+                const usageTone =
+                  usagePct >= 85 ? styles.usageHigh : usagePct >= 60 ? styles.usageMedium : styles.usageLow;
+                return (
+                  <article key={c.id} className={styles.cardItem}>
+                    <div className={styles.cardHead}>
+                      <div>
+                        <h3 className={styles.cardName}>{c.name}</h3>
+                        <p className={styles.cardMeta}>
+                          Fechamento dia {c.closing_day} · Vencimento dia {c.due_day}
+                        </p>
+                      </div>
+                      <span className={styles.cardBrand}>{c.brand}</span>
+                    </div>
+                    <p className={styles.cardLimit}>{money(limit)}</p>
+                    <div className={styles.cardStats}>
+                      <div className={styles.cardStat}>
+                        <span className={styles.cardStatLabel}>Usado</span>
+                        <span className={styles.cardStatValue}>{money(used)}</span>
+                      </div>
+                      <div className={styles.cardStat}>
+                        <span className={styles.cardStatLabel}>Disponível</span>
+                        <span className={styles.cardStatValue}>{money(Number(c.available_limit || 0))}</span>
+                      </div>
+                    </div>
+                    <div className={styles.usageWrap}>
+                      <div className={styles.usageTrack}>
+                        <div className={`${styles.usageFill} ${usageTone}`} style={{ width: `${usagePct}%` }} />
+                      </div>
+                      <span className={styles.usageText}>Uso do limite: {usagePct}%</span>
+                    </div>
+                    <div className={styles.cardFooter}>
+                      <button type="button" className={shell.btnSecondary} onClick={() => openConfig(c)}>
+                        <Settings2 aria-hidden />
+                        Configurar
+                      </button>
+                      <button type="button" className={shell.btnDangerGhost} onClick={() => void removeCard(c)}>
+                        Excluir
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </article>
+
+      {configCard ? (
+        <div className={styles.modalOverlay} role="presentation" onClick={() => setConfigCard(null)}>
+          <form
+            className={styles.modal}
+            onSubmit={saveConfig}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-labelledby="finance-card-config-title"
+          >
+            <header className={styles.modalHead}>
+              <h2 id="finance-card-config-title">Configurar {configCard.name}</h2>
+              <button type="button" className={styles.modalClose} onClick={() => setConfigCard(null)} aria-label="Fechar">
+                <X aria-hidden />
+              </button>
+            </header>
+            <div className={styles.modalBody}>
+              <label className={styles.field}>
+                <span>Limite total</span>
+                <input type="number" min="0" step="0.01" value={cfgLimit} onChange={(e) => setCfgLimit(e.target.value)} />
+              </label>
+              <label className={styles.field}>
+                <span>Dia de fechamento</span>
+                <input type="number" min="1" max="31" value={cfgClosing} onChange={(e) => setCfgClosing(e.target.value)} />
+              </label>
+              <label className={styles.field}>
+                <span>Dia de vencimento</span>
+                <input type="number" min="1" max="31" value={cfgDue} onChange={(e) => setCfgDue(e.target.value)} />
+              </label>
+              <label className={styles.field}>
+                <span>Conta para pagar fatura</span>
+                <FinanceAccountCombobox
+                  id="fin-card-config-billing"
+                  accounts={accounts}
+                  value={cfgAccount}
+                  onChange={setCfgAccount}
+                  gateways={gateways}
+                  catalog={bankCatalog}
+                  emptyOption
+                  emptyLabel="Não vincular agora"
+                />
+              </label>
+            </div>
+            <footer className={styles.modalFooter}>
+              <button type="button" className={shell.btnGhost} onClick={() => setConfigCard(null)}>
+                Cancelar
+              </button>
+              <button type="submit" className={shell.btnPrimary}>
+                Salvar configuração
+              </button>
+            </footer>
           </form>
         </div>
       ) : null}
-    </section>
+    </FinanceCadastroPageShell>
   );
 }
-

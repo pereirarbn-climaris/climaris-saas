@@ -43,6 +43,14 @@ def _parse_ofx_date(raw: str) -> date | None:
         return None
 
 
+def _strip_sgml_value(val: str) -> str:
+    """Remove fechamento SGML na mesma linha, ex.: 120.00</TRNAMT> → 120.00."""
+    s = (val or "").strip()
+    if "</" in s:
+        s = s.split("</", 1)[0].strip()
+    return s
+
+
 def _tags_in_segment(segment: str) -> dict[str, str]:
     d: dict[str, str] = {}
     for line in segment.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
@@ -54,12 +62,12 @@ def _tags_in_segment(segment: str) -> dict[str, str]:
         except ValueError:
             continue
         tag = s[1:gt].strip().upper()
-        val = s[gt + 1 :].strip()
+        val = _strip_sgml_value(s[gt + 1 :])
         if tag and val:
             d[tag] = val
     if len(d) < 3:
         for m in _TAG_RE.finditer(segment):
-            key, val = m.group(1).upper(), m.group(2).strip()
+            key, val = m.group(1).upper(), _strip_sgml_value(m.group(2))
             if key and val:
                 d.setdefault(key, val)
     return d

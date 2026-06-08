@@ -41,3 +41,50 @@ export async function fetchCepLookup(digits8: string): Promise<CepLookupResult> 
   }
   return body as CepLookupResult;
 }
+
+export type CepStreetMatch = {
+  cep: string;
+  address_street: string | null;
+  address_district: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_complement: string | null;
+};
+
+export type CepStreetSearchResult = {
+  source: "viacep" | "nominatim";
+  matches: CepStreetMatch[];
+  total_found: number;
+  truncated: boolean;
+};
+
+export async function fetchCepStreetSearch(
+  street: string,
+  opts?: { uf?: string; city?: string; nearUf?: string; nearCity?: string },
+): Promise<CepStreetSearchResult> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Sessão expirada.");
+  const params = new URLSearchParams({ street: street.trim() });
+  const uf = opts?.uf?.trim().toUpperCase().slice(0, 2);
+  const city = opts?.city?.trim();
+  const nearUf = opts?.nearUf?.trim().toUpperCase().slice(0, 2);
+  const nearCity = opts?.nearCity?.trim();
+  if (uf) params.set("uf", uf);
+  if (city) params.set("city", city);
+  if (nearUf) params.set("near_uf", nearUf);
+  if (nearCity) params.set("near_city", nearCity);
+  const response = await fetch(apiUrl(`/api/v1/cep/search/street?${params}`), {
+    method: "GET",
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+  });
+  const body: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(parseError(body, response.status, "Não foi possível buscar o logradouro."));
+  }
+  const parsed = body as CepStreetSearchResult;
+  return {
+    ...parsed,
+    total_found: parsed.total_found ?? parsed.matches.length,
+    truncated: parsed.truncated ?? false,
+  };
+}

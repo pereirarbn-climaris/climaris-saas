@@ -4,25 +4,9 @@ import { forgotPasswordRequest, loginRequest, resendVerificationEmailRequest } f
 import { isPlatformAdminEmail } from "../lib/platformAdmin";
 import { setAccessToken, setRefreshToken, setTenantId, clearRefreshToken } from "../lib/authStorage";
 import { DEMO_ACCESS_TOKEN } from "../lib/demoMode";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
+import { usePlatformBranding } from "../context/PlatformBrandingContext";
 import styles from "./LoginPage.module.css";
-
-// Ícones SVG inline para melhor performance
-const SnowflakeIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={styles.logoIcon}>
-    <line x1="12" y1="2" x2="12" y2="22" />
-    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-    <line x1="19.07" y1="4.93" x2="4.93" y2="19.07" />
-    <line x1="2" y1="12" x2="22" y2="12" />
-    <polyline points="12,6 9,3" />
-    <polyline points="12,6 15,3" />
-    <polyline points="12,18 9,21" />
-    <polyline points="12,18 15,21" />
-    <polyline points="6,12 3,9" />
-    <polyline points="6,12 3,15" />
-    <polyline points="18,12 21,9" />
-    <polyline points="18,12 21,15" />
-  </svg>
-);
 
 const MailIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={styles.inputIcon}>
@@ -70,6 +54,7 @@ const LAST_LOGIN_EMAIL_KEY = "climaris_last_login_email";
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { branding } = usePlatformBranding();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -260,12 +245,7 @@ export function LoginPage() {
       <section className={styles.hero} aria-labelledby="login-hero-title">
         <div className={styles.heroPattern} aria-hidden="true" />
         <div className={styles.heroInner}>
-          <div className={styles.brandRow}>
-            <div className={styles.logoMark}>
-              <SnowflakeIcon />
-            </div>
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth-dark" className={styles.brandRow} />
           <h1 id="login-hero-title" className={styles.heroTitle}>
             Bem-vindo de volta!
           </h1>
@@ -311,12 +291,7 @@ export function LoginPage() {
 
       <section className={styles.formSide} aria-labelledby="login-form-title">
         <div className={styles.card}>
-          <div className={styles.mobileBrand}>
-            <div className={styles.logoMark}>
-              <SnowflakeIcon />
-            </div>
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth" className={styles.mobileBrand} />
           
           <div className={styles.cardHeader}>
             <h2 id="login-form-title" className={styles.cardTitle}>
@@ -324,7 +299,7 @@ export function LoginPage() {
             </h2>
             <p className={styles.cardSubtitle}>
               Insira suas credenciais para acessar o painel. A senha pode ser salva pelo{" "}
-              <strong>gerenciador de senhas do navegador</strong> (ex.: Chrome) ao entrar — o Climaris não armazena sua
+              <strong>gerenciador de senhas do navegador</strong> (ex.: Chrome) ao entrar — o {branding.platform_name} não armazena sua
               senha.
             </p>
           </div>
@@ -573,7 +548,7 @@ export function LoginPage() {
         </div>
         
         <p className={styles.footerText}>
-          Climaris ERP - Gestao inteligente para climatizacao
+          {branding.platform_name} ERP - Gestao inteligente para climatizacao
         </p>
       </section>
     </main>

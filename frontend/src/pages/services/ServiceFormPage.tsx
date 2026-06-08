@@ -494,14 +494,23 @@ export function ServiceFormPage() {
   if (!isNew && loadErr) {
     return (
       <div className={styles.wrap}>
-        <header className={styles.hero}>
-          <div className={styles.heroLeft}>
-            <span className={styles.heroIcon} aria-hidden>
+        <header className={styles.pageHeader}>
+          <nav className={styles.breadcrumb} aria-label="Navegação">
+            <Link className={styles.breadcrumbLink} to="/app/services">
+              Serviços
+            </Link>
+            <span className={styles.breadcrumbSep} aria-hidden>
+              /
+            </span>
+            <span className={styles.breadcrumbCurrent}>Erro ao carregar</span>
+          </nav>
+          <div className={styles.pageHeaderMain}>
+            <span className={styles.pageHeaderIcon} aria-hidden>
               <svg viewBox="0 0 24 24">
                 <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
               </svg>
             </span>
-            <div>
+            <div className={styles.pageHeaderText}>
               <h1 className={styles.title}>Erro ao carregar</h1>
               <p className={styles.lead}>{loadErr}</p>
             </div>
@@ -518,17 +527,30 @@ export function ServiceFormPage() {
     <>
       <ToastHost />
       <div className={styles.wrap}>
-      <header className={styles.hero}>
-        <div className={styles.heroLeft}>
-          <span className={styles.heroIcon} aria-hidden>
+      <header className={styles.pageHeader}>
+        <nav className={styles.breadcrumb} aria-label="Navegação">
+          <Link className={styles.breadcrumbLink} to="/app/services">
+            Serviços
+          </Link>
+          <span className={styles.breadcrumbSep} aria-hidden>
+            /
+          </span>
+          <span className={styles.breadcrumbCurrent}>
+            {isNew ? "Novo cadastro" : form.name.trim() || "Editar serviço"}
+          </span>
+        </nav>
+        <div className={styles.pageHeaderMain}>
+          <span className={styles.pageHeaderIcon} aria-hidden>
             <svg viewBox="0 0 24 24">
               <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
             </svg>
           </span>
-          <div>
-            <h1 className={styles.title}>{isNew ? "Novo servico" : "Editar servico"}</h1>
+          <div className={styles.pageHeaderText}>
+            <h1 className={styles.title}>{isNew ? "Novo serviço" : "Editar serviço"}</h1>
             <p className={styles.lead}>
-              O tempo de execucao em minutos sera usado no agendamento. Voce tambem pode cadastrar produtos consumidos para estimar o lucro real.
+              {isNew
+                ? "Defina tempo de execução, preço e produtos consumidos para agendamento e estimativa de lucro."
+                : "O tempo de execução em minutos será usado no agendamento. Você também pode cadastrar produtos consumidos para estimar o lucro real."}
             </p>
           </div>
         </div>

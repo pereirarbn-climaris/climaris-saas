@@ -12,7 +12,7 @@ from models import FinanceBankAccount, FinanceEntry, FinanceEntryStatus, Finance
 
 
 AMOUNT_TOLERANCE = Decimal("0.02")
-DEFAULT_DATE_WINDOW_DAYS = 14
+DEFAULT_DATE_WINDOW_DAYS = 30
 
 
 def amount_matches_ofx_line(entry: FinanceEntry, ofx_amount: Decimal) -> bool:
@@ -74,25 +74,31 @@ def suggest_finance_entries_for_ofx_line(
         .limit(80)
     )
     rows = db.execute(q).scalars().all()
-    scored: list[tuple[int, FinanceEntry]] = []
-    for e in rows:
-        if not finance_entry_matches_bank_account_for_ofx(e, bank_account):
-            continue
+    scored: list[tuple[int, int, FinanceEntry]] = []
+
+    def _consider(e: FinanceEntry, *, account_penalty: int) -> None:
         try:
             ea = Decimal(str(e.amount)).quantize(Decimal("0.01"))
         except Exception:
-            continue
+            return
         if abs(ea - target_abs) > AMOUNT_TOLERANCE:
-            continue
+            return
         due_delta = abs((e.due_date - posted_at).days)
         comp_delta = abs((e.competence_date - posted_at).days)
         score = min(due_delta, comp_delta)
-        scored.append((score, e))
+        scored.append((account_penalty, score, e))
 
-    scored.sort(key=lambda x: (x[0], x[1].id))
+    for e in rows:
+        if finance_entry_matches_bank_account_for_ofx(e, bank_account):
+            _consider(e, account_penalty=0)
+        elif e.finance_account_id is None:
+            # Lançamento sem conta: ainda pode ser vinculado na conciliação
+            _consider(e, account_penalty=1)
+
+    scored.sort(key=lambda x: (x[0], x[1], x[2].id))
     out: list[FinanceEntry] = []
     seen: set[int] = set()
-    for _s, e in scored:
+    for _ap, _s, e in scored:
         if e.id in seen:
             continue
         seen.add(e.id)

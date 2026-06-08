@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
+import { Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { listTenantUsers } from "../../api/auth";
 import { listClientHvacEquipments, listClientsAll } from "../../api/clients";
-import { getPmocPlan } from "../../api/pmoc";
 import { listProducts } from "../../api/products";
 import { listServices } from "../../api/services";
 import {
@@ -13,6 +12,7 @@ import {
   getTechnicianNextSlots,
   patchServiceOrderDetails,
   patchServiceOrderDiscount,
+  patchServiceOrderLaudo,
   patchServiceOrderStatus,
   rescheduleSchedule,
   fetchServiceOrderPdf,
@@ -25,6 +25,7 @@ import {
 import { API_MAX_PAGE_LIMIT } from "../../lib/apiPagination";
 import {
   buildOrderDetailsPayload,
+  buildLaudoPatchPayload,
   buildScheduleStartsAt,
   enrichOrderViewLines,
   mapClientsToFormView,
@@ -35,7 +36,7 @@ import {
   serviceOrderOutToViewData,
   viewDataToCreatePayload,
 } from "../../lib/serviceOrderFormViewAdapter";
-import { monthYearFromDateString } from "../../lib/pmocOsSchedule";
+import { generateTechnicalReportPDF } from "../../lib/laudo/laudoGenerator";
 import { buildServiceLinesFromPreventiveLines } from "../../lib/preventiveServiceOrder";
 import {
   computeDiscountAmountFromView,
@@ -51,9 +52,12 @@ import { ToastHost } from "../../components/ToastHost";
 import {
   syncServiceOrderItems,
   syncServiceOrderProducts,
+  sanitizeServiceOrderEquipmentSelection,
 } from "../../lib/serviceOrderLinesSync";
+import { isInventoryEnabled } from "../../lib/inventoryEnabled";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
+import { useFeature } from "../../lib/featureManager";
 import styles from "./ServiceOrderFormPage.module.css";
 
 function isAssignedTechnician(order: ServiceOrderOut, userId: number): boolean {
@@ -74,6 +78,8 @@ export function ServiceOrderFormPage() {
   const isReceptionist = role === "receptionist";
   const isTechnician = role === "technician";
   const canEditGeneral = isAdmin || isReceptionist;
+  const inventoryEnabled = isInventoryEnabled(ctx?.tenant);
+  const newLaudoEnabled = useFeature("new_laudo");
 
   const [serviceOrder, setServiceOrder] = useState<Partial<ServiceOrderData> | undefined>(undefined);
   const [orderRow, setOrderRow] = useState<ServiceOrderOut | null>(null);
@@ -89,6 +95,8 @@ export function ServiceOrderFormPage() {
   const [isCompleting, setIsCompleting] = useState(false);
   const [isCancellingSchedule, setIsCancellingSchedule] = useState(false);
   const [isCancellingOrder, setIsCancellingOrder] = useState(false);
+  const [isSavingLaudo, setIsSavingLaudo] = useState(false);
+  const [isGeneratingLaudoPdf, setIsGeneratingLaudoPdf] = useState(false);
   const [schedulingPanelKey, setSchedulingPanelKey] = useState("default");
   const [error, setError] = useState<string | null>(null);
 
@@ -182,7 +190,7 @@ export function ServiceOrderFormPage() {
           listClientsAll(),
           listTenantUsers({ limit: API_MAX_PAGE_LIMIT }),
           listServices({ limit: API_MAX_PAGE_LIMIT }),
-          listProducts({ limit: API_MAX_PAGE_LIMIT }),
+          inventoryEnabled ? listProducts({ limit: API_MAX_PAGE_LIMIT }) : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setClientes(mapClientsToFormView(clients));
@@ -196,53 +204,28 @@ export function ServiceOrderFormPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [inventoryEnabled]);
 
   useEffect(() => {
     if (!isNew) return;
-    const pmocId = searchParams.get("pmoc_id");
     const startsAt = searchParams.get("starts_at");
     const technicianId = searchParams.get("technician_id");
-    const yearParam = searchParams.get("year");
-    const monthParam = searchParams.get("month");
     const tipo = searchParams.get("tipo");
-    if (!pmocId && !startsAt && !technicianId && !tipo) return;
+    if (!startsAt && !technicianId && !tipo) return;
 
     let cancelled = false;
     void (async () => {
       const partial: Partial<ServiceOrderData> = {};
       if (tipo === "preventiva") partial.tipoServico = "preventiva";
-      if (pmocId) partial.pmocPlanId = pmocId;
-      if (yearParam && monthParam) {
-        partial.pmocPeriodYear = Number(yearParam);
-        partial.pmocPeriodMonth = Number(monthParam);
-      }
       if (startsAt) {
         const d = new Date(startsAt);
         if (!Number.isNaN(d.getTime())) {
           const pad = (n: number) => String(n).padStart(2, "0");
           partial.dataAgendamento = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
           partial.horaAgendamento = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-          if (!yearParam || !monthParam) {
-            const period = monthYearFromDateString(partial.dataAgendamento);
-            if (period) {
-              partial.pmocPeriodYear = period.year;
-              partial.pmocPeriodMonth = period.month;
-            }
-          }
         }
       }
       if (technicianId) partial.tecnicoId = technicianId;
-      if (pmocId) {
-        try {
-          const plan = await getPmocPlan(Number(pmocId));
-          if (cancelled) return;
-          partial.clienteId = String(plan.client_id);
-          await loadEquipments(String(plan.client_id));
-        } catch {
-          /* plano opcional no prefill */
-        }
-      }
       if (!cancelled && Object.keys(partial).length > 0) {
         setServiceOrder((prev) => ({ ...(prev ?? {}), ...partial }));
       }
@@ -250,7 +233,7 @@ export function ServiceOrderFormPage() {
     return () => {
       cancelled = true;
     };
-  }, [isNew, searchParams, loadEquipments]);
+  }, [isNew, searchParams]);
 
   useEffect(() => {
     if (!isNew) return;
@@ -306,7 +289,6 @@ export function ServiceOrderFormPage() {
       setIsLoading(false);
       setEquipamentosCliente([]);
       const hasPrefill =
-        searchParams.get("pmoc_id") ||
         searchParams.get("starts_at") ||
         searchParams.get("technician_id") ||
         searchParams.get("tipo") ||
@@ -454,6 +436,35 @@ export function ServiceOrderFormPage() {
     }
   }, [orderRow, canCompleteOrder, refreshOrderState]);
 
+  const handleSaveLaudo = useCallback(
+    async (data: ServiceOrderData) => {
+      if (!canEditLaudo || !orderRow || !Number.isFinite(idNum)) return;
+      setIsSavingLaudo(true);
+      try {
+        await patchServiceOrderLaudo(idNum, buildLaudoPatchPayload(data));
+        await refreshOrderState(orderRow.id);
+        toast.success("Laudo salvo com sucesso.");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Não foi possível salvar o laudo.");
+      } finally {
+        setIsSavingLaudo(false);
+      }
+    },
+    [canEditLaudo, orderRow, idNum, refreshOrderState],
+  );
+
+  const handleGenerateLaudoPdf = useCallback(async () => {
+    if (!orderRow || !Number.isFinite(idNum)) return;
+    setIsGeneratingLaudoPdf(true);
+    try {
+      await generateTechnicalReportPDF({ orderId: idNum });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar o laudo em PDF.");
+    } finally {
+      setIsGeneratingLaudoPdf(false);
+    }
+  }, [orderRow, idNum]);
+
   const clientNameById = useMemo(() => new Map(clientes.map((c) => [c.id, c.nome])), [clientes]);
 
   const handleSave = useCallback(
@@ -480,25 +491,27 @@ export function ServiceOrderFormPage() {
         desiredTotal,
       });
 
+      const { data: saveData } = sanitizeServiceOrderEquipmentSelection(data, equipamentosCliente);
+
       try {
         if (isNew) {
           if (!canEditGeneral) {
             toast.error("Sem permissão para criar ordem de serviço.");
             return;
           }
-          const payload = viewDataToCreatePayload(data, {
+          const payload = viewDataToCreatePayload(saveData, {
             clientName,
             services: servicesCatalog,
             products: productsCatalog,
           });
           console.log("Payload enviado para a OS:", payload);
           const created = await createServiceOrder(payload);
-          const startsAt = buildScheduleStartsAt(data);
+          const startsAt = buildScheduleStartsAt(saveData);
           if (startsAt) {
             await approveServiceOrder(created.id, {
               starts_at: startsAt,
-              technician_ids: data.tecnicoId ? [Number(data.tecnicoId)] : undefined,
-              notes: data.observacoesInternas?.trim() || undefined,
+              technician_ids: saveData.tecnicoId ? [Number(saveData.tecnicoId)] : undefined,
+              notes: saveData.observacoesInternas?.trim() || undefined,
             });
           }
           toast.success("Ordem de serviço criada.");
@@ -518,19 +531,21 @@ export function ServiceOrderFormPage() {
           console.log("[ServiceOrderFormPage] sincronizando serviços…", data.servicos, {
             equipmentLinksOnly: linesReadOnly,
           });
-          refreshed = await syncServiceOrderItems(orderId, refreshed, data.servicos ?? [], {
+          refreshed = await syncServiceOrderItems(orderId, refreshed, saveData.servicos ?? [], {
             equipmentLinksOnly: linesReadOnly,
           });
         } catch (syncErr) {
           console.error("[ServiceOrderFormPage] falha sync serviços", syncErr);
-          toast.error("Erro ao salvar os itens da OS");
+          toast.error(
+            syncErr instanceof Error ? syncErr.message : "Erro ao salvar os itens da OS",
+          );
           throw syncErr;
         }
 
-        if (!linesReadOnly) {
+        if (!linesReadOnly && inventoryEnabled) {
           try {
-            console.log("[ServiceOrderFormPage] sincronizando peças…", data.pecas);
-            refreshed = await syncServiceOrderProducts(orderId, refreshed, data.pecas ?? []);
+            console.log("[ServiceOrderFormPage] sincronizando peças…", saveData.pecas);
+            refreshed = await syncServiceOrderProducts(orderId, refreshed, saveData.pecas ?? []);
           } catch (syncErr) {
             console.error("[ServiceOrderFormPage] falha sync peças", syncErr);
             toast.error("Erro ao salvar os itens da OS");
@@ -538,7 +553,7 @@ export function ServiceOrderFormPage() {
           }
         }
 
-        const detailsPayload = buildOrderDetailsPayload(data);
+        const detailsPayload = buildOrderDetailsPayload(saveData);
         const osDetailsPayload = { description: detailsPayload.description };
         console.log("Payload enviado para a OS:", {
           orderId,
@@ -576,28 +591,28 @@ export function ServiceOrderFormPage() {
         }
 
         if (canEditGeneral) {
-          const patchTarget = mapFormStatusToPatchTarget(orderRow.status, data.status);
+          const patchTarget = mapFormStatusToPatchTarget(orderRow.status, saveData.status);
           if (patchTarget) {
             refreshed = await patchServiceOrderStatus(orderId, patchTarget, {
-              schedule_notes: data.observacoesInternas?.trim() || null,
+              schedule_notes: saveData.observacoesInternas?.trim() || null,
             });
           }
 
-          const startsAt = buildScheduleStartsAt(data);
+          const startsAt = buildScheduleStartsAt(saveData);
           if (startsAt && refreshed.schedule?.id) {
             const currentStart = refreshed.schedule.starts_at;
             if (new Date(currentStart).getTime() !== new Date(startsAt).getTime()) {
               await rescheduleSchedule(refreshed.schedule.id, {
                 starts_at: startsAt,
-                technician_ids: data.tecnicoId ? [Number(data.tecnicoId)] : undefined,
-                notes: data.observacoesInternas?.trim() || undefined,
+                technician_ids: saveData.tecnicoId ? [Number(saveData.tecnicoId)] : undefined,
+                notes: saveData.observacoesInternas?.trim() || undefined,
               });
             }
           } else if (startsAt && !refreshed.schedule) {
             await approveServiceOrder(orderId, {
               starts_at: startsAt,
-              technician_ids: data.tecnicoId ? [Number(data.tecnicoId)] : undefined,
-              notes: data.observacoesInternas?.trim() || undefined,
+              technician_ids: saveData.tecnicoId ? [Number(saveData.tecnicoId)] : undefined,
+              notes: saveData.observacoesInternas?.trim() || undefined,
             });
           }
         }
@@ -630,6 +645,7 @@ export function ServiceOrderFormPage() {
       servicesCatalog,
       linesReadOnly,
       refreshOrderState,
+      equipamentosCliente,
     ],
   );
 
@@ -656,9 +672,6 @@ export function ServiceOrderFormPage() {
   if (!isNew && error) {
     return (
       <div className={styles.wrap}>
-        <Link className={styles.back} to={isTechnician ? "/app/tecnico" : "/app/service-orders"}>
-          ← Voltar
-        </Link>
         <p className={styles.msgErr}>{error}</p>
       </div>
     );
@@ -666,10 +679,6 @@ export function ServiceOrderFormPage() {
 
   return (
     <div className={styles.wrap}>
-      <Link className={styles.back} to={isTechnician ? "/app/tecnico" : "/app/service-orders"}>
-        ← Voltar
-      </Link>
-
       <ToastHost />
       {error && isNew ? <p className={styles.msgErr}>{error}</p> : null}
 
@@ -697,9 +706,10 @@ export function ServiceOrderFormPage() {
         equipamentosCliente={equipamentosCliente}
         servicesCatalog={servicesCatalog}
         productsCatalog={productsCatalog}
+        inventoryEnabled={inventoryEnabled}
         canEditLines={canEditLines}
         canEditGeneral={canEditGeneral}
-        canEditLaudo={canEditLaudo}
+        canEditLaudo={canEditLaudo && newLaudoEnabled}
         isLoading={isLoading || isSaving}
         onSave={handleSave}
         onCancel={() => navigate(isTechnician ? "/app/tecnico" : "/app/service-orders")}
@@ -755,6 +765,10 @@ export function ServiceOrderFormPage() {
               }
             : undefined
         }
+        onSaveLaudo={!isNew && canEditLaudo && newLaudoEnabled ? handleSaveLaudo : undefined}
+        onGenerateLaudoPdf={!isNew && orderRow && newLaudoEnabled ? handleGenerateLaudoPdf : undefined}
+        isSavingLaudo={isSavingLaudo}
+        isGeneratingLaudoPdf={isGeneratingLaudoPdf}
       />
     </div>
   );

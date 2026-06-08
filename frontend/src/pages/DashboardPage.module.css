@@ -141,8 +141,8 @@
 }
 
 .logoMark {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.75rem;
+  height: 2.75rem;
   flex-shrink: 0;
   border-radius: 0.625rem;
   background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 50%, #0369a1 100%);
@@ -161,14 +161,14 @@
 
 .logoMark::after {
   content: "C";
-  font-size: 1rem;
+  font-size: 1.2rem;
   font-weight: 800;
   color: #ffffff;
   letter-spacing: -0.02em;
 }
 
 .brandName {
-  font-size: 1.125rem;
+  font-size: 1.35rem;
   font-weight: 700;
   letter-spacing: -0.025em;
   color: #0f172a;
@@ -789,6 +789,44 @@
   position: sticky;
   top: 0;
   z-index: 20;
+}
+
+.headerSidebarToggle {
+  display: none;
+  position: absolute;
+  left: -0.875rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 35;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+  transition:
+    color var(--motion-duration) var(--motion-easing),
+    border-color var(--motion-duration) var(--motion-easing),
+    background var(--motion-duration) var(--motion-easing),
+    box-shadow var(--motion-duration) var(--motion-easing);
+}
+
+.headerSidebarToggle:hover {
+  background: #f0f9ff;
+  border-color: #0ea5e9;
+  color: #0284c7;
+  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.2);
+}
+
+@media (min-width: 901px) {
+  .headerSidebarToggle {
+    display: inline-flex;
+  }
 }
 
 /* Mobile: só menu (hambúrguer) + título; conta e workspace ficam na sidebar */

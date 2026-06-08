@@ -279,6 +279,66 @@ export function financeAccountConfigProvider(
   return "none";
 }
 
+export type AccountIntegrationSummary = {
+  label: string;
+  detail?: string;
+  tone: "success" | "warning" | "muted";
+};
+
+/** Resumo curto para o card e o cabeçalho do modal de configuração. */
+export function accountIntegrationSummary(
+  account: FinanceBankAccountOut,
+  gw: FinanceGatewaysOut | null,
+): AccountIntegrationSummary | null {
+  const provider = financeAccountConfigProvider(account, gw);
+  if (provider === "mercadopago") {
+    const mp = gw?.mercadopago;
+    if (!mp) return null;
+    const products: string[] = [];
+    if (mp.products.pix) products.push("Pix");
+    if (mp.products.boleto) products.push("Boleto");
+    if (mp.products.checkout_pro) products.push("Checkout");
+    if (mp.products.payment_link) products.push("Link");
+    const detail = products.length ? products.join(" · ") : mp.account_label || undefined;
+    return {
+      label: mp.connected ? "Mercado Pago ativo" : "Mercado Pago pendente",
+      detail,
+      tone: mp.connected ? "success" : "warning",
+    };
+  }
+  if (provider === "stone") {
+    const st = gw?.stone;
+    if (!st) return null;
+    return {
+      label: st.connected ? "Stone / Pagar.me ativo" : "Stone pendente",
+      detail: st.account_label || st.secret_key_hint || undefined,
+      tone: st.connected ? "success" : "warning",
+    };
+  }
+  if (provider === "asaas") {
+    const aa = gw?.asaas;
+    return {
+      label: aa?.connected ? "Asaas conectado" : "Asaas pendente",
+      detail: aa?.account_label || undefined,
+      tone: aa?.connected ? "success" : "warning",
+    };
+  }
+  return { label: "Conciliação via OFX", detail: "Sem API de cobrança", tone: "muted" };
+}
+
+const ACCOUNT_TYPE_LABELS: Record<FinanceBankAccountOut["account_type"], string> = {
+  checking: "Conta corrente",
+  savings: "Poupança",
+  investment: "Investimento",
+  digital_wallet: "Carteira digital",
+  cash: "Caixa",
+  other: "Outra",
+};
+
+export function financeAccountTypeLabel(account: FinanceBankAccountOut): string {
+  return ACCOUNT_TYPE_LABELS[account.account_type] || account.account_type;
+}
+
 type MarkProps = {
   account: FinanceBankAccountOut;
   gateways: FinanceGatewaysOut | null;

@@ -7,6 +7,7 @@ import {
 } from "../../api/preventiveMaintenance";
 import {
   buildLastDoneServiceDateByEquipment,
+  formatClientPreventiveNextDue,
   formatFriendlyDatePt,
 } from "../../lib/preventiveLastService";
 import type { EquipmentItem } from "../v0-ui/clients/ClientEquipmentManager";
@@ -14,16 +15,20 @@ import {
   EquipmentPreventiveInlineRow,
 } from "../v0-ui/preventive/EquipmentPreventiveInlineRow";
 import type { PreventiveScheduleConfig } from "../v0-ui/preventive/EquipmentPreventiveForm";
+import { FormSwitch } from "../ui/form-switch";
 import styles from "./ClientPreventiveTab.module.css";
 
 type Props = {
   clientId: number;
   equipments: EquipmentItem[];
   readOnly?: boolean;
+  preventiveCampaignOptOut?: boolean;
+  onPreventiveCampaignOptOutChange?: (value: boolean) => void;
 };
 
 type RowState = {
   rule: EquipmentPreventiveRuleOut | null;
+  lastServiceAt: string | null;
   lastServiceLabel: string | null;
   canConfigure: boolean;
 };
@@ -45,11 +50,52 @@ function equipmentLabel(item: EquipmentItem): string {
   return brandModel ? `${title} · ${brandModel}` : title;
 }
 
-export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: Props) {
+function OptOutSection({
+  preventiveCampaignOptOut,
+  onPreventiveCampaignOptOutChange,
+  readOnly,
+}: {
+  preventiveCampaignOptOut: boolean;
+  onPreventiveCampaignOptOutChange?: (value: boolean) => void;
+  readOnly?: boolean;
+}) {
+  return (
+    <section className={styles.optOutCard}>
+      <div className={styles.optOutText}>
+        <h4 className={styles.optOutTitle}>Participação na gestão preventiva</h4>
+        <p className={styles.optOutLead}>
+          Com o interruptor ligado, os equipamentos deste cliente ficam fora da Gestão preventiva e das campanhas
+          automáticas.
+        </p>
+      </div>
+      <label htmlFor="client-preventive-opt-out" className={styles.optOutControl}>
+        <span className={styles.optOutLabel}>Não participar de campanhas preventivas</span>
+        <FormSwitch
+          id="client-preventive-opt-out"
+          checked={preventiveCampaignOptOut}
+          onChange={(value) => onPreventiveCampaignOptOutChange?.(value)}
+          disabled={readOnly || !onPreventiveCampaignOptOutChange}
+          ariaLabel="Não participar de campanhas preventivas"
+        />
+      </label>
+    </section>
+  );
+}
+
+export function ClientPreventiveTab({
+  clientId,
+  equipments,
+  readOnly = false,
+  preventiveCampaignOptOut = false,
+  onPreventiveCampaignOptOutChange,
+}: Props) {
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState("");
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
+  const [draftConfigByEquipment, setDraftConfigByEquipment] = useState<
+    Record<string, PreventiveScheduleConfig>
+  >({});
 
   const activeEquipments = useMemo(
     () => equipments.filter((e) => e.status === "ativo"),
@@ -63,6 +109,13 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
   }, [toast]);
 
   useEffect(() => {
+    if (preventiveCampaignOptOut) {
+      setLoading(false);
+      setLoadErr("");
+      setRowState({});
+      return;
+    }
+
     let cancelled = false;
 
     void (async () => {
@@ -88,6 +141,7 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
               {
                 rule,
                 canConfigure,
+                lastServiceAt: lastDate ? lastDate.toISOString() : null,
                 lastServiceLabel: lastDate ? formatFriendlyDatePt(lastDate) : null,
               } satisfies RowState,
             ] as const;
@@ -112,7 +166,7 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
     return () => {
       cancelled = true;
     };
-  }, [activeEquipments, clientId]);
+  }, [activeEquipments, clientId, preventiveCampaignOptOut]);
 
   const handleSave = useCallback(
     async (equipment: EquipmentItem, config: PreventiveScheduleConfig) => {
@@ -137,10 +191,16 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
             ...prev,
             [equipment.id]: {
               canConfigure: current?.canConfigure ?? true,
+              lastServiceAt: current?.lastServiceAt ?? null,
               lastServiceLabel: current?.lastServiceLabel ?? null,
               rule: saved,
             },
           };
+        });
+        setDraftConfigByEquipment((prev) => {
+          const next = { ...prev };
+          delete next[equipment.id];
+          return next;
         });
         setToast({ kind: "ok", text: "Configuração preventiva atualizada com sucesso!" });
       } catch (e) {
@@ -153,29 +213,69 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
     [],
   );
 
+  if (preventiveCampaignOptOut) {
+    return (
+      <div className={styles.wrap}>
+        <OptOutSection
+          preventiveCampaignOptOut={preventiveCampaignOptOut}
+          onPreventiveCampaignOptOutChange={onPreventiveCampaignOptOutChange}
+          readOnly={readOnly}
+        />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
-      <div className={styles.loading} aria-busy="true">
-        Carregando cronogramas preventivos…
+      <div className={styles.wrap}>
+        <OptOutSection
+          preventiveCampaignOptOut={preventiveCampaignOptOut}
+          onPreventiveCampaignOptOutChange={onPreventiveCampaignOptOutChange}
+          readOnly={readOnly}
+        />
+        <div className={styles.loading} aria-busy="true">
+          Carregando cronogramas preventivos…
+        </div>
       </div>
     );
   }
 
   if (loadErr) {
-    return <p className={styles.error}>{loadErr}</p>;
+    return (
+      <div className={styles.wrap}>
+        <OptOutSection
+          preventiveCampaignOptOut={preventiveCampaignOptOut}
+          onPreventiveCampaignOptOutChange={onPreventiveCampaignOptOutChange}
+          readOnly={readOnly}
+        />
+        <p className={styles.error}>{loadErr}</p>
+      </div>
+    );
   }
 
   if (activeEquipments.length === 0) {
     return (
-      <div className={styles.empty}>
-        <p>Nenhum equipamento ativo cadastrado para este cliente.</p>
-        <p className={styles.emptyHint}>Cadastre aparelhos na aba Equipamentos para configurar a preventiva.</p>
+      <div className={styles.wrap}>
+        <OptOutSection
+          preventiveCampaignOptOut={preventiveCampaignOptOut}
+          onPreventiveCampaignOptOutChange={onPreventiveCampaignOptOutChange}
+          readOnly={readOnly}
+        />
+        <div className={styles.empty}>
+          <p>Nenhum equipamento ativo cadastrado para este cliente.</p>
+          <p className={styles.emptyHint}>Cadastre aparelhos na aba Equipamentos para configurar a preventiva.</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className={styles.wrap}>
+      <OptOutSection
+        preventiveCampaignOptOut={preventiveCampaignOptOut}
+        onPreventiveCampaignOptOutChange={onPreventiveCampaignOptOutChange}
+        readOnly={readOnly}
+      />
       <header className={styles.header}>
         <div>
           <h3 className={styles.title}>Gestão preventiva por equipamento</h3>
@@ -198,10 +298,14 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
           <tbody>
             {activeEquipments.map((item) => {
               const state = rowState[item.id];
-              const config = ruleToConfig(state?.rule ?? null);
-              const nextDue = state?.rule?.next_due_date
-                ? formatFriendlyDatePt(state.rule.next_due_date)
-                : null;
+              const config = draftConfigByEquipment[item.id] ?? ruleToConfig(state?.rule ?? null);
+              const nextDue = formatClientPreventiveNextDue({
+                lastServiceAt: state?.lastServiceAt,
+                lastPerformedFromRule: state?.rule?.last_performed_date ?? null,
+                intervalValue: config.intervalValue,
+                intervalType: config.intervalType,
+                ruleNextDueDate: state?.rule?.next_due_date ?? null,
+              });
 
               return (
                 <tr key={item.id} className={styles.row}>
@@ -226,7 +330,10 @@ export function ClientPreventiveTab({ clientId, equipments, readOnly = false }: 
                       <EquipmentPreventiveInlineRow
                         equipmentKey={item.id}
                         disabled={readOnly}
-                        initialConfig={config}
+                        initialConfig={ruleToConfig(state?.rule ?? null)}
+                        onConfigChange={(cfg) =>
+                          setDraftConfigByEquipment((prev) => ({ ...prev, [item.id]: cfg }))
+                        }
                         onSave={(cfg) => handleSave(item, cfg)}
                       />
                     ) : (

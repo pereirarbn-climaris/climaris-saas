@@ -15,12 +15,14 @@ import {
   loadCompletedServiceItemIds,
   toggleCompletedServiceItem,
 } from "../../lib/technicianOsProgress";
+import { isInventoryEnabled } from "../../lib/inventoryEnabled";
 import type { DashboardOutletContext } from "../dashboardContext";
 import { TechnicianServiceOrderView } from "./TechnicianServiceOrderView";
 import styles from "./TechnicianServiceOrderPage.module.css";
 
 export function TechnicianServiceOrderPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
+  const inventoryEnabled = isInventoryEnabled(ctx?.tenant);
   const { orderId } = useParams<{ orderId: string }>();
   const idNum = orderId ? Number(orderId) : NaN;
 
@@ -49,7 +51,7 @@ export function TechnicianServiceOrderPage() {
       try {
         const [row, products, services] = await Promise.all([
           getServiceOrder(idNum, { bustCache: true }),
-          listProducts({ limit: API_MAX_PAGE_LIMIT }),
+          inventoryEnabled ? listProducts({ limit: API_MAX_PAGE_LIMIT }) : Promise.resolve([]),
           listServices({ limit: API_MAX_PAGE_LIMIT }),
         ]);
         if (cancelled) return;
@@ -80,7 +82,7 @@ export function TechnicianServiceOrderPage() {
     return () => {
       cancelled = true;
     };
-  }, [idNum]);
+  }, [idNum, inventoryEnabled]);
 
   const readOnly = useMemo(() => {
     if (!order) return true;
@@ -193,6 +195,7 @@ export function TechnicianServiceOrderPage() {
         clientPhone={clientPhone}
         clientWhatsapp={clientWhatsapp}
         productNameById={productNameById}
+        inventoryEnabled={inventoryEnabled}
         servicesCatalog={servicesCatalog}
         completedServiceIds={completedIds}
         busy={busy}

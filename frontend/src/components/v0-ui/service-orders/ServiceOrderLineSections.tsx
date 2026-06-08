@@ -51,6 +51,8 @@ export interface ServiceOrderLineSectionsProps {
   canEditLines: boolean;
   /** OS concluída: bloqueia add/remove e edição de qtd/preço; mantém vínculo com equipamentos. */
   readOnly?: boolean;
+  /** Exibe seção de peças/insumos do estoque (desligado quando o tenant não controla estoque). */
+  showProductLines?: boolean;
   equipamentosCliente: Equipamento[];
   equipamentosIds: string[];
 }
@@ -64,6 +66,7 @@ export function ServiceOrderLineSections({
   productsCatalog = [],
   canEditLines,
   readOnly = false,
+  showProductLines = true,
   equipamentosCliente = [],
   equipamentosIds = [],
 }: ServiceOrderLineSectionsProps) {
@@ -282,42 +285,47 @@ export function ServiceOrderLineSections({
         />
       </section>
 
-      <section
-        style={{
-          backgroundColor: "var(--color-surface-elevated)",
-          borderRadius: "var(--card-radius)",
-          padding: "var(--card-padding-lg)",
-          boxShadow: "var(--card-shadow)",
-        }}
-      >
-        <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Peças / insumos utilizados</h3>
-        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
-          Produtos do estoque consumidos nesta ordem de serviço.
-        </p>
+      {showProductLines ? (
+        <section
+          style={{
+            backgroundColor: "var(--color-surface-elevated)",
+            borderRadius: "var(--card-radius)",
+            padding: "var(--card-padding-lg)",
+            boxShadow: "var(--card-shadow)",
+          }}
+        >
+          <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Peças / insumos utilizados</h3>
+          <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+            Produtos do estoque consumidos nesta ordem de serviço.
+          </p>
 
-        {canEditLineFields ? (
-          <CatalogCombobox
-            id="os-add-product"
-            items={productComboboxItems}
-            onPick={addProductById}
-            placeholder="Adicionar produto do estoque…"
-            searchPlaceholder="Pesquisar produto…"
-            emptyMessage="Nenhum produto encontrado."
+          {canEditLineFields ? (
+            <CatalogCombobox
+              id="os-add-product"
+              items={productComboboxItems}
+              onPick={addProductById}
+              placeholder="Adicionar produto do estoque…"
+              searchPlaceholder="Pesquisar produto…"
+              emptyMessage="Nenhum produto encontrado."
+            />
+          ) : null}
+
+          <ProductTable
+            pecas={pecas}
+            canEditLineFields={canEditLineFields}
+            readOnly={readOnly}
+            onPecasChange={onPecasChange}
+            formatCurrency={formatCurrency}
+            inputStyle={inputStyle}
+            thStyle={thStyle}
+            tdStyle={tdStyle}
           />
-        ) : null}
-
-        <ProductTable
-          pecas={pecas}
-          canEditLineFields={canEditLineFields}
-          readOnly={readOnly}
-          onPecasChange={onPecasChange}
-          formatCurrency={formatCurrency}
-          inputStyle={inputStyle}
-          thStyle={thStyle}
-          tdStyle={tdStyle}
-        />
-        <TotalRow label="Total peças" value={pecas.reduce((s, l) => s + Math.max(l.quantity, 1) * Math.max(0, l.unitPrice), 0)} />
-      </section>
+          <TotalRow
+            label="Total peças"
+            value={pecas.reduce((s, l) => s + Math.max(l.quantity, 1) * Math.max(0, l.unitPrice), 0)}
+          />
+        </section>
+      ) : null}
 
       <section
         style={{

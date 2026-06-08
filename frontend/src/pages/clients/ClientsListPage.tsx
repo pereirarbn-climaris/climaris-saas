@@ -1,6 +1,6 @@
 import type { ChangeEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useOutletContext } from "react-router-dom";
+import { Link, Navigate, useNavigate, useOutletContext } from "react-router-dom";
 import {
   countClients,
   exportClientsCsv,
@@ -223,7 +223,7 @@ export function ClientsListPage() {
             <option value="all">Todos</option>
           </select>
         </div>
-        <button type="button" className={tableStyles.listToolbarBtnGhost} onClick={() => void onExportCsv()}>
+        <button type="button" className={`${tableStyles.listToolbarBtnGhost} ${listStyles.hideOnMobile}`} onClick={() => void onExportCsv()}>
           <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
             <svg viewBox="0 0 24 24">
               <path d="M12 3v12" />
@@ -246,7 +246,7 @@ export function ClientsListPage() {
             />
             <button
               type="button"
-              className={tableStyles.listToolbarBtnGhost}
+              className={`${tableStyles.listToolbarBtnGhost} ${listStyles.hideOnMobile}`}
               onClick={() => {
                 setImportSource(null);
                 setImportModalOpen(true);
@@ -334,6 +334,10 @@ export function ClientsListPage() {
         </div>
       </div>
     ) : null;
+
+  if (ctx?.user.role === "technician") {
+    return <Navigate to="/app/service-orders" replace />;
+  }
 
   return (
     <div className={listStyles.wrap}>

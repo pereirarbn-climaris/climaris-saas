@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
+from app.preventive_maintenance import tenant_local_date
 from app.schemas import FinanceEntryCreate, FinanceRecurringSpec
 from models import (
     FinanceEntry,
@@ -29,14 +30,41 @@ WEEKDAY_LABELS_PT = ("segunda", "terça", "quarta", "quinta", "sexta", "sábado"
 MAX_SCHEDULE_ENTRIES_PER_RULE = 120
 DEFAULT_HORIZON_MONTHS = 24
 
+# Metadado interno no template_json da regra (não vira campo do lançamento).
+EXCLUDED_DUE_DATES_KEY = "_excluded_due_dates"
 
-def _today_local() -> date:
-    return datetime.now(timezone.utc).date()
+
+def _today_local(tz_name: str = "America/Sao_Paulo") -> date:
+    """Data civil no fuso do tenant (evita rejeitar lançamento à noite no Brasil)."""
+    return tenant_local_date(datetime.now(timezone.utc), tz_name)
 
 
-def validate_recurring_spec(spec: FinanceRecurringSpec, first_due: date, *, today: date | None = None) -> None:
+def resolve_first_recurring_due(reference: date, spec: FinanceRecurringSpec) -> date:
+    """Primeira data de vencimento da série (dia do mês / dia da semana) em ou após reference."""
+    if spec.frequency == "weekly":
+        wd = int(spec.weekday or 0)
+        delta = (wd - reference.weekday()) % 7
+        return reference + timedelta(days=delta)
+    dom = int(spec.day_of_month or reference.day)
+    return _first_monthly_due_on_or_after_ref(reference, dom)
+
+
+def _first_monthly_due_on_or_after_ref(ref: date, day_of_month: int) -> date:
+    candidate = _add_months_clamped(date(ref.year, ref.month, 1), 0, day_of_month)
+    if candidate < ref:
+        candidate = _add_months_clamped(ref, 1, day_of_month)
+    return candidate
+
+
+def validate_recurring_spec(
+    spec: FinanceRecurringSpec,
+    first_due: date,
+    *,
+    today: date | None = None,
+    tz_name: str = "America/Sao_Paulo",
+) -> None:
     """Impede agendamento com primeira ocorrência ou término no passado."""
-    ref = today or _today_local()
+    ref = today or _today_local(tz_name)
     if first_due < ref:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -64,6 +92,75 @@ def validate_recurring_spec(spec: FinanceRecurringSpec, first_due: date, *, toda
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Informe o dia da semana para recorrência semanal.",
             )
+
+
+def load_excluded_due_dates(rule: FinanceRecurringTransaction) -> set[date]:
+    try:
+        data = json.loads(rule.template_json)
+    except Exception:
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    raw = data.get(EXCLUDED_DUE_DATES_KEY)
+    if not isinstance(raw, list):
+        return set()
+    out: set[date] = set()
+    for item in raw:
+        if isinstance(item, str):
+            try:
+                out.add(date.fromisoformat(item))
+            except ValueError:
+                continue
+    return out
+
+
+def add_excluded_due_date(rule: FinanceRecurringTransaction, due: date) -> None:
+    try:
+        data = json.loads(rule.template_json)
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    excluded = load_excluded_due_dates(rule)
+    excluded.add(due)
+    data[EXCLUDED_DUE_DATES_KEY] = sorted(d.isoformat() for d in excluded)
+    rule.template_json = json.dumps(data, ensure_ascii=False)
+
+
+def apply_recurring_delete_side_effects(
+    db: Session,
+    *,
+    tenant_id: int,
+    anchor_entry: FinanceEntry,
+    scope: Literal["single", "future", "all"],
+) -> None:
+    """Impede o agendador de recriar lançamentos após exclusão pelo usuário."""
+    rid = anchor_entry.recurring_transaction_id
+    if rid is None:
+        return
+    rule = db.execute(
+        select(FinanceRecurringTransaction).where(
+            FinanceRecurringTransaction.id == rid,
+            FinanceRecurringTransaction.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if rule is None:
+        return
+
+    if scope == "all":
+        rule.status = FinanceRecurringStatus.ENDED.value
+        db.add(rule)
+        return
+
+    if scope == "future":
+        end = anchor_entry.due_date - timedelta(days=1)
+        if rule.end_date is None or end < rule.end_date:
+            rule.end_date = end
+        db.add(rule)
+        return
+
+    add_excluded_due_date(rule, anchor_entry.due_date)
+    db.add(rule)
 
 
 def build_entry_template_from_payload(payload: FinanceEntryCreate) -> dict[str, Any]:
@@ -97,8 +194,9 @@ def create_recurring_rule(
     spec: FinanceRecurringSpec,
     template: dict[str, Any],
     first_due: date,
+    tz_name: str = "America/Sao_Paulo",
 ) -> FinanceRecurringTransaction:
-    validate_recurring_spec(spec, first_due)
+    validate_recurring_spec(spec, first_due, tz_name=tz_name)
     freq = str(spec.frequency)
     row = FinanceRecurringTransaction(
         tenant_id=tenant_id,
@@ -227,6 +325,7 @@ def materialize_recurring_schedule(
     rule: FinanceRecurringTransaction,
     *,
     end_at: date | None = None,
+    tz_name: str = "America/Sao_Paulo",
 ) -> int:
     """Cria lançamentos pendentes de toda a série até end_at (idempotente)."""
     if rule.status != FinanceRecurringStatus.ACTIVE.value:
@@ -239,18 +338,24 @@ def materialize_recurring_schedule(
     if not isinstance(template, dict):
         return 0
 
-    ref = _today_local()
-    end = end_at if end_at is not None else _schedule_end(rule, reference=ref)
-    if rule.end_date is not None:
-        end = min(end, rule.end_date)
-
+    ref = _today_local(tz_name)
     start = _schedule_start_for_rule(db, rule)
     if rule.end_date is not None and start > rule.end_date:
         return 0
 
+    # Horizonte a partir da primeira ocorrência (não só “hoje”), para séries com vencimento futuro.
+    end = end_at if end_at is not None else _schedule_end(rule, reference=max(start, ref))
+    if rule.end_date is not None:
+        end = min(end, rule.end_date)
+    if end < start:
+        return 0
+
     created = 0
     last_due: date | None = None
+    excluded = load_excluded_due_dates(rule)
     for due in iter_recurring_due_dates(rule, start, end):
+        if due in excluded:
+            continue
         last_due = due
         if _create_entry_from_template(
             db,
@@ -269,14 +374,25 @@ def materialize_recurring_schedule(
     return created
 
 
-def _entry_exists_for_due(db: Session, recurring_id: int, due: date) -> bool:
+def _entry_exists_for_due(
+    db: Session,
+    recurring_id: int,
+    due: date,
+    *,
+    rule: FinanceRecurringTransaction | None = None,
+) -> bool:
+    if rule is None:
+        rule = db.execute(
+            select(FinanceRecurringTransaction).where(FinanceRecurringTransaction.id == recurring_id)
+        ).scalar_one_or_none()
+    if rule is not None and due in load_excluded_due_dates(rule):
+        return True
     n = db.execute(
         select(func.count())
         .select_from(FinanceEntry)
         .where(
             FinanceEntry.recurring_transaction_id == recurring_id,
             FinanceEntry.due_date == due,
-            FinanceEntry.status != FinanceEntryStatus.CANCELLED,
         )
     ).scalar_one()
     return int(n or 0) > 0
@@ -305,7 +421,10 @@ def _create_entry_from_template(
     template: dict[str, Any],
     due: date,
 ) -> FinanceEntry | None:
-    if _entry_exists_for_due(db, recurring_id, due):
+    rule = db.execute(
+        select(FinanceRecurringTransaction).where(FinanceRecurringTransaction.id == recurring_id)
+    ).scalar_one_or_none()
+    if _entry_exists_for_due(db, recurring_id, due, rule=rule):
         return None
 
     from app.finance_settlement import expected_settlement_for_parcel, normalize_settlement_plan

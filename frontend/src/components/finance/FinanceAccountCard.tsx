@@ -8,7 +8,11 @@ import {
   Wallet,
 } from "lucide-react";
 import type { FinanceBankAccountOut, FinanceBankCatalogRow, FinanceGatewaysOut } from "../../api/finance";
-import { FinanceAccountBankMark, financeAccountConfigProvider } from "./FinanceAccountBankMark";
+import {
+  FinanceAccountBankMark,
+  accountIntegrationSummary,
+  financeAccountConfigProvider,
+} from "./FinanceAccountBankMark";
 import { Badge } from "../ui/badge";
 import styles from "./FinanceAccountCard.module.css";
 
@@ -65,6 +69,8 @@ type Props = {
   account: FinanceBankAccountOut;
   gateways: FinanceGatewaysOut | null;
   catalog: FinanceBankCatalogRow[] | null;
+  /** Saldo calculado (lançamentos + saldo inicial); quando ausente, usa initial_balance. */
+  displayBalance?: number | null;
   onReconcile: () => void;
   onConfigure: () => void;
   onDelete: () => void;
@@ -75,6 +81,7 @@ export function FinanceAccountCard({
   account,
   gateways,
   catalog,
+  displayBalance,
   onReconcile,
   onConfigure,
   onDelete,
@@ -86,7 +93,12 @@ export function FinanceAccountCard({
   const statusLabel = accountStatusLabel(account, gateways);
   const isCaixa = account.name.trim().toLowerCase() === "caixa";
   const provider = financeAccountConfigProvider(account, gateways);
-  const showReconcileCta = provider === "mercadopago" || provider === "stone";
+  const integrationSummary = accountIntegrationSummary(account, gateways);
+  const showReconcileCta = provider === "mercadopago" || provider === "stone" || integrationSummary?.tone === "muted";
+  const balance =
+    displayBalance != null && Number.isFinite(displayBalance)
+      ? displayBalance
+      : Number(account.initial_balance || 0);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -169,7 +181,7 @@ export function FinanceAccountCard({
 
       <div className={styles.balanceBlock}>
         <span className={styles.balanceLabel}>Saldo</span>
-        <p className={styles.balanceValue}>{money(Number(account.initial_balance || 0))}</p>
+        <p className={styles.balanceValue}>{money(balance)}</p>
       </div>
 
       <svg className={styles.sparkline} viewBox="0 0 252 56" preserveAspectRatio="none" aria-hidden>
@@ -186,21 +198,37 @@ export function FinanceAccountCard({
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          points={sparklinePoints(account.id, Number(account.initial_balance || 0))}
+          points={sparklinePoints(account.id, balance)}
         />
         <polygon
           className={styles.sparklineFill}
           fill={`url(#spark-${account.id})`}
-          points={`0,56 ${sparklinePoints(account.id, Number(account.initial_balance || 0))} 252,56`}
+          points={`0,56 ${sparklinePoints(account.id, balance)} 252,56`}
         />
       </svg>
 
       <footer className={styles.cardFooter}>
-        {statusLabel ? (
-          <Badge variant={status === "attention" ? "warning" : status === "inactive" ? "secondary" : "success"}>
-            {statusLabel}
-          </Badge>
-        ) : null}
+        <div className={styles.cardFooterBadges}>
+          {statusLabel ? (
+            <Badge variant={status === "attention" ? "warning" : status === "inactive" ? "secondary" : "success"}>
+              {statusLabel}
+            </Badge>
+          ) : null}
+          {integrationSummary ? (
+            <Badge
+              variant={
+                integrationSummary.tone === "success"
+                  ? "success"
+                  : integrationSummary.tone === "warning"
+                    ? "warning"
+                    : "secondary"
+              }
+              title={integrationSummary.detail}
+            >
+              {integrationSummary.label}
+            </Badge>
+          ) : null}
+        </div>
         {showReconcileCta && status === "active" ? (
           <button type="button" className={styles.reconcileCta} onClick={onReconcile}>
             Conciliar

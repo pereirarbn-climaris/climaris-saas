@@ -35,6 +35,7 @@ _DEFAULT_CAPACITOR_CORS_ORIGINS: tuple[str, ...] = (
 # Produção Climaris (SPA + Evolution Manager em subdomínios distintos). Sobrescreva/estenda com CORS_ORIGINS.
 _DEFAULT_CLIMARIS_PROD_CORS_ORIGINS: tuple[str, ...] = (
     "https://app.climaris.com.br",
+    "https://beta.climaris.com.br",
     "https://evo.climaris.com.br",
 )
 

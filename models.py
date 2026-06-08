@@ -71,6 +71,7 @@ class ScheduleStatus(str, enum.Enum):
 class StockMovementReason(str, enum.Enum):
     OS_CONSUMPTION = "os_consumption"
     MANUAL_ADJUST = "manual_adjust"
+    PURCHASE = "purchase"
 
 
 class PreventiveIntervalType(str, enum.Enum):
@@ -244,6 +245,9 @@ class Tenant(Base):
     tax_id_kind: Mapped[str] = mapped_column(String(8), nullable=False, default="cnpj")
     active_plan: Mapped[str] = mapped_column(String(80), nullable=False)
     finance_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    inventory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Flags de funcionalidades beta por workspace: {"new_laudo": true, "dre_dashboard": false}
+    features_enabled: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     finance_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="basic")
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     business_days: Mapped[str] = mapped_column(String(32), nullable=False, default="0,1,2,3,4")
@@ -262,6 +266,19 @@ class Tenant(Base):
     address_ibge_code: Mapped[str | None] = mapped_column(String(7), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    trade_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    state_registration: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ie_indicator: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    main_activity_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    main_activity_description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    legal_nature: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    registration_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    founded_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_verified_cnpj: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_cnpj_commercial_update: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cnpj_commercial_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     website: Mapped[str | None] = mapped_column(String(255), nullable=True)
     whatsapp_instance_name: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
     whatsapp_connection_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -283,6 +300,7 @@ class Tenant(Base):
     logo_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
     logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     pdf_primary_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#0B7FAF")
+    cft_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     preventive_promo_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     preventive_promo_image_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     preventive_promo_image_mimetype: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -310,11 +328,17 @@ class Tenant(Base):
     clients: Mapped[list["Client"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     products: Mapped[list["Product"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     stock_movements: Mapped[list["StockMovement"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    product_purchases: Mapped[list["ProductPurchase"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     services: Mapped[list["Service"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     service_orders: Mapped[list["ServiceOrder"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
     budgets: Mapped[list["Budget"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    budget_template_settings: Mapped["BudgetTemplateSettings | None"] = relationship(
+        back_populates="tenant", uselist=False, cascade="all, delete-orphan"
+    )
     qrcodes: Mapped[list["QrCode"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     schedules: Mapped[list["Schedule"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     holidays: Mapped[list["TenantHoliday"]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
@@ -541,6 +565,26 @@ class PlatformApiCredential(Base):
     aws_keys_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     extra_config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PlatformBranding(Base):
+    """Identidade visual global do SaaS (logo, favicon, nome) — singleton id=1."""
+
+    __tablename__ = "platform_branding"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform_name: Mapped[str] = mapped_column(String(120), nullable=False, default="Climaris")
+    logo_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    logo_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    favicon_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    favicon_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    favicon_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    favicon_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
@@ -870,6 +914,12 @@ class Client(Base):
     last_cnpj_commercial_update: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Enriquecimento CNPJá comercial (Receita + Cadastro de Contribuintes).
+    main_activity_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    main_activity_description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    legal_nature: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    registration_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    founded_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     logo_s3_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     logo_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -913,8 +963,11 @@ class ClientSite(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     street: Mapped[str | None] = mapped_column(String(255), nullable=True)
     number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    complement: Mapped[str | None] = mapped_column(String(120), nullable=True)
     neighborhood: Mapped[str | None] = mapped_column(String(100), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(2), nullable=True)
@@ -1600,6 +1653,7 @@ class Product(Base):
     order_items: Mapped[list["ServiceOrderProductItem"]] = relationship(back_populates="product")
     service_inputs: Mapped[list["ServiceProductInput"]] = relationship(back_populates="product")
     stock_movements: Mapped[list["StockMovement"]] = relationship(back_populates="product")
+    purchase_lines: Mapped[list["ProductPurchaseLine"]] = relationship(back_populates="product")
     images: Mapped[list["ProductImage"]] = relationship(
         back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.sort_order"
     )
@@ -1773,7 +1827,11 @@ class HistoricoServico(Base):
     client: Mapped["Client"] = relationship(back_populates="historico_servicos")
     service: Mapped["Service"] = relationship(back_populates="historico_servicos")
     service_order: Mapped["ServiceOrder | None"] = relationship()
-    lembretes: Mapped[list["LembretePreventivo"]] = relationship(back_populates="historico_servico")
+    lembretes: Mapped[list["LembretePreventivo"]] = relationship(
+        back_populates="historico_servico",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class LembretePreventivo(Base):
@@ -2039,6 +2097,9 @@ class StockMovement(Base):
     service_order_id: Mapped[int | None] = mapped_column(
         ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    product_purchase_id: Mapped[int | None] = mapped_column(
+        ForeignKey("product_purchases.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
@@ -2047,6 +2108,50 @@ class StockMovement(Base):
     tenant: Mapped["Tenant"] = relationship(back_populates="stock_movements")
     product: Mapped["Product"] = relationship(back_populates="stock_movements")
     service_order: Mapped["ServiceOrder | None"] = relationship(back_populates="stock_movements")
+    product_purchase: Mapped["ProductPurchase | None"] = relationship(back_populates="stock_movements")
+
+
+class ProductPurchase(Base):
+    __tablename__ = "product_purchases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    finance_entry_id: Mapped[int] = mapped_column(
+        ForeignKey("finance_entries.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    supplier_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    purchased_at: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="product_purchases")
+    finance_entry: Mapped["FinanceEntry"] = relationship(back_populates="product_purchase")
+    lines: Mapped[list["ProductPurchaseLine"]] = relationship(
+        back_populates="purchase", cascade="all, delete-orphan"
+    )
+    stock_movements: Mapped[list["StockMovement"]] = relationship(back_populates="product_purchase")
+
+
+class ProductPurchaseLine(Base):
+    __tablename__ = "product_purchase_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    purchase_id: Mapped[int] = mapped_column(
+        ForeignKey("product_purchases.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
+    unit_cost: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+
+    purchase: Mapped["ProductPurchase"] = relationship(back_populates="lines")
+    product: Mapped["Product"] = relationship(back_populates="purchase_lines")
 
 
 class Budget(Base):
@@ -2147,6 +2252,25 @@ class BudgetProductItem(Base):
 
     budget: Mapped["Budget"] = relationship(back_populates="product_items")
     product: Mapped["Product"] = relationship()
+
+
+class BudgetTemplateSettings(Base):
+    """Configuração de modelos, cores e textos legais padrão para PDFs de orçamento."""
+
+    __tablename__ = "budget_template_settings"
+
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    template_key: Mapped[str] = mapped_column(String(32), nullable=False, default="classic")
+    brand_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#0B7FAF")
+    default_warranty_terms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_payment_terms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_technical_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="budget_template_settings")
 
 
 class ServiceOrderTechnician(Base):
@@ -2394,6 +2518,9 @@ class FinanceEntry(Base):
     )
     credit_card_invoice: Mapped["FinanceCreditCardInvoice | None"] = relationship(
         back_populates="entries", foreign_keys="FinanceEntry.credit_card_invoice_id"
+    )
+    product_purchase: Mapped["ProductPurchase | None"] = relationship(
+        back_populates="finance_entry", uselist=False
     )
 
 

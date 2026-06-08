@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import (
+    OrderStatus,
     ScheduleStatus,
     ServiceOrderEquipmentService,
     ServiceOrderTechnician,
@@ -19,6 +20,41 @@ from models import (
     UserRole,
 )
 
+_OPEN_ORDER_STATUSES = frozenset(
+    {
+        OrderStatus.OPEN,
+        OrderStatus.APPROVED,
+        OrderStatus.SCHEDULED,
+        OrderStatus.IN_PROGRESS,
+    }
+)
+
+
+def is_open_service_order(order: "ServiceOrder") -> bool:
+    """OS ainda em andamento (equipamento inativo não deve aparecer)."""
+    status = getattr(order, "status", None)
+    if status is None:
+        return False
+    if isinstance(status, str):
+        status = OrderStatus(status)
+    return status in _OPEN_ORDER_STATUSES
+
+
+def service_item_visible_on_order(order: "ServiceOrder", item: ServiceOrderEquipmentService) -> bool:
+    """Em OS abertas, oculta linhas de equipamentos desativados; em concluídas/canceladas mantém histórico."""
+    if not is_open_service_order(order):
+        return True
+    if item.equipment_id is None:
+        return True
+    equipment = item.equipment
+    if equipment is None:
+        return True
+    return bool(equipment.ativo)
+
+
+def iter_visible_service_items(order: "ServiceOrder") -> list[ServiceOrderEquipmentService]:
+    return [item for item in order.service_items if service_item_visible_on_order(order, item)]
+
 if TYPE_CHECKING:
     from models import ServiceOrder, User
 
@@ -26,7 +62,7 @@ if TYPE_CHECKING:
 def get_total_duration_minutes(order: "ServiceOrder") -> int:
     """Soma quantity × duration_minutes dos serviços vinculados a equipamentos (não inclui produtos)."""
     total = 0
-    for item in order.service_items:
+    for item in iter_visible_service_items(order):
         qty = max(int(item.quantity or 1), 1)
         minutes = max(int(item.duration_minutes or 1), 1)
         total += qty * minutes
@@ -86,7 +122,7 @@ def assert_unique_equipment_service(
 def build_equipment_cards(order: "ServiceOrder") -> list[dict[str, Any]]:
     """Agrupa equipment_services por equipamento para a visão do técnico."""
     groups: dict[int | None, list[ServiceOrderEquipmentService]] = defaultdict(list)
-    for item in order.service_items:
+    for item in iter_visible_service_items(order):
         groups[item.equipment_id].append(item)
 
     cards: list[dict[str, Any]] = []

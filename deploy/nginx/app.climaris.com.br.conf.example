@@ -19,7 +19,7 @@ server {
 
 server {
     listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen [::]:443 ssl http2;  # obrigatório se existir AAAA no DNS; senão o IPv6 cai no vhost beta
     server_name app.climaris.com.br;
 
     # Certbot / Let's Encrypt

@@ -18,6 +18,7 @@ import {
 import type { DashboardOutletContext } from "../dashboardContext";
 import { PreventiveCreateFormView } from "../../components/preventive";
 import { ToastHost } from "../../components/ToastHost";
+import { DeleteConfirmModal } from "../../components/ui/delete-confirm-modal";
 import { toast } from "../../lib/toast";
 import tableStyles from "../listTableCommon.module.css";
 import { PreventiveClientsGroupedList } from "./PreventiveClientsGroupedList";
@@ -53,6 +54,8 @@ export function PreventiveMaintenancePage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editScheduleId, setEditScheduleId] = useState<number | null>(null);
   const [sendingClientId, setSendingClientId] = useState<number | null>(null);
+  const [deleteReminderTarget, setDeleteReminderTarget] = useState<PreventiveItem | null>(null);
+  const [deletingReminder, setDeletingReminder] = useState(false);
   const [savingAutoSetting, setSavingAutoSetting] = useState(false);
 
   const monthLabel = useMemo(() => formatMonthLabel(monthValue), [monthValue]);
@@ -177,7 +180,7 @@ export function PreventiveMaintenancePage() {
       if (!canEdit || !parsedMonth) return;
       setSendingClientId(clientId);
       try {
-        await sendPreventiveReminder({
+        const result = await sendPreventiveReminder({
           client_id: clientId,
           year: parsedMonth.year,
           month: parsedMonth.month,
@@ -185,36 +188,56 @@ export function PreventiveMaintenancePage() {
           technical_problem_hint: settings?.preventive_technical_problem_hint ?? null,
         });
         toast.success("Lembrete enviado por WhatsApp (processando em segundo plano).");
+
+        if (result.processing_in_background) {
+          const maxAttempts = 15;
+          for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            if (attempt > 0) {
+              await new Promise((resolve) => window.setTimeout(resolve, 2000));
+            }
+            const grouped = await listPreventiveItemsGrouped(parsedMonth);
+            setClients(grouped.clients);
+            const group = grouped.clients.find((c) => c.client_id === clientId);
+            const sent = group?.equipments.some((row) => row.status_mensagem_enviada);
+            if (sent) {
+              toast.success("Status atualizado: mensagem enviada.");
+              break;
+            }
+          }
+        } else {
+          await refreshList();
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Não foi possível enviar o lembrete.");
       } finally {
         setSendingClientId(null);
       }
     },
-    [canEdit, parsedMonth, settings],
+    [canEdit, parsedMonth, settings, refreshList],
   );
 
-  const handleDeleteManualReminder = useCallback(
-    async (row: PreventiveItem) => {
+  const handleRequestDeleteManualReminder = useCallback(
+    (row: PreventiveItem) => {
       if (!canEdit || !row.preventive_schedule_id) return;
-      const label = row.equipment_identificacao || row.service_name || "este lembrete";
-      if (
-        !window.confirm(
-          `Excluir o lembrete de "${label}"?\n\nO registro sai da listagem mensal. Lembretes de WhatsApp ainda na fila serão cancelados.`,
-        )
-      ) {
-        return;
-      }
-      try {
-        await deleteManualPreventiveReminder(row.preventive_schedule_id);
-        await refreshList();
-        toast.success("Lembrete excluído.");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Não foi possível excluir o lembrete.");
-      }
+      setDeleteReminderTarget(row);
     },
-    [canEdit, refreshList],
+    [canEdit],
   );
+
+  const handleConfirmDeleteManualReminder = useCallback(async () => {
+    if (!deleteReminderTarget?.preventive_schedule_id) return;
+    setDeletingReminder(true);
+    try {
+      await deleteManualPreventiveReminder(deleteReminderTarget.preventive_schedule_id);
+      setDeleteReminderTarget(null);
+      await refreshList();
+      toast.success("Lembrete excluído.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível excluir o lembrete.");
+    } finally {
+      setDeletingReminder(false);
+    }
+  }, [deleteReminderTarget, refreshList]);
 
   return (
     <div className={styles.wrap}>
@@ -416,7 +439,22 @@ export function PreventiveMaintenancePage() {
           setEditScheduleId(row.preventive_schedule_id);
           setCreateOpen(true);
         }}
-        onDeleteManualReminder={(row) => void handleDeleteManualReminder(row)}
+        onDeleteManualReminder={handleRequestDeleteManualReminder}
+      />
+
+      <DeleteConfirmModal
+        open={deleteReminderTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletingReminder) setDeleteReminderTarget(null);
+        }}
+        title="Excluir lembrete"
+        description={
+          deleteReminderTarget
+            ? `Excluir o lembrete de "${deleteReminderTarget.equipment_identificacao || deleteReminderTarget.service_name || "este lembrete"}"? O registro sai da listagem mensal. Lembretes de WhatsApp ainda na fila serão cancelados.`
+            : ""
+        }
+        busy={deletingReminder}
+        onConfirm={() => void handleConfirmDeleteManualReminder()}
       />
 
       <PreventiveCreateFormView

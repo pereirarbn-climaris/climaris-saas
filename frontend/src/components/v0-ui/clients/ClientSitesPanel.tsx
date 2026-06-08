@@ -6,12 +6,17 @@ import {
   type ClientSiteOut,
   type ClientSitePayload,
 } from "../../../api/clients";
+import { fetchCepLookup } from "../../../api/cep";
 import { Button } from "../../ui/button";
-import { formatCepInput } from "../../../lib/brMask";
+import { digitsOnly, formatCepInput, formatPhoneBrInput } from "../../../lib/brMask";
+import { StreetAddressLookupInput } from "./StreetAddressLookupInput";
+import panelStyles from "./client-sites-panel.module.css";
 
 type Props = {
   clientId: number;
   readOnly?: boolean;
+  nearCity?: string;
+  nearState?: string;
   /** Dispara após criar/excluir unidade (atualizar equipamentos e selects). */
   onSitesChanged?: () => void;
   /** Abre o cadastro de equipamento com a obra já selecionada. */
@@ -20,8 +25,11 @@ type Props = {
 
 const emptyForm = (): ClientSitePayload => ({
   name: "",
+  contact_name: "",
+  phone: "",
   street: "",
   number: "",
+  complement: "",
   neighborhood: "",
   city: "",
   state: "",
@@ -78,21 +86,8 @@ function PanelToggle({
   );
 }
 
-const fieldLabelStyle: React.CSSProperties = {
-  fontSize: "0.8125rem",
-  color: "var(--color-text)",
-};
 
-const fieldInputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "0.5rem 0.625rem",
-  borderRadius: 6,
-  border: "1px solid var(--color-border, #e5e7eb)",
-  fontSize: "0.875rem",
-  backgroundColor: "var(--color-surface, #fff)",
-};
-
-export function ClientSitesPanel({ clientId, readOnly, onSitesChanged, onAddEquipmentForSite }: Props) {
+export function ClientSitesPanel({ clientId, readOnly, nearCity, nearState, onSitesChanged, onAddEquipmentForSite }: Props) {
   const [sites, setSites] = useState<ClientSiteOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -100,6 +95,33 @@ export function ClientSitesPanel({ clientId, readOnly, onSitesChanged, onAddEqui
   const [form, setForm] = useState<ClientSitePayload>(emptyForm);
   const [hasMultipleSites, setHasMultipleSites] = useState(false);
   const [isAddingSite, setIsAddingSite] = useState(false);
+  const [cepLoading, setCepLoading] = useState(false);
+
+  const onBuscarCepSite = async () => {
+    const digits = digitsOnly(form.cep ?? "");
+    if (digits.length !== 8) {
+      setErr("Informe um CEP válido com 8 dígitos.");
+      return;
+    }
+    setCepLoading(true);
+    setErr("");
+    try {
+      const data = await fetchCepLookup(digits);
+      setForm((f) => ({
+        ...f,
+        street: data.address_street ?? f.street,
+        neighborhood: data.address_district ?? f.neighborhood,
+        complement: data.address_complement ?? f.complement,
+        city: data.address_city ?? f.city,
+        state: data.address_state ?? f.state,
+        cep: data.cep ? formatCepInput(data.cep) : f.cep,
+      }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Não foi possível buscar o CEP.");
+    } finally {
+      setCepLoading(false);
+    }
+  };
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -131,7 +153,12 @@ export function ClientSitesPanel({ clientId, readOnly, onSitesChanged, onAddEqui
     setSaving(true);
     setErr("");
     try {
-      await createClientSite(clientId, form);
+      await createClientSite(clientId, {
+        ...form,
+        phone: digitsOnly(form.phone ?? "") || undefined,
+        contact_name: form.contact_name?.trim() || undefined,
+        complement: form.complement?.trim() || undefined,
+      });
       setForm(emptyForm());
       setIsAddingSite(false);
       setHasMultipleSites(true);
@@ -223,8 +250,14 @@ export function ClientSitesPanel({ clientId, readOnly, onSitesChanged, onAddEqui
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <strong>{s.name}</strong>
+                  {s.contact_name ? (
+                    <div style={{ fontSize: "0.8125rem", marginTop: 2 }}>Contato: {s.contact_name}</div>
+                  ) : null}
+                  {s.phone ? (
+                    <div style={{ fontSize: "0.8125rem" }}>Tel.: {formatPhoneBrInput(s.phone)}</div>
+                  ) : null}
                   <div style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", marginTop: 4 }}>
-                    {[s.street, s.number, s.neighborhood, s.city, s.state].filter(Boolean).join(" — ")}
+                    {[s.street, s.number, s.complement, s.neighborhood, s.city, s.state].filter(Boolean).join(" — ")}
                     {s.cep ? ` · CEP ${formatCepInput(s.cep)}` : ""}
                   </div>
                 </div>
@@ -272,75 +305,119 @@ export function ClientSitesPanel({ clientId, readOnly, onSitesChanged, onAddEqui
                   + Cadastrar Nova Obra / Filial
                 </Button>
               ) : (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                    gap: "0.5rem",
-                    alignItems: "end",
-                    marginTop: "0.25rem",
-                    padding: "1rem",
-                    borderRadius: 8,
-                    border: "1px solid var(--color-border, #e5e7eb)",
-                    backgroundColor: "var(--color-surface, #fafafa)",
-                  }}
-                >
+                <div className={panelStyles.formCard} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "0.5rem", alignItems: "end" }}>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
-                    <span style={fieldLabelStyle}>Nome da unidade *</span>
+                    <span className={panelStyles.fieldLabel}>Nome da unidade *</span>
                     <input
-                      style={fieldInputStyle}
+                      className={panelStyles.fieldInput}
                       value={form.name}
                       onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                       placeholder="Ex.: Obra Centro, Filial SP"
                     />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={fieldLabelStyle}>Logradouro</span>
+                    <span className={panelStyles.fieldLabel}>Nome do contato</span>
                     <input
-                      style={fieldInputStyle}
-                      value={form.street ?? ""}
-                      onChange={(e) => setForm((f) => ({ ...f, street: e.target.value }))}
+                      className={panelStyles.fieldInput}
+                      value={form.contact_name ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, contact_name: e.target.value }))}
+                      placeholder="Pessoa de contato na unidade"
                     />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={fieldLabelStyle}>Número</span>
+                    <span className={panelStyles.fieldLabel}>Telefone</span>
                     <input
-                      style={fieldInputStyle}
+                      className={panelStyles.fieldInput}
+                      value={form.phone ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, phone: formatPhoneBrInput(e.target.value) }))}
+                      placeholder="(00) 0000-0000"
+                    />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+                    <span className={panelStyles.fieldLabel}>CEP</span>
+                    <div className={panelStyles.cepRow}>
+                      <input
+                        className={`${panelStyles.fieldInput} ${panelStyles.cepInput}`}
+                        value={form.cep ?? ""}
+                        onChange={(e) => setForm((f) => ({ ...f, cep: formatCepInput(e.target.value) }))}
+                        placeholder="00000-000"
+                        inputMode="numeric"
+                        autoComplete="postal-code"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void onBuscarCepSite()}
+                        disabled={cepLoading}
+                      >
+                        {cepLoading ? "…" : "Buscar CEP"}
+                      </Button>
+                    </div>
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "1 / -1" }}>
+                    <span className={panelStyles.fieldLabel}>Logradouro</span>
+                    <StreetAddressLookupInput
+                      value={form.street ?? ""}
+                      onChange={(street) => setForm((f) => ({ ...f, street }))}
+                      city={form.city ?? ""}
+                      state={form.state ?? ""}
+                      nearCity={nearCity}
+                      nearState={nearState}
+                      className={panelStyles.fieldInput}
+                      onSelect={(sel) =>
+                        setForm((f) => ({
+                          ...f,
+                          street: sel.street || f.street,
+                          neighborhood: sel.district || f.neighborhood,
+                          complement: sel.complement || f.complement,
+                          city: sel.city || f.city,
+                          state: sel.state || f.state,
+                          cep: sel.cep ? formatCepInput(sel.cep) : f.cep,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span className={panelStyles.fieldLabel}>Número</span>
+                    <input
+                      className={panelStyles.fieldInput}
                       value={form.number ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, number: e.target.value }))}
                     />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={fieldLabelStyle}>Bairro</span>
+                    <span className={panelStyles.fieldLabel}>Complemento</span>
                     <input
-                      style={fieldInputStyle}
+                      className={panelStyles.fieldInput}
+                      value={form.complement ?? ""}
+                      onChange={(e) => setForm((f) => ({ ...f, complement: e.target.value }))}
+                      placeholder="Apt, sala, bloco…"
+                    />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span className={panelStyles.fieldLabel}>Bairro</span>
+                    <input
+                      className={panelStyles.fieldInput}
                       value={form.neighborhood ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, neighborhood: e.target.value }))}
                     />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={fieldLabelStyle}>Cidade</span>
+                    <span className={panelStyles.fieldLabel}>Cidade</span>
                     <input
-                      style={fieldInputStyle}
+                      className={panelStyles.fieldInput}
                       value={form.city ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))}
                     />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={fieldLabelStyle}>UF</span>
+                    <span className={panelStyles.fieldLabel}>UF</span>
                     <input
-                      style={fieldInputStyle}
+                      className={panelStyles.fieldInput}
                       maxLength={2}
                       value={form.state ?? ""}
                       onChange={(e) => setForm((f) => ({ ...f, state: e.target.value.toUpperCase() }))}
-                    />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={fieldLabelStyle}>CEP</span>
-                    <input
-                      style={fieldInputStyle}
-                      value={form.cep ?? ""}
-                      onChange={(e) => setForm((f) => ({ ...f, cep: formatCepInput(e.target.value) }))}
                     />
                   </label>
                   <div

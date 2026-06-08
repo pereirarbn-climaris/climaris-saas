@@ -10,6 +10,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.budget_pdf import build_budget_pdf
+from app.budget_template_settings import (
+    apply_budget_defaults_from_settings,
+    build_budget_template_preview_pdf,
+    get_budget_template_settings,
+    patch_budget_template_settings,
+)
+from app.schemas_budget_template import BudgetTemplateSettingsOut, BudgetTemplateSettingsPatch
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
@@ -130,6 +137,70 @@ def list_budgets(
 
 
 @router.get(
+    "/budgets/template-settings",
+    response_model=BudgetTemplateSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def get_budget_template_settings_route(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BudgetTemplateSettingsOut:
+    data = get_budget_template_settings(db, tenant_id=current_user.tenant_id)
+    return BudgetTemplateSettingsOut.model_validate(data)
+
+
+@router.patch(
+    "/budgets/template-settings",
+    response_model=BudgetTemplateSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def patch_budget_template_settings_route(
+    payload: BudgetTemplateSettingsPatch,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BudgetTemplateSettingsOut:
+    data = patch_budget_template_settings(db, tenant_id=current_user.tenant_id, payload=payload)
+    return BudgetTemplateSettingsOut.model_validate(data)
+
+
+@router.post(
+    "/budgets/template-settings/preview-pdf",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def post_budget_template_preview_pdf(
+    payload: BudgetTemplateSettingsPatch,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
+    logo_url: str | None = getattr(tenant, "logo_url", None)
+    logo_s3_key = getattr(tenant, "logo_s3_key", None)
+    if logo_s3_key:
+        try:
+            logo_url = generate_tenant_logo_presigned_url(logo_s3_key, db=db, expires_seconds=600)
+        except Exception:
+            pass
+    draft = BudgetTemplateSettingsPatch(
+        template_key=payload.template_key or "classic",
+        brand_color=payload.brand_color or getattr(tenant, "pdf_primary_color", None) or "#0B7FAF",
+        default_warranty_terms=payload.default_warranty_terms,
+        default_payment_terms=payload.default_payment_terms,
+        default_technical_notes=payload.default_technical_notes,
+    )
+    pdf_bytes = build_budget_template_preview_pdf(
+        db,
+        tenant_id=current_user.tenant_id,
+        payload=draft,
+        logo_url=logo_url,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="orcamento-modelo-preview.pdf"'},
+    )
+
+
+@router.get(
     "/budgets/{budget_id}",
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
 )
@@ -166,15 +237,23 @@ def create_budget(
     if payload.validity_days < 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="validity_days must be at least 1.")
 
+    payment_terms, warranty_terms, observation = apply_budget_defaults_from_settings(
+        db,
+        tenant_id=current_user.tenant_id,
+        payment_terms=payload.payment_terms,
+        warranty_terms=payload.warranty_terms,
+        observation=payload.observation,
+    )
+
     budget = Budget(
         tenant_id=current_user.tenant_id,
         client_id=payload.client_id,
         title=f"Orcamento - {client.name}",
-        description=payload.observation,
+        description=observation,
         status=BudgetStatus.DRAFT,
         payment_method=payload.payment_method,
-        payment_terms=payload.payment_terms,
-        warranty_terms=payload.warranty_terms,
+        payment_terms=payment_terms,
+        warranty_terms=warranty_terms,
         validity_days=payload.validity_days,
     )
     db.add(budget)
@@ -387,7 +466,7 @@ def budget_pdf(
             logo_url = generate_tenant_logo_presigned_url(logo_s3_key, db=db, expires_seconds=600)
         except Exception:
             logo_url = logo_url
-    pdf_bytes = build_budget_pdf(budget, tenant, logo_url=logo_url)
+    pdf_bytes = build_budget_pdf(budget, tenant, logo_url=logo_url, db=db)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

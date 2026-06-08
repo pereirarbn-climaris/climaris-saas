@@ -1,0 +1,201 @@
+.pageWithActionBar {
+  padding-bottom: 5.5rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 1.75rem;
+  align-items: start;
+}
+
+.actionBar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--color-surface-elevated);
+  border-top: 1px solid var(--color-border);
+  padding: 1rem 1.5rem;
+  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.06);
+}
+
+.actionBarInner {
+  max-width: 72rem;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.formColumn {
+  min-width: 0;
+}
+
+.previewColumn {
+  position: sticky;
+  top: 1rem;
+}
+
+.previewPanel {
+  padding: 1rem 1rem 1.15rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 14px;
+  background: var(--card, #fff);
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+}
+
+.previewPanelTitle {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.previewPanelHint {
+  margin: 0 0 0.85rem;
+  font-size: 0.8rem;
+  color: var(--muted-foreground, #64748b);
+  line-height: 1.45;
+}
+
+.previewPdfBtn {
+  display: block;
+  width: 100%;
+  margin-top: 0.85rem;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #0f172a;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.previewPdfBtn:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.previewPdfBtn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.card {
+  margin-bottom: 1.25rem;
+  padding: 1.25rem 1.35rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  background: var(--card, #fff);
+}
+
+.cardTitle {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.cardHint {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--muted-foreground, #64748b);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.field label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--foreground, #0f172a);
+}
+
+.field select,
+.field textarea {
+  font: inherit;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+}
+
+.field textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.colorRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.colorRow input[type="color"] {
+  width: 48px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.colorRow input[type="text"] {
+  flex: 1;
+  font: inherit;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  font-family: ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.previewBar {
+  height: 8px;
+  border-radius: 4px;
+  margin-top: 0.35rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.msgOk {
+  font-size: 0.88rem;
+  color: #047857;
+}
+
+.msgErr {
+  font-size: 0.88rem;
+  color: #b91c1c;
+}
+
+.templateOptionDesc {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted-foreground, #64748b);
+  font-weight: 400;
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .previewColumn {
+    position: static;
+    order: -1;
+  }
+}

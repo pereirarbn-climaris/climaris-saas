@@ -1,28 +1,303 @@
-.page { display: grid; gap: 1rem; }
-.header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.8rem; }
-.subtitle { margin: 0.25rem 0 0; color: var(--color-text-muted); font-size: 0.88rem; }
-.actions { display: flex; gap: 0.6rem; }
-.card { border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-elevated); padding: 1rem; display: grid; gap: 0.7rem; }
-.grid { display: grid; gap: var(--form-field-gap); grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
-.field { min-width: 0; }
-.field span { font-size: 0.76rem; text-transform: uppercase; color: var(--color-text-muted); letter-spacing: 0.04em; font-weight: 600; }
-.grid input, .grid select, .grid button { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text); padding: 0.55rem 0.7rem; }
-.hint { margin: 0; font-size: 0.82rem; color: var(--color-text-muted); }
-.cards { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-.item { border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-elevated); padding: 0.95rem; display: flex; justify-content: space-between; gap: 0.8rem; }
-.item p { margin: 0.2rem 0; color: var(--color-text-muted); font-size: 0.86rem; }
-.usageWrap { display: grid; gap: 0.25rem; margin: 0.35rem 0; }
-.usageTrack { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--color-border) 70%, #fff); overflow: hidden; }
-.usageFill { height: 100%; border-radius: 999px; }
-.usageLow { background: #16a34a; }
-.usageMedium { background: #f59e0b; }
-.usageHigh { background: #dc2626; }
-.usageText { font-size: 0.76rem; color: var(--color-text-muted); }
-.row { display: grid; gap: 0.4rem; align-content: start; }
-.row button { border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text); padding: 0.45rem 0.62rem; }
-.modalOverlay { position: fixed; inset: 0; background: rgba(20,27,45,0.45); display: grid; place-items: center; z-index: 40; }
-.modal { width: min(480px, calc(100vw - 2rem)); border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-elevated); padding: 1rem; }
-.modal header { display: flex; justify-content: space-between; align-items: center; }
-.modal input, .modal select, .modal button { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text); padding: 0.55rem 0.7rem; }
-.error { margin: 0; color: #b42318; }
-.msg { margin: 0; color: #047857; }
+.page {
+  display: grid;
+  gap: var(--space-4, 1rem);
+}
+
+.formGrid {
+  display: grid;
+  gap: var(--space-4, 1rem);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  align-items: end;
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2, 0.5rem);
+  min-width: 0;
+}
+
+.field span {
+  font-size: var(--font-size-sm, 0.8125rem);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text);
+}
+
+.formGrid input,
+.formGrid select,
+.formGrid button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.formGrid input:focus,
+.formGrid select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  grid-column: 1 / -1;
+}
+
+.cardsGrid {
+  display: grid;
+  gap: var(--space-4, 1rem);
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.cardItem {
+  border: 1px solid var(--color-border);
+  border-radius: var(--card-radius, 14px);
+  background: var(--color-surface-elevated);
+  padding: var(--space-5, 1.25rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 1rem);
+  box-shadow: var(--card-shadow, 0 1px 3px rgba(15, 23, 42, 0.06));
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.cardItem:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 22%, var(--color-border));
+  box-shadow: var(--card-shadow-hover, 0 4px 16px rgba(15, 23, 42, 0.08));
+  transform: translateY(-1px);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3, 0.75rem);
+}
+
+.cardBrand {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+.cardName {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+
+.cardMeta {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.cardLimit {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cardStats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2, 0.5rem);
+}
+
+.cardStat {
+  padding: var(--space-3, 0.75rem);
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid color-mix(in srgb, var(--color-border) 90%, transparent);
+  background: var(--color-surface);
+}
+
+.cardStatLabel {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.cardStatValue {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.usageWrap {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.usageTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-border) 70%, #fff);
+  overflow: hidden;
+}
+
+.usageFill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.usageLow {
+  background: #16a34a;
+}
+
+.usageMedium {
+  background: #f59e0b;
+}
+
+.usageHigh {
+  background: #dc2626;
+}
+
+.usageText {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.cardFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 0.5rem);
+  margin-top: auto;
+  padding-top: var(--space-2, 0.5rem);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+}
+
+.cardDates {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.emptyState {
+  padding: var(--space-8, 2rem) var(--space-4, 1rem);
+  text-align: center;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px dashed color-mix(in srgb, var(--color-border) 85%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 50%, transparent);
+}
+
+.emptyState svg {
+  width: 2rem;
+  height: 2rem;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+  margin-bottom: var(--space-2, 0.5rem);
+}
+
+.emptyState p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 27, 45, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 1rem;
+}
+
+.modal {
+  width: min(480px, 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--card-radius, 14px);
+  background: var(--color-surface-elevated);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+
+.modalHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3, 0.75rem);
+  padding: var(--space-5, 1.25rem);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+}
+
+.modalHead h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.modalClose {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-md, 10px);
+  line-height: 0;
+}
+
+.modalClose:hover {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  color: var(--color-text);
+}
+
+.modalClose svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.modalBody {
+  padding: var(--space-5, 1.25rem);
+  display: grid;
+  gap: var(--space-4, 1rem);
+}
+
+.modalBody input,
+.modalBody select {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-4, 1rem) var(--space-5, 1.25rem) var(--space-5, 1.25rem);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+}

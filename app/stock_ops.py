@@ -7,6 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.tenant_inventory import tenant_inventory_enabled
 from models import OrderStatus, Product, Service, ServiceOrder, ServiceOrderServiceItem, StockMovement, StockMovementReason
 
 
@@ -52,6 +53,10 @@ def apply_stock_consumption(
 ) -> None:
     """Baixa física ao concluir OS e libera reserva. Idempotente se stock_consumed_at estiver setado."""
     if order.stock_consumed_at is not None:
+        return
+
+    if not tenant_inventory_enabled(db, tenant_id):
+        order.stock_consumed_at = datetime.now(timezone.utc)
         return
 
     demand = demand_map_for_order(order)

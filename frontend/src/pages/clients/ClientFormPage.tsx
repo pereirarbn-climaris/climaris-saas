@@ -13,7 +13,6 @@ import {
   createClient,
   deleteClient,
   getClient,
-  listClientAudit,
   listClientSites,
   refreshClientCnpjCommercial,
   updateClient,
@@ -55,10 +54,8 @@ import {
 import { mapApiCategoryToOption } from "../../lib/equipmentCatalogAdminAdapter";
 import { digitsOnly, formatCepInput } from "../../lib/brMask";
 import {
-  clientHasPersistedAddressFromView,
   clientOutToViewData,
   emptyViewData,
-  mapAuditToHistory,
   mapBudgetsToView,
   mapOrdersToView,
   mapPmocPlansToView,
@@ -68,6 +65,8 @@ import {
   viewDataToCreatePayload,
   viewDataToUpdatePayload,
 } from "../../lib/clientFormViewAdapter";
+import { DeactivateEquipmentConfirmModal } from "../../components/equipment/DeactivateEquipmentConfirmModal";
+import { DeleteEquipmentConfirmModal } from "../../components/equipment/DeleteEquipmentConfirmModal";
 import { ToastHost } from "../../components/ToastHost";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
@@ -110,8 +109,6 @@ export function ClientFormPage() {
   const [cnpjCommercialLoading, setCnpjCommercialLoading] = useState(false);
   const [cnpjCommercialRefreshLoading, setCnpjCommercialRefreshLoading] = useState(false);
   const [cnpjLookupErr, setCnpjLookupErr] = useState("");
-  const [cnpjIncludeAddress, setCnpjIncludeAddress] = useState(true);
-  const [addressPersisted, setAddressPersisted] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("cadastro");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -126,13 +123,14 @@ export function ClientFormPage() {
   const [manualUrlByEquipmentId, setManualUrlByEquipmentId] = useState<Record<string, string>>({});
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [history, setHistory] = useState<ReturnType<typeof mapAuditToHistory>>([]);
   const [pmocData, setPmocData] = useState<ReturnType<typeof mapPmocPlansToView>>(undefined);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedErr, setRelatedErr] = useState("");
   const [equipmentModalRequest, setEquipmentModalRequest] = useState<{ clientSiteId: number } | null>(
     null,
   );
+  const [deactivateEquipmentTarget, setDeactivateEquipmentTarget] = useState<EquipmentItem | null>(null);
+  const [deleteEquipmentTarget, setDeleteEquipmentTarget] = useState<EquipmentItem | null>(null);
 
   const docDigits = useMemo(() => digitsOnly(clientData.documento).slice(0, 14), [clientData.documento]);
   const cepDigits = useMemo(
@@ -165,7 +163,6 @@ export function ClientFormPage() {
   useEffect(() => {
     if (isNew) {
       setClientData(emptyViewData());
-      setAddressPersisted(false);
       setIsLoading(false);
       return;
     }
@@ -181,7 +178,6 @@ export function ClientFormPage() {
           const view = clientOutToViewData(c);
           setClientData(view);
           savedClientSnapshotRef.current = serializeClientFormSnapshot(view);
-          setAddressPersisted(clientHasPersistedAddressFromView(view));
         }
       } catch (e) {
         if (!cancelled) {
@@ -197,16 +193,14 @@ export function ClientFormPage() {
   }, [isNew, clientId, idNum]);
 
   useEffect(() => {
-    setCnpjIncludeAddress(!addressPersisted);
-  }, [addressPersisted]);
-
-  useEffect(() => {
     if (isNew || !Number.isFinite(idNum) || idNum < 1 || isLoading) return;
     const tab = searchParams.get("tab");
     if (tab === "pmoc" && showPmocTab) {
       setActiveTab("pmoc");
     } else if (tab === "preventiva") {
       setActiveTab("preventiva");
+    } else if (tab === "historico") {
+      setActiveTab("cadastro");
     }
     setSearchParams(
       (prev) => {
@@ -326,25 +320,6 @@ export function ClientFormPage() {
   }, [isNew, idNum, reloadCatalogEquipments]);
 
   useEffect(() => {
-    if (isNew || !Number.isFinite(idNum) || idNum < 1 || activeTab !== "historico") {
-      setHistory([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const rows = await listClientAudit(idNum);
-        if (!cancelled) setHistory(mapAuditToHistory(rows));
-      } catch {
-        if (!cancelled) setHistory([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, idNum, isNew]);
-
-  useEffect(() => {
     if (
       isNew ||
       !Number.isFinite(idNum) ||
@@ -414,21 +389,24 @@ export function ClientFormPage() {
   }, [cepDigits, readOnly]);
 
   const applyCnpjLookupResult = useCallback(
-    (lu: Awaited<ReturnType<typeof fetchCnpjOpen>>, source: "open" | "commercial") => {
+    (lu: Awaited<ReturnType<typeof fetchCnpjOpen>>) => {
       setClientData((prev) => {
         const cur = digitsOnly(prev.documento).slice(0, 14);
         if (cur !== docDigits) return prev;
-        return mergeCnpjLookupToViewData(prev, lu, cnpjIncludeAddress);
+        return mergeCnpjLookupToViewData(prev, lu, true);
       });
-      const sourceLabel = source === "open" ? "consulta rápida (CNPJA Open)" : "validação fiscal (CNPJA Comercial)";
+      const sourceLabel =
+        lu.source === "commercial"
+          ? "validação fiscal (CNPJA Comercial)"
+          : lu.source === "brasilapi"
+            ? "consulta alternativa (BrasilAPI)"
+            : "consulta rápida (CNPJA Open)";
       setMsg({
         kind: "ok",
-        text: cnpjIncludeAddress
-          ? `Dados aplicados via ${sourceLabel}. CNPJ, razão social e tipo ficam protegidos após salvar.`
-          : `Razão social e nome fantasia atualizados via ${sourceLabel}. Clique em Salvar para gravar.`,
+        text: `Dados aplicados via ${sourceLabel}, incluindo endereço. CNPJ, razão social e tipo de cadastro ficam protegidos após salvar.`,
       });
     },
-    [cnpjIncludeAddress, docDigits],
+    [docDigits],
   );
 
   const onConsultCNPJ = useCallback(
@@ -442,7 +420,7 @@ export function ClientFormPage() {
       setMsg(null);
       try {
         const lu = await fetchCnpjOpen(docDigits);
-        applyCnpjLookupResult(lu, "open");
+        applyCnpjLookupResult(lu);
       } catch (error) {
         console.error("Erro detalhado da consulta fiscal:", error);
         setCnpjLookupErr(
@@ -466,7 +444,7 @@ export function ClientFormPage() {
       setMsg(null);
       try {
         const lu = await fetchCnpjCommercial(docDigits, true);
-        applyCnpjLookupResult(lu, "commercial");
+        applyCnpjLookupResult(lu);
       } catch (error) {
         console.error("Erro detalhado da consulta fiscal:", error);
         setCnpjLookupErr(
@@ -488,15 +466,13 @@ export function ClientFormPage() {
     setCnpjLookupErr("");
     setMsg(null);
     try {
-      const result = await refreshClientCnpjCommercial(idNum, cnpjIncludeAddress);
+      const result = await refreshClientCnpjCommercial(idNum, true);
       setClientData(
-        mergeCnpjLookupToViewData(clientOutToViewData(result.client), result.lookup, cnpjIncludeAddress),
+        mergeCnpjLookupToViewData(clientOutToViewData(result.client), result.lookup, true),
       );
       setMsg({
         kind: "ok",
-        text: cnpjIncludeAddress
-          ? "Cadastro atualizado via Receita (Comercial), incluindo endereço."
-          : "Dados fiscais atualizados via Receita (Comercial).",
+        text: "Cadastro atualizado via Receita (Comercial), incluindo endereço.",
       });
     } catch (error) {
       console.error("Erro detalhado da atualização comercial:", error);
@@ -509,7 +485,7 @@ export function ClientFormPage() {
     } finally {
       setCnpjCommercialRefreshLoading(false);
     }
-  }, [cnpjIncludeAddress, clientData.type, idNum, isNew, readOnly]);
+  }, [clientData.type, idNum, isNew, readOnly]);
 
   const onAddCatalogEquipment = useCallback(
     async (data: NewEquipmentData) => {
@@ -543,59 +519,65 @@ export function ClientFormPage() {
   );
 
   const onDeactivateCatalogEquipment = useCallback(
-    async (equipmentId: string) => {
+    (equipmentId: string) => {
       if (!canEdit || readOnly) return;
       const item = catalogEquipments.find((e) => e.id === equipmentId);
-      const label = item ? `${item.brandName} ${item.modelName}` : "este equipamento";
-      if (!window.confirm(`Desativar ${label}?`)) return;
-      setCatalogSaving(true);
-      setMsg(null);
-      try {
-        await updateClientCatalogEquipmentStatus(equipmentId, false);
-        await reloadCatalogEquipments();
-        setMsg({ kind: "ok", text: "Equipamento desativado." });
-      } catch (e) {
-        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao desativar equipamento." });
-      } finally {
-        setCatalogSaving(false);
-      }
+      if (!item) return;
+      setDeactivateEquipmentTarget(item);
     },
-    [canEdit, catalogEquipments, readOnly, reloadCatalogEquipments],
+    [canEdit, catalogEquipments, readOnly],
   );
 
+  const onConfirmDeactivateCatalogEquipment = useCallback(async () => {
+    if (!deactivateEquipmentTarget || !canEdit || readOnly) return;
+    const equipmentId = deactivateEquipmentTarget.id;
+    setCatalogSaving(true);
+    setMsg(null);
+    try {
+      await updateClientCatalogEquipmentStatus(equipmentId, false);
+      await reloadCatalogEquipments();
+      setDeactivateEquipmentTarget(null);
+      setMsg({ kind: "ok", text: "Equipamento desativado." });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao desativar equipamento." });
+    } finally {
+      setCatalogSaving(false);
+    }
+  }, [canEdit, deactivateEquipmentTarget, readOnly, reloadCatalogEquipments]);
+
   const onDeleteCatalogEquipment = useCallback(
-    async (equipmentId: string) => {
+    (equipmentId: string) => {
       if (!canEdit || readOnly) return;
       const item = catalogEquipments.find((e) => e.id === equipmentId);
-      if (item && !item.canDelete) {
+      if (!item) return;
+      if (!item.canDelete) {
         setMsg({
           kind: "err",
           text: item.deleteBlockReason ?? "Este equipamento não pode ser excluído.",
         });
         return;
       }
-      const label = item?.tag?.trim() || (item ? `${item.brandName} ${item.modelName}` : "este equipamento");
-      if (
-        !window.confirm(
-          `Excluir permanentemente "${label}"?\n\nEsta ação não pode ser desfeita. Só é possível quando não há OS, PMOC ou documentos vinculados.`,
-        )
-      ) {
-        return;
-      }
-      setCatalogSaving(true);
-      setMsg(null);
-      try {
-        await deleteClientCatalogEquipment(equipmentId);
-        await reloadCatalogEquipments();
-        setMsg({ kind: "ok", text: "Equipamento excluído." });
-      } catch (e) {
-        setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao excluir equipamento." });
-      } finally {
-        setCatalogSaving(false);
-      }
+      setDeleteEquipmentTarget(item);
     },
-    [canEdit, catalogEquipments, readOnly, reloadCatalogEquipments],
+    [canEdit, catalogEquipments, readOnly],
   );
+
+  const onConfirmDeleteCatalogEquipment = useCallback(async () => {
+    if (!deleteEquipmentTarget || !canEdit || readOnly) return;
+    const equipmentId = deleteEquipmentTarget.id;
+    setCatalogSaving(true);
+    setMsg(null);
+    try {
+      await deleteClientCatalogEquipment(equipmentId);
+      await reloadCatalogEquipments();
+      setDeleteEquipmentTarget(null);
+      setMsg({ kind: "ok", text: "Equipamento excluído." });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao excluir equipamento." });
+    } finally {
+      setCatalogSaving(false);
+    }
+  }, [canEdit, deleteEquipmentTarget, readOnly, reloadCatalogEquipments]);
 
   const onDownloadEquipmentManual = useCallback(
     (equipmentId: string, directUrl?: string | null) => {
@@ -631,6 +613,11 @@ export function ClientFormPage() {
     setMsg(null);
     if (readOnly) return;
 
+    if (!clientData.type) {
+      setMsg({ kind: "err", text: "Selecione o tipo de cadastro (Pessoa Física ou Pessoa Jurídica)." });
+      return;
+    }
+
     const digits = digitsOnly(clientData.documento);
     if (digits && digits.length !== 11 && digits.length !== 14) {
       setMsg({ kind: "err", text: "Documento deve ser CPF (11 dígitos) ou CNPJ (14 dígitos)." });
@@ -647,7 +634,6 @@ export function ClientFormPage() {
         const view = clientOutToViewData(updated);
         setClientData(view);
         savedClientSnapshotRef.current = serializeClientFormSnapshot(view);
-        setAddressPersisted(clientHasPersistedAddressFromView(view));
         toast.success("Alterações salvas com sucesso!");
       }
     } catch (err) {
@@ -674,6 +660,10 @@ export function ClientFormPage() {
 
   if (!ctx) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (ctx.user.role === "technician") {
+    return <Navigate to="/app/service-orders" replace />;
   }
 
   if (isNew && !canEdit) {
@@ -705,19 +695,42 @@ export function ClientFormPage() {
 
   return (
     <div className={styles.wrap}>
-      <header className={styles.hero}>
-        <div className={styles.heroLeft}>
-          <span className={styles.heroIcon} aria-hidden>
-            <svg viewBox="0 0 24 24">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-            </svg>
+      <header className={styles.pageHeader}>
+        <nav className={styles.breadcrumb} aria-label="Navegação">
+          <Link className={styles.breadcrumbLink} to="/app/clients">
+            Clientes
+          </Link>
+          <span className={styles.breadcrumbSep} aria-hidden>
+            /
           </span>
-          <div>
+          <span className={styles.breadcrumbCurrent}>
+            {isNew ? "Novo cadastro" : clientData.nomeFantasia?.trim() || clientData.razaoSocial?.trim() || "Editar cliente"}
+          </span>
+        </nav>
+        <div className={styles.pageHeaderMain}>
+          <span className={styles.pageHeaderIcon} aria-hidden>
+            {clientData.type === "pj" ? (
+              <svg viewBox="0 0 24 24">
+                <path d="M3 21h18" />
+                <path d="M5 21V7l8-4v18" />
+                <path d="M19 21V11l-6-4" />
+                <path d="M9 9h1" />
+                <path d="M9 13h1" />
+                <path d="M9 17h1" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            )}
+          </span>
+          <div className={styles.pageHeaderText}>
             <h1 className={styles.title}>{isNew ? "Novo cliente" : "Editar cliente"}</h1>
             <p className={styles.lead}>
-              Cadastro completo para faturamento e operação (CPF/CNPJ, fiscal, endereço e histórico comercial).
+              {isNew
+                ? "Cadastre pessoa física ou jurídica com dados fiscais, endereço e vínculos operacionais."
+                : "Atualize cadastro, fiscal, endereço, equipamentos e configurações preventivas."}
             </p>
           </div>
         </div>
@@ -728,20 +741,27 @@ export function ClientFormPage() {
       {cepErr ? <p className={styles.msgErr}>{cepErr}</p> : null}
       {cnpjLookupErr ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
 
-      {!isNew && clientData.type === "pj" && addressPersisted && canEdit ? (
-        <p className={styles.cepHint}>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={cnpjIncludeAddress}
-              onChange={(e) => setCnpjIncludeAddress(e.target.checked)}
-            />
-            Ao consultar CNPJ, atualizar também o endereço da Receita
-          </label>
-        </p>
-      ) : null}
-
       <ToastHost />
+
+      <DeactivateEquipmentConfirmModal
+        equipment={deactivateEquipmentTarget}
+        open={deactivateEquipmentTarget !== null}
+        busy={catalogSaving}
+        onOpenChange={(open) => {
+          if (!open && !catalogSaving) setDeactivateEquipmentTarget(null);
+        }}
+        onConfirm={() => void onConfirmDeactivateCatalogEquipment()}
+      />
+
+      <DeleteEquipmentConfirmModal
+        equipment={deleteEquipmentTarget}
+        open={deleteEquipmentTarget !== null}
+        busy={catalogSaving}
+        onOpenChange={(open) => {
+          if (!open && !catalogSaving) setDeleteEquipmentTarget(null);
+        }}
+        onConfirm={() => void onConfirmDeleteCatalogEquipment()}
+      />
 
       <form id="client-form-main" className={styles.form} onSubmit={onSubmit}>
         <ClientFormView
@@ -764,13 +784,12 @@ export function ClientFormPage() {
                 onModalOpenRequestHandled={() => setEquipmentModalRequest(null)}
                 onEquipmentsChanged={() => void reloadCatalogEquipments()}
                 onAddEquipment={readOnly ? undefined : onAddCatalogEquipment}
-                onDeactivate={readOnly ? undefined : (id) => void onDeactivateCatalogEquipment(id)}
-                onDelete={readOnly ? undefined : (id) => void onDeleteCatalogEquipment(id)}
+                onDeactivate={readOnly ? undefined : onDeactivateCatalogEquipment}
+                onDelete={readOnly ? undefined : onDeleteCatalogEquipment}
                 onDownloadManual={(id) => onDownloadEquipmentManual(id)}
               />
             )
           }
-          history={history}
           orders={isNew ? [] : orders}
           budgets={isNew ? [] : budgets}
           pmocData={showPmocTab ? pmocData : { status: "sem_contrato" }}
@@ -788,11 +807,14 @@ export function ClientFormPage() {
           loadingCnpjCommercialRefresh={cnpjCommercialRefreshLoading}
           cnpjCommercialCooldownDays={cnpjCommercialCooldownDays}
           fiscalFieldsLocked={fiscalFieldsLocked}
+          showPmocTab={showPmocTab}
           sitesPanel={
             !isNew && Number.isFinite(idNum) ? (
               <ClientSitesPanel
                 clientId={idNum}
                 readOnly={readOnly}
+                nearCity={clientData.endereco?.cidade}
+                nearState={clientData.endereco?.estado}
                 onSitesChanged={() => void reloadCatalogEquipments()}
                 onAddEquipmentForSite={
                   readOnly
@@ -815,6 +837,10 @@ export function ClientFormPage() {
                 clientId={idNum}
                 equipments={catalogEquipments}
                 readOnly={readOnly}
+                preventiveCampaignOptOut={Boolean(clientData.preventiveCampaignOptOut)}
+                onPreventiveCampaignOptOutChange={(value) =>
+                  handleClientChange({ preventiveCampaignOptOut: value })
+                }
               />
             )
           }

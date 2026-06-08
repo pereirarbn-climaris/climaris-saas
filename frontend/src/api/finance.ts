@@ -207,6 +207,7 @@ export async function listFinanceEntries(params: {
   entry_type?: FinanceEntryType;
   date_basis?: FinanceEntryDateBasis;
   service_order_id?: number;
+  limit?: number;
 }): Promise<FinanceEntryOut[]> {
   if (isDemoMode()) {
     let rows: FinanceEntryOut[] = demoListFinanceEntries();
@@ -224,6 +225,7 @@ export async function listFinanceEntries(params: {
   if (params.entry_type) sp.set("entry_type", params.entry_type);
   if (params.date_basis) sp.set("date_basis", params.date_basis);
   if (params.service_order_id != null) sp.set("service_order_id", String(params.service_order_id));
+  if (params.limit != null) sp.set("limit", String(params.limit));
   const response = await fetch(apiUrl(`/api/v1/finance/entries?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível listar lançamentos."));
@@ -371,6 +373,33 @@ export async function listFinanceAccounts(): Promise<FinanceBankAccountOut[]> {
   const response = await fetch(apiUrl("/api/v1/finance/accounts"), { headers: bearer() });
   const body = await parseResponseOrApiError(response, "Não foi possível listar contas bancárias.");
   return body as FinanceBankAccountOut[];
+}
+
+export type FinanceAccountBalanceSyncResultOut = {
+  provider: string;
+  account_id: number | null;
+  balance: number | null;
+  ok: boolean;
+  message: string | null;
+};
+
+export type FinanceAccountBalanceSyncOut = {
+  results: FinanceAccountBalanceSyncResultOut[];
+  accounts: FinanceBankAccountOut[];
+};
+
+export async function syncFinanceAccountBalances(): Promise<FinanceAccountBalanceSyncOut> {
+  if (isDemoMode()) {
+    const accounts = demoListFinanceAccounts();
+    return Promise.resolve({ results: [], accounts });
+  }
+  const response = await fetch(apiUrl("/api/v1/finance/accounts/sync-balances"), {
+    method: "POST",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errMessage(body, "Não foi possível atualizar saldos das contas."));
+  return body as FinanceAccountBalanceSyncOut;
 }
 
 export async function getFinanceBalanceSnapshot(params: {

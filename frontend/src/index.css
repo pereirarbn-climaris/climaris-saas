@@ -98,7 +98,7 @@
   --input-padding-x: 0.875rem;
   --input-padding-y: 0.625rem;
   --input-radius: 0.625rem;     /* 10px */
-  --input-border: 1px solid var(--color-border);
+  --input-border: 1px solid #bfdbfe;
   --input-bg: var(--color-surface-elevated);
 
   /*

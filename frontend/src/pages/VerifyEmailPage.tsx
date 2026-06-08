@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { verifyEmailRequest } from "../api/auth";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import styles from "./LoginPage.module.css";
 
 type VerifyState = "loading" | "success" | "error";
@@ -41,10 +42,7 @@ export function VerifyEmailPage() {
     <main className={styles.layout} id="conteudo-principal">
       <section className={styles.hero} aria-labelledby="verify-hero-title">
         <div className={styles.heroInner}>
-          <div className={styles.brandRow}>
-            <span className={styles.logoMark} />
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth-dark" className={styles.brandRow} />
           <h1 id="verify-hero-title" className={styles.heroTitle}>
             Confirmação de e-mail
           </h1>

@@ -22,6 +22,7 @@ function movementReasonLabel(r: string): string {
   const map: Record<string, string> = {
     os_consumption: "Baixa OS",
     manual_adjust: "Ajuste manual",
+    purchase: "Compra",
   };
   return map[r] ?? r;
 }

@@ -61,6 +61,7 @@ export type TechnicianServiceOrderViewProps = {
   clientPhone: string | null;
   clientWhatsapp: string | null;
   productNameById: Map<number, string>;
+  inventoryEnabled?: boolean;
   servicesCatalog: ServiceOut[];
   completedServiceIds: Set<number>;
   busy?: boolean;
@@ -78,6 +79,7 @@ export function TechnicianServiceOrderView({
   clientPhone,
   clientWhatsapp,
   productNameById,
+  inventoryEnabled = true,
   servicesCatalog,
   completedServiceIds,
   busy = false,
@@ -236,23 +238,25 @@ export function TechnicianServiceOrderView({
         )}
       </div>
 
-      <section className={styles.materialsSection} aria-labelledby="materials-heading">
-        <h2 id="materials-heading" className={styles.sectionTitle}>
-          Materiais separados para a OS
-        </h2>
-        {order.product_items.length === 0 ? (
-          <p className={styles.emptyMaterials}>Nenhum material listado para esta visita.</p>
-        ) : (
-          <ul className={styles.materialsList}>
-            {order.product_items.map((item) => (
-              <li key={item.id} className={styles.materialsRow}>
-                <span>{productNameById.get(item.product_id) ?? `Produto #${item.product_id}`}</span>
-                <span className={styles.materialsQty}>Qtd. {item.quantity}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {inventoryEnabled ? (
+        <section className={styles.materialsSection} aria-labelledby="materials-heading">
+          <h2 id="materials-heading" className={styles.sectionTitle}>
+            Materiais separados para a OS
+          </h2>
+          {order.product_items.length === 0 ? (
+            <p className={styles.emptyMaterials}>Nenhum material listado para esta visita.</p>
+          ) : (
+            <ul className={styles.materialsList}>
+              {order.product_items.map((item) => (
+                <li key={item.id} className={styles.materialsRow}>
+                  <span>{productNameById.get(item.product_id) ?? `Produto #${item.product_id}`}</span>
+                  <span className={styles.materialsQty}>Qtd. {item.quantity}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
       {canExecute ? (
         <div className={styles.actionsBar}>

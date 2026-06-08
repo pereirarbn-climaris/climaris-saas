@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.service_order_ops import assert_unique_equipment_service, build_equipment_cards, get_total_duration_minutes
+from app.service_order_ops import (
+    assert_unique_equipment_service,
+    build_equipment_cards,
+    get_total_duration_minutes,
+)
+from models import OrderStatus
 
 
 class _FakeSession:
@@ -69,6 +74,63 @@ def test_build_equipment_cards_groups_by_equipment():
     assert len(by_eq[10]["services"]) == 2
     assert by_eq[10]["total_duration_minutes"] == 90
     assert by_eq[20]["total_duration_minutes"] == 120
+
+
+def test_build_equipment_cards_hides_inactive_on_open_order():
+    inactive_eq = SimpleNamespace(identificacao="Off", tipo="AR", modelo="Z", ativo=False)
+    active_eq = SimpleNamespace(identificacao="On", tipo="AR", modelo="W", ativo=True)
+    svc = SimpleNamespace(name="Limpeza", periodicidade_meses=6)
+    order = SimpleNamespace(
+        status=OrderStatus.IN_PROGRESS,
+        service_items=[
+            SimpleNamespace(
+                id=1,
+                equipment_id=10,
+                equipment=inactive_eq,
+                service_id=5,
+                service=svc,
+                quantity=1,
+                unit_price=100,
+                duration_minutes=60,
+            ),
+            SimpleNamespace(
+                id=2,
+                equipment_id=20,
+                equipment=active_eq,
+                service_id=5,
+                service=svc,
+                quantity=1,
+                unit_price=100,
+                duration_minutes=30,
+            ),
+        ],
+    )
+    cards = build_equipment_cards(order)
+    assert len(cards) == 1
+    assert cards[0]["equipment_id"] == 20
+
+
+def test_build_equipment_cards_keeps_inactive_on_done_order():
+    inactive_eq = SimpleNamespace(identificacao="Off", tipo="AR", modelo="Z", ativo=False)
+    svc = SimpleNamespace(name="Limpeza", periodicidade_meses=6)
+    order = SimpleNamespace(
+        status=OrderStatus.DONE,
+        service_items=[
+            SimpleNamespace(
+                id=1,
+                equipment_id=10,
+                equipment=inactive_eq,
+                service_id=5,
+                service=svc,
+                quantity=1,
+                unit_price=100,
+                duration_minutes=60,
+            ),
+        ],
+    )
+    cards = build_equipment_cards(order)
+    assert len(cards) == 1
+    assert cards[0]["equipment_id"] == 10
 
 
 def test_assert_unique_raises_on_duplicate():

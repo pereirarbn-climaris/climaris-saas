@@ -5,6 +5,7 @@ import { isPlatformOperatorUser } from "../lib/platformAdmin";
 import { fetchCnpjRegisterLookup, type CnpjLookupResult } from "../api/cnpj";
 import { digitsOnly, formatTaxDocumentInput, taxDocumentOnKindChange } from "../lib/brMask";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import styles from "./LoginPage.module.css";
 
 const LOOKUP_DEBOUNCE_MS = 480;
@@ -113,7 +114,11 @@ export function CompleteRegistrationPage() {
               .filter(Boolean)
               .join(" · ");
             setMessage({
-              text: extra ? `Dados encontrados. ${extra}` : "Dados da Receita carregados.",
+              text: extra
+                ? `Dados encontrados via CNPJá. ${extra}`
+                : lu.source === "commercial"
+                  ? "Dados completos da CNPJá comercial carregados."
+                  : "Dados da Receita carregados.",
               kind: "success",
             });
           } else {
@@ -176,10 +181,7 @@ export function CompleteRegistrationPage() {
     <main className={styles.layout} id="conteudo-principal">
       <section className={styles.hero} aria-labelledby="complete-hero-title">
         <div className={styles.heroInner}>
-          <div className={styles.brandRow}>
-            <span className={styles.logoMark} />
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth-dark" className={styles.brandRow} />
           <h1 id="complete-hero-title" className={styles.heroTitle}>
             Complete seu cadastro fiscal
           </h1>
@@ -267,10 +269,11 @@ export function CompleteRegistrationPage() {
                 {taxIdKind === "cnpj" ? (
                   <>
                     {cnpjLookupLoading ? (
-                      <span className={styles.fieldHint}>Verificando cadastro e consultando a Receita…</span>
+                      <span className={styles.fieldHint}>Verificando cadastro e consultando a CNPJá comercial…</span>
                     ) : (
                       <span className={styles.fieldHint}>
-                        Ao digitar o 14º dígito, verificamos se o CNPJ já está em uso e buscamos dados na Receita.
+                        Ao digitar o 14º dígito, verificamos se o CNPJ já está em uso e buscamos os dados na CNPJá
+                        comercial.
                       </span>
                     )}
                   </>
@@ -290,9 +293,31 @@ export function CompleteRegistrationPage() {
                         <dd>{cnpjDetails.trade_name}</dd>
                       </>
                     ) : null}
+                    {cnpjDetails.main_activity_description || cnpjDetails.main_activity ? (
+                      <>
+                        <dt>Atividade principal</dt>
+                        <dd>
+                          {[cnpjDetails.main_activity_code, cnpjDetails.main_activity_description || cnpjDetails.main_activity]
+                            .filter(Boolean)
+                            .join(" — ")}
+                        </dd>
+                      </>
+                    ) : null}
+                    {cnpjDetails.legal_nature ? (
+                      <>
+                        <dt>Natureza jurídica</dt>
+                        <dd>{cnpjDetails.legal_nature}</dd>
+                      </>
+                    ) : null}
+                    {cnpjDetails.status_text ? (
+                      <>
+                        <dt>Situação cadastral</dt>
+                        <dd>{cnpjDetails.status_text}</dd>
+                      </>
+                    ) : null}
                     {cnpjDetails.address ? (
                       <>
-                        <dt>Endereço (Receita)</dt>
+                        <dt>Endereço</dt>
                         <dd>
                           {[
                             [cnpjDetails.address.street, cnpjDetails.address.number].filter(Boolean).join(", "),

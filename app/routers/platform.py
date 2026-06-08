@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_platform_operator
+from app.feature_flags import KNOWN_FEATURE_FLAGS, merge_features_enabled, normalize_features_enabled
 from app.schemas import (
     PlatformApiCredentialOut,
     PlatformApiCredentialUpsertRequest,
     PlatformLoginAttemptAuditOut,
     PlatformSessionOut,
     PlatformTenantDetailOut,
+    PlatformTenantFeaturesUpdateRequest,
     PlatformTenantListItemOut,
     PlatformTenantPlanChangeLogOut,
     PlatformTenantPlanUpdateRequest,
@@ -121,6 +123,7 @@ def _to_tenant_list_item(
         tax_document=tenant.cnpj,
         status=tenant.status,
         active_plan=tenant.active_plan,
+        features_enabled=normalize_features_enabled(tenant.features_enabled),
         timezone=tenant.timezone,
         created_at=tenant.created_at,
         registration_email=registration_email,
@@ -347,6 +350,29 @@ def update_platform_tenant_plan(
         )
         db.commit()
         db.refresh(tenant)
+    return _to_tenant_detail_out(db, tenant)
+
+
+@router.patch("/tenants/{tenant_id}/features", response_model=PlatformTenantDetailOut)
+def update_platform_tenant_features(
+    tenant_id: int,
+    payload: PlatformTenantFeaturesUpdateRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_platform_operator)],
+) -> PlatformTenantDetailOut:
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Cliente SaaS não encontrado.")
+    unknown = sorted(k for k in payload.features_enabled if k not in KNOWN_FEATURE_FLAGS)
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Flags desconhecidas: {', '.join(unknown)}. Válidas: {', '.join(sorted(KNOWN_FEATURE_FLAGS))}.",
+        )
+    tenant.features_enabled = merge_features_enabled(tenant.features_enabled, payload.features_enabled)
+    db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
     return _to_tenant_detail_out(db, tenant)
 
 

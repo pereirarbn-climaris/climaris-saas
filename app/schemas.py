@@ -9,7 +9,11 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator, model_validator
 
 from app.plan_rules import get_plan_definition, normalize_plan_key
-from app.service_order_ops import build_equipment_cards, get_total_duration_minutes
+from app.service_order_ops import (
+    build_equipment_cards,
+    get_total_duration_minutes,
+    iter_visible_service_items,
+)
 from models import (
     BudgetStatus,
     EquipmentCatalogComponentType,
@@ -266,6 +270,7 @@ class TenantAdminUpdateRequest(BaseModel):
     name: str | None = Field(None, max_length=150)
     active_plan: str | None = Field(None, max_length=80)
     finance_enabled: bool | None = None
+    inventory_enabled: bool | None = None
     finance_mode: Literal["basic", "intermediate", "management"] | None = None
     timezone: str | None = Field(None, max_length=64)
     business_days: str | None = Field(None, max_length=32)
@@ -288,9 +293,24 @@ class TenantAdminUpdateRequest(BaseModel):
     phone: str | None = Field(None, max_length=20)
     email: str | None = Field(None, max_length=255)
     website: str | None = Field(None, max_length=255)
+    trade_name: str | None = Field(None, max_length=150)
+    state_registration: str | None = Field(None, max_length=20)
+    ie_indicator: Literal["1", "2", "9"] | None = None
     pdf_primary_color: str | None = Field(None, max_length=7)
+    cft_number: str | None = Field(None, max_length=50)
 
-    @field_validator("name", "active_plan", "timezone", "address_country", "phone", "email", "website")
+    @field_validator(
+        "name",
+        "active_plan",
+        "timezone",
+        "address_country",
+        "phone",
+        "email",
+        "website",
+        "cft_number",
+        "trade_name",
+        "state_registration",
+    )
     @classmethod
     def _strip_optional(cls, v: str | None) -> str | None:
         if v is None:
@@ -388,6 +408,7 @@ class TenantAdminUpdateRequest(BaseModel):
             self.name is None
             and self.active_plan is None
             and self.finance_enabled is None
+            and self.inventory_enabled is None
             and self.finance_mode is None
             and self.timezone is None
             and self.business_days is None
@@ -407,6 +428,14 @@ class TenantAdminUpdateRequest(BaseModel):
             and self.address_postal_code is None
             and self.address_country is None
             and self.address_ibge_code is None
+            and self.phone is None
+            and self.email is None
+            and self.website is None
+            and self.trade_name is None
+            and self.state_registration is None
+            and self.ie_indicator is None
+            and self.pdf_primary_color is None
+            and self.cft_number is None
         ):
             raise ValueError("Informe ao menos um campo para atualizar.")
         if self.workday_start is not None and self.workday_end is not None and self.workday_end <= self.workday_start:
@@ -438,6 +467,15 @@ class ChangeTemporaryPasswordRequest(BaseModel):
     email: EmailStr
     temporary_password: str
     new_password: str
+
+
+class TenantDestructiveActionRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=256)
+
+
+class TenantResetDataOut(BaseModel):
+    message: str
+    deleted_entities: dict[str, int]
 
 
 class ChangeMyPasswordRequest(BaseModel):
@@ -503,6 +541,7 @@ class PlatformTenantListItemOut(BaseModel):
     tax_document: str
     status: TenantStatus
     active_plan: str
+    features_enabled: dict[str, bool] = Field(default_factory=dict)
     timezone: str
     created_at: datetime
     registration_email: str | None = None
@@ -559,6 +598,13 @@ class PlatformTenantPlanUpdateRequest(BaseModel):
         if not s:
             raise ValueError("Informe o plano.")
         return normalize_plan_key(s[:80])
+
+
+class PlatformTenantFeaturesUpdateRequest(BaseModel):
+    features_enabled: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Mapa parcial de flags conhecidas (new_laudo, dre_dashboard).",
+    )
 
 
 FinanceModeCap = Literal["basic", "intermediate", "management"]
@@ -738,6 +784,8 @@ class TenantOut(BaseModel):
     # Nome exibível do plano (catálogo SaaS); active_plan permanece a chave técnica.
     active_plan_label: str | None = None
     finance_enabled: bool
+    inventory_enabled: bool = True
+    features_enabled: dict[str, bool] = Field(default_factory=dict)
     finance_mode: Literal["basic", "intermediate", "management"]
     timezone: str
     business_days: str
@@ -766,6 +814,17 @@ class TenantOut(BaseModel):
     logo_content_type: str | None = None
     logo_updated_at: datetime | None = None
     pdf_primary_color: str = "#0B7FAF"
+    cft_number: str | None = None
+    trade_name: str | None = None
+    state_registration: str | None = None
+    ie_indicator: str | None = None
+    main_activity_code: str | None = None
+    main_activity_description: str | None = None
+    legal_nature: str | None = None
+    registration_status: str | None = None
+    founded_at: date | None = None
+    is_verified_cnpj: bool = False
+    last_cnpj_commercial_update: datetime | None = None
 
     @field_validator("weekday_work_hours", mode="before")
     @classmethod
@@ -782,6 +841,13 @@ class TenantOut(BaseModel):
             if isinstance(parsed, dict):
                 return parsed
         return None
+
+    @field_validator("features_enabled", mode="before")
+    @classmethod
+    def _parse_features_enabled(cls, v: Any) -> dict[str, bool]:
+        from app.feature_flags import normalize_features_enabled
+
+        return normalize_features_enabled(v)
 
     @computed_field
     @property
@@ -815,6 +881,13 @@ class CnpjLookupOut(BaseModel):
     status_text: str | None = None
     founded: str | None = None
     main_activity: str | None = None
+    main_activity_code: str | None = None
+    main_activity_description: str | None = None
+    legal_nature: str | None = None
+    state_registration: str | None = None
+    ie_indicator: Literal["1", "2", "9"] | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
     address: CnpjAddressOut | None = None
     optante_mei: bool | None = None
 
@@ -847,6 +920,22 @@ class CepLookupOut(BaseModel):
     address_state: str | None = Field(default=None, max_length=2)
     address_postal_code: str | None = Field(default=None, description="Mesmo CEP formatado para o formulário.")
     address_ibge_code: str | None = Field(default=None, max_length=7)
+
+
+class CepStreetMatchOut(BaseModel):
+    cep: str
+    address_street: str | None = None
+    address_district: str | None = None
+    address_city: str | None = None
+    address_state: str | None = None
+    address_complement: str | None = None
+
+
+class CepStreetSearchOut(BaseModel):
+    source: Literal["viacep", "nominatim"] = "viacep"
+    matches: list[CepStreetMatchOut]
+    total_found: int = 0
+    truncated: bool = False
 
 
 class ClientCreate(BaseModel):
@@ -883,6 +972,11 @@ class ClientCreate(BaseModel):
     preventive_campaign_opt_out: bool = False
     is_active: bool = True
     is_verified_cnpj: bool = False
+    main_activity_code: str | None = Field(default=None, max_length=20)
+    main_activity_description: str | None = Field(default=None, max_length=255)
+    legal_nature: str | None = Field(default=None, max_length=150)
+    registration_status: str | None = Field(default=None, max_length=80)
+    founded_at: date | None = None
 
     @field_validator("contact_person_name", mode="before")
     @classmethod
@@ -960,6 +1054,11 @@ class ClientUpdate(BaseModel):
     preventive_campaign_opt_out: bool | None = None
     is_active: bool | None = None
     is_verified_cnpj: bool | None = None
+    main_activity_code: str | None = Field(default=None, max_length=20)
+    main_activity_description: str | None = Field(default=None, max_length=255)
+    legal_nature: str | None = Field(default=None, max_length=150)
+    registration_status: str | None = Field(default=None, max_length=80)
+    founded_at: date | None = None
 
     @field_validator("contact_person_name", mode="before")
     @classmethod
@@ -1018,12 +1117,20 @@ class ClientOut(BaseModel):
     is_active: bool = True
     is_verified_cnpj: bool = False
     last_cnpj_commercial_update: datetime | None = None
+    main_activity_code: str | None = None
+    main_activity_description: str | None = None
+    legal_nature: str | None = None
+    registration_status: str | None = None
+    founded_at: date | None = None
 
 
 class ClientSiteCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
+    contact_name: str | None = Field(default=None, max_length=150)
+    phone: str | None = Field(default=None, max_length=20)
     street: str | None = Field(default=None, max_length=255)
     number: str | None = Field(default=None, max_length=20)
+    complement: str | None = Field(default=None, max_length=120)
     neighborhood: str | None = Field(default=None, max_length=100)
     city: str | None = Field(default=None, max_length=100)
     state: str | None = Field(default=None, max_length=2)
@@ -1049,8 +1156,11 @@ class ClientSiteCreate(BaseModel):
 
 class ClientSiteUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
+    contact_name: str | None = Field(default=None, max_length=150)
+    phone: str | None = Field(default=None, max_length=20)
     street: str | None = Field(default=None, max_length=255)
     number: str | None = Field(default=None, max_length=20)
+    complement: str | None = Field(default=None, max_length=120)
     neighborhood: str | None = Field(default=None, max_length=100)
     city: str | None = Field(default=None, max_length=100)
     state: str | None = Field(default=None, max_length=2)
@@ -1080,8 +1190,11 @@ class ClientSiteOut(BaseModel):
     id: int
     client_id: int
     name: str
+    contact_name: str | None = None
+    phone: str | None = None
     street: str | None = None
     number: str | None = None
+    complement: str | None = None
     neighborhood: str | None = None
     city: str | None = None
     state: str | None = None
@@ -1110,6 +1223,13 @@ class ClientCountOut(BaseModel):
     empresas: int = 0
     pessoas: int = 0
     ativos: int = 0
+
+
+class ProductCountOut(BaseModel):
+    total: int
+    active: int = 0
+    inactive: int = 0
+    avg_margin: float = 0
 
 
 class ClientImportSummaryOut(BaseModel):
@@ -1965,6 +2085,67 @@ class StockAdjustmentCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
 
 
+class ProductPurchaseLineIn(BaseModel):
+    product_id: int = Field(ge=1)
+    quantity: float = Field(..., gt=0)
+    unit_cost: float | None = Field(default=None, ge=0, description="Padrão: preço de compra do produto.")
+
+
+class ProductPurchaseCreate(BaseModel):
+    description: str = Field(default="Compra de produtos", min_length=1, max_length=180)
+    total_amount: float = Field(..., gt=0, description="Valor pago (pode incluir frete/desconto vs. soma dos itens).")
+    purchased_at: date
+    due_date: date
+    status: FinanceEntryStatus = FinanceEntryStatus.PAID
+    finance_account_id: int | None = Field(default=None, ge=1)
+    category_id: int | None = Field(default=None, ge=1)
+    payment_method: str | None = Field(default="pix", max_length=40)
+    credit_card_id: int | None = Field(default=None, ge=1)
+    supplier_name: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+    lines: list[ProductPurchaseLineIn] = Field(..., min_length=1)
+    update_product_cost: bool = Field(
+        default=True,
+        description="Atualiza purchase_price de cada produto com o custo unitário informado.",
+    )
+
+
+class ProductPurchaseLineOut(BaseModel):
+    id: int
+    product_id: int
+    product_name: str
+    sku: str
+    quantity: float
+    unit_cost: float
+    line_total: float
+
+
+class ProductPurchaseFinanceEntryOut(BaseModel):
+    id: int
+    description: str
+    status: str
+    amount: float
+    due_date: str
+    payment_method: str | None = None
+    finance_account_id: int | None
+    credit_card_id: int | None = None
+    category_id: int | None
+
+
+class ProductPurchaseOut(BaseModel):
+    id: int
+    tenant_id: int
+    finance_entry_id: int
+    supplier_name: str | None
+    purchased_at: str
+    notes: str | None
+    created_at: datetime
+    lines_subtotal: float
+    total_paid: float
+    finance_entry: ProductPurchaseFinanceEntryOut | None
+    lines: list[ProductPurchaseLineOut]
+
+
 class ServiceOrderStatusUpdate(BaseModel):
     status: Literal["in_progress", "done", "cancelled"]
     schedule_notes: str | None = Field(default=None, max_length=4000)
@@ -2769,6 +2950,20 @@ class FinanceBankCatalogPublicOut(BaseModel):
     logo_url: str | None = None
 
 
+class PlatformBrandingOut(BaseModel):
+    platform_name: str
+    has_logo: bool = False
+    has_favicon: bool = False
+    logo_url: str | None = None
+    favicon_url: str | None = None
+    logo_updated_at: datetime | None = None
+    favicon_updated_at: datetime | None = None
+
+
+class PlatformBrandingPatch(BaseModel):
+    platform_name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
 class FinanceBankCatalogAdminOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -2818,6 +3013,19 @@ class FinanceBankAccountOut(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class FinanceAccountBalanceSyncResultOut(BaseModel):
+    provider: str
+    account_id: int | None = None
+    balance: float | None = None
+    ok: bool
+    message: str | None = None
+
+
+class FinanceAccountBalanceSyncOut(BaseModel):
+    results: list[FinanceAccountBalanceSyncResultOut]
+    accounts: list[FinanceBankAccountOut]
 
 
 class FinanceCreditCardCreate(BaseModel):
@@ -3015,6 +3223,42 @@ class ServiceOrderDetailsUpdate(BaseModel):
     description: str | None = None
 
 
+class ServiceOrderLaudoPhotoIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(min_length=1, max_length=64)
+    data_url: str = Field(alias="dataUrl", min_length=1)
+    caption: str | None = Field(default=None, max_length=500)
+
+
+class ServiceOrderLaudoChecklistItemIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    descricao: str = Field(min_length=1, max_length=500)
+    status: str = Field(default="na", max_length=8)
+    observacao: str | None = Field(default=None, max_length=2000)
+
+
+class ServiceOrderLaudoUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    objeto_laudo: str | None = Field(default=None, alias="objetoLaudo", max_length=8000)
+    metodologia: str | None = Field(default=None, max_length=8000)
+    descricao_problema: str | None = Field(default=None, alias="descricaoProblema", max_length=8000)
+    diagnostico_tecnico: str | None = Field(default=None, alias="diagnosticoTecnico", max_length=8000)
+    conclusao: str | None = Field(default=None, max_length=8000)
+    plano_acao: str | None = Field(default=None, alias="planoAcao", max_length=8000)
+    pressao_succao: float | None = Field(default=None, alias="pressaoSuccao", ge=0, le=9999)
+    pressao_descarga: float | None = Field(default=None, alias="pressaoDescarga", ge=0, le=9999)
+    tensao_v: float | None = Field(default=None, alias="tensaoV", ge=0, le=9999)
+    corrente_a: float | None = Field(default=None, alias="correnteA", ge=0, le=9999)
+    checklist: list[ServiceOrderLaudoChecklistItemIn] | None = None
+    laudo_fotos: list[ServiceOrderLaudoPhotoIn] | None = Field(default=None, alias="laudoFotos")
+    client_signature_base64: str | None = Field(default=None, alias="clientSignatureBase64")
+    client_signature_name: str | None = Field(default=None, alias="clientSignatureName", max_length=255)
+    client_signature_at: str | None = Field(default=None, alias="clientSignatureAt", max_length=64)
+    client_signature_geo: dict[str, float] | None = Field(default=None, alias="clientSignatureGeo")
+
+
 class EquipmentUsageReportRowOut(BaseModel):
     equipment_id: int
     identificacao: str
@@ -3157,7 +3401,7 @@ class ServiceOrderOut(BaseModel):
     def _enrich_technician_view(cls, data: Any) -> Any:
         if not isinstance(data, ServiceOrder):
             return data
-        items = list(data.service_items)
+        items = iter_visible_service_items(data)
         equipment_services = [_equipment_service_item_dict(item) for item in items]
         return {
             "id": data.id,
@@ -3622,6 +3866,21 @@ class EquipmentCategoryUpdate(BaseModel):
 
 class EquipmentCategoryListOut(BaseModel):
     items: list[EquipmentCategoryOut]
+
+
+class EquipmentLabelResolveOut(BaseModel):
+    """Etiqueta processada: extração + modelo no catálogo (encontrado ou criado)."""
+
+    equipment_kind: str
+    extraction: "EquipmentLabelExtractionOut"
+    catalog_id: str
+    catalog_created: bool
+    category_id: str
+    category_name: str
+    brand: str
+    model_display: str
+    suggested_identificacao: str | None = None
+    capacidade_btu: int | None = None
 
 
 class EquipmentLabelExtractionOut(BaseModel):

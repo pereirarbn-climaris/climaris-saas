@@ -1,0 +1,1516 @@
+OFXHEADER:100
+DATA:OFXSGML
+VERSION:103
+SECURITY:NONE
+ENCODING:USASCII
+CHARSET:1252
+COMPRESSION:NONE
+OLDFILEUID:NONE
+NEWFILEUID:NONE
+
+<OFX>
+  <SIGNONMSGSRSV1>
+    <SONRS>
+      <STATUS>
+        <CODE>0</CODE>
+        <SEVERITY>INFO</SEVERITY>
+      </STATUS>
+      <DTSERVER>20260603234333</DTSERVER>
+      <LANGUAGE>POR</LANGUAGE>
+    </SONRS>
+  </SIGNONMSGSRSV1>
+  <BANKMSGSRSV1>
+    <STMTTRNRS>
+      <STMTRS>
+        <CURDEF>BRL</CURDEF>
+        
+        <BANKACCTFROM>
+          <BANKID>0542</BANKID>
+          <BRANCHID>0001</BRANCHID>
+          <ACCTID>197274</ACCTID>
+          <ACCTTYPE>CHECKING</ACCTTYPE>
+        </BANKACCTFROM>
+        
+        <BANKTRANLIST>
+          <DTSTART>20260304000000</DTSTART>
+          <DTEND>20260603235959</DTEND>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260603170734</DTPOSTED>
+            <TRNAMT>120.00</TRNAMT>
+            <FITID>7579373683</FITID>
+            <NAME>Pix JOSIBERTI FLAVIO A M DA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260603164711</DTPOSTED>
+            <TRNAMT>-14.71</TRNAMT>
+            <FITID>7579199218</FITID>
+            <NAME>AUTO POSTO RUA ZERO LT</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260603083349</DTPOSTED>
+            <TRNAMT>-14.24</TRNAMT>
+            <FITID>7575727034</FITID>
+            <NAME>PAO CASEIRO BOTANICO</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260601174940</DTPOSTED>
+            <TRNAMT>1420.00</TRNAMT>
+            <FITID>7564271694</FITID>
+            <NAME>Pix S  R  ORDINE SUCATA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260528101411</DTPOSTED>
+            <TRNAMT>-37.97</TRNAMT>
+            <FITID>7531107114</FITID>
+            <NAME>AMARELINHA LOJA VINTE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260528095801</DTPOSTED>
+            <TRNAMT>900.00</TRNAMT>
+            <FITID>7531010611</FITID>
+            <NAME>Pix SONIA A S PASCHOALINO</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260528082857</DTPOSTED>
+            <TRNAMT>-1.00</TRNAMT>
+            <FITID>7530498097</FITID>
+            <NAME>AR IDEAL CLIMATIZACOES</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260527162656</DTPOSTED>
+            <TRNAMT>-28.01</TRNAMT>
+            <FITID>7526053155</FITID>
+            <NAME>PAO CASEIRO BOTANICO</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260527110542</DTPOSTED>
+            <TRNAMT>450.00</TRNAMT>
+            <FITID>7523602299</FITID>
+            <NAME>Pix 62.947.268 CHARLENE DA SILVA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260526162413</DTPOSTED>
+            <TRNAMT>200.00</TRNAMT>
+            <FITID>7518336426</FITID>
+            <NAME>Pix FAVERAL TEMAKERIA MATAO</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260526102257</DTPOSTED>
+            <TRNAMT>-234.69</TRNAMT>
+            <FITID>7516003332</FITID>
+            <NAME>JABU*ENGENHARIA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260525204504</DTPOSTED>
+            <TRNAMT>-85.00</TRNAMT>
+            <FITID>7512923696</FITID>
+            <NAME>Pix Josangela Batista Sales Silva</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260525162004</DTPOSTED>
+            <TRNAMT>-11.65</TRNAMT>
+            <FITID>7511006167</FITID>
+            <NAME>PAO CASEIRO BOTANICO</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260522171955</DTPOSTED>
+            <TRNAMT>-45.88</TRNAMT>
+            <FITID>7490806844</FITID>
+            <NAME>ASSAI ATACADISTA LJ278</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260521125218</DTPOSTED>
+            <TRNAMT>-36.99</TRNAMT>
+            <FITID>7481123736</FITID>
+            <NAME>GranBeefExpress</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260521124241</DTPOSTED>
+            <TRNAMT>-49.99</TRNAMT>
+            <FITID>7481056722</FITID>
+            <NAME>GranBeefExpress</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260521121057</DTPOSTED>
+            <TRNAMT>650.00</TRNAMT>
+            <FITID>7480829511</FITID>
+            <NAME>Pix Lucas Henrique Amâncio</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260521090524</DTPOSTED>
+            <TRNAMT>-119.83</TRNAMT>
+            <FITID>7479601689</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260521090021</DTPOSTED>
+            <TRNAMT>-44.00</TRNAMT>
+            <FITID>7479574581</FITID>
+            <NAME>Pix TELEFONICA BRASIL S.A.</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260520164356</DTPOSTED>
+            <TRNAMT>-4.28</TRNAMT>
+            <FITID>7474747776</FITID>
+            <NAME>AUTO POSTO RUA ZERO LT</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260520162716</DTPOSTED>
+            <TRNAMT>-110.00</TRNAMT>
+            <FITID>7474614919</FITID>
+            <NAME>Oxiara</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260520160642</DTPOSTED>
+            <TRNAMT>-74.30</TRNAMT>
+            <FITID>7474455407</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260520141826</DTPOSTED>
+            <TRNAMT>-261.83</TRNAMT>
+            <FITID>7473696244</FITID>
+            <NAME>Pix COMPANHIA PAULISTA DE FORCA E LUZ</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260520114940</DTPOSTED>
+            <TRNAMT>-40.00</TRNAMT>
+            <FITID>7472645846</FITID>
+            <NAME>UNOFRIO ARARAQUARA C D</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260519174407</DTPOSTED>
+            <TRNAMT>300.00</TRNAMT>
+            <FITID>7467590131</FITID>
+            <NAME>Pix ALEX PEREIRA DE OLIVEIRA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260518094339</DTPOSTED>
+            <TRNAMT>-10.57</TRNAMT>
+            <FITID>7457222676</FITID>
+            <NAME>PAO CASEIRO BOTANICO</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260515130629</DTPOSTED>
+            <TRNAMT>-30.00</TRNAMT>
+            <FITID>7437039343</FITID>
+            <NAME>CONCORDIA POSTO DE COM</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260515104751</DTPOSTED>
+            <TRNAMT>-29.60</TRNAMT>
+            <FITID>7436008979</FITID>
+            <NAME>PARAFUSOS & CIA II</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260514082844</DTPOSTED>
+            <TRNAMT>-13.88</TRNAMT>
+            <FITID>7427342022</FITID>
+            <NAME>JAU SERVE LOJA 17</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260514081739</DTPOSTED>
+            <TRNAMT>-17.20</TRNAMT>
+            <FITID>7427287645</FITID>
+            <NAME>PARAFUSOS & CIA II</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260514021342</DTPOSTED>
+            <TRNAMT>563.28</TRNAMT>
+            <FITID>7426580658</FITID>
+            <NAME>Vendas</NAME>
+            <MEMO>Depósito InfinitePay</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260513212117</DTPOSTED>
+            <TRNAMT>-15.58</TRNAMT>
+            <FITID>7424908529</FITID>
+            <NAME>MINUTO PA 5712</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260513111109</DTPOSTED>
+            <TRNAMT>100.00</TRNAMT>
+            <FITID>7420765442</FITID>
+            <NAME>Pix Maria Eduarda Piva</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260511175357</DTPOSTED>
+            <TRNAMT>-1775.54</TRNAMT>
+            <FITID>7408668849</FITID>
+            <NAME>Pix MERCADO PAGO INSTITUICAO DE PAGAMENTO LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260511171243</DTPOSTED>
+            <TRNAMT>-11.06</TRNAMT>
+            <FITID>7408317897</FITID>
+            <NAME>VAREJAO PASSARINHO</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260511164117</DTPOSTED>
+            <TRNAMT>-50.00</TRNAMT>
+            <FITID>7408064440</FITID>
+            <NAME>Pix Arthur Vieira</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260511104119</DTPOSTED>
+            <TRNAMT>-33.25</TRNAMT>
+            <FITID>7405464661</FITID>
+            <NAME>PARAFUSOS & CIA II</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260510212338</DTPOSTED>
+            <TRNAMT>-45.55</TRNAMT>
+            <FITID>7401486508</FITID>
+            <NAME>PANIFICADORA PAO DA TE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260509060207</DTPOSTED>
+            <TRNAMT>-1470.00</TRNAMT>
+            <FITID>7389683956</FITID>
+            <NAME>Pix ROGERIO HENRIQUE ZANIN</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260508091759</DTPOSTED>
+            <TRNAMT>-45.84</TRNAMT>
+            <FITID>7381520590</FITID>
+            <NAME>ELETRICA SANTA TEREZIN</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260508085554</DTPOSTED>
+            <TRNAMT>-80.00</TRNAMT>
+            <FITID>7381376301</FITID>
+            <NAME>PALACIO DAS BORRACHAS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260507140005</DTPOSTED>
+            <TRNAMT>-36.40</TRNAMT>
+            <FITID>7374992277</FITID>
+            <NAME>SHOPPING DOS PARAFUSOS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260507134832</DTPOSTED>
+            <TRNAMT>-10.50</TRNAMT>
+            <FITID>7374910139</FITID>
+            <NAME>CONCORDIA POSTO DE COM</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260507134424</DTPOSTED>
+            <TRNAMT>-363.11</TRNAMT>
+            <FITID>7374881592</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260507090727</DTPOSTED>
+            <TRNAMT>-62.00</TRNAMT>
+            <FITID>7372870415</FITID>
+            <NAME>SHOPPING DOS PARAFUSOS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260507085458</DTPOSTED>
+            <TRNAMT>-58.80</TRNAMT>
+            <FITID>7372798097</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260506082643</DTPOSTED>
+            <TRNAMT>-29.98</TRNAMT>
+            <FITID>7364612647</FITID>
+            <NAME>AUTO POSTO RUA ZERO LT</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260506082546</DTPOSTED>
+            <TRNAMT>-132.94</TRNAMT>
+            <FITID>7364607847</FITID>
+            <NAME>Pix DESKTOP INTERNET LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260506075010</DTPOSTED>
+            <TRNAMT>-44.00</TRNAMT>
+            <FITID>7364441800</FITID>
+            <NAME>Pix TELEFONICA BRASIL S.A.</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260505152316</DTPOSTED>
+            <TRNAMT>1000.00</TRNAMT>
+            <FITID>7359512426</FITID>
+            <NAME>Pix FELIPE MORONI</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260505145940</DTPOSTED>
+            <TRNAMT>2050.00</TRNAMT>
+            <FITID>7359351089</FITID>
+            <NAME>Pix JEFFERSON MARTINS CEATO</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260505090018</DTPOSTED>
+            <TRNAMT>-78.11</TRNAMT>
+            <FITID>7356919218</FITID>
+            <NAME>JABU*ENGENHARIA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260505083809</DTPOSTED>
+            <TRNAMT>-30.00</TRNAMT>
+            <FITID>7356799932</FITID>
+            <NAME>ELETRICA SANTA TEREZIN</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260505060033</DTPOSTED>
+            <TRNAMT>-23.90</TRNAMT>
+            <FITID>7356260157</FITID>
+            <NAME>Ebanx</NAME>
+            <MEMO>Enviado – Pix Automático</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260504095512</DTPOSTED>
+            <TRNAMT>-16.00</TRNAMT>
+            <FITID>7350017862</FITID>
+            <NAME>PALACIO DAS BORRACHAS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260503143846</DTPOSTED>
+            <TRNAMT>-7.98</TRNAMT>
+            <FITID>7344752492</FITID>
+            <NAME>AUTO POSTO MAUER LT</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260502184647</DTPOSTED>
+            <TRNAMT>-35.00</TRNAMT>
+            <FITID>7340623887</FITID>
+            <NAME>Pix ADOLFO PINHEIRO PARK ESTACIONAMENTOS LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260430103214</DTPOSTED>
+            <TRNAMT>-40.00</TRNAMT>
+            <FITID>7323410381</FITID>
+            <NAME>CONCORDIA POSTO DE COM</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260430102348</DTPOSTED>
+            <TRNAMT>-14.99</TRNAMT>
+            <FITID>7323353228</FITID>
+            <NAME>AUTO POSTO RUA ZERO LT</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260429115513</DTPOSTED>
+            <TRNAMT>-238.75</TRNAMT>
+            <FITID>7316602398</FITID>
+            <NAME>Pix COMPANHIA PAULISTA DE FORCA E LUZ</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260429005840</DTPOSTED>
+            <TRNAMT>160.84</TRNAMT>
+            <FITID>7314267136</FITID>
+            <NAME>Vendas</NAME>
+            <MEMO>Depósito InfinitePay</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260428120452</DTPOSTED>
+            <TRNAMT>-1.00</TRNAMT>
+            <FITID>7309694161</FITID>
+            <NAME>AR IDEAL CLIMATIZACOES</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260427165152</DTPOSTED>
+            <TRNAMT>-2.50</TRNAMT>
+            <FITID>7304651133</FITID>
+            <NAME>PARAFUSOS & CIA II</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260427141731</DTPOSTED>
+            <TRNAMT>-25.00</TRNAMT>
+            <FITID>7303683545</FITID>
+            <NAME>CasaMais</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260425094011</DTPOSTED>
+            <TRNAMT>-90.00</TRNAMT>
+            <FITID>7288969656</FITID>
+            <NAME>Pix ISADORA GARCIA DE PAIVA SOUZA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260424142441</DTPOSTED>
+            <TRNAMT>310.00</TRNAMT>
+            <FITID>7283762373</FITID>
+            <NAME>Pix BARBARA T MARQUES ALMEIDA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260424090000</DTPOSTED>
+            <TRNAMT>-30.00</TRNAMT>
+            <FITID>7281657645</FITID>
+            <NAME>Pix CAROLINE GUERINO PEREIRA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260417162403</DTPOSTED>
+            <TRNAMT>-27.00</TRNAMT>
+            <FITID>7237116134</FITID>
+            <NAME>Pix Laudicelia Inês Simão de Souza</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260416013027</DTPOSTED>
+            <TRNAMT>1397.25</TRNAMT>
+            <FITID>7221499424</FITID>
+            <NAME>Vendas</NAME>
+            <MEMO>Depósito InfinitePay</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260415142100</DTPOSTED>
+            <TRNAMT>-90.00</TRNAMT>
+            <FITID>7211920569</FITID>
+            <NAME>Pix Antonio Carlos Scudeler</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260415132555</DTPOSTED>
+            <TRNAMT>-137.79</TRNAMT>
+            <FITID>7211117267</FITID>
+            <NAME>Pix SECRETARIA DA FAZENDA E PLANEJAMENTO</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260415090336</DTPOSTED>
+            <TRNAMT>-10.68</TRNAMT>
+            <FITID>7207130061</FITID>
+            <NAME>CONVENIENCIA FLORA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260414162508</DTPOSTED>
+            <TRNAMT>-83.90</TRNAMT>
+            <FITID>7197744699</FITID>
+            <NAME>ANTONIO AFONSO DIAS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260410202615</DTPOSTED>
+            <TRNAMT>-80.50</TRNAMT>
+            <FITID>7141798163</FITID>
+            <NAME>Pix Gustavo Veroneze Poletto</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260410082009</DTPOSTED>
+            <TRNAMT>-34.30</TRNAMT>
+            <FITID>7129175142</FITID>
+            <NAME>ELETRICA SANTA TEREZIN</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260409100513</DTPOSTED>
+            <TRNAMT>-11.68</TRNAMT>
+            <FITID>7113354233</FITID>
+            <NAME>CONVENIENCIA FLORA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260409060226</DTPOSTED>
+            <TRNAMT>-1470.00</TRNAMT>
+            <FITID>7110937649</FITID>
+            <NAME>Pix ROGERIO HENRIQUE ZANIN</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260407171644</DTPOSTED>
+            <TRNAMT>-16.61</TRNAMT>
+            <FITID>7085604283</FITID>
+            <NAME>PANIFICADORA PAO DA TE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260407082828</DTPOSTED>
+            <TRNAMT>-34.00</TRNAMT>
+            <FITID>7077595406</FITID>
+            <NAME>ELETRICA SANTA TEREZIN</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260406181135</DTPOSTED>
+            <TRNAMT>-35.90</TRNAMT>
+            <FITID>7070555601</FITID>
+            <NAME>ExproteinBodyshop</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260406181120</DTPOSTED>
+            <TRNAMT>359.80</TRNAMT>
+            <FITID>7070551553</FITID>
+            <NAME>Reembolso ExproteinBodyshop</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260406180748</DTPOSTED>
+            <TRNAMT>-359.80</TRNAMT>
+            <FITID>7070488015</FITID>
+            <NAME>ExproteinBodyshop</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260406132551</DTPOSTED>
+            <TRNAMT>-44.90</TRNAMT>
+            <FITID>7066072591</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260405111137</DTPOSTED>
+            <TRNAMT>-132.85</TRNAMT>
+            <FITID>7050747412</FITID>
+            <NAME>Pix DESKTOP INTERNET LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260403105037</DTPOSTED>
+            <TRNAMT>-23.90</TRNAMT>
+            <FITID>7025762053</FITID>
+            <NAME>Pix EBANX Ltda.</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260402193335</DTPOSTED>
+            <TRNAMT>2050.00</TRNAMT>
+            <FITID>7019272468</FITID>
+            <NAME>Pix JEFFERSON MARTINS CEATO</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260402124458</DTPOSTED>
+            <TRNAMT>-49.14</TRNAMT>
+            <FITID>7012352936</FITID>
+            <NAME>Pix DEPARTAMENTO AUTONOMO DE AGUA E ESGOTO</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260402124418</DTPOSTED>
+            <TRNAMT>-60.09</TRNAMT>
+            <FITID>7012341862</FITID>
+            <NAME>Pix DEPARTAMENTO AUTONOMO DE AGUA E ESGOTO</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260402124313</DTPOSTED>
+            <TRNAMT>-204.53</TRNAMT>
+            <FITID>7012323674</FITID>
+            <NAME>Pix COMPANHIA PAULISTA DE FORCA E LUZ</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260402103723</DTPOSTED>
+            <TRNAMT>-59.97</TRNAMT>
+            <FITID>7010200993</FITID>
+            <NAME>AUTO POSTO RUA ZERO LT</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260402083004</DTPOSTED>
+            <TRNAMT>-102.00</TRNAMT>
+            <FITID>7008487498</FITID>
+            <NAME>Pix LAVANDERIA LAVE MAIS LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260330153805</DTPOSTED>
+            <TRNAMT>-5.00</TRNAMT>
+            <FITID>6967186481</FITID>
+            <NAME>Pix ANDREIA LUZIA RASTELLI</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260330144152</DTPOSTED>
+            <TRNAMT>-54.90</TRNAMT>
+            <FITID>6966423634</FITID>
+            <NAME>NINA COM DE ALIMENTOS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260330101503</DTPOSTED>
+            <TRNAMT>-136.82</TRNAMT>
+            <FITID>6962738609</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260327134146</DTPOSTED>
+            <TRNAMT>-162.90</TRNAMT>
+            <FITID>6924204090</FITID>
+            <NAME>BARROSA LTDA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260327122608</DTPOSTED>
+            <TRNAMT>-11.50</TRNAMT>
+            <FITID>6923100885</FITID>
+            <NAME>Pix PIX Marketplace</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260326164742</DTPOSTED>
+            <TRNAMT>-43.26</TRNAMT>
+            <FITID>6911559444</FITID>
+            <NAME>PANIFICADORA PAO DA TE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260326103915</DTPOSTED>
+            <TRNAMT>-101.98</TRNAMT>
+            <FITID>6906484853</FITID>
+            <NAME>ASSISTEC ARARAQUARA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260325135937</DTPOSTED>
+            <TRNAMT>50.00</TRNAMT>
+            <FITID>6894546948</FITID>
+            <NAME>Pix SAULO RODRIGUES FACIN</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260324141924</DTPOSTED>
+            <TRNAMT>-21.49</TRNAMT>
+            <FITID>6880308660</FITID>
+            <NAME>CONCORDIA POSTO DE COM</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260323015009</DTPOSTED>
+            <TRNAMT>484.25</TRNAMT>
+            <FITID>6859172701</FITID>
+            <NAME>Vendas</NAME>
+            <MEMO>Depósito InfinitePay</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260321214417</DTPOSTED>
+            <TRNAMT>-78.97</TRNAMT>
+            <FITID>6846444406</FITID>
+            <NAME>ECHOPE GROUP</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260320173303</DTPOSTED>
+            <TRNAMT>-132.00</TRNAMT>
+            <FITID>6827308470</FITID>
+            <NAME>Pix CAROLINE GUERINO PEREIRA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260320171149</DTPOSTED>
+            <TRNAMT>-145.00</TRNAMT>
+            <FITID>6826903095</FITID>
+            <NAME>Pix Gustavo Veroneze Poletto</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260320125702</DTPOSTED>
+            <TRNAMT>-35.90</TRNAMT>
+            <FITID>6822858475</FITID>
+            <NAME>BARROSA LTDA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260320095854</DTPOSTED>
+            <TRNAMT>-54.52</TRNAMT>
+            <FITID>6820167662</FITID>
+            <NAME>COMERCIAL TIBA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260319181159</DTPOSTED>
+            <TRNAMT>0.16</TRNAMT>
+            <FITID>6812290331</FITID>
+            <NAME>Cashback MINUTO PA 5712</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260319181159</DTPOSTED>
+            <TRNAMT>-10.49</TRNAMT>
+            <FITID>6812290338</FITID>
+            <NAME>MINUTO PA 5712</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260319091418</DTPOSTED>
+            <TRNAMT>170.00</TRNAMT>
+            <FITID>6805030810</FITID>
+            <NAME>Pix JULIANA LAMANO LORIA PIVA TOLEDO PIZA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260319084421</DTPOSTED>
+            <TRNAMT>600.00</TRNAMT>
+            <FITID>6804701107</FITID>
+            <NAME>Pix LUIZA IECKS</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260318122315</DTPOSTED>
+            <TRNAMT>0.81</TRNAMT>
+            <FITID>6793197762</FITID>
+            <NAME>Cashback HlEletricaE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260318122315</DTPOSTED>
+            <TRNAMT>-54.00</TRNAMT>
+            <FITID>6793197794</FITID>
+            <NAME>HlEletricaE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260318113211</DTPOSTED>
+            <TRNAMT>0.80</TRNAMT>
+            <FITID>6792415890</FITID>
+            <NAME>Cashback CasaMais</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260318113211</DTPOSTED>
+            <TRNAMT>-53.00</TRNAMT>
+            <FITID>6792415908</FITID>
+            <NAME>CasaMais</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260318100328</DTPOSTED>
+            <TRNAMT>-168.00</TRNAMT>
+            <FITID>6791240232</FITID>
+            <NAME>Pix 53 107 607 EDUARDO DE SOUZA ROHVEDER</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260317173507</DTPOSTED>
+            <TRNAMT>150.00</TRNAMT>
+            <FITID>6783022353</FITID>
+            <NAME>Pix JOSE GERALDO FERNANDES SILVA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260317080644</DTPOSTED>
+            <TRNAMT>100.00</TRNAMT>
+            <FITID>6775501352</FITID>
+            <NAME>Pix FABRICIO MORONI</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260316180116</DTPOSTED>
+            <TRNAMT>310.00</TRNAMT>
+            <FITID>6768963024</FITID>
+            <NAME>Pix BARBARA T MARQUES ALMEIDA</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260316101215</DTPOSTED>
+            <TRNAMT>2.97</TRNAMT>
+            <FITID>6762016775</FITID>
+            <NAME>Cashback ELETRICA SANTA TEREZIN</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260316101215</DTPOSTED>
+            <TRNAMT>-198.20</TRNAMT>
+            <FITID>6762016792</FITID>
+            <NAME>ELETRICA SANTA TEREZIN</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260316082013</DTPOSTED>
+            <TRNAMT>1.91</TRNAMT>
+            <FITID>6760540004</FITID>
+            <NAME>Cashback PALACIO DAS BORRACHAS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260316082013</DTPOSTED>
+            <TRNAMT>-127.00</TRNAMT>
+            <FITID>6760540011</FITID>
+            <NAME>PALACIO DAS BORRACHAS</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260313145151</DTPOSTED>
+            <TRNAMT>0.21</TRNAMT>
+            <FITID>6723977444</FITID>
+            <NAME>Cashback CONVENIENCIA FLORA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260313145151</DTPOSTED>
+            <TRNAMT>-13.98</TRNAMT>
+            <FITID>6723977455</FITID>
+            <NAME>CONVENIENCIA FLORA</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260313141949</DTPOSTED>
+            <TRNAMT>0.40</TRNAMT>
+            <FITID>6723531502</FITID>
+            <NAME>Cashback HlEletricaE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260313141949</DTPOSTED>
+            <TRNAMT>-26.50</TRNAMT>
+            <FITID>6723531492</FITID>
+            <NAME>HlEletricaE</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260313092504</DTPOSTED>
+            <TRNAMT>170.00</TRNAMT>
+            <FITID>6719309520</FITID>
+            <NAME>Pix 54.754.781 GUILHERME PEREIRA PAIAO</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260310161721</DTPOSTED>
+            <TRNAMT>380.00</TRNAMT>
+            <FITID>6673325378</FITID>
+            <NAME>Pix ASSOCIACAO DOS PROPRIETARIOS DO CENTRAL PARK MORAD</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260310102508</DTPOSTED>
+            <TRNAMT>-700.00</TRNAMT>
+            <FITID>6668053064</FITID>
+            <NAME>Pix CAROLINE GUERINO PEREIRA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260309162234</DTPOSTED>
+            <TRNAMT>210.00</TRNAMT>
+            <FITID>6657718482</FITID>
+            <NAME>Pix EVANDRO TIAGO DE FARIA CICONE</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260309095223</DTPOSTED>
+            <TRNAMT>-975.04</TRNAMT>
+            <FITID>6651838859</FITID>
+            <NAME>BANCO COOPERATIVO DO BRASIL S.A.</NAME>
+            <MEMO>Pagamento efetuado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260309083008</DTPOSTED>
+            <TRNAMT>-100.00</TRNAMT>
+            <FITID>6650681297</FITID>
+            <NAME>Pix ROGERIO HENRIQUE ZANIN</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260309075354</DTPOSTED>
+            <TRNAMT>-1236.15</TRNAMT>
+            <FITID>6650272199</FITID>
+            <NAME>BANCO COOPERATIVO DO BRASIL S.A.</NAME>
+            <MEMO>Pagamento efetuado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260309074205</DTPOSTED>
+            <TRNAMT>-3500.00</TRNAMT>
+            <FITID>6650150102</FITID>
+            <NAME>Pix CAROLINE GUERINO PEREIRA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260309073647</DTPOSTED>
+            <TRNAMT>-998.60</TRNAMT>
+            <FITID>6650100506</FITID>
+            <NAME>Pix MERCADO PAGO INSTITUICAO DE PAGAMENTO LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260309060035</DTPOSTED>
+            <TRNAMT>-1370.00</TRNAMT>
+            <FITID>6649466215</FITID>
+            <NAME>Pix ROGERIO HENRIQUE ZANIN</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260309020141</DTPOSTED>
+            <TRNAMT>5749.38</TRNAMT>
+            <FITID>6647838906</FITID>
+            <NAME>Vendas</NAME>
+            <MEMO>Depósito InfinitePay</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260308152415</DTPOSTED>
+            <TRNAMT>-20.00</TRNAMT>
+            <FITID>6641795369</FITID>
+            <NAME>Pix CAROLINE GUERINO PEREIRA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260307090353</DTPOSTED>
+            <TRNAMT>-132.81</TRNAMT>
+            <FITID>6622085868</FITID>
+            <NAME>Pix DESKTOP INTERNET LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260306195322</DTPOSTED>
+            <TRNAMT>-30.00</TRNAMT>
+            <FITID>6616026133</FITID>
+            <NAME>Pix ISADORA GARCIA DE PAIVA SOUZA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260305201015</DTPOSTED>
+            <TRNAMT>-240.00</TRNAMT>
+            <FITID>6598474661</FITID>
+            <NAME>Pix CAROLINE GUERINO PEREIRA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260305115450</DTPOSTED>
+            <TRNAMT>2050.00</TRNAMT>
+            <FITID>6590740851</FITID>
+            <NAME>Pix JEFFERSON MARTINS CEATO</NAME>
+            <MEMO>Recebido</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260305115414</DTPOSTED>
+            <TRNAMT>0.69</TRNAMT>
+            <FITID>6590731522</FITID>
+            <NAME>Cashback CENTRAL DE CARNES-IND</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260305115414</DTPOSTED>
+            <TRNAMT>-46.25</TRNAMT>
+            <FITID>6590731527</FITID>
+            <NAME>CENTRAL DE CARNES-IND</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260304164930</DTPOSTED>
+            <TRNAMT>-26.60</TRNAMT>
+            <FITID>6579790095</FITID>
+            <NAME>Pix BLANCO & PIAO COMERCIO DE PARAFUSOS LTDA</NAME>
+            <MEMO>Enviado</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20260304082924</DTPOSTED>
+            <TRNAMT>0.24</TRNAMT>
+            <FITID>6573076286</FITID>
+            <NAME>Cashback BRAS AR</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20260304082924</DTPOSTED>
+            <TRNAMT>-15.90</TRNAMT>
+            <FITID>6573076292</FITID>
+            <NAME>BRAS AR</NAME>
+            <MEMO>aridealararaquara</MEMO>
+            <CHECKNUM>0</CHECKNUM>
+          </STMTTRN>
+          
+        </BANKTRANLIST>
+        <LEDGERBAL>
+          <BALAMT>3556.72</BALAMT>
+          <DTASOF>20260603234334</DTASOF>
+        </LEDGERBAL>
+      </STMTRS>
+    </STMTTRNRS>
+  </BANKMSGSRSV1>
+</OFX>

@@ -12,6 +12,7 @@ import type {
 import type { EquipmentItem } from "../components/v0-ui/clients/ClientEquipmentManager";
 import { buildTechnicalSpecRows, type TechnicalSpecRow } from "./categoryFieldDefinitions";
 import { buildPublicEquipmentUrl } from "./publicEquipmentUrl";
+import { getTenantDisplayName } from "./tenantDisplay";
 import { mapEquipmentHistoryToTimeline, sortTimelineEntries } from "./equipmentHistory";
 import type { EquipmentHistoryTimelineEntry } from "../components/equipment/EquipmentHistoryTimeline";
 
@@ -169,7 +170,7 @@ function formatTenantStreetLine(tenant: TenantOut): string | undefined {
 export function mapTenantOutToProvider(tenant: TenantOut): ProviderCompany {
   const doc = tenant.tax_document?.trim() || tenant.cnpj?.trim();
   return {
-    name: tenant.name,
+    name: getTenantDisplayName(tenant),
     cnpj: doc || undefined,
     phone: tenant.phone?.trim() || undefined,
     email: tenant.email?.trim() || undefined,

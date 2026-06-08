@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ChevronRight, Lock, X } from 'lucide-react';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useServiceOrderFinanceEntries } from '../hooks/useServiceOrderFinanceEntries';
 import { Link } from 'react-router-dom';
 import { patchFinanceEntry } from '../../../api/finance';
@@ -27,7 +27,7 @@ import { useCreateFinanceEntry } from '../hooks';
 import { buildMaquininhaOptions, useFinancePaymentFees } from '../hooks/useFinancePaymentFees';
 import type { CreateTransactionInput } from '../transaction.types';
 import type { LinkedServiceOrder } from '../serviceOrderFinance.types';
-import { listFinanceCreditCards, type FinanceCreditCardOut } from '../../../api/finance';
+import { listFinanceCreditCards, listFinanceCategories, type FinanceCreditCardOut, type FinanceCategoryOut } from '../../../api/finance';
 import {
   buildMaquininhaSettlementContext,
   calculateInvoiceDueDate,
@@ -43,6 +43,8 @@ import { EditSeriesScopeField } from './EditSeriesScopeField';
 import { ServiceOrderLinkCombobox } from './ServiceOrderLinkCombobox';
 import { ServiceOrderExpenseMarginAlert } from './ServiceOrderExpenseMarginAlert';
 import { RecurringStep } from './RecurringStep';
+import { FinanceCategorySelect } from './FinanceCategorySelect';
+import { normalizeFinanceCategoryValue, resolveCategoryIdByName } from '../financeCategoryUtils';
 import { isVariableCostCategory } from '../osVariableCost';
 import {
   detectEditSeriesKindFromTransacao,
@@ -61,6 +63,7 @@ import {
   buildRecurringPreviewMessage,
   defaultRecurringState,
   isRecurringAllowed,
+  resolveFirstRecurringDue,
   toApiRecurringPayload,
   validateRecurringForm,
   type RecurringFormState,
@@ -126,6 +129,8 @@ export type TransactionWizardModalProps = {
   linkedServiceOrder?: LinkedServiceOrder | null;
   linkedServiceOrderId?: number;
   onPaymentRecorded?: () => void;
+  /** Após criar com sucesso (ajuste de filtro no dashboard, etc.). */
+  onTransactionCreated?: (transacao: Transacao) => void;
   /** Edição de lançamento existente (escopo em cascata no passo final). */
   mode?: 'create' | 'edit';
   editTransaction?: Transacao | null;
@@ -146,6 +151,7 @@ export function TransactionWizardModal({
   linkedServiceOrder = null,
   linkedServiceOrderId,
   onPaymentRecorded,
+  onTransactionCreated,
   mode = 'create',
   editTransaction = null,
   onSaved,
@@ -157,6 +163,7 @@ export function TransactionWizardModal({
   const osLink = linkedServiceOrder;
   const osLinkLocked = Boolean(osLink);
   const createEntry = useCreateFinanceEntry();
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [editBusy, setEditBusy] = useState(false);
   const [editScope, setEditScope] = useState<EditSeriesScope | null>(null);
   const [editScopeTouched, setEditScopeTouched] = useState(false);
@@ -182,6 +189,7 @@ export function TransactionWizardModal({
   const [expensePayMode, setExpensePayMode] = useState<'bank' | 'credit_card'>('bank');
   const [creditCardId, setCreditCardId] = useState<number | ''>('');
   const [creditCards, setCreditCards] = useState<FinanceCreditCardOut[]>([]);
+  const [financeCategories, setFinanceCategories] = useState<FinanceCategoryOut[]>([]);
   const [linkSelectionId, setLinkSelectionId] = useState<string | null>(null);
   const [linkLabel, setLinkLabel] = useState('');
   const [clienteId, setClienteId] = useState<number | undefined>();
@@ -311,7 +319,7 @@ export function TransactionWizardModal({
     setKind(editTransaction.kind);
     setValorBruto(amountToCurrencyBrlInput(editTransaction.valor));
     setDescricao(editTransaction.descricao);
-    setCategoria(editTransaction.categoria);
+    setCategoria(normalizeFinanceCategoryValue(editTransaction.categoria));
     setFornecedor(editTransaction.fornecedor ?? '');
     setContaId(editTransaction.contaId);
     setDataPrevista(toDateInput(editTransaction.dataPrevista));
@@ -321,8 +329,18 @@ export function TransactionWizardModal({
     setForceEditLocked(false);
   }, [open, isEditMode, editTransaction, showEditScopePicker]);
 
+  const wasOpenRef = useRef(false);
+
   useEffect(() => {
-    if (!open || isEditMode) return;
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (isEditMode) return;
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+
+    setSubmitError(null);
     setStep(1);
     setKind('RECEBIMENTO');
     const today = toDateInput(new Date());
@@ -381,6 +399,7 @@ export function TransactionWizardModal({
     setContaId(first);
   }, [
     open,
+    isEditMode,
     defaultContaId,
     activeContas,
     bankContas,
@@ -396,6 +415,21 @@ export function TransactionWizardModal({
     if (contaId && bankContas.some((c) => c.id === contaId)) return;
     setContaId(principalBank?.id ?? bankContas[0]?.id ?? '');
   }, [kind, open, contaId, bankContas, principalBank?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    listFinanceCategories()
+      .then((rows) => {
+        if (!cancelled) setFinanceCategories(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFinanceCategories([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || kind !== 'PAGAMENTO') return;
@@ -467,7 +501,7 @@ export function TransactionWizardModal({
     if (maquininhaModo === 'debit') setParcelas(1);
   }, [maquininhaModo]);
 
-  const firstDueForRecurring = useMemo(() => {
+  const recurringReferenceDate = useMemo(() => {
     if (kind === 'PAGAMENTO') {
       return parseDateInput(dataPrevista);
     }
@@ -486,6 +520,12 @@ export function TransactionWizardModal({
     maquininhaSettlement,
     saleDate,
   ]);
+
+  const firstDueForRecurring = useMemo(() => {
+    const spec = toApiRecurringPayload(recurring);
+    if (spec) return resolveFirstRecurringDue(recurringReferenceDate, spec);
+    return recurringReferenceDate;
+  }, [recurring, recurringReferenceDate]);
 
   const recurringValidationError = useMemo(
     () => validateRecurringForm(recurring, firstDueForRecurring),
@@ -516,7 +556,10 @@ export function TransactionWizardModal({
   );
 
   const editStep1Valid =
-    valorNum > 0 && descricao.trim().length >= 2 && Boolean(dataPrevista) && categoria.trim().length >= 1;
+    valorNum > 0 &&
+    descricao.trim().length >= 2 &&
+    Boolean(dataPrevista) &&
+    (kind !== 'PAGAMENTO' || Boolean(fornecedor.trim() || categoria.trim()));
 
   const canNext =
     (isEditMode && step === 1 && editStep1Valid) ||
@@ -547,6 +590,7 @@ export function TransactionWizardModal({
         (editStep1Valid && (!showEditScopePicker || editScope != null))
       : kind === 'PAGAMENTO'
         ? Boolean(fornecedor.trim() || categoria.trim()) &&
+          recurringStepValid &&
           (expensePayMode === 'credit_card'
             ? Boolean(creditCardId)
             : Boolean(contaId) && bankContas.some((c) => c.id === contaId))
@@ -756,6 +800,7 @@ export function TransactionWizardModal({
         description: descricao.trim(),
         amount: amt,
         due_date: dataPrevista,
+        category_id: resolveCategoryIdByName(categoria, financeCategories),
         edit_scope: toApiEditScope(editScope ?? 'single'),
         force_edit_locked: forceEditLocked && reconciledLocked,
       });
@@ -776,7 +821,12 @@ export function TransactionWizardModal({
       setStep((s) => s + 1);
       return;
     }
-    if (!canFinish) return;
+    if (!canFinish) {
+      toast.error('Complete os campos obrigatórios antes de confirmar.');
+      return;
+    }
+
+    setSubmitError(null);
 
     if (isEditMode) {
       if (effectivelyReadOnly) {
@@ -791,8 +841,11 @@ export function TransactionWizardModal({
       return;
     }
 
-    const recurErr = validateRecurringForm(recurring, firstDueForRecurring);
-    if (recurErr) return;
+    const recurErr = validateRecurringForm(recurring, recurringReferenceDate);
+    if (recurErr) {
+      toast.error(recurErr);
+      return;
+    }
 
     if (showExpenseOsMarginAudit && expenseOsId && valorNum > 0) {
       const projected = calculateProjectedOSMargin(expenseOsId, valorNum, osMarginEntries);
@@ -827,9 +880,18 @@ export function TransactionWizardModal({
         listParams,
         linkedServiceOrderId: soId,
         options: apiOpts,
-        onRecorded: () => onPaymentRecorded?.(),
+        onRecorded: (transacao) => {
+          onTransactionCreated?.(transacao);
+          onPaymentRecorded?.();
+        },
       },
-      { onSuccess: () => onClose() },
+      {
+        onSuccess: () => onClose(),
+        onError: (err) => {
+          const msg = err instanceof Error && err.message ? err.message : 'Não foi possível salvar a transação.';
+          setSubmitError(msg);
+        },
+      },
     );
   }
 
@@ -953,14 +1015,17 @@ export function TransactionWizardModal({
                   />
                 </div>
               </div>
-              <label className={wizardStyles.fieldLabel}>Categoria</label>
-              <input
-                className={wizardStyles.textInput}
+              <label className={wizardStyles.fieldLabel} htmlFor="txn-edit-categoria">
+                Categoria
+              </label>
+              <FinanceCategorySelect
+                id="txn-edit-categoria"
                 value={categoria}
-                onChange={(e) => setCategoria(e.target.value)}
-                readOnly={effectivelyReadOnly}
+                onChange={setCategoria}
+                categories={financeCategories}
                 disabled={effectivelyReadOnly}
-                required
+                allowEmpty={kind === 'PAGAMENTO'}
+                required={kind !== 'PAGAMENTO'}
               />
               {kind === 'PAGAMENTO' ? (
                 <>
@@ -1164,18 +1229,21 @@ export function TransactionWizardModal({
                 onChange={(e) => setFornecedor(e.target.value)}
                 placeholder="Nome do fornecedor"
               />
-              <label className={wizardStyles.fieldLabel}>Categoria</label>
-              <input
-                className={wizardStyles.textInput}
+              <label className={wizardStyles.fieldLabel} htmlFor="txn-pay-categoria">
+                Categoria
+              </label>
+              <FinanceCategorySelect
+                id="txn-pay-categoria"
                 value={categoria}
-                onChange={(e) => {
-                  setCategoria(e.target.value);
-                  if (!isVariableCostCategory(e.target.value)) {
+                onChange={(next) => {
+                  setCategoria(next);
+                  if (!isVariableCostCategory(next)) {
                     setExpenseOsLinkId(null);
                     setExpenseOsLinkSelection(undefined);
                   }
                 }}
-                required
+                categories={financeCategories}
+                allowEmpty
               />
               {showExpenseOsLink ? (
                 <>
@@ -1291,7 +1359,10 @@ export function TransactionWizardModal({
                   <strong>Valor:</strong> {money(valorNum)}
                 </p>
                 <p>
-                  <strong>Vencimento:</strong> {formatDateBr(parseDateInput(dataPrevista))}
+                  <strong>Vencimento:</strong>{' '}
+                  {formatDateBr(
+                    recurring.frequency !== 'none' ? firstDueForRecurring : parseDateInput(dataPrevista),
+                  )}
                 </p>
                 <p>
                   <strong>Descrição:</strong> {descricao}
@@ -1402,6 +1473,12 @@ export function TransactionWizardModal({
             />
           ) : null}
         </div>
+
+        {submitError ? (
+          <p className={styles.invalidHint} role="alert" style={{ margin: '0 1.25rem 0.5rem' }}>
+            {submitError}
+          </p>
+        ) : null}
 
         <footer className={wizardStyles.wizardFooter}>
           {step > 1 ? (

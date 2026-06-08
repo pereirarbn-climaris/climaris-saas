@@ -9,11 +9,20 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
+from app.tenant_inventory import tenant_inventory_enabled
 from app.limiter import limiter
 from app.schemas import InventoryProductRowOut, StockAdjustmentCreate, StockMovementOut
 from models import Product, StockMovement, StockMovementReason, User, UserRole
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
+
+
+def _require_inventory_enabled(db: Session, tenant_id: int) -> None:
+    if not tenant_inventory_enabled(db, tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Controle de estoque desativado para esta empresa.",
+        )
 
 
 @router.get("", response_model=list[InventoryProductRowOut])
@@ -23,6 +32,7 @@ def list_inventory(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[InventoryProductRowOut]:
+    _require_inventory_enabled(db, current_user.tenant_id)
     products = db.execute(
         select(Product)
         .where(Product.tenant_id == current_user.tenant_id)
@@ -56,6 +66,7 @@ def list_stock_movements(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[StockMovement]:
+    _require_inventory_enabled(db, current_user.tenant_id)
     q = select(StockMovement).where(StockMovement.tenant_id == current_user.tenant_id)
     if product_id is not None:
         q = q.where(StockMovement.product_id == product_id)
@@ -75,6 +86,7 @@ def create_stock_adjustment(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> StockMovement:
+    _require_inventory_enabled(db, current_user.tenant_id)
     if payload.quantity_delta == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="quantity_delta não pode ser zero.")
 

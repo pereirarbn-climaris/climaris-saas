@@ -178,7 +178,7 @@ def upload_budget_pdf_to_s3(budget: Budget, tenant: Tenant, db: Session) -> str:
             logo_url = generate_tenant_logo_presigned_url(logo_s3_key, db=db, expires_seconds=600)
         except Exception:
             pass
-    pdf_bytes = build_budget_pdf(budget, tenant, logo_url=logo_url)
+    pdf_bytes = build_budget_pdf(budget, tenant, logo_url=logo_url, db=db)
     result = upload_qr_label_bytes(
         tenant_id=budget.tenant_id,
         qrcode_id=budget.id,

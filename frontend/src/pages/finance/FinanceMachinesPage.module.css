@@ -1,169 +1,90 @@
-.page {
-  display: grid;
-  gap: 1.25rem;
-  max-width: 56rem;
-}
-
-.header {
-  gap: 0.8rem;
-}
-
-.subtitle {
-  margin: 0.35rem 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.9rem;
-  line-height: 1.5;
-  max-width: 40rem;
-}
-
-.actions {
-  gap: 0.5rem;
-}
-
-.linkBtn {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.45rem 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 0.82rem;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.linkBtn:hover {
-  border-color: #99f6e4;
-  color: #0f766e;
-}
-
-.card {
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-surface-elevated);
-  padding: 1.15rem 1.25rem;
-  display: grid;
-  gap: 0.85rem;
-}
-
-.cardHead {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.cardHead h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-
-.row {
-  gap: 0.6rem;
-}
-
-.textInput,
-.nameField input,
-.rateInput,
-.simSelect {
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  padding: 0.55rem 0.7rem;
-  font-size: 0.9rem;
-  width: 100%;
-}
-
-.textInput:focus,
-.nameField input:focus,
-.rateInput:focus,
-.simSelect:focus {
-  outline: 2px solid rgba(13, 148, 136, 0.35);
-  outline-offset: 1px;
-}
-
-.btnPrimary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  padding: 0.6rem 1rem;
-  border: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #0d9488, #059669);
-  color: #fff;
-  font-size: 0.88rem;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btnPrimary:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.btnSecondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btnSecondary:hover {
-  border-color: #cbd5e1;
-}
-
-.hint {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.82rem;
-}
-
-.error {
-  margin: 0;
-  color: #b42318;
-  font-size: 0.88rem;
-}
-
-.msg {
-  margin: 0;
-  color: #047857;
-  font-size: 0.88rem;
-}
-
-.machineList {
+.list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.55rem;
+  gap: var(--space-2, 0.5rem);
 }
 
 .machineRow {
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 0.85rem 1rem;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--space-3, 0.75rem);
+  padding: var(--space-4, 1rem);
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid color-mix(in srgb, var(--color-border) 92%, transparent);
+  background: var(--color-surface);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.machineRow:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 22%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 3%, var(--color-surface));
 }
 
 .machineInfo {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 0.2rem;
+  min-width: 0;
+}
+
+.machineInfo strong {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.machineStatus {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.machineStatusConfigured {
+  color: #047857;
+}
+
+.newForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--space-2, 0.5rem);
+}
+
+.newForm input {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.emptyState {
+  padding: var(--space-8, 2rem) var(--space-4, 1rem);
+  text-align: center;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px dashed color-mix(in srgb, var(--color-border) 85%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 50%, transparent);
+}
+
+.emptyState svg {
+  width: 2rem;
+  height: 2rem;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+  margin-bottom: var(--space-2, 0.5rem);
+}
+
+.emptyState p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.loadingHint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
 }
 
 /* —— Editor (painel full-screen) —— */
@@ -326,7 +247,7 @@
 
 .planTabActive {
   background: var(--color-bg, #fff);
-  color: #0f766e;
+  color: var(--color-primary);
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
@@ -337,8 +258,8 @@
   letter-spacing: 0.03em;
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
-  background: #ccfbf1;
-  color: #0f766e;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
 }
 
 .planDescription {
@@ -396,6 +317,28 @@
   gap: 0.25rem;
 }
 
+.textInput,
+.nameField input,
+.rateInput,
+.simSelect {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.textInput:focus,
+.nameField input:focus,
+.rateInput:focus,
+.simSelect:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
 .editorFooter {
   display: flex;
   flex-wrap: wrap;
@@ -405,13 +348,15 @@
   border-top: 1px solid var(--color-border);
 }
 
-/* —— Simulador —— */
-
 .simulator {
-  border: 1px solid #99f6e4;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
   border-radius: 14px;
   padding: 1rem;
-  background: linear-gradient(165deg, #f0fdfa 0%, #ecfeff 100%);
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--color-primary) 6%, var(--color-surface)) 0%,
+    var(--color-surface-elevated) 100%
+  );
   display: grid;
   gap: 0.85rem;
   align-self: start;
@@ -427,13 +372,13 @@
   margin: 0;
   font-size: 0.95rem;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--color-text);
 }
 
 .simulatorSubtitle {
   margin: 0.15rem 0 0;
   font-size: 0.78rem;
-  color: #64748b;
+  color: var(--color-text-muted);
 }
 
 .simulatorControls {
@@ -451,7 +396,7 @@
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--color-text-muted);
 }
 
 .simulatorMetrics {
@@ -470,7 +415,7 @@
 .simulatorMetrics dt {
   margin: 0;
   font-size: 0.78rem;
-  color: #64748b;
+  color: var(--color-text-muted);
   display: flex;
   align-items: center;
   gap: 0.25rem;
@@ -480,22 +425,22 @@
   margin: 0;
   font-size: 0.9rem;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--color-text);
 }
 
 .metricMuted {
-  color: #64748b !important;
+  color: var(--color-text-muted) !important;
   font-weight: 600 !important;
 }
 
 .metricHighlight {
   padding-top: 0.5rem;
-  border-top: 1px dashed #99f6e4;
+  border-top: 1px dashed color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
 }
 
 .metricHighlight dt {
   font-weight: 600;
-  color: #0f766e;
+  color: var(--color-primary);
 }
 
 .metricHighlight dd {
@@ -505,7 +450,7 @@
 
 .infoWrap {
   display: inline-flex;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   cursor: help;
 }
 
@@ -513,5 +458,5 @@
   margin: 0;
   font-size: 0.72rem;
   line-height: 1.4;
-  color: #64748b;
+  color: var(--color-text-muted);
 }

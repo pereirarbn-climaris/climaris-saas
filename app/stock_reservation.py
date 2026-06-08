@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.stock_ops import StockReservationError, demand_map_for_order
+from app.tenant_inventory import tenant_inventory_enabled
 from models import OrderStatus, Product, ServiceOrder
 
 T = TypeVar("T")
@@ -84,6 +85,8 @@ def sync_order_reservation(
     old_demand: dict[int, Decimal],
 ) -> None:
     """Recalcula reserva da OS após alteração de linhas ou status."""
+    if not tenant_inventory_enabled(db, tenant_id):
+        return
     if order.status == OrderStatus.DONE and order.stock_consumed_at is not None:
         return
     new_demand = effective_reservation_demand(order)

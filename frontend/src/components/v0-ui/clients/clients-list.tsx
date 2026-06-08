@@ -5,6 +5,7 @@
 
 import type { ReactNode } from "react";
 import { formatPhoneBrDisplay, whatsappMeUrl } from "../../../lib/brMask";
+import { ListPaginationBar, type ListPaginationConfig } from "../../ui/list-pagination";
 import tableStyles from "../../../pages/listTableCommon.module.css";
 import styles from "./clients-list.module.css";
 
@@ -15,12 +16,31 @@ export type ClientListItem = {
   id: number;
   name: string;
   email: string | null;
+  phone: string | null;
   whatsapp: string | null;
   is_active: boolean;
   tax_id_kind?: string;
   contact_person_name?: string | null;
   trade_name?: string | null;
 };
+
+function clientDisplayName(c: ClientListItem): string {
+  const trade = c.trade_name?.trim();
+  if (trade) return trade;
+  return c.name.trim() || "—";
+}
+
+function clientContactLabel(c: ClientListItem): string {
+  const wa = c.whatsapp?.trim();
+  if (wa) return formatPhoneBrDisplay(wa);
+  const phone = c.phone?.trim();
+  if (phone) return formatPhoneBrDisplay(phone);
+  const email = c.email?.trim();
+  if (email) return email;
+  const contact = c.contact_person_name?.trim();
+  if (contact) return contact;
+  return "—";
+}
 
 export type ClientsStats = {
   total: number;
@@ -61,7 +81,7 @@ export interface ClientsStatsGridProps {
 
 export function ClientsStatsGrid({ stats }: ClientsStatsGridProps) {
   return (
-    <div className={styles.heroStats}>
+    <div className={`${styles.heroStats} ${styles.heroStatsDesktop}`}>
       <article className={styles.statCard}>
         <div className={styles.statHead}>
           <div>
@@ -142,16 +162,17 @@ function ClientsListTableSkeleton({ rows = 6 }: { rows?: number }) {
           <thead>
             <tr>
               <th>Nome</th>
-              <th>E-mail</th>
-              <th>WhatsApp</th>
-              <th>Status</th>
-              <th className={tableStyles.tailCol} aria-hidden="true" />
+              <th className={styles.colDesktopOnly}>E-mail</th>
+              <th className={styles.colDesktopOnly}>WhatsApp</th>
+              <th className={styles.colMobileOnly}>Contato</th>
+              <th className={styles.colDesktopOnly}>Status</th>
+              <th className={`${tableStyles.tailCol} ${styles.colDesktopOnly}`} aria-hidden="true" />
             </tr>
           </thead>
           <tbody>
             {Array.from({ length: rows }, (_, i) => (
               <tr key={i}>
-                <td colSpan={5}>
+                <td colSpan={6}>
                   <div
                     style={{
                       height: "2.25rem",
@@ -218,7 +239,7 @@ export function ClientsListTable({
                   </span>
                 </button>
               </th>
-              <th className={styles.sortableTh} aria-sort={sortAriaSort("email")}>
+              <th className={`${styles.sortableTh} ${styles.colDesktopOnly}`} aria-sort={sortAriaSort("email")}>
                 <button type="button" className={styles.sortableThBtn} onClick={() => onSortHeader("email")}>
                   E-mail
                   {sortKey === "email" ? (
@@ -226,7 +247,7 @@ export function ClientsListTable({
                   ) : null}
                 </button>
               </th>
-              <th className={styles.sortableTh} aria-sort={sortAriaSort("whatsapp")}>
+              <th className={`${styles.sortableTh} ${styles.colDesktopOnly}`} aria-sort={sortAriaSort("whatsapp")}>
                 <button type="button" className={styles.sortableThBtn} onClick={() => onSortHeader("whatsapp")}>
                   <span className={styles.waThLabel}>
                     <WaMark className={styles.waThIcon} />
@@ -237,8 +258,9 @@ export function ClientsListTable({
                   ) : null}
                 </button>
               </th>
-              <th>Status</th>
-              <th className={tableStyles.tailCol} aria-hidden="true" />
+              <th className={styles.colMobileOnly}>Contato</th>
+              <th className={styles.colDesktopOnly}>Status</th>
+              <th className={`${tableStyles.tailCol} ${styles.colDesktopOnly}`} aria-hidden="true" />
             </tr>
           </thead>
           <tbody>
@@ -251,6 +273,8 @@ export function ClientsListTable({
                   ? (c.contact_person_name?.trim() || c.trade_name?.trim() || "")
                   : (c.trade_name?.trim() || "")
               ).trim();
+              const displayName = clientDisplayName(c);
+              const contactLabel = clientContactLabel(c);
               return (
                 <tr
                   key={c.id}
@@ -264,19 +288,23 @@ export function ClientsListTable({
                   }}
                   role="link"
                   tabIndex={0}
-                  aria-label={`Abrir cliente ${c.name}`}
+                  aria-label={`Abrir cliente ${displayName}`}
                 >
                   <td>
                     <div className={styles.clientCell}>
-                      <span className={`${styles.avatar} ${avatarClass(c.id)}`}>{initials(c.name)}</span>
+                      <span className={`${styles.avatar} ${avatarClass(c.id)}`}>{initials(displayName)}</span>
                       <div className={styles.clientInfo}>
-                        <span className={styles.clientName}>{c.name}</span>
-                        {subline ? <span className={styles.clientTrade}>{subline}</span> : null}
+                        <span className={styles.clientName}>{displayName}</span>
+                        {subline ? <span className={`${styles.clientTrade} ${styles.clientTradeDesktop}`}>{subline}</span> : null}
                       </div>
                     </div>
                   </td>
-                  <td>{c.email?.trim() ? c.email : "—"}</td>
-                  <td onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <td className={styles.colDesktopOnly}>{c.email?.trim() ? c.email : "—"}</td>
+                  <td
+                    className={styles.colDesktopOnly}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
                     <span className={styles.waCellInner}>
                       <WaMark className={styles.waCellIcon} />
                       {wa ? (
@@ -286,7 +314,7 @@ export function ClientsListTable({
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          aria-label={`Abrir WhatsApp de ${c.name}`}
+                          aria-label={`Abrir WhatsApp de ${displayName}`}
                         >
                           {formatPhoneBrDisplay(c.whatsapp)}
                         </a>
@@ -295,12 +323,31 @@ export function ClientsListTable({
                       )}
                     </span>
                   </td>
-                  <td>
+                  <td
+                    className={styles.colMobileOnly}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    {wa ? (
+                      <a
+                        className={styles.mobileContactLink}
+                        href={wa}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {contactLabel}
+                      </a>
+                    ) : (
+                      <span className={styles.mobileContactText}>{contactLabel}</span>
+                    )}
+                  </td>
+                  <td className={styles.colDesktopOnly}>
                     <span className={`${styles.statusPill} ${cadastroAtivo ? styles.statusOk : styles.statusWarn}`}>
                       {cadastroAtivo ? "Ativo" : "Inativo"}
                     </span>
                   </td>
-                  <td className={`${tableStyles.tailCol} ${tableStyles.rowHint}`} aria-hidden="true">
+                  <td className={`${tableStyles.tailCol} ${tableStyles.rowHint} ${styles.colDesktopOnly}`} aria-hidden="true">
                     <span className={tableStyles.rowHintIcon}>
                       <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
                         <path
@@ -323,51 +370,7 @@ export function ClientsListTable({
   );
 }
 
-export interface ClientsListPagination {
-  currentPage: number;
-  totalPages: number;
-  totalItems: number;
-  itemsPerPage: number;
-  onPageChange: (page: number) => void;
-}
-
-function ClientsListPaginationBar({ pagination }: { pagination: ClientsListPagination }) {
-  const { currentPage, totalPages, totalItems, itemsPerPage, onPageChange } = pagination;
-  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
-  const endItem = Math.min(currentPage * itemsPerPage, totalItems);
-
-  return (
-    <div className={styles.listFootPagination}>
-      <span>
-        Mostrando <strong>{startItem}</strong> a <strong>{endItem}</strong> de <strong>{totalItems}</strong> cliente
-        {totalItems === 1 ? "" : "s"}
-      </span>
-      <div className={styles.pagerBtns}>
-        <button
-          type="button"
-          className={styles.pagerBtn}
-          disabled={currentPage <= 1}
-          onClick={() => onPageChange(currentPage - 1)}
-          aria-label="Página anterior"
-        >
-          ‹
-        </button>
-        <span className={styles.pagerBtnActive}>
-          {currentPage} / {totalPages}
-        </span>
-        <button
-          type="button"
-          className={styles.pagerBtn}
-          disabled={currentPage >= totalPages}
-          onClick={() => onPageChange(currentPage + 1)}
-          aria-label="Próxima página"
-        >
-          ›
-        </button>
-      </div>
-    </div>
-  );
-}
+export type ClientsListPagination = ListPaginationConfig;
 
 export interface ClientsListViewProps {
   clients: ClientListItem[];
@@ -421,7 +424,7 @@ export function ClientsListView({
 
       {!isLoading && !error && totalCount > 0 && pagination ? (
         <div className={styles.listFoot}>
-          <ClientsListPaginationBar pagination={pagination} />
+          <ListPaginationBar {...pagination} itemLabel="cliente" />
         </div>
       ) : null}
 

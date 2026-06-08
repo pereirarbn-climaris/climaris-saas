@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 import io
 import re
 import zipfile
@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import unicodedata
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -14,6 +14,7 @@ from app.pagination import clamp_limit
 from app.dependencies import get_current_user, require_roles
 from app.product_media import delete_product_image_if_exists
 from app.schemas import (
+    ProductCountOut,
     ProductCreate,
     ProductDetailOut,
     ProductImportErrorOut,
@@ -169,6 +170,59 @@ def _normalize_rows_shape(rows: list[list[str]]) -> list[list[str]]:
     return normalized
 
 
+ProductListSort = Literal[
+    "name_asc",
+    "name_desc",
+    "sku_asc",
+    "sku_desc",
+    "purchase_asc",
+    "purchase_desc",
+    "sale_asc",
+    "sale_desc",
+    "margin_asc",
+    "margin_desc",
+    "status_active_first",
+    "status_inactive_first",
+]
+
+
+def _product_list_filter(tenant_id: int, q: str | None):
+    query = select(Product).where(Product.tenant_id == tenant_id)
+    if q:
+        term = f"%{q}%"
+        query = query.where(or_(Product.name.ilike(term), Product.sku.ilike(term)))
+    return query
+
+
+def _apply_product_list_order(query, sort: ProductListSort):
+    margin = Product.sale_price - Product.purchase_price
+    match sort:
+        case "name_desc":
+            return query.order_by(Product.name.desc(), Product.id.desc())
+        case "sku_asc":
+            return query.order_by(Product.sku.asc(), Product.id.asc())
+        case "sku_desc":
+            return query.order_by(Product.sku.desc(), Product.id.desc())
+        case "purchase_asc":
+            return query.order_by(Product.purchase_price.asc(), Product.id.asc())
+        case "purchase_desc":
+            return query.order_by(Product.purchase_price.desc(), Product.id.desc())
+        case "sale_asc":
+            return query.order_by(Product.sale_price.asc(), Product.id.asc())
+        case "sale_desc":
+            return query.order_by(Product.sale_price.desc(), Product.id.desc())
+        case "margin_asc":
+            return query.order_by(margin.asc(), Product.id.asc())
+        case "margin_desc":
+            return query.order_by(margin.desc(), Product.id.desc())
+        case "status_active_first":
+            return query.order_by(Product.is_active.desc(), Product.name.asc(), Product.id.asc())
+        case "status_inactive_first":
+            return query.order_by(Product.is_active.asc(), Product.name.asc(), Product.id.asc())
+        case _:
+            return query.order_by(Product.name.asc(), Product.id.asc())
+
+
 @router.get("", response_model=list[ProductOut])
 def list_products(
     db: Annotated[Session, Depends(get_db)],
@@ -176,13 +230,43 @@ def list_products(
     q: Annotated[str | None, Query(description="Filter by name or SKU")] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1)] = 20,
+    sort: Annotated[ProductListSort, Query(description="Ordenação da listagem")] = "name_asc",
 ) -> list[Product]:
     limit = clamp_limit(limit)
-    query = select(Product).where(Product.tenant_id == current_user.tenant_id)
+    query = _apply_product_list_order(_product_list_filter(current_user.tenant_id, q), sort)
+    return db.execute(query.offset(skip).limit(limit)).scalars().all()
+
+
+@router.get("/count", response_model=ProductCountOut)
+def count_products(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    q: Annotated[str | None, Query()] = None,
+) -> ProductCountOut:
+    tenant_id = current_user.tenant_id
+
+    def count_where(*extra) -> int:
+        query = select(func.count(Product.id)).select_from(Product).where(Product.tenant_id == tenant_id)
+        if q:
+            term = f"%{q}%"
+            query = query.where(or_(Product.name.ilike(term), Product.sku.ilike(term)))
+        for clause in extra:
+            query = query.where(clause)
+        return int(db.scalar(query) or 0)
+
+    margin_expr = Product.sale_price - Product.purchase_price
+    avg_query = select(func.avg(margin_expr)).where(Product.tenant_id == tenant_id)
     if q:
         term = f"%{q}%"
-        query = query.where(or_(Product.name.ilike(term), Product.sku.ilike(term)))
-    return db.execute(query.order_by(Product.id.desc()).offset(skip).limit(limit)).scalars().all()
+        avg_query = avg_query.where(or_(Product.name.ilike(term), Product.sku.ilike(term)))
+    avg_margin = float(db.scalar(avg_query) or 0)
+
+    return ProductCountOut(
+        total=count_where(),
+        active=count_where(Product.is_active.is_(True)),
+        inactive=count_where(Product.is_active.is_(False)),
+        avg_margin=avg_margin,
+    )
 
 
 @router.get("/{product_id}", response_model=ProductDetailOut)

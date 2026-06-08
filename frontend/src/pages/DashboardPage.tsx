@@ -16,6 +16,7 @@ import {
 import { financeQueryKeys } from "../features/finance/hooks/financeQueryKeys";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
 import { getPlanDisplayLabel } from "../lib/planRules";
+import { getTenantDisplayName } from "../lib/tenantDisplay";
 import { digitsOnlyPhoneForApi, formatPhoneBrInput } from "../lib/brMask";
 import {
   NavIconBuilding,
@@ -375,6 +376,8 @@ export function DashboardPage() {
       ["cliente", "/app/clients"],
       ["produto", "/app/products"],
       ["estoque", "/app/products"],
+      ["compra", "/app/purchases"],
+      ["compras", "/app/purchases"],
       ["serviço", "/app/services"],
       ["servico", "/app/services"],
       ["ordem", "/app/service-orders"],
@@ -498,13 +501,14 @@ export function DashboardPage() {
 
         <div className={styles.mainColumn}>
         <header className={`${styles.header} ${isMobileLayout ? styles.headerMobile : ""}`}>
+          <Sidebar.Toggle className={styles.headerSidebarToggle} />
           <div className={styles.headerLeft}>
             <Sidebar.Trigger className={styles.menuBtn} aria-controls={navId}>
               <span className={styles.menuIcon} aria-hidden />
               <span className={styles.srOnly}>Abrir menu</span>
             </Sidebar.Trigger>
             <div className={styles.headerTitles}>
-              <h1 className={styles.headerCompanyName}>{tenant?.name?.trim() || "—"}</h1>
+              <h1 className={styles.headerCompanyName}>{getTenantDisplayName(tenant)}</h1>
               <p className={styles.headerPageContext}>{pageTitle}</p>
             </div>
           </div>
@@ -797,11 +801,11 @@ export function DashboardPage() {
                     className={styles.accountDrawerTenantLogo}
                   />
                 ) : (
-                  tenant ? tenantInitial(tenant.name) : "—"
+                  tenant ? tenantInitial(getTenantDisplayName(tenant)) : "—"
                 )}
               </div>
               <div className={styles.accountDrawerProfileText}>
-                <span className={styles.accountDrawerProfileName}>{tenant?.name ?? "—"}</span>
+                <span className={styles.accountDrawerProfileName}>{getTenantDisplayName(tenant)}</span>
                 <span className={styles.accountDrawerProfileEmail}>
                   Plano{" "}
                   <strong>
@@ -888,6 +892,18 @@ export function DashboardPage() {
                       <NavIconWallet />
                     </span>
                     Financeiro
+                  </Link>
+                  <Link
+                    className={styles.accountDrawerLinkRow}
+                    to="/app/admin?tab=orcamentos"
+                    onClick={() => {
+                      setWorkspaceDrawerOpen(false);
+                    }}
+                  >
+                    <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
+                      <NavIconFileQuote />
+                    </span>
+                    Modelos de orçamento
                   </Link>
                   <Link
                     className={styles.accountDrawerLinkRow}

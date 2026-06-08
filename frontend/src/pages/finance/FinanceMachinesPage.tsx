@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { CreditCard, Plus, Settings2 } from "lucide-react";
+import { CreditCard, Plus, Settings2, Smartphone } from "lucide-react";
 import {
   createFinancePaymentFee,
   deleteFinancePaymentFee,
   listFinancePaymentFees,
   type FinancePaymentFeeOut,
 } from "../../api/finance";
+import {
+  FinanceCadastroPageShell,
+  financeCadastroShellStyles as shell,
+} from "../../components/finance/FinanceCadastroPageShell";
 import {
   configFromPaymentFees,
   configToFeeRows,
@@ -15,6 +18,12 @@ import {
 import type { MaquininhaConfig } from "../../schemas/financeMaquininha";
 import { MachineRatesEditor } from "./MachineRatesEditor";
 import styles from "./FinanceMachinesPage.module.css";
+
+const CADASTRO_NAV = [
+  { to: "/app/finance/settings/accounts", label: "Contas" },
+  { to: "/app/finance/settings/cards", label: "Cartões" },
+  { to: "/app/finance/settings/machines", label: "Maquininhas", active: true },
+];
 
 type MachineSummary = {
   name: string;
@@ -106,84 +115,89 @@ export function FinanceMachinesPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <header className={`${styles.header} flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between`}>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Maquininhas de cartão</h1>
-          <p className={styles.subtitle}>
-            Gestão profissional de taxas por plano de recebimento (D+0, D+1 e parcelado 30 dias).
-          </p>
+    <FinanceCadastroPageShell
+      breadcrumb="Financeiro · Cadastros · Maquininhas"
+      title="Maquininhas de cartão"
+      subtitle="Gestão de taxas por plano de recebimento (D+0, D+1 e parcelado 30 dias)."
+      navLinks={CADASTRO_NAV}
+      error={error}
+      msg={msg}
+    >
+      <article className={shell.panel}>
+        <div className={shell.panelHead}>
+          <span className={`${shell.panelIcon} ${shell.panelIconSuccess}`}>
+            <Plus aria-hidden />
+          </span>
+          <div className={shell.panelHeadText}>
+            <h2 className={shell.panelTitle}>Nova maquininha</h2>
+            <p className={shell.panelDesc}>Informe o nome e configure as taxas por bandeira e parcela.</p>
+          </div>
         </div>
-        <nav className={`${styles.actions} flex flex-wrap gap-2`}>
-          <Link to="/app/finance/settings/accounts" className={styles.linkBtn}>
-            Contas
-          </Link>
-          <Link to="/app/finance/settings/cards" className={styles.linkBtn}>
-            Cartões
-          </Link>
-          <Link to="/app/finance/settings" className={styles.linkBtn}>
-            Configurações
-          </Link>
-        </nav>
-      </header>
-
-      {error ? <p className={styles.error}>{error}</p> : null}
-      {msg ? <p className={styles.msg}>{msg}</p> : null}
-
-      <section className={styles.card}>
-        <div className={styles.cardHead}>
-          <Plus size={18} className="text-teal-700" aria-hidden />
-          <h2>Nova maquininha</h2>
+        <div className={shell.panelBody}>
+          <form
+            className={styles.newForm}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              openNewEditor();
+            }}
+          >
+            <input
+              className={shell.input}
+              value={newMachineName}
+              onChange={(e) => setNewMachineName(e.target.value)}
+              placeholder="Nome da maquininha (ex.: Stone)"
+              aria-label="Nome da nova maquininha"
+            />
+            <button type="submit" className={shell.btnPrimary} disabled={!newMachineName.trim()}>
+              <Plus aria-hidden />
+              Criar e configurar taxas
+            </button>
+          </form>
         </div>
-        <form
-          className={`${styles.row} flex flex-col gap-3 sm:flex-row sm:items-center`}
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            openNewEditor();
-          }}
-        >
-          <input
-            className={`${styles.textInput} flex-1 min-w-0`}
-            value={newMachineName}
-            onChange={(e) => setNewMachineName(e.target.value)}
-            placeholder="Nome da maquininha (ex.: Stone)"
-          />
-          <button type="submit" className={styles.btnPrimary} disabled={!newMachineName.trim()}>
-            Criar e configurar taxas
-          </button>
-        </form>
-      </section>
+      </article>
 
-      <section className={styles.card}>
-        <div className={styles.cardHead}>
-          <CreditCard size={18} className="text-teal-700" aria-hidden />
-          <h2>Maquininhas cadastradas</h2>
+      <article className={shell.panel}>
+        <div className={shell.panelHead}>
+          <span className={shell.panelIcon}>
+            <Smartphone aria-hidden />
+          </span>
+          <div className={shell.panelHeadText}>
+            <h2 className={shell.panelTitle}>Maquininhas cadastradas</h2>
+            <p className={shell.panelDesc}>
+              {loading ? "Carregando…" : `${summaries.length} maquininha(s) no workspace.`}
+            </p>
+          </div>
         </div>
-        {loading ? (
-          <p className={styles.hint}>Carregando…</p>
-        ) : summaries.length === 0 ? (
-          <p className={styles.hint}>Nenhuma maquininha cadastrada. Crie a primeira acima.</p>
-        ) : (
-          <ul className={styles.machineList}>
-            {summaries.map((m) => (
-              <li key={m.name} className={styles.machineRow}>
-                <div className={styles.machineInfo}>
-                  <strong>{m.name}</strong>
-                  <span className={styles.hint}>
-                    {m.hasRates
-                      ? `${m.planCount} planos de recebimento configurados`
-                      : "Taxas ainda não configuradas"}
-                  </span>
-                </div>
-                <button type="button" className={styles.btnSecondary} onClick={() => openEditor(m.name)}>
-                  <Settings2 size={16} />
-                  Gerenciar taxas
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        <div className={shell.panelBody}>
+          {loading ? (
+            <p className={styles.loadingHint}>Carregando maquininhas…</p>
+          ) : summaries.length === 0 ? (
+            <div className={styles.emptyState}>
+              <CreditCard aria-hidden />
+              <p>Nenhuma maquininha cadastrada. Crie a primeira acima.</p>
+            </div>
+          ) : (
+            <ul className={styles.list}>
+              {summaries.map((m) => (
+                <li key={m.name} className={styles.machineRow}>
+                  <div className={styles.machineInfo}>
+                    <strong>{m.name}</strong>
+                    <span className={`${styles.machineStatus} ${m.hasRates ? styles.machineStatusConfigured : ""}`}>
+                      {m.hasRates
+                        ? `${m.planCount} planos de recebimento configurados`
+                        : "Taxas ainda não configuradas"}
+                    </span>
+                  </div>
+                  <button type="button" className={shell.btnSecondary} onClick={() => openEditor(m.name)}>
+                    <Settings2 aria-hidden />
+                    Gerenciar taxas
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </article>
 
       {editorConfig ? (
         <MachineRatesEditor
@@ -193,6 +207,6 @@ export function FinanceMachinesPage() {
           onSave={persistConfig}
         />
       ) : null}
-    </section>
+    </FinanceCadastroPageShell>
   );
 }

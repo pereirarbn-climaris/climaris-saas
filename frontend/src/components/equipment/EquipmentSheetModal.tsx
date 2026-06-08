@@ -9,6 +9,7 @@ import { buildTechnicalSpecRows } from "../../lib/categoryFieldDefinitions";
 import { mapHistoryRowsToMaintenanceEvents } from "../../lib/equipmentProfileAdapter";
 import { buildPublicEquipmentUrl } from "../../lib/publicEquipmentUrl";
 import { toast } from "../../lib/toast";
+import { getTenantDisplayName } from "../../lib/tenantDisplay";
 import type { EquipmentItem } from "../v0-ui/clients/ClientEquipmentManager";
 import {
   buildEquipmentEditDraft,
@@ -176,7 +177,7 @@ export function EquipmentSheetModal({
       <div className={styles.panel} role="dialog" aria-modal="true" aria-labelledby="equipment-sheet-title">
         {publicUrl && tenant ? (
           <EquipmentThermalLabelPrint
-            providerName={tenant.name}
+            providerName={getTenantDisplayName(tenant)}
             logoUrl={tenant.logo_url}
             publicUrl={publicUrl}
             tag={equipment.tag}

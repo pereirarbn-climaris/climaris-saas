@@ -309,6 +309,31 @@ export function linkServicesToAllSelectedEquipment(
   }));
 }
 
+type EquipmentSelectionInput = {
+  equipamentosIds: string[];
+  servicos: ServiceLineDraft[];
+};
+
+/** Remove equipamentos inativos/indisponíveis da seleção e das linhas de serviço. */
+export function sanitizeServiceOrderEquipmentSelection<T extends EquipmentSelectionInput>(
+  data: T,
+  activeEquipments: ReadonlyArray<{ id: string }>,
+): { data: T; removedCount: number } {
+  const activeIds = new Set(activeEquipments.map((e) => e.id));
+  const equipamentosIds = data.equipamentosIds.filter((id) => activeIds.has(id));
+  const servicos = data.servicos.map((line) => {
+    const equipmentIds = lineEquipmentIds(line).filter((id) => activeIds.has(id));
+    return {
+      ...line,
+      equipmentIds,
+      equipmentId: undefined,
+      quantity: equipmentIds.length > 0 ? Math.max(line.quantity, equipmentIds.length) : line.quantity,
+    };
+  });
+  const removedCount = data.equipamentosIds.filter((id) => !activeIds.has(id)).length;
+  return { data: { ...data, equipamentosIds, servicos }, removedCount };
+}
+
 export function toggleServiceOnEquipment(
   lines: ServiceLineDraft[],
   equipmentId: string,

@@ -527,29 +527,6 @@ def _latest_historico_ids_subquery(tenant_id: int):
     ).subquery()
 
 
-def _latest_preventive_whatsapp_jobs_by_historico(
-    db: Session, *, tenant_id: int, historico_ids: list[int]
-) -> dict[int, WhatsappMessageJob]:
-    """Último job preventivo por `historico_servico_id` (maior id)."""
-    if not historico_ids:
-        return {}
-    subq = (
-        select(
-            WhatsappMessageJob.reference_id.label("hid"),
-            func.max(WhatsappMessageJob.id).label("jid"),
-        )
-        .where(
-            WhatsappMessageJob.tenant_id == tenant_id,
-            WhatsappMessageJob.template_key == "preventive_maintenance",
-            WhatsappMessageJob.reference_type == "preventive_historico",
-            WhatsappMessageJob.reference_id.in_(historico_ids),
-        )
-        .group_by(WhatsappMessageJob.reference_id)
-    ).subquery()
-    jobs = db.execute(select(WhatsappMessageJob).join(subq, WhatsappMessageJob.id == subq.c.jid)).scalars().all()
-    return {int(j.reference_id): j for j in jobs if j.reference_id is not None}
-
-
 _WHATSAPP_SENT_STATUSES = frozenset(
     {
         WhatsappMessageStatus.SENT,
@@ -559,27 +536,84 @@ _WHATSAPP_SENT_STATUSES = frozenset(
 )
 
 
-def _latest_preventive_whatsapp_jobs_by_client(
-    db: Session, *, tenant_id: int, client_ids: list[int]
+def _fetch_preventive_jobs_by_max_id_subquery(db: Session, subq) -> dict[int, WhatsappMessageJob]:
+    jobs = db.execute(select(WhatsappMessageJob).join(subq, WhatsappMessageJob.id == subq.c.jid)).scalars().all()
+    out: dict[int, WhatsappMessageJob] = {}
+    for job in jobs:
+        rid = int(job.reference_id or 0)
+        if rid > 0:
+            out[rid] = job
+    return out
+
+
+def _latest_preventive_whatsapp_jobs_for_references(
+    db: Session,
+    *,
+    tenant_id: int,
+    reference_type: str,
+    reference_ids: list[int],
 ) -> dict[int, WhatsappMessageJob]:
-    """Último job preventivo agrupado por cliente (envio manual/automático por mês)."""
-    if not client_ids:
+    """Último job preventivo por referência; prioriza envio bem-sucedido (evita QUEUED/FAILED mais novo)."""
+    if not reference_ids:
         return {}
-    subq = (
+    common = (
+        WhatsappMessageJob.tenant_id == tenant_id,
+        WhatsappMessageJob.template_key == "preventive_maintenance",
+        WhatsappMessageJob.reference_type == reference_type,
+        WhatsappMessageJob.reference_id.in_(reference_ids),
+    )
+    sent_subq = (
         select(
-            WhatsappMessageJob.reference_id.label("cid"),
+            WhatsappMessageJob.reference_id.label("rid"),
+            func.max(WhatsappMessageJob.id).label("jid"),
+        )
+        .where(*common, WhatsappMessageJob.status.in_(tuple(_WHATSAPP_SENT_STATUSES)))
+        .group_by(WhatsappMessageJob.reference_id)
+    ).subquery()
+    out = _fetch_preventive_jobs_by_max_id_subquery(db, sent_subq)
+
+    missing = [rid for rid in reference_ids if rid not in out]
+    if not missing:
+        return out
+    latest_subq = (
+        select(
+            WhatsappMessageJob.reference_id.label("rid"),
             func.max(WhatsappMessageJob.id).label("jid"),
         )
         .where(
             WhatsappMessageJob.tenant_id == tenant_id,
             WhatsappMessageJob.template_key == "preventive_maintenance",
-            WhatsappMessageJob.reference_type == "preventive_client",
-            WhatsappMessageJob.reference_id.in_(client_ids),
+            WhatsappMessageJob.reference_type == reference_type,
+            WhatsappMessageJob.reference_id.in_(missing),
         )
         .group_by(WhatsappMessageJob.reference_id)
     ).subquery()
-    jobs = db.execute(select(WhatsappMessageJob).join(subq, WhatsappMessageJob.id == subq.c.jid)).scalars().all()
-    return {int(j.reference_id): j for j in jobs if j.reference_id is not None}
+    out.update(_fetch_preventive_jobs_by_max_id_subquery(db, latest_subq))
+    return out
+
+
+def _latest_preventive_whatsapp_jobs_by_historico(
+    db: Session, *, tenant_id: int, historico_ids: list[int]
+) -> dict[int, WhatsappMessageJob]:
+    """Último job preventivo por `historico_servico_id` (prioriza SENT/DELIVERED/READ)."""
+    return _latest_preventive_whatsapp_jobs_for_references(
+        db,
+        tenant_id=tenant_id,
+        reference_type="preventive_historico",
+        reference_ids=historico_ids,
+    )
+
+
+def _latest_preventive_whatsapp_jobs_by_client(
+    db: Session, *, tenant_id: int, client_ids: list[int]
+) -> dict[int, WhatsappMessageJob]:
+    """Último job preventivo agrupado por cliente (prioriza SENT/DELIVERED/READ)."""
+    return _latest_preventive_whatsapp_jobs_for_references(
+        db,
+        tenant_id=tenant_id,
+        reference_type="preventive_client",
+        reference_ids=client_ids,
+    )
 
 
 def _pending_preventive_order_ids_by_equipment_service(
@@ -632,6 +666,51 @@ def _whatsapp_job_is_sent(job: WhatsappMessageJob | None) -> bool:
         return WhatsappMessageStatus(st) in _WHATSAPP_SENT_STATUSES
     except ValueError:
         return st.lower() in {"sent", "delivered", "read"}
+
+
+def _prefer_preventive_whatsapp_job(candidate: WhatsappMessageJob, current: WhatsappMessageJob) -> bool:
+    """True se `candidate` deve substituir `current` no mapa por cliente."""
+    c_sent = _whatsapp_job_is_sent(candidate)
+    cur_sent = _whatsapp_job_is_sent(current)
+    if c_sent and not cur_sent:
+        return True
+    if cur_sent and not c_sent:
+        return False
+    return int(candidate.id) > int(current.id)
+
+
+def _resolve_preventive_whatsapp_jobs_by_client(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_ids: list[int],
+) -> dict[int, WhatsappMessageJob]:
+    """Último job preventivo por cliente (`preventive_client` + `preventive_historico` do cliente)."""
+    out = _latest_preventive_whatsapp_jobs_by_client(db, tenant_id=tenant_id, client_ids=client_ids)
+    if not client_ids:
+        return out
+    hist_rows = db.execute(
+        select(HistoricoServico.id, HistoricoServico.client_id).where(
+            HistoricoServico.tenant_id == tenant_id,
+            HistoricoServico.client_id.in_(client_ids),
+        )
+    ).all()
+    if not hist_rows:
+        return out
+    hist_to_client = {int(hid): int(cid) for hid, cid in hist_rows}
+    wa_by_hist = _latest_preventive_whatsapp_jobs_by_historico(
+        db,
+        tenant_id=tenant_id,
+        historico_ids=list(hist_to_client.keys()),
+    )
+    for hid, job in wa_by_hist.items():
+        cid = hist_to_client.get(int(hid))
+        if cid is None:
+            continue
+        existing = out.get(cid)
+        if existing is None or _prefer_preventive_whatsapp_job(job, existing):
+            out[cid] = job
+    return out
 
 
 def _preventive_item_due_date(item: dict[str, Any]) -> date:
@@ -696,7 +775,9 @@ def enrich_preventive_items_campaign_status(
     tenant = db.get(Tenant, tenant_id)
     holidays = load_tenant_holiday_dates(db, tenant_id) if tenant else set()
 
-    wa_by_client = _latest_preventive_whatsapp_jobs_by_client(db, tenant_id=tenant_id, client_ids=client_ids)
+    wa_by_client = _resolve_preventive_whatsapp_jobs_by_client(
+        db, tenant_id=tenant_id, client_ids=client_ids
+    )
     sent_by_client = _preventive_sent_reminders_by_client(
         db,
         tenant_id=tenant_id,
@@ -1692,9 +1773,7 @@ def dispatch_preventive_grouped_reminder(
         sched = sched.replace(tzinfo=timezone.utc)
     use_schedule = sched is not None and sched > now_utc
 
-    reference_type = "preventive_historico" if anchor_historico_id else "preventive_client"
-    reference_id = anchor_historico_id if anchor_historico_id else cli.id
-
+    # Sempre `preventive_client`: itens da gestão por equipamento usam historico_servico_id=0.
     job = create_message_job(
         db,
         tenant_id=tenant_id,
@@ -1702,8 +1781,8 @@ def dispatch_preventive_grouped_reminder(
         template_key="preventive_maintenance",
         recipient_whatsapp=dest,
         rendered_message=body,
-        reference_type=reference_type,
-        reference_id=reference_id,
+        reference_type="preventive_client",
+        reference_id=cli.id,
         scheduled_for=sched if use_schedule else None,
     )
 

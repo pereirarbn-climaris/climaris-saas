@@ -8,6 +8,8 @@ export type EquipmentPreventiveInlineRowProps = {
   disabled?: boolean;
   initialConfig: PreventiveScheduleConfig;
   onSave: (config: PreventiveScheduleConfig) => Promise<void>;
+  /** Atualiza prévia do próximo vencimento no cadastro do cliente enquanto o usuário edita. */
+  onConfigChange?: (config: PreventiveScheduleConfig) => void;
 };
 
 function InlineSwitch({
@@ -41,6 +43,7 @@ export function EquipmentPreventiveInlineRow({
   disabled = false,
   initialConfig,
   onSave,
+  onConfigChange,
 }: EquipmentPreventiveInlineRowProps) {
   const [config, setConfig] = useState<PreventiveScheduleConfig>(initialConfig);
   const [saving, setSaving] = useState(false);
@@ -58,6 +61,10 @@ export function EquipmentPreventiveInlineRow({
       config.intervalType !== initialConfig.intervalType;
     setDirty(changed);
   }, [config, initialConfig]);
+
+  useEffect(() => {
+    onConfigChange?.(config);
+  }, [config, onConfigChange]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);

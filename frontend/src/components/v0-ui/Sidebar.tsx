@@ -42,6 +42,8 @@ import {
     }
     return ctx;
   }
+
+  export const useSidebar = useSidebarContext;
   
   /* ============================================================================
      SIDEBAR ROOT
@@ -292,13 +294,13 @@ import {
         className="sidebar-header"
         style={{
           display: "flex",
-          flexDirection: showFull ? "row" : "column",
+          flexDirection: "row",
           alignItems: "center",
-          justifyContent: showFull ? "space-between" : "center",
+          justifyContent: showFull ? "flex-start" : "center",
           gap: showFull ? "var(--space-2)" : "var(--space-3)",
-          padding: showFull ? "var(--space-4)" : "var(--space-3) var(--space-2)",
+          padding: showFull ? "var(--space-4) var(--space-4) var(--space-4) var(--space-5)" : "var(--space-4) var(--space-2)",
           borderBottom: "1px solid var(--color-border)",
-          minHeight: "4rem",
+          minHeight: "4.5rem",
           flexShrink: 0,
         }}
       >
@@ -446,17 +448,29 @@ import {
     return pathname === prefix || pathname.startsWith(`${prefix}/`);
   }
   
+  const collapsedItemSize = "2.5rem";
+
   function itemStyles(
     showLabel: boolean,
     active: boolean,
   ): React.CSSProperties {
+    const collapsedChrome: React.CSSProperties | null = showLabel
+      ? null
+      : {
+          width: collapsedItemSize,
+          height: collapsedItemSize,
+          minHeight: collapsedItemSize,
+          margin: "0 auto",
+          padding: 0,
+        };
+
     return {
       display: "flex",
       alignItems: "center",
       justifyContent: showLabel ? "flex-start" : "center",
       gap: "var(--space-3)",
-      width: "100%",
-      padding: showLabel ? "var(--space-3)" : "var(--space-3) 0",
+      width: showLabel ? "100%" : collapsedItemSize,
+      padding: showLabel ? "var(--space-3)" : 0,
       fontSize: "var(--font-size-base)",
       fontWeight: active ? "var(--font-weight-medium)" : "var(--font-weight-normal)",
       color: active ? "var(--color-primary)" : "var(--color-text)",
@@ -467,6 +481,7 @@ import {
       textDecoration: "none",
       transition:
         "background var(--motion-duration) var(--motion-easing), color var(--motion-duration) var(--motion-easing)",
+      ...collapsedChrome,
     };
   }
   

@@ -36,6 +36,13 @@ function addCalendarMonths(d: Date, months: number): Date {
   return new Date(year, monthIndex, Math.min(day, lastDay), d.getHours(), d.getMinutes(), d.getSeconds());
 }
 
+/** Normaliza ISO/API para data civil local (evita deslocar dia por fuso). */
+export function toLocalCalendarDate(value: Date | string): Date | null {
+  const parsed = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
 /** Calcula próxima validade a partir da última OS + intervalo (meses/dias/anos). */
 export function computePreventiveNextDue(
   lastPerformedAt: string | null | undefined,
@@ -43,8 +50,8 @@ export function computePreventiveNextDue(
   intervalType: "days" | "months" | "years",
 ): Date | null {
   if (!lastPerformedAt) return null;
-  const last = new Date(lastPerformedAt);
-  if (Number.isNaN(last.getTime())) return null;
+  const last = toLocalCalendarDate(lastPerformedAt);
+  if (!last) return null;
   const value = Math.max(1, Math.floor(intervalValue));
   if (intervalType === "days") {
     const next = new Date(last);
@@ -55,6 +62,29 @@ export function computePreventiveNextDue(
     return addCalendarMonths(last, value * 12);
   }
   return addCalendarMonths(last, value);
+}
+
+/** Próximo vencimento exibido no cadastro do cliente (prioriza última OS / última realização). */
+export function formatClientPreventiveNextDue(params: {
+  lastServiceAt: string | null | undefined;
+  lastPerformedFromRule: string | null | undefined;
+  intervalValue: number;
+  intervalType: "days" | "months" | "years";
+  ruleNextDueDate: string | null | undefined;
+}): string | null {
+  const lastAt = params.lastServiceAt ?? params.lastPerformedFromRule ?? null;
+  if (lastAt) {
+    const computed = computePreventiveNextDue(
+      lastAt,
+      params.intervalValue,
+      params.intervalType,
+    );
+    if (computed) return formatFriendlyDatePt(computed);
+  }
+  if (params.ruleNextDueDate) {
+    return formatFriendlyDatePt(params.ruleNextDueDate);
+  }
+  return null;
 }
 
 function collectEquipmentIdsFromOrder(order: ServiceOrderOut): number[] {

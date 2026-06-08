@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
+from app.services.client_equipment_deactivation import deactivate_installation
 from app.services.client_equipment_deletion import can_delete_client_equipment, delete_client_equipment
 from app.services.platform_catalog import catalog_tenant_ids_for_lookup
 from app.schemas import (
@@ -433,9 +434,12 @@ def update_client_catalog_equipment_status(
     if installation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipamento não encontrado.")
 
-    installation.is_active = payload.is_active
-    if installation.legacy_equipment is not None:
-        installation.legacy_equipment.ativo = payload.is_active
+    deactivate_installation(
+        db,
+        installation,
+        tenant_id=current_user.tenant_id,
+        is_active=payload.is_active,
+    )
     db.commit()
     installation = _fetch_client_equipment(db, installation.id, tenant_id=current_user.tenant_id)
     if installation is None:
@@ -519,7 +523,12 @@ def update_client_catalog_equipment(
         installation.installation_date = payload.installation_date
 
     if payload.is_active is not None:
-        installation.is_active = payload.is_active
+        deactivate_installation(
+            db,
+            installation,
+            tenant_id=current_user.tenant_id,
+            is_active=payload.is_active,
+        )
 
     if payload.components:
         component_by_id = {str(row.id): row for row in installation.components}

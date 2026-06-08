@@ -160,12 +160,38 @@ function parseHmToMinutes(value: string, fallback: number): number {
   return hh * 60 + mm;
 }
 
+function formatMinutesLabel(totalMinutes: number): string {
+  const hh = Math.floor(totalMinutes / 60);
+  const mm = totalMinutes % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
 function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function toTenantWeekday(date: Date): number {
   return date.getDay() === 0 ? 6 : date.getDay() - 1;
+}
+
+function outsideExpedienteSegments(
+  weekdayRule: WeekdayHourSlice | undefined,
+  gridStartMinutes: number,
+  gridEndMinutes: number,
+  fallbackStart: number,
+  fallbackEnd: number,
+): Array<{ startMinutes: number; endMinutes: number }> {
+  if (!weekdayRule) return [];
+  const dayStart = parseHmToMinutes(weekdayRule.start, fallbackStart);
+  const dayEnd = parseHmToMinutes(weekdayRule.end, fallbackEnd);
+  const segments: Array<{ startMinutes: number; endMinutes: number }> = [];
+  if (dayStart > gridStartMinutes) {
+    segments.push({ startMinutes: gridStartMinutes, endMinutes: dayStart });
+  }
+  if (dayEnd < gridEndMinutes) {
+    segments.push({ startMinutes: dayEnd, endMinutes: gridEndMinutes });
+  }
+  return segments;
 }
 
 type BrasilApiHoliday = { date: string; name: string };
@@ -425,14 +451,20 @@ export function TechnicianSchedulePage() {
       .sort((a, b) => b - a);
     return ends[0] ?? defaultEndMinutes;
   }, [weekdayHours]);
-  const dayStartHour = useMemo(() => Math.floor(companyStartMinutes / 60), [companyStartMinutes]);
-  const dayEndHour = useMemo(() => Math.ceil(companyEndMinutes / 60), [companyEndMinutes]);
-  const calendarRows = Math.max(dayEndHour - dayStartHour, 1);
-  const minutesPerDay = (dayEndHour - dayStartHour) * 60;
-  const daySlots = useMemo(
-    () => Array.from({ length: dayEndHour - dayStartHour }, (_, i) => `${String(dayStartHour + i).padStart(2, "0")}:00`),
-    [dayEndHour, dayStartHour],
-  );
+  const gridStartMinutes = companyStartMinutes;
+  const gridEndMinutes = companyEndMinutes;
+  const minutesPerDay = Math.max(gridEndMinutes - gridStartMinutes, 1);
+  const daySlots = useMemo(() => {
+    const slots = [formatMinutesLabel(gridStartMinutes)];
+    let hourMark = Math.ceil(gridStartMinutes / 60) * 60;
+    if (hourMark === gridStartMinutes) hourMark += 60;
+    while (hourMark < gridEndMinutes) {
+      slots.push(formatMinutesLabel(hourMark));
+      hourMark += 60;
+    }
+    return slots;
+  }, [gridEndMinutes, gridStartMinutes]);
+  const calendarRows = Math.max(daySlots.length, 1);
   const technicianNameById = useMemo(() => {
     const map = new Map<number, string>();
     for (const t of technicians) map.set(t.id, t.full_name?.trim() || `Técnico #${t.id}`);
@@ -788,7 +820,7 @@ export function TechnicianSchedulePage() {
       const y = clientY - rect.top;
       const ratio = Math.min(Math.max(y / rect.height, 0), 1);
       const rawMinutes = Math.round((ratio * minutesPerDay) / 15) * 15;
-      const absoluteMinute = dayStartHour * 60 + rawMinutes;
+      const absoluteMinute = gridStartMinutes + rawMinutes;
       if (absoluteMinute < dayStartMin || absoluteMinute >= dayEndMin) {
         return { minutes: absoluteMinute, valid: false };
       }
@@ -798,7 +830,7 @@ export function TechnicianSchedulePage() {
       businessDays,
       companyEndMinutes,
       companyStartMinutes,
-      dayStartHour,
+      gridStartMinutes,
       holidayLabelForDay,
       minutesPerDay,
       weekdayHours,
@@ -884,7 +916,7 @@ export function TechnicianSchedulePage() {
     if (session.shiftDrag) {
       openBlockModalFromDrag(day, session.anchorMinutes, session.currentMinutes);
     } else if (!session.suppressClick) {
-      const offsetFromDayStart = session.anchorMinutes - dayStartHour * 60;
+      const offsetFromDayStart = session.anchorMinutes - gridStartMinutes;
       openNewOrderFromSlot(day, offsetFromDayStart);
     }
     overlayPointerRef.current = null;
@@ -901,8 +933,8 @@ export function TechnicianSchedulePage() {
 
   function openNewOrderFromSlot(day: Date, minuteOffset: number) {
     const base = new Date(day);
-    base.setHours(dayStartHour, 0, 0, 0);
-    base.setMinutes(base.getMinutes() + minuteOffset);
+    const totalMinutes = gridStartMinutes + minuteOffset;
+    base.setHours(Math.floor(totalMinutes / 60), totalMinutes % 60, 0, 0);
     const params = new URLSearchParams();
     params.set("starts_at", base.toISOString());
     if (technicianId) params.set("technician_id", technicianId);
@@ -1297,7 +1329,8 @@ export function TechnicianSchedulePage() {
                 <div className={`${styles.calendarDayBody} ${isToday ? styles.calendarDayBodyToday : ""}`}>
                   {(() => {
                     const holidayLabel = holidayLabelForDay(day);
-                    const isBusinessDay = businessDays.has(day.getDay() === 0 ? 6 : day.getDay() - 1);
+                    const weekday = toTenantWeekday(day);
+                    const isBusinessDay = businessDays.has(weekday);
                     if (holidayLabel) {
                       return (
                         <div
@@ -1320,6 +1353,37 @@ export function TechnicianSchedulePage() {
                     }
                     return null;
                   })()}
+                  {(() => {
+                    const holidayLabel = holidayLabelForDay(day);
+                    const weekday = toTenantWeekday(day);
+                    if (holidayLabel || !businessDays.has(weekday)) return null;
+                    return outsideExpedienteSegments(
+                      weekdayHours[String(weekday)],
+                      gridStartMinutes,
+                      gridEndMinutes,
+                      companyStartMinutes,
+                      companyEndMinutes,
+                    ).map((segment, idx) => {
+                      const top = ((segment.startMinutes - gridStartMinutes) / minutesPerDay) * 100;
+                      const height = ((segment.endMinutes - segment.startMinutes) / minutesPerDay) * 100;
+                      return (
+                        <div
+                          key={`off-hours-${localDateKey(day)}-${idx}`}
+                          className={`${styles.calendarEvent} ${styles.calendarBlockedEvent}`}
+                          style={{ top: `${Math.max(top, 0)}%`, height: `${Math.max(height, 2)}%` }}
+                          title="Fora do expediente configurado da empresa"
+                          aria-hidden
+                        >
+                          {height >= 6 ? (
+                            <>
+                              <p className={styles.scheduleTime}>Sem expediente</p>
+                              <p className={styles.scheduleMeta}>Fora do horário da empresa</p>
+                            </>
+                          ) : null}
+                        </div>
+                      );
+                    });
+                  })()}
                   {canManage &&
                   !holidayLabelForDay(day) &&
                   businessDays.has(toTenantWeekday(day)) ? (
@@ -1335,7 +1399,7 @@ export function TechnicianSchedulePage() {
                       {dragSelect?.dayKey === localDateKey(day) ? (() => {
                         const startMin = Math.min(dragSelect.anchorMinutes, dragSelect.currentMinutes);
                         const endMin = Math.max(dragSelect.anchorMinutes, dragSelect.currentMinutes);
-                        const top = ((startMin - dayStartHour * 60) / minutesPerDay) * 100;
+                        const top = ((startMin - gridStartMinutes) / minutesPerDay) * 100;
                         const height = (Math.max(endMin - startMin, 15) / minutesPerDay) * 100;
                         const previewStart = dateFromAbsoluteMinutes(day, startMin);
                         const previewEnd = dateFromAbsoluteMinutes(day, Math.max(endMin, startMin + 15));
@@ -1368,7 +1432,7 @@ export function TechnicianSchedulePage() {
                     startMinutes = Math.max(startMinutes, visibleStartMin);
                     endMinutes = Math.min(endMinutes, visibleEndMin);
                     if (endMinutes <= startMinutes) return null;
-                    const top = ((startMinutes - dayStartHour * 60) / minutesPerDay) * 100;
+                    const top = ((startMinutes - gridStartMinutes) / minutesPerDay) * 100;
                     const height = (Math.max(endMinutes - startMinutes, 15) / minutesPerDay) * 100;
                     const techName = technicianNameById.get(block.technician_id);
                     const display = unavailabilityDisplayMeta(block.reason);
@@ -1412,7 +1476,7 @@ export function TechnicianSchedulePage() {
                     const end = new Date(s.ends_at);
                     const startMinutes = start.getHours() * 60 + start.getMinutes();
                     const endMinutes = end.getHours() * 60 + end.getMinutes();
-                    const top = ((startMinutes - dayStartHour * 60) / minutesPerDay) * 100;
+                    const top = ((startMinutes - gridStartMinutes) / minutesPerDay) * 100;
                     const height = (Math.max(endMinutes - startMinutes, 15) / minutesPerDay) * 100;
                     const isConfirmed = String(s.status || "").toLowerCase() === "confirmed";
                     const isPmoc = Boolean(s.is_pmoc);

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { changeMyPassword, fetchCurrentTenant, fetchCurrentUser, logoutRevokeRefresh, type TenantOut, type UserOut } from "../api/auth";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
+import { usePlatformBranding } from "../context/PlatformBrandingContext";
 import { NavIconChevronDown, NavIconKey, NavIconLayoutDashboard, NavIconPuzzle } from "../components/dashboard/NavIcons";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
 import { PLATFORM_ADMIN_EMAIL, isPlatformOperatorUser } from "../lib/platformAdmin";
@@ -43,6 +45,8 @@ export function PlatformAdminLayout() {
   const isPagarmeRoute = location.pathname.startsWith("/operacao/pagar-me");
   const isCatalogRoute = location.pathname.startsWith("/operacao/catalogo");
   const isCategoryRoute = location.pathname.startsWith("/operacao/categorias-equipamentos");
+  const isBrandingRoute = location.pathname.startsWith("/operacao/identidade-visual");
+  const { branding } = usePlatformBranding();
   const pageTitle = isApiKeysRoute
     ? "Chaves APIs"
     : isTenantsRoute
@@ -61,9 +65,11 @@ export function PlatformAdminLayout() {
                   ? "Catálogo de equipamentos"
                   : isCategoryRoute
                     ? "Categorias de equipamentos"
-                    : location.pathname === "/operacao"
+                    : isBrandingRoute
+                      ? "Identidade visual"
+                      : location.pathname === "/operacao"
                   ? "Painel de operação"
-                  : "Operação Climaris";
+                  : `Operação ${branding.platform_name}`;
 
   const refreshWorkspace = useCallback(async () => {
     const u = await fetchCurrentUser();
@@ -214,11 +220,9 @@ export function PlatformAdminLayout() {
       >
         <div className={styles.opHeader}>
           <div className={styles.opBrandRow}>
-            <span className={styles.opLogoMark} aria-hidden>
-              <span className={styles.opLogoLetter}>C</span>
-            </span>
+            <PlatformBrandMark variant="operacao" showName={false} />
             <div className={styles.opBrandText}>
-              <span className={styles.opBrandName}>Climaris</span>
+              <span className={styles.opBrandName}>{branding.platform_name}</span>
               <span className={styles.opBrandTag}>Operação</span>
             </div>
           </div>
@@ -285,6 +289,22 @@ export function PlatformAdminLayout() {
                   </svg>
                 </span>
                 Segurança
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/identidade-visual"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="m21 15-5-5L5 21" />
+                  </svg>
+                </span>
+                Identidade visual
               </NavLink>
             </li>
             <li>
@@ -411,7 +431,7 @@ export function PlatformAdminLayout() {
         <div className={styles.opWorkspace}>
           <p className={styles.opWorkspaceLabel}>Workspace</p>
           <button type="button" className={styles.opWorkspaceBtn} onClick={() => setSidebarOpen(false)}>
-            <span className={styles.opWorkspaceTitle}>Plataforma Climaris</span>
+            <span className={styles.opWorkspaceTitle}>Plataforma {branding.platform_name}</span>
             <span className={styles.opWorkspaceChevron} aria-hidden>
               <NavIconChevronDown />
             </span>
@@ -439,7 +459,7 @@ export function PlatformAdminLayout() {
               <span className={dash.srOnly}>{sidebarOpen ? "Fechar menu" : "Abrir menu"}</span>
             </button>
             <div className={dash.headerTitles}>
-              <p className={styles.opBreadcrumb}>Operação Climaris</p>
+              <p className={styles.opBreadcrumb}>Operação {branding.platform_name}</p>
               <h1 className={dash.pageTitle}>{pageTitle}</h1>
               <p className={dash.headerSubtitle}>
                 Administração do produto SaaS — não é o app dos clientes.

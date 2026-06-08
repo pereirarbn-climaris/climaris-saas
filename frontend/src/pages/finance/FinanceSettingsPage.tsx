@@ -1,5 +1,20 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
+import {
+  Bell,
+  Calculator,
+  CheckCircle2,
+  ChevronRight,
+  CreditCard,
+  Landmark,
+  Palette,
+  Send,
+  Settings2,
+  Smartphone,
+  Tags,
+  TrendingUp,
+  TriangleAlert,
+} from "lucide-react";
 import {
   createFinanceCategory,
   deleteFinanceCategory,
@@ -13,18 +28,59 @@ import {
   type FinanceCategoryOut,
   type FinanceSettingsOut,
 } from "../../api/finance";
+import { Button } from "../../components/ui/button";
+import { FormSwitch } from "../../components/ui/form-switch";
+import { CategoryColorPicker, resolveCategoryColor } from "../../components/finance/CategoryColorPicker";
 import type { DashboardOutletContext } from "../dashboardContext";
 import formLayout from "../formLayout.module.css";
+import layout from "../admin/ManagementView.module.css";
 import styles from "./FinanceSettingsPage.module.css";
+
+function FinanceSettingsHeaderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M12 2v20" />
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </svg>
+  );
+}
 
 function money(v: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v ?? 0);
+}
+
+function modeLabel(mode: FinanceSettingsOut["effective_mode"]): string {
+  if (mode === "management") return "Gestão completa";
+  if (mode === "intermediate") return "Intermediário";
+  return "Básico";
 }
 
 function modeDescription(mode: FinanceSettingsOut["effective_mode"]): string {
   if (mode === "management") return "Relatórios avançados, conciliação e previsão de caixa.";
   if (mode === "intermediate") return "Categorias, cartões e maquininhas com taxas.";
   return "Lançamentos essenciais e saldos.";
+}
+
+function categoryDotColor(value: string | null | undefined): string {
+  return resolveCategoryColor(value) || "var(--color-border)";
+}
+
+function PanelIcon({
+  children,
+  variant,
+}: {
+  children: ReactNode;
+  variant?: "default" | "warn" | "success" | "violet";
+}) {
+  const cls =
+    variant === "warn"
+      ? `${styles.panelIcon} ${styles.panelIconWarn}`
+      : variant === "success"
+        ? `${styles.panelIcon} ${styles.panelIconSuccess}`
+        : variant === "violet"
+          ? `${styles.panelIcon} ${styles.panelIconViolet}`
+          : styles.panelIcon;
+  return <span className={cls}>{children}</span>;
 }
 
 export function FinanceSettingsPage() {
@@ -140,7 +196,7 @@ export function FinanceSettingsPage() {
   function startEdit(c: FinanceCategoryOut) {
     setEditingId(c.id);
     setEditName(c.name);
-    setEditColor(c.color ?? "");
+    setEditColor(c.color?.trim() ?? "");
     setError(null);
   }
 
@@ -189,34 +245,72 @@ export function FinanceSettingsPage() {
 
   if (loading) {
     return (
-      <section className={styles.page}>
-        <div className={styles.loadingState}>Carregando configurações…</div>
+      <section className={styles.page} aria-busy="true" aria-label="Carregando configurações">
+        <div className={styles.loadingState}>
+          <div className={styles.loadingHero} />
+          <div className={styles.loadingPanels}>
+            <div className={styles.loadingPanel} />
+            <div className={styles.loadingPanel} />
+            <div className={styles.loadingPanel} />
+          </div>
+        </div>
       </section>
     );
   }
 
   return (
     <section className={styles.page}>
-      <header className={styles.hero}>
-        <div className={styles.heroText}>
-          <h1 className={styles.title}>Configurações do Financeiro</h1>
-          <p className={styles.lead}>Ative o módulo, organize cadastros e acompanhe o fluxo de caixa em um só lugar.</p>
+      <header className={layout.pageHeader}>
+        <nav className={layout.breadcrumb} aria-label="Navegação">
+          <Link to="/app/finance/dashboard" className={layout.breadcrumbCurrent}>
+            Financeiro
+          </Link>
+          <span className={layout.breadcrumbSep} aria-hidden>
+            /
+          </span>
+          <span>Configurações</span>
+        </nav>
+        <div className={layout.sectionHeaderRow}>
+          <div className={layout.pageHeaderMain}>
+            <span className={layout.pageHeaderIcon} aria-hidden>
+              <FinanceSettingsHeaderIcon />
+            </span>
+            <div className={layout.pageHeaderText}>
+              <h1 className={layout.pageTitle}>Configurações do Financeiro</h1>
+              <p className={layout.pageLead}>
+                Ative o módulo, organize cadastros e acompanhe o fluxo de caixa em um só lugar.
+              </p>
+              {settings ? (
+                <div className={styles.heroMeta}>
+                  <span className={styles.modeBadge}>
+                    <span className={styles.modeBadgeDot} aria-hidden />
+                    Modo {modeLabel(settings.effective_mode)}
+                    {!settings.finance_enabled ? " · inativo" : ""}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <Link to="/app/finance/dashboard" style={{ textDecoration: "none" }}>
+            <Button type="button" variant="outline" size="sm">
+              Voltar ao Financeiro
+            </Button>
+          </Link>
         </div>
-        <Link to="/app/finance/dashboard" className={styles.backLink}>
-          ← Voltar ao Financeiro
-        </Link>
       </header>
 
       {(error || msg) && (
         <div className={styles.flashRow}>
           {error ? (
             <div className={styles.flashError} role="alert">
-              {error}
+              <TriangleAlert aria-hidden />
+              <span>{error}</span>
             </div>
           ) : null}
           {msg ? (
             <div className={styles.flashOk} role="status">
-              {msg}
+              <CheckCircle2 aria-hidden />
+              <span>{msg}</span>
             </div>
           ) : null}
         </div>
@@ -227,21 +321,32 @@ export function FinanceSettingsPage() {
           {settings ? (
             <article className={styles.panel}>
               <div className={styles.panelHead}>
-                <h2 className={styles.panelTitle}>Módulo financeiro</h2>
-                <p className={styles.panelDesc}>Controle se o workspace usa o financeiro e qual nível de recursos.</p>
+                <PanelIcon>
+                  <Settings2 aria-hidden />
+                </PanelIcon>
+                <div className={styles.panelHeadText}>
+                  <h2 className={styles.panelTitle}>Módulo financeiro</h2>
+                  <p className={styles.panelDesc}>Controle se o workspace usa o financeiro e qual nível de recursos.</p>
+                </div>
               </div>
               <div className={`${formLayout.stack} ${styles.panelBody}`}>
-                <label className={styles.toggleRow}>
-                  <input
-                    type="checkbox"
+                <div className={styles.settingRow}>
+                  <div className={styles.settingRowLabel}>
+                    <span className={styles.settingRowTitle}>Ativar financeiro no workspace</span>
+                    <span className={styles.settingRowHint}>
+                      Habilita lançamentos, saldos e relatórios para toda a equipe autorizada.
+                    </span>
+                  </div>
+                  <FormSwitch
+                    id="finance-enabled-switch"
                     checked={settings.finance_enabled}
                     disabled={!isAdmin || saving}
-                    onChange={(e) =>
-                      void saveSettings({ finance_enabled: e.target.checked, finance_mode: settings.selected_mode })
+                    ariaLabel="Ativar financeiro no workspace"
+                    onChange={(checked) =>
+                      void saveSettings({ finance_enabled: checked, finance_mode: settings.selected_mode })
                     }
                   />
-                  <span>Ativar financeiro no workspace</span>
-                </label>
+                </div>
                 <label className={`${formLayout.field} ${styles.fieldBlock}`}>
                   <span className={styles.fieldLabel}>Modo de operação</span>
                   <select
@@ -267,8 +372,13 @@ export function FinanceSettingsPage() {
 
           <article className={styles.panel}>
             <div className={styles.panelHead}>
-              <h2 className={styles.panelTitle}>Lembretes de vencimento</h2>
-              <p className={styles.panelDesc}>Dispare avisos manuais para lançamentos em aberto na data escolhida.</p>
+              <PanelIcon variant="warn">
+                <Bell aria-hidden />
+              </PanelIcon>
+              <div className={styles.panelHeadText}>
+                <h2 className={styles.panelTitle}>Lembretes de vencimento</h2>
+                <p className={styles.panelDesc}>Dispare avisos manuais para lançamentos em aberto na data escolhida.</p>
+              </div>
             </div>
             <div className={`${formLayout.stack} ${styles.panelBody}`}>
               <div className={formLayout.field}>
@@ -284,6 +394,7 @@ export function FinanceSettingsPage() {
                     aria-labelledby="finance-remind-date-label"
                   />
                   <button type="button" className={styles.btnPrimary} onClick={() => void fireReminders()}>
+                    <Send aria-hidden />
                     Disparar lembretes do dia
                   </button>
                 </div>
@@ -293,11 +404,16 @@ export function FinanceSettingsPage() {
 
           <article className={styles.panel}>
             <div className={styles.panelHead}>
-              <h2 className={styles.panelTitle}>Categorias</h2>
-              <p className={styles.panelDesc}>
-                Classifique lançamentos nas movimentações. As categorias aparecem nos filtros e relatórios compatíveis com o modo
-                ativo.
-              </p>
+              <PanelIcon variant="violet">
+                <Tags aria-hidden />
+              </PanelIcon>
+              <div className={styles.panelHeadText}>
+                <h2 className={styles.panelTitle}>Categorias</h2>
+                <p className={styles.panelDesc}>
+                  Classifique lançamentos nas movimentações. As categorias aparecem nos filtros e relatórios compatíveis com o
+                  modo ativo.
+                </p>
+              </div>
             </div>
             <div className={`${formLayout.stack} ${styles.panelBody}`}>
               {!settings?.finance_enabled ? (
@@ -320,39 +436,41 @@ export function FinanceSettingsPage() {
                         disabled={catBusy}
                         aria-label="Nome da nova categoria"
                       />
-                      <input
-                        className={styles.inputColor}
-                        type="text"
-                        placeholder="#RRGGBB"
+                      <CategoryColorPicker
+                        id="new-category-color"
+                        label="Cor (opcional)"
                         value={newCatColor}
-                        onChange={(e) => setNewCatColor(e.target.value)}
-                        maxLength={7}
+                        onChange={setNewCatColor}
                         disabled={catBusy}
-                        aria-label="Cor opcional (hex)"
                       />
-                      <button type="submit" className={styles.btnSecondary} disabled={catBusy || !newCatName.trim()}>
-                        Adicionar
-                      </button>
+                      <div className={styles.newCategoryActions}>
+                        <button type="submit" className={styles.btnSecondary} disabled={catBusy || !newCatName.trim()}>
+                          Adicionar
+                        </button>
+                      </div>
                     </form>
                   ) : (
                     <p className={styles.muted}>Apenas administradores e recepção alteram categorias; lista abaixo para consulta.</p>
                   )}
 
                   {categories.length === 0 ? (
-                    <p className={styles.muted}>
-                      {canManageCadastros ? "Nenhuma categoria ainda. Cadastre a primeira acima." : "Nenhuma categoria cadastrada."}
-                    </p>
+                    <div className={styles.emptyCategories}>
+                      <Palette aria-hidden />
+                      <p>
+                        {canManageCadastros
+                          ? "Nenhuma categoria ainda. Cadastre a primeira acima."
+                          : "Nenhuma categoria cadastrada."}
+                      </p>
+                    </div>
                   ) : (
                     <ul className={styles.categoryList}>
                       {categories.map((c) => (
-                        <li key={c.id} className={styles.categoryRow}>
+                        <li
+                          key={c.id}
+                          className={`${styles.categoryRow} ${canManageCadastros && editingId === c.id ? styles.categoryRowEditing : ""}`}
+                        >
                           {canManageCadastros && editingId === c.id ? (
-                            <>
-                              <span
-                                className={styles.colorDot}
-                                style={{ background: editColor.trim() || "var(--color-border)" }}
-                                aria-hidden
-                              />
+                            <div className={styles.categoryEditBlock}>
                               <input
                                 className={styles.input}
                                 value={editName}
@@ -360,14 +478,13 @@ export function FinanceSettingsPage() {
                                 disabled={catBusy}
                                 aria-label="Editar nome"
                               />
-                              <input
-                                className={styles.inputColor}
-                                type="text"
+                              <CategoryColorPicker
+                                id={`edit-category-color-${c.id}`}
+                                label="Cor"
                                 value={editColor}
-                                onChange={(e) => setEditColor(e.target.value)}
+                                onChange={setEditColor}
                                 disabled={catBusy}
-                                placeholder="#RRGGBB"
-                                aria-label="Editar cor"
+                                compact
                               />
                               <div className={styles.rowActions}>
                                 <button type="button" className={styles.btnGhost} onClick={cancelEdit} disabled={catBusy}>
@@ -377,12 +494,12 @@ export function FinanceSettingsPage() {
                                   Salvar
                                 </button>
                               </div>
-                            </>
+                            </div>
                           ) : (
                             <>
                               <span
                                 className={styles.colorDot}
-                                style={{ background: c.color?.trim() || "var(--color-border)" }}
+                                style={{ background: categoryDotColor(c.color) }}
                                 title={c.color ?? "Sem cor"}
                                 aria-hidden
                               />
@@ -392,7 +509,12 @@ export function FinanceSettingsPage() {
                                   <button type="button" className={styles.btnGhost} onClick={() => startEdit(c)} disabled={catBusy}>
                                     Editar
                                   </button>
-                                  <button type="button" className={styles.btnDangerGhost} onClick={() => void removeCategory(c)} disabled={catBusy}>
+                                  <button
+                                    type="button"
+                                    className={styles.btnDangerGhost}
+                                    onClick={() => void removeCategory(c)}
+                                    disabled={catBusy}
+                                  >
                                     Excluir
                                   </button>
                                 </div>
@@ -410,8 +532,13 @@ export function FinanceSettingsPage() {
 
           <article className={styles.panel}>
             <div className={styles.panelHead}>
-              <h2 className={styles.panelTitle}>Fluxo de caixa</h2>
-              <p className={styles.panelDesc}>Resumo sintético do período — útil para conferência rápida.</p>
+              <PanelIcon variant="success">
+                <TrendingUp aria-hidden />
+              </PanelIcon>
+              <div className={styles.panelHeadText}>
+                <h2 className={styles.panelTitle}>Fluxo de caixa</h2>
+                <p className={styles.panelDesc}>Resumo sintético do período — útil para conferência rápida.</p>
+              </div>
             </div>
             <div className={`${formLayout.stack} ${styles.panelBody}`}>
               <div className={formLayout.field}>
@@ -435,6 +562,7 @@ export function FinanceSettingsPage() {
                     aria-labelledby="finance-cashflow-period-label"
                   />
                   <button type="button" className={styles.btnSecondary} onClick={() => void loadCashflow()}>
+                    <Calculator aria-hidden />
                     Calcular
                   </button>
                 </div>
@@ -457,7 +585,7 @@ export function FinanceSettingsPage() {
                     <dt>Fluxo líquido</dt>
                     <dd>{money(cashflow.net_flow)}</dd>
                   </div>
-                  <div className={styles.stat}>
+                  <div className={`${styles.stat} ${styles.statHighlight}`}>
                     <dt>Saldo final</dt>
                     <dd>{money(cashflow.closing_balance)}</dd>
                   </div>
@@ -474,19 +602,40 @@ export function FinanceSettingsPage() {
           <p className={styles.asideLead}>Páginas dedicadas — cada uma com fluxo próprio e validações.</p>
           <nav className={styles.tileNav} aria-label="Cadastros financeiros">
             <Link className={styles.tile} to="/app/finance/settings/accounts">
-              <span className={styles.tileKicker}>Contas</span>
-              <span className={styles.tileTitle}>Contas bancárias e caixa</span>
-              <span className={styles.tileArrow}>Abrir →</span>
+              <span className={styles.tileIcon}>
+                <Landmark aria-hidden />
+              </span>
+              <span className={styles.tileBody}>
+                <span className={styles.tileKicker}>Contas</span>
+                <span className={styles.tileTitle}>Contas bancárias e caixa</span>
+              </span>
+              <span className={styles.tileChevron} aria-hidden>
+                <ChevronRight />
+              </span>
             </Link>
             <Link className={styles.tile} to="/app/finance/settings/cards">
-              <span className={styles.tileKicker}>Cartões</span>
-              <span className={styles.tileTitle}>Cartões de crédito</span>
-              <span className={styles.tileArrow}>Abrir →</span>
+              <span className={styles.tileIcon}>
+                <CreditCard aria-hidden />
+              </span>
+              <span className={styles.tileBody}>
+                <span className={styles.tileKicker}>Cartões</span>
+                <span className={styles.tileTitle}>Cartões de crédito</span>
+              </span>
+              <span className={styles.tileChevron} aria-hidden>
+                <ChevronRight />
+              </span>
             </Link>
             <Link className={styles.tile} to="/app/finance/settings/machines">
-              <span className={styles.tileKicker}>Maquininhas</span>
-              <span className={styles.tileTitle}>Taxas por parcela e bandeira</span>
-              <span className={styles.tileArrow}>Abrir →</span>
+              <span className={styles.tileIcon}>
+                <Smartphone aria-hidden />
+              </span>
+              <span className={styles.tileBody}>
+                <span className={styles.tileKicker}>Maquininhas</span>
+                <span className={styles.tileTitle}>Taxas por parcela e bandeira</span>
+              </span>
+              <span className={styles.tileChevron} aria-hidden>
+                <ChevronRight />
+              </span>
             </Link>
           </nav>
         </aside>

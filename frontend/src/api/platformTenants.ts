@@ -9,6 +9,7 @@ export type PlatformTenantListItem = {
   tax_document: string;
   status: TenantStatus;
   active_plan: string;
+  features_enabled?: Record<string, boolean>;
   timezone: string;
   created_at: string;
   registration_email: string | null;
@@ -109,6 +110,23 @@ export async function deletePlatformTenant(tenantId: number): Promise<void> {
   if (response.status === 204) return;
   const body: unknown = await response.json().catch(() => ({}));
   throw new Error(extractError(body, "Não foi possível excluir o cliente SaaS."));
+}
+
+export async function updatePlatformTenantFeatures(
+  tenantId: number,
+  featuresEnabled: Record<string, boolean>,
+): Promise<PlatformTenantDetail> {
+  const response = await fetch(apiUrl(`/api/v1/platform/tenants/${tenantId}/features`), {
+    method: "PATCH",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ features_enabled: featuresEnabled }),
+  });
+  const body: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível atualizar funcionalidades beta."));
+  return body as PlatformTenantDetail;
 }
 
 export async function updatePlatformTenantPlan(tenantId: number, activePlan: string): Promise<PlatformTenantDetail> {

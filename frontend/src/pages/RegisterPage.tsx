@@ -1,25 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { registerRequest, resendVerificationEmailRequest } from "../api/auth";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
+import { usePlatformBranding } from "../context/PlatformBrandingContext";
 import styles from "./LoginPage.module.css";
-
-// Icones SVG inline para melhor performance
-const SnowflakeIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={styles.logoIcon}>
-    <line x1="12" y1="2" x2="12" y2="22" />
-    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-    <line x1="19.07" y1="4.93" x2="4.93" y2="19.07" />
-    <line x1="2" y1="12" x2="22" y2="12" />
-    <polyline points="12,6 9,3" />
-    <polyline points="12,6 15,3" />
-    <polyline points="12,18 9,21" />
-    <polyline points="12,18 15,21" />
-    <polyline points="6,12 3,9" />
-    <polyline points="6,12 3,15" />
-    <polyline points="18,12 21,9" />
-    <polyline points="18,12 21,15" />
-  </svg>
-);
 
 const BuildingIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={styles.inputIcon}>
@@ -76,6 +60,7 @@ const EyeOffIcon = () => (
 
 export function RegisterPage() {
   const navigate = useNavigate();
+  const { branding } = usePlatformBranding();
   const [tenantName, setTenantName] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -167,12 +152,7 @@ export function RegisterPage() {
       <section className={styles.hero} aria-labelledby="register-hero-title">
         <div className={styles.heroPattern} aria-hidden="true" />
         <div className={styles.heroInner}>
-          <div className={styles.brandRow}>
-            <div className={styles.logoMark}>
-              <SnowflakeIcon />
-            </div>
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth-dark" className={styles.brandRow} />
           <h1 id="register-hero-title" className={styles.heroTitle}>
             Comece agora!
           </h1>
@@ -216,12 +196,7 @@ export function RegisterPage() {
 
       <section className={styles.formSide} aria-labelledby="register-form-title">
         <div className={styles.card}>
-          <div className={styles.mobileBrand}>
-            <div className={styles.logoMark}>
-              <SnowflakeIcon />
-            </div>
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth" className={styles.mobileBrand} />
           
           <div className={styles.cardHeader}>
             <h2 id="register-form-title" className={styles.cardTitle}>
@@ -415,7 +390,7 @@ export function RegisterPage() {
         </div>
         
         <p className={styles.footerText}>
-          Climaris ERP - Gestao inteligente para climatizacao
+          {branding.platform_name} ERP - Gestao inteligente para climatizacao
         </p>
       </section>
     </main>

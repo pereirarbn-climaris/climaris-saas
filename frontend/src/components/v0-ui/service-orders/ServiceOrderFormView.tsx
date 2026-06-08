@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import {
   expandServiceOrderDescriptionToViewFields,
   serializeServiceOrderFormSnapshot,
@@ -21,14 +22,12 @@ import type { ServiceOut } from '../../../api/services'
 import type { SuggestedSlotOut } from '../../../api/serviceOrders'
 import { computeEstimatedMinutesFromLines } from '../../../lib/serviceOrderEstimatedTime'
 import type { PmocEstimatedTimeOut } from '../../../api/pmoc'
-import { ServiceOrderChecklist } from '../../serviceOrders/ServiceOrderChecklist'
-import { PmocScheduleOsSection, type PmocScheduleOsApplyPayload } from '../../pmoc/PmocScheduleOsSection'
-import { SignaturePad } from '../../pmoc/SignaturePad'
+import { LaudoAndChecklistTab } from '../../serviceOrders/LaudoAndChecklistTab'
 import { addMinutesToTimeString } from '../../../lib/pmocOsSchedule'
-import { formatDurationMinutes } from '../../../lib/formatDuration'
 import {
   computeLaborTotal,
   computePartsTotal,
+  sanitizeServiceOrderEquipmentSelection,
   toggleServiceOnEquipment,
 } from '../../../lib/serviceOrderLinesSync'
 import { ClientCombobox } from '../../ui/client-combobox'
@@ -50,6 +49,7 @@ import {
 } from '../../ui/alert-dialog'
 import { computeDiscountAmountFromView, type DiscountType } from '../../../lib/serviceOrderDiscount'
 import { toast } from '../../../lib/toast'
+import headerStyles from './ServiceOrderFormView.module.css'
 
 export type { DiscountType }
 
@@ -97,6 +97,12 @@ export interface Equipamento {
   tag?: string
   localizacao?: string
   numeroSerie?: string
+}
+
+export interface LaudoPhoto {
+  id: string
+  dataUrl: string
+  caption?: string
 }
 
 export interface ChecklistItem {
@@ -148,6 +154,15 @@ export interface ServiceOrderData {
   pecas: ProductLineDraft[]
   descricaoProblema: string
   diagnosticoTecnico: string
+  objetoLaudo?: string
+  metodologia?: string
+  conclusao?: string
+  planoAcao?: string
+  pressaoSuccao?: number | null
+  pressaoDescarga?: number | null
+  tensaoV?: number | null
+  correnteA?: number | null
+  laudoFotos?: LaudoPhoto[]
   checklist: ChecklistItem[]
   valorPecas: number
   valorMaoDeObra: number
@@ -175,6 +190,8 @@ export interface ServiceOrderFormViewProps {
   servicesCatalog?: ServiceOut[]
   /** Catálogo de produtos (API) */
   productsCatalog?: ProductOut[]
+  /** Controle de estoque ativo no workspace */
+  inventoryEnabled?: boolean
   /** Editar serviços/peças (admin, recepção ou técnico responsável) */
   canEditLines?: boolean
   /** Editar dados gerais (cliente, agenda, status) */
@@ -225,6 +242,12 @@ export interface ServiceOrderFormViewProps {
   profitabilityBadge?: React.ReactNode
   /** Seção "Gestão Financeira" (OS concluída). */
   financeSection?: React.ReactNode
+  /** Salvar laudo via PATCH dedicado */
+  onSaveLaudo?: (data: ServiceOrderData) => void | Promise<void>
+  /** Gerar PDF do laudo técnico */
+  onGenerateLaudoPdf?: () => void | Promise<void>
+  isSavingLaudo?: boolean
+  isGeneratingLaudoPdf?: boolean
 }
 
 // ============================================================================
@@ -255,6 +278,16 @@ const formatCurrency = (value: number): string => {
     style: 'currency',
     currency: 'BRL'
   }).format(value)
+}
+
+function formatAgendamentoDate(dateStr: string): string {
+  if (!dateStr) return ''
+  const parts = dateStr.split('-')
+  if (parts.length === 3) {
+    const [year, month, day] = parts
+    return `${day}/${month}/${year}`
+  }
+  return dateStr
 }
 
 function resolveLaudoFieldsFromServiceOrder(so: Partial<ServiceOrderData>): Pick<
@@ -953,6 +986,7 @@ interface ValueSummaryProps {
   valorMaoDeObra: number
   descontoTipo: DiscountType
   descontoValor: number
+  showParts?: boolean
 }
 
 const ValueSummary: React.FC<ValueSummaryProps> = ({
@@ -960,6 +994,7 @@ const ValueSummary: React.FC<ValueSummaryProps> = ({
   valorMaoDeObra,
   descontoTipo,
   descontoValor,
+  showParts = true,
 }) => {
   const subtotal = valorPecas + valorMaoDeObra
   const discountPreview = computeDiscountAmountFromView({
@@ -992,15 +1027,17 @@ const ValueSummary: React.FC<ValueSummaryProps> = ({
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
-            Peças
-          </span>
-          <span style={{ fontSize: 'var(--font-size-base)', color: 'var(--color-text)' }}>
-            {formatCurrency(valorPecas)}
-          </span>
-        </div>
-        
+        {showParts ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+              Peças
+            </span>
+            <span style={{ fontSize: 'var(--font-size-base)', color: 'var(--color-text)' }}>
+              {formatCurrency(valorPecas)}
+            </span>
+          </div>
+        ) : null}
+
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
             Mão de Obra
@@ -1096,6 +1133,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   equipamentosCliente,
   servicesCatalog = [],
   productsCatalog = [],
+  inventoryEnabled = true,
   canEditLines = true,
   canEditGeneral = true,
   canEditLaudo = true,
@@ -1121,6 +1159,10 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   financePaymentLabel = null,
   profitabilityBadge = null,
   financeSection = null,
+  onSaveLaudo,
+  onGenerateLaudoPdf,
+  isSavingLaudo = false,
+  isGeneratingLaudoPdf = false,
 }) => {
   const clientLocked = mode === 'edit' && Boolean(serviceOrder?.id ?? orderId)
   // Form state
@@ -1144,6 +1186,15 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     pecas: serviceOrder?.pecas || [],
     descricaoProblema: laudo?.descricaoProblema ?? '',
     diagnosticoTecnico: laudo?.diagnosticoTecnico ?? '',
+    objetoLaudo: serviceOrder?.objetoLaudo ?? '',
+    metodologia: serviceOrder?.metodologia ?? '',
+    conclusao: serviceOrder?.conclusao ?? '',
+    planoAcao: serviceOrder?.planoAcao ?? '',
+    pressaoSuccao: serviceOrder?.pressaoSuccao ?? null,
+    pressaoDescarga: serviceOrder?.pressaoDescarga ?? null,
+    tensaoV: serviceOrder?.tensaoV ?? null,
+    correnteA: serviceOrder?.correnteA ?? null,
+    laudoFotos: serviceOrder?.laudoFotos ?? [],
     checklist: laudo?.checklist ?? DEFAULT_CHECKLIST,
     valorPecas: serviceOrder?.valorPecas || 0,
     valorMaoDeObra: serviceOrder?.valorMaoDeObra || 0,
@@ -1209,6 +1260,15 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
       pecas: serviceOrder.pecas || [],
       descricaoProblema: laudoBaseline.descricaoProblema,
       diagnosticoTecnico: laudoBaseline.diagnosticoTecnico,
+      objetoLaudo: serviceOrder.objetoLaudo ?? '',
+      metodologia: serviceOrder.metodologia ?? '',
+      conclusao: serviceOrder.conclusao ?? '',
+      planoAcao: serviceOrder.planoAcao ?? '',
+      pressaoSuccao: serviceOrder.pressaoSuccao ?? null,
+      pressaoDescarga: serviceOrder.pressaoDescarga ?? null,
+      tensaoV: serviceOrder.tensaoV ?? null,
+      correnteA: serviceOrder.correnteA ?? null,
+      laudoFotos: serviceOrder.laudoFotos ?? [],
       checklist: laudoBaseline.checklist,
       valorPecas: serviceOrder.valorPecas || 0,
       valorMaoDeObra: serviceOrder.valorMaoDeObra || 0,
@@ -1244,6 +1304,15 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
       pecas: serviceOrder.pecas || [],
       descricaoProblema: laudo.descricaoProblema,
       diagnosticoTecnico: laudo.diagnosticoTecnico,
+      objetoLaudo: serviceOrder.objetoLaudo ?? '',
+      metodologia: serviceOrder.metodologia ?? '',
+      conclusao: serviceOrder.conclusao ?? '',
+      planoAcao: serviceOrder.planoAcao ?? '',
+      pressaoSuccao: serviceOrder.pressaoSuccao ?? null,
+      pressaoDescarga: serviceOrder.pressaoDescarga ?? null,
+      tensaoV: serviceOrder.tensaoV ?? null,
+      correnteA: serviceOrder.correnteA ?? null,
+      laudoFotos: serviceOrder.laudoFotos ?? [],
       checklist: laudo.checklist,
       valorPecas: serviceOrder.valorPecas || 0,
       valorMaoDeObra: serviceOrder.valorMaoDeObra || 0,
@@ -1257,14 +1326,33 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     })
   }, [serviceOrder])
 
+  const activeEquipmentIdsKey = useMemo(
+    () => equipamentosCliente.map((e) => e.id).sort().join(','),
+    [equipamentosCliente],
+  )
+
+  useEffect(() => {
+    if (!activeEquipmentIdsKey) return
+    setFormData((prev) => {
+      const { data, removedCount } = sanitizeServiceOrderEquipmentSelection(prev, equipamentosCliente)
+      if (removedCount === 0) return prev
+      toast.success(
+        removedCount === 1
+          ? '1 equipamento inativo ou indisponível foi removido da seleção desta OS.'
+          : `${removedCount} equipamentos inativos ou indisponíveis foram removidos da seleção desta OS.`,
+      )
+      return data
+    })
+  }, [activeEquipmentIdsKey, equipamentosCliente])
+
   useEffect(() => {
     const labor = computeLaborTotal(formData.servicos)
-    const parts = computePartsTotal(formData.pecas)
+    const parts = inventoryEnabled ? computePartsTotal(formData.pecas) : 0
     setFormData((prev) => {
       if (prev.valorMaoDeObra === labor && prev.valorPecas === parts) return prev
       return { ...prev, valorMaoDeObra: labor, valorPecas: parts }
     })
-  }, [formData.servicos, formData.pecas])
+  }, [formData.servicos, formData.pecas, inventoryEnabled])
   
   const [errors, setErrors] = useState<Record<string, string>>({})
   
@@ -1389,56 +1477,28 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
       return;
     }
     try {
-      await onSave(formData);
+      const { data: payload } = sanitizeServiceOrderEquipmentSelection(formData, equipamentosCliente)
+      await onSave(payload);
     } catch (e) {
       console.error("[ServiceOrderFormView] onSave rejeitou", e);
       toast.error(e instanceof Error ? e.message : 'Erro ao salvar ordem de serviço.');
     }
-  }, [validate, onSave, formData])
+  }, [validate, onSave, formData, equipamentosCliente])
   
+  const visibleSelectedEquipmentCount = useMemo(
+    () => formData.equipamentosIds.filter((id) => equipamentosCliente.some((e) => e.id === id)).length,
+    [formData.equipamentosIds, equipamentosCliente],
+  )
+
   // Computed values
   const canGeneratePDF = mode === 'edit' && formData.status === 'concluida' && serviceOrder?.id
   
-  const estimatedMinutes = useMemo(() => {
-    if ((formData.pmocEstimatedMinutes ?? 0) > 0) {
-      return formData.pmocEstimatedMinutes!;
-    }
-    return computeEstimatedMinutesFromLines(formData.servicos, servicesCatalog);
-  }, [formData.pmocEstimatedMinutes, formData.servicos, servicesCatalog]);
+  const estimatedMinutes = useMemo(
+    () => computeEstimatedMinutesFromLines(formData.servicos, servicesCatalog),
+    [formData.servicos, servicesCatalog],
+  );
 
-  const schedulingEnabled = formData.servicos.length > 0 || (formData.pmocEstimatedMinutes ?? 0) > 0;
-
-  const pmocDurationHint =
-    formData.pmocPlanId && (formData.pmocEstimatedMinutes ?? 0) > 0
-      ? `⏱ Tempo estimado com base nos serviços do cronograma para este mês: ${formatDurationMinutes(formData.pmocEstimatedMinutes!)}.`
-      : undefined;
-
-  const handlePmocApply = useCallback((payload: PmocScheduleOsApplyPayload) => {
-    setFormData((prev) => ({
-      ...prev,
-      pmocPlanId: payload.pmocPlanId,
-      pmocPeriodYear: payload.pmocPeriodYear,
-      pmocPeriodMonth: payload.pmocPeriodMonth,
-      pmocEstimatedMinutes: payload.pmocEstimatedMinutes,
-      pmocBreakdown: payload.pmocBreakdown,
-      servicos: payload.servicos,
-      checklist: payload.checklist,
-      descricaoProblema: payload.descricaoProblema || prev.descricaoProblema,
-      equipamentosIds: payload.equipamentosIds.length ? payload.equipamentosIds : prev.equipamentosIds,
-    }));
-  }, []);
-
-  const handlePmocClear = useCallback(() => {
-    setFormData((prev) => ({
-      ...prev,
-      pmocPlanId: '',
-      pmocPeriodYear: undefined,
-      pmocPeriodMonth: undefined,
-      pmocEstimatedMinutes: undefined,
-      pmocBreakdown: undefined,
-      horaTermino: '',
-    }));
-  }, []);
+  const schedulingEnabled = formData.servicos.length > 0;
 
   useEffect(() => {
     if (!formData.horaAgendamento || estimatedMinutes < 1) return;
@@ -1482,6 +1542,53 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     [onSuggestSlots],
   )
 
+  const selectedCliente = useMemo(
+    () => clientes.find((c) => c.id === formData.clienteId),
+    [clientes, formData.clienteId],
+  )
+
+  const selectedTecnico = useMemo(
+    () => tecnicos.find((t) => t.id === formData.tecnicoId),
+    [tecnicos, formData.tecnicoId],
+  )
+
+  const headerLead = useMemo(() => {
+    if (mode === 'create') {
+      return 'Cadastre cliente, serviços, equipamentos e agenda da ordem de serviço.'
+    }
+    const parts: string[] = []
+    if (selectedCliente?.nome) {
+      parts.push(`Cliente: ${selectedCliente.nome}`)
+    }
+    if (formData.dataAgendamento) {
+      const dateLabel = formatAgendamentoDate(formData.dataAgendamento)
+      const timeLabel = formData.horaAgendamento ? ` às ${formData.horaAgendamento}` : ''
+      parts.push(`Agendamento: ${dateLabel}${timeLabel}`)
+    }
+    if (selectedTecnico?.nome) {
+      parts.push(`Técnico: ${selectedTecnico.nome}`)
+    }
+    if (visibleSelectedEquipmentCount > 0) {
+      parts.push(`${visibleSelectedEquipmentCount} equipamento${visibleSelectedEquipmentCount === 1 ? '' : 's'}`)
+    }
+    return parts.length > 0
+      ? parts.join(' · ')
+      : 'Gerencie serviços, equipamentos, laudo técnico e fechamento da ordem.'
+  }, [
+    mode,
+    selectedCliente,
+    selectedTecnico,
+    formData.dataAgendamento,
+    formData.horaAgendamento,
+    visibleSelectedEquipmentCount,
+  ])
+
+  const breadcrumbCurrent = useMemo(() => {
+    if (mode === 'create') return 'Nova OS'
+    if (selectedCliente?.nome) return selectedCliente.nome
+    return serviceOrder?.numero ? `OS #${serviceOrder.numero}` : 'Editar OS'
+  }, [mode, selectedCliente, serviceOrder?.numero])
+
   const statusOptions: SelectOption[] = [
     { value: 'pendente', label: 'Pendente' },
     { value: 'agendada', label: 'Agendada' },
@@ -1491,127 +1598,107 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   ]
   
   const tipoServicoOptions: SelectOption[] = [
-    { value: 'preventiva', label: 'Preventiva (PMOC)' },
+    { value: 'preventiva', label: 'Preventiva' },
     { value: 'corretiva', label: 'Corretiva' },
     { value: 'instalacao', label: 'Instalação' },
   ]
 
   return (
-    <div 
-      style={{
-        minHeight: '100vh',
-        backgroundColor: 'var(--color-surface)',
-        paddingBottom: '6rem', // Space for floating buttons
-      }}
-    >
-      {/* Header */}
-      <div 
-        style={{
-          backgroundColor: 'var(--color-surface-elevated)',
-          borderBottom: '1px solid var(--color-border)',
-          padding: 'var(--space-5) var(--space-6)',
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-        }}
-      >
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <h1 
+    <div className={headerStyles.pageShell}>
+      <header className={headerStyles.pageHeader}>
+        <nav className={headerStyles.breadcrumb} aria-label="Navegação">
+          <Link className={headerStyles.breadcrumbLink} to="/app/service-orders">
+            Ordens de serviço
+          </Link>
+          <span className={headerStyles.breadcrumbSep} aria-hidden>
+            /
+          </span>
+          <span className={headerStyles.breadcrumbCurrent}>{breadcrumbCurrent}</span>
+        </nav>
+        <div className={headerStyles.pageHeaderMain}>
+          <span className={headerStyles.pageHeaderIcon} aria-hidden>
+            <Icons.Clipboard />
+          </span>
+          <div className={headerStyles.pageHeaderText}>
+            <h1 className={headerStyles.title}>
+              {mode === 'create' ? 'Nova Ordem de Serviço' : `OS #${serviceOrder?.numero}`}
+            </h1>
+            <p className={headerStyles.lead}>{headerLead}</p>
+            {mode === 'edit' ? (
+              <div className={headerStyles.headerBadges}>
+                <span
+                  className={headerStyles.statusBadge}
+                  style={{
+                    color: STATUS_CONFIG[formData.status].color,
+                    backgroundColor: STATUS_CONFIG[formData.status].bg,
+                  }}
+                >
+                  {STATUS_CONFIG[formData.status].label}
+                </span>
+                <span className={headerStyles.typeBadge}>
+                  {SERVICE_TYPE_CONFIG[formData.tipoServico].label}
+                </span>
+                {financePaymentLabel ? (
+                  <span
+                    className={headerStyles.financeBadge}
+                    style={{
+                      color:
+                        financePaymentLabel === 'Pago'
+                          ? 'var(--color-success, #15803d)'
+                          : financePaymentLabel === 'Parcial'
+                            ? 'var(--color-warning, #b45309)'
+                            : 'var(--color-text-muted, #64748b)',
+                      backgroundColor:
+                        financePaymentLabel === 'Pago'
+                          ? 'rgba(21, 128, 61, 0.1)'
+                          : financePaymentLabel === 'Parcial'
+                            ? 'rgba(180, 83, 9, 0.12)'
+                            : 'rgba(100, 116, 139, 0.12)',
+                    }}
+                  >
+                    Financeiro: {financePaymentLabel}
+                  </span>
+                ) : null}
+                {profitabilityBadge}
+                {financePaymentLabel === 'Pago' && formData.status === 'concluida' ? (
+                  <span
+                    className={headerStyles.financeBadge}
+                    style={{
+                      color: 'var(--color-success, #15803d)',
+                      backgroundColor: 'rgba(21, 128, 61, 0.1)',
+                    }}
+                  >
+                    Recebida
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {canCompleteOrder && onCompleteOrder ? (
+            <div className={headerStyles.pageHeaderActions}>
+              <Button
+                variant="primary"
+                onClick={() => setCompleteOrderOpen(true)}
+                loading={isCompletingOrder}
+                disabled={isLoading || isCancellingSchedule || isCancellingOrder}
+                icon={<Icons.Check style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
                 style={{
-                  fontSize: 'var(--font-size-2xl)',
-                  fontWeight: 'var(--font-weight-bold)',
-                  color: 'var(--color-text)',
-                  margin: 0,
+                  backgroundColor: 'var(--color-success, #16a34a)',
                 }}
               >
-                {mode === 'create' ? 'Nova Ordem de Serviço' : `OS #${serviceOrder?.numero}`}
-              </h1>
-              {mode === 'edit' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 'var(--space-1)',
-                      padding: `0 var(--badge-padding-x)`,
-                      height: 'var(--badge-height)',
-                      fontSize: 'var(--badge-font-size)',
-                      fontWeight: 'var(--font-weight-medium)',
-                      color: STATUS_CONFIG[formData.status].color,
-                      backgroundColor: STATUS_CONFIG[formData.status].bg,
-                      borderRadius: 'var(--badge-radius)',
-                    }}
-                  >
-                    {STATUS_CONFIG[formData.status].label}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 'var(--font-size-sm)',
-                      color: 'var(--color-text-muted)',
-                    }}
-                  >
-                    {SERVICE_TYPE_CONFIG[formData.tipoServico].label}
-                  </span>
-                  {financePaymentLabel ? (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: `0 var(--badge-padding-x)`,
-                        height: 'var(--badge-height)',
-                        fontSize: 'var(--badge-font-size)',
-                        fontWeight: 'var(--font-weight-medium)',
-                        color:
-                          financePaymentLabel === 'Pago'
-                            ? 'var(--color-success, #15803d)'
-                            : financePaymentLabel === 'Parcial'
-                              ? 'var(--color-warning, #b45309)'
-                              : 'var(--color-text-muted, #64748b)',
-                        backgroundColor:
-                          financePaymentLabel === 'Pago'
-                            ? 'rgba(21, 128, 61, 0.1)'
-                            : financePaymentLabel === 'Parcial'
-                              ? 'rgba(180, 83, 9, 0.12)'
-                              : 'rgba(100, 116, 139, 0.12)',
-                        borderRadius: 'var(--badge-radius)',
-                      }}
-                    >
-                      Financeiro: {financePaymentLabel}
-                    </span>
-                  ) : null}
-                  {profitabilityBadge}
-                  {financePaymentLabel === 'Pago' && formData.status === 'concluida' ? (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: `0 var(--badge-padding-x)`,
-                        height: 'var(--badge-height)',
-                        fontSize: 'var(--badge-font-size)',
-                        fontWeight: 'var(--font-weight-medium)',
-                        color: 'var(--color-success, #15803d)',
-                        backgroundColor: 'rgba(21, 128, 61, 0.1)',
-                        borderRadius: 'var(--badge-radius)',
-                      }}
-                    >
-                      Recebida
-                    </span>
-                  ) : null}
-                </div>
-              )}
+                Concluir OS
+              </Button>
             </div>
-          </div>
+          ) : null}
         </div>
-      </div>
-      
+      </header>
+
       {/* Form Content */}
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: 'var(--space-6)' }}>
+      <div className={headerStyles.content}>
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'dados' | 'laudo')}>
           <TabsList>
             <TabsTrigger value="dados">Dados Gerais</TabsTrigger>
-            <TabsTrigger value="laudo">Laudo e Checklist</TabsTrigger>
+            <TabsTrigger value="laudo">Laudo Técnico</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dados">
@@ -1653,6 +1740,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             onPecasChange={(pecas) => setFormData((prev) => ({ ...prev, pecas }))}
             servicesCatalog={servicesCatalog}
             productsCatalog={productsCatalog}
+            showProductLines={inventoryEnabled}
             canEditLines={canEditLines}
             readOnly={linesReadOnly}
             equipamentosCliente={equipamentosCliente}
@@ -1715,33 +1803,11 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                     marginTop: 'var(--space-4)',
                   }}
                 >
-                  {formData.equipamentosIds.length} equipamento(s) selecionado(s)
+                  {visibleSelectedEquipmentCount} equipamento(s) selecionado(s)
                 </p>
               </>
             )}
           </FormCard>
-
-          {formData.tipoServico === 'preventiva' && canEditGeneral ? (
-            <PmocScheduleOsSection
-              clientId={formData.clienteId}
-              dataAgendamento={formData.dataAgendamento}
-              pmocPlanId={formData.pmocPlanId ?? ''}
-              pmocPeriodYear={formData.pmocPeriodYear}
-              pmocPeriodMonth={formData.pmocPeriodMonth}
-              servicesCatalog={servicesCatalog}
-              disabled={!formData.clienteId}
-              onPlanChange={(planId) => {
-                if (!planId) {
-                  handlePmocClear();
-                  updateField('pmocPlanId', '');
-                  return;
-                }
-                updateField('pmocPlanId', planId);
-              }}
-              onApply={handlePmocApply}
-              onClear={handlePmocClear}
-            />
-          ) : null}
 
           <ServiceOrderSchedulingPanel
               key={schedulingPanelKey}
@@ -1754,7 +1820,6 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               onHoraChange={(v) => updateField('horaAgendamento', v)}
               tecnicos={tecnicos}
               estimatedMinutes={estimatedMinutes}
-              pmocDurationHint={pmocDurationHint}
               schedulingEnabled={schedulingEnabled}
               canEditScheduling={canEditGeneral}
               orderId={orderId}
@@ -1771,22 +1836,6 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             title="Status e tipo"
             subtitle="Situação da OS e classificação do serviço"
           >
-            {canCompleteOrder ? (
-              <p
-                style={{
-                  margin: '0 0 var(--space-4)',
-                  padding: '0.65rem 0.85rem',
-                  borderRadius: 'var(--input-radius)',
-                  backgroundColor: 'color-mix(in srgb, var(--color-success, #16a34a) 10%, transparent)',
-                  fontSize: 'var(--font-size-sm)',
-                  lineHeight: 1.45,
-                  color: 'var(--color-text)',
-                }}
-              >
-                O serviço já foi executado mas a OS continua aberta? Use o botão{' '}
-                <strong>Concluir OS</strong> no rodapé para registrar a conclusão e atualizar a gestão preventiva.
-              </p>
-            ) : null}
             <div
               style={{
                 display: 'grid',
@@ -1806,11 +1855,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                 <Select
                   options={tipoServicoOptions}
                   value={formData.tipoServico}
-                  onChange={(v) => {
-                    const tipo = v as ServiceType
-                    if (tipo !== 'preventiva') handlePmocClear()
-                    updateField('tipoServico', tipo)
-                  }}
+                  onChange={(v) => updateField('tipoServico', v as ServiceType)}
                   disabled={!canEditGeneral}
                 />
               </FormField>
@@ -1830,16 +1875,18 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               }}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--form-field-gap-loose)' }}>
-                <FormField label="Valor das Peças" hint="Calculado automaticamente a partir das peças/insumos">
-                  <Input
-                    type="text"
-                    value={formatCurrency(formData.valorPecas)}
-                    readOnly
-                    disabled
-                    icon={<Icons.DollarSign style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
-                  />
-                </FormField>
-                
+                {inventoryEnabled ? (
+                  <FormField label="Valor das Peças" hint="Calculado automaticamente a partir das peças/insumos">
+                    <Input
+                      type="text"
+                      value={formatCurrency(formData.valorPecas)}
+                      readOnly
+                      disabled
+                      icon={<Icons.DollarSign style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
+                    />
+                  </FormField>
+                ) : null}
+
                 <FormField label="Valor da Mão de Obra" hint="Calculado automaticamente a partir dos serviços">
                   <Input
                     type="text"
@@ -1854,7 +1901,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                   label="Desconto"
                   hint={
                     formData.descontoTipo === 'percent'
-                      ? 'Percentual sobre o subtotal (mão de obra + peças)'
+                      ? inventoryEnabled
+                        ? 'Percentual sobre o subtotal (mão de obra + peças)'
+                        : 'Percentual sobre o valor da mão de obra'
                       : 'Valor fixo em reais descontado do subtotal'
                   }
                 >
@@ -1922,6 +1971,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                   valorMaoDeObra={formData.valorMaoDeObra}
                   descontoTipo={formData.descontoTipo ?? 'fixed'}
                   descontoValor={formData.descontoValor ?? 0}
+                  showParts={inventoryEnabled}
                 />
               </div>
             </div>
@@ -1933,104 +1983,19 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
 
           <TabsContent value="laudo">
             {canEditLaudo ? (
-              <FormCard
-                icon={<Icons.FileText style={{ width: 'var(--icon-size-md)', height: 'var(--icon-size-md)' }} />}
-                title="Laudo Técnico e Checklist"
-                subtitle="Documentação do serviço executado (PMOC)"
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                      gap: 'var(--form-grid-column-gap)',
-                    }}
-                  >
-                    <FormField label="Descrição do Problema / Solicitação">
-                      <Textarea
-                        value={formData.descricaoProblema}
-                        onChange={(e) => updateField('descricaoProblema', e.target.value)}
-                        placeholder="Descreva o problema relatado pelo cliente ou a solicitação de serviço..."
-                        rows={5}
-                      />
-                    </FormField>
-                    <FormField label="Diagnóstico Técnico / Parecer">
-                      <Textarea
-                        value={formData.diagnosticoTecnico}
-                        onChange={(e) => updateField('diagnosticoTecnico', e.target.value)}
-                        placeholder="Descreva o diagnóstico, procedimentos realizados e observações técnicas..."
-                        rows={5}
-                      />
-                    </FormField>
-                  </div>
-                  <div>
-                    <h4
-                      style={{
-                        fontSize: 'var(--font-size-md)',
-                        fontWeight: 'var(--font-weight-medium)',
-                        color: 'var(--color-text)',
-                        marginBottom: 'var(--space-4)',
-                      }}
-                    >
-                      Checklist de Verificação
-                    </h4>
-                    <ServiceOrderChecklist
-                      items={formData.checklist}
-                      onChange={handleChecklistChange}
-                      pmocPlanId={formData.pmocPlanId}
-                      orderId={orderId}
-                      equipmentIds={formData.equipamentosIds}
-                      error={errors.checklist}
-                    />
-                  </div>
-
-                  {(formData.status === 'em_andamento' || formData.status === 'concluida') ? (
-                    <div>
-                      <h4
-                        style={{
-                          fontSize: 'var(--font-size-md)',
-                          fontWeight: 'var(--font-weight-medium)',
-                          color: 'var(--color-text)',
-                          marginBottom: 'var(--space-4)',
-                        }}
-                      >
-                        Assinatura digital do cliente
-                      </h4>
-                      <FormField
-                        label="Nome do signatário"
-                        required={formData.status === 'concluida'}
-                        error={errors.clientSignatureName}
-                      >
-                        <Input
-                          value={formData.clientSignatureName ?? ''}
-                          onChange={(e) => updateField('clientSignatureName', e.target.value)}
-                          placeholder="Nome completo do cliente"
-                        />
-                      </FormField>
-                      <div style={{ marginTop: 'var(--space-4)' }}>
-                        <SignaturePad
-                          onChange={(dataUrl) => {
-                            updateField('clientSignatureBase64', dataUrl)
-                            if (dataUrl && !formData.clientSignatureAt) {
-                              updateField('clientSignatureAt', new Date().toISOString())
-                            }
-                          }}
-                        />
-                        {errors.clientSignature ? (
-                          <p style={{ marginTop: 'var(--space-2)', fontSize: 'var(--font-size-sm)', color: 'var(--color-error)' }}>
-                            {errors.clientSignature}
-                          </p>
-                        ) : null}
-                        {formData.clientSignatureGeo ? (
-                          <p style={{ marginTop: 'var(--space-2)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-                            Geolocalização capturada: {formData.clientSignatureGeo.lat.toFixed(5)}, {formData.clientSignatureGeo.lng.toFixed(5)}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </FormCard>
+              <LaudoAndChecklistTab
+                formData={formData}
+                canEdit={canEditLaudo}
+                errors={errors}
+                selectedClienteNome={selectedCliente?.nome}
+                onFieldChange={updateField}
+                onChecklistChange={handleChecklistChange}
+                onSaveLaudo={onSaveLaudo ? () => onSaveLaudo(formData) : undefined}
+                onGenerateLaudoPdf={onGenerateLaudoPdf}
+                isSavingLaudo={isSavingLaudo}
+                isGeneratingLaudoPdf={isGeneratingLaudoPdf}
+                showSignature={formData.status === 'em_andamento' || formData.status === 'concluida'}
+              />
             ) : (
               <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
                 Você não tem permissão para editar o laudo desta ordem de serviço.
@@ -2102,21 +2067,6 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               disabled={isLoading || isCancellingSchedule || isCompletingOrder}
             >
               Cancelar OS
-            </Button>
-          ) : null}
-
-          {canCompleteOrder && onCompleteOrder ? (
-            <Button
-              variant="primary"
-              onClick={() => setCompleteOrderOpen(true)}
-              loading={isCompletingOrder}
-              disabled={isLoading || isCancellingSchedule || isCancellingOrder}
-              icon={<Icons.Check style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
-              style={{
-                backgroundColor: 'var(--color-success, #16a34a)',
-              }}
-            >
-              Concluir OS
             </Button>
           ) : null}
 
@@ -2223,8 +2173,8 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             <AlertDialogTitle id="os-complete-order-title">Concluir ordem de serviço?</AlertDialogTitle>
             <AlertDialogDescription id="os-complete-order-desc">
               Use esta opção quando o serviço já foi realizado mas o técnico não finalizou a OS. A conclusão
-              registra a manutenção, atualiza prazos da gestão preventiva e consome estoque reservado — sem
-              exigir assinatura do cliente.
+              registra a manutenção e atualiza prazos da gestão preventiva
+              {inventoryEnabled ? " e consome estoque reservado" : ""} — sem exigir assinatura do cliente.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

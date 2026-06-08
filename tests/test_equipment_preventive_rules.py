@@ -12,6 +12,7 @@ from app.equipment_preventive_rules import (
     compute_next_due_datetime,
     equipment_due_row_to_preventive_item,
     group_preventive_items_by_client,
+    preventive_order_completion_at,
     refresh_rule_next_due_date,
 )
 from app.service_order_closure import execute_post_closure_automations
@@ -22,6 +23,14 @@ def test_compute_next_due_datetime_days():
     base = datetime(2026, 5, 18, 14, 30, tzinfo=timezone.utc)
     result = compute_next_due_datetime(base, interval_value=15, interval_type=PreventiveIntervalType.DAYS)
     assert result == datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc)
+
+
+def test_preventive_order_completion_at_prefers_stock_consumed():
+    order = MagicMock(
+        stock_consumed_at=datetime(2026, 5, 14, 8, 0, tzinfo=timezone.utc),
+        schedule=None,
+    )
+    assert preventive_order_completion_at(order) == datetime(2026, 5, 14, 8, 0, tzinfo=timezone.utc)
 
 
 def test_compute_next_due_datetime_months():
@@ -109,11 +118,10 @@ def test_refresh_rule_next_due_date_without_last_performed():
         interval_value=6,
         interval_type=PreventiveIntervalType.MONTHS,
         is_active=True,
+        next_due_date=datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc),
     )
-    ref = datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc)
-    refresh_rule_next_due_date(rule, reference=ref)
-    assert rule.next_due_date is not None
-    assert rule.next_due_date.date() == date(2026, 11, 18)
+    refresh_rule_next_due_date(rule)
+    assert rule.next_due_date is None
 
 
 def test_refresh_rule_next_due_date_with_last_performed():

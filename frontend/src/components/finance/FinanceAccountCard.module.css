@@ -212,6 +212,14 @@
   min-height: 2rem;
 }
 
+.cardFooterBadges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .reconcileCta {
   margin-left: auto;
   padding: 0.28rem 0.65rem;

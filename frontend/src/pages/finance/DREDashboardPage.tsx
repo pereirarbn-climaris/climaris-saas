@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
+import { useFeature } from '../../lib/featureManager';
 import { useQuery } from '@tanstack/react-query';
 import { Download, ChevronLeft } from 'lucide-react';
 import { ToastHost } from '../../components/ToastHost';
@@ -34,7 +35,12 @@ const MONTH_OPTIONS = [
 ];
 
 export function DREDashboardPage() {
+  const dreDashboardEnabled = useFeature('dre_dashboard');
   const now = new Date();
+
+  if (!dreDashboardEnabled) {
+    return <Navigate to="/app/finance/dashboard" replace />;
+  }
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
 

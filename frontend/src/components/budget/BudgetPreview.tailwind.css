@@ -1,0 +1,55 @@
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .budget-preview-sheet {
+    @apply relative flex w-full flex-col overflow-hidden bg-white shadow-lg;
+    aspect-ratio: 210 / 297;
+    font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif;
+    font-size: 7px;
+    line-height: 1.35;
+    color: #1e293b;
+  }
+
+  .budget-preview-fade {
+    @apply flex h-full flex-col p-4 transition-opacity duration-300 ease-out;
+  }
+
+  .budget-preview-muted {
+    @apply text-slate-500;
+  }
+
+  .budget-preview-table {
+    @apply mb-2 w-full border-collapse text-[6.5px];
+  }
+
+  .budget-preview-table th {
+    @apply border-b px-1 py-0.5 text-left font-semibold text-white;
+  }
+
+  .budget-preview-table td {
+    @apply border-b border-slate-100 px-1 py-0.5 align-top;
+  }
+
+  .budget-preview-table th:not(:first-child),
+  .budget-preview-table td:not(:first-child) {
+    @apply text-right;
+  }
+
+  .budget-preview-table--pro {
+    @apply table-fixed;
+  }
+
+  .budget-preview-table--pro th:first-child,
+  .budget-preview-table--pro td:first-child {
+    @apply text-left;
+    width: 50%;
+  }
+
+  .budget-preview-table--pro th,
+  .budget-preview-table--pro td {
+    @apply text-[5.5px];
+    border-width: 1px;
+    border-style: solid;
+  }
+}

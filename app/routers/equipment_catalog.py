@@ -19,6 +19,7 @@ from app.schemas import (
     EquipmentCategoryListOut,
     EquipmentCategoryOut,
     EquipmentLabelExtractionOut,
+    EquipmentLabelResolveOut,
 )
 from app.services.catalog_duplicate import find_catalog_duplicate
 from app.services.category_field_definitions import (
@@ -39,7 +40,13 @@ from app.services.equipment_catalog_form import (
     read_catalog_existing_manual_multipart,
 )
 from app.platform_credentials import resolve_claude_api_key, resolve_claude_model
+from app.services.equipment_label_catalog_resolve import (
+    find_or_create_catalog_from_label,
+    suggested_identificacao_from_extraction,
+    _parse_btu as parse_label_btu,
+)
 from app.services.equipment_label_vision import (
+    classify_equipment_kind_from_images,
     extract_ac_label_from_images,
     extract_climatizador_label_from_images,
 )
@@ -379,6 +386,118 @@ async def extract_equipment_label_from_photos(
         claude_model=claude_model,
     )
     return EquipmentLabelExtractionOut.model_validate(result)
+
+
+@router.post(
+    "/ai/resolve-label",
+    response_model=EquipmentLabelResolveOut,
+    dependencies=[
+        Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)),
+    ],
+)
+async def resolve_equipment_label_from_photos(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    equipment_kind: Annotated[str, Form()] = "auto",
+    evaporator_image: Annotated[UploadFile | None, File()] = None,
+    condenser_image: Annotated[UploadFile | None, File()] = None,
+    label_image: Annotated[UploadFile | None, File()] = None,
+) -> EquipmentLabelResolveOut:
+    """Extrai etiqueta, classifica tipo (se auto), busca ou cria modelo no catálogo."""
+    from app.services.platform_catalog import resolve_catalog_write_tenant_id
+
+    kind_raw = (equipment_kind or "auto").strip().lower()
+    claude_key = resolve_claude_api_key(db)
+    claude_model = resolve_claude_model(db)
+    catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
+
+    label = label_image or evaporator_image
+    label_bytes = await label.read() if label else None
+    evap_bytes = await evaporator_image.read() if evaporator_image else None
+    cond_bytes = await condenser_image.read() if condenser_image else None
+
+    if kind_raw in ("auto", ""):
+        classify_bytes = label_bytes or evap_bytes or cond_bytes
+        classify_ct = (
+            (label or evaporator_image or condenser_image).content_type
+            if (label or evaporator_image or condenser_image)
+            else None
+        )
+        classify_name = (
+            (label or evaporator_image or condenser_image).filename
+            if (label or evaporator_image or condenser_image)
+            else None
+        )
+        kind = await classify_equipment_kind_from_images(
+            label_bytes=classify_bytes,
+            label_content_type=classify_ct,
+            label_filename=classify_name,
+            claude_api_key=claude_key,
+            claude_model=claude_model,
+        )
+    elif kind_raw in ("climatizador", "clima"):
+        kind = "climatizador"
+    else:
+        kind = "ar_condicionado"
+
+    if kind == "climatizador":
+        lb = label_bytes or evap_bytes
+        lf = label or evaporator_image
+        result = await extract_climatizador_label_from_images(
+            label_bytes=lb,
+            label_content_type=lf.content_type if lf else None,
+            label_filename=lf.filename if lf else None,
+            claude_api_key=claude_key,
+            claude_model=claude_model,
+        )
+    else:
+        result = await extract_ac_label_from_images(
+            evaporator_bytes=evap_bytes or label_bytes,
+            evaporator_content_type=(
+                evaporator_image.content_type if evaporator_image else label.content_type if label else None
+            ),
+            evaporator_filename=(
+                evaporator_image.filename if evaporator_image else label.filename if label else None
+            ),
+            condenser_bytes=cond_bytes,
+            condenser_content_type=condenser_image.content_type if condenser_image else None,
+            condenser_filename=condenser_image.filename if condenser_image else None,
+            claude_api_key=claude_key,
+            claude_model=claude_model,
+        )
+
+    extraction_out = EquipmentLabelExtractionOut.model_validate(result)
+    catalog, category, created = find_or_create_catalog_from_label(
+        db,
+        tenant_id=catalog_tenant_id,
+        equipment_kind=kind,
+        extraction=result,
+    )
+    db.commit()
+    db.refresh(catalog)
+
+    brand = catalog.brand
+    model_display = catalog.model
+    suggested = suggested_identificacao_from_extraction(
+        result,
+        equipment_kind=kind,
+        brand=brand,
+        model_display=model_display,
+    )
+    cap_btu = parse_label_btu(result.get("capacidade_btus"))
+
+    return EquipmentLabelResolveOut(
+        equipment_kind=kind,
+        extraction=extraction_out,
+        catalog_id=str(catalog.id),
+        catalog_created=created,
+        category_id=str(category.id),
+        category_name=category.name,
+        brand=brand,
+        model_display=model_display,
+        suggested_identificacao=suggested,
+        capacidade_btu=cap_btu,
+    )
 
 
 @router.get("/categories", response_model=EquipmentCategoryListOut)

@@ -76,6 +76,11 @@ export function clientOutToViewData(c: ClientOut): ClientData {
     isActive: c.is_active !== false,
     isVerifiedCnpj: Boolean(c.is_verified_cnpj),
     lastCnpjCommercialUpdate: c.last_cnpj_commercial_update ?? null,
+    mainActivityCode: c.main_activity_code ?? undefined,
+    mainActivityDescription: c.main_activity_description ?? undefined,
+    legalNature: c.legal_nature ?? undefined,
+    registrationStatus: c.registration_status ?? undefined,
+    foundedAt: c.founded_at ?? undefined,
     endereco: {
       cep: formatCepInput(c.address_postal_code ?? ""),
       logradouro: c.address_street ?? "",
@@ -107,6 +112,11 @@ export function serializeClientFormSnapshot(data: ClientData): string {
     addressIbgeCode: digitsOnly(data.addressIbgeCode ?? ""),
     preventiveCampaignOptOut: Boolean(data.preventiveCampaignOptOut),
     isActive: data.isActive !== false,
+    mainActivityCode: (data.mainActivityCode ?? "").trim(),
+    mainActivityDescription: (data.mainActivityDescription ?? "").trim(),
+    legalNature: (data.legalNature ?? "").trim(),
+    registrationStatus: (data.registrationStatus ?? "").trim(),
+    foundedAt: (data.foundedAt ?? "").trim(),
     endereco: {
       cep: digitsOnly(end.cep ?? ""),
       logradouro: (end.logradouro ?? "").trim(),
@@ -121,7 +131,6 @@ export function serializeClientFormSnapshot(data: ClientData): string {
 
 export function emptyViewData(): ClientData {
   return {
-    type: "pj",
     razaoSocial: "",
     documento: "",
     regime: "regular",
@@ -215,14 +224,26 @@ export function mergeCnpjLookupToViewData(
       ? formatTaxDocumentInput(lu.tax_id, "cnpj")
       : prev.documento;
   const verifiedPatch = { isVerifiedCnpj: true as const, documento: docFormatted };
+  const fiscalPatch = {
+    mainActivityCode: lu.main_activity_code ?? enrichment.mainActivityCode ?? prev.mainActivityCode,
+    mainActivityDescription:
+      lu.main_activity_description ?? enrichment.mainActivityDescription ?? prev.mainActivityDescription,
+    legalNature: lu.legal_nature ?? enrichment.legalNature ?? prev.legalNature,
+    registrationStatus: lu.status_text ?? prev.registrationStatus,
+    foundedAt: lu.founded?.slice(0, 10) ?? prev.foundedAt,
+    stateRegistration: lu.state_registration ?? prev.stateRegistration,
+    ieIndicator: lu.ie_indicator ?? prev.ieIndicator,
+    telefone: prev.telefone || (lu.contact_phone ? formatPhoneBrInput(lu.contact_phone) : prev.telefone),
+    email: prev.email || lu.contact_email || prev.email,
+  };
   if (!mergeAddress) {
     return {
       ...prev,
       ...verifiedPatch,
+      ...fiscalPatch,
       razaoSocial: lu.company_name.trim() || prev.razaoSocial,
       nomeFantasia: (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.nomeFantasia,
       regime: nextRegime,
-      ...enrichment,
     };
   }
   const a = lu.address;
@@ -230,10 +251,10 @@ export function mergeCnpjLookupToViewData(
   return {
     ...prev,
     ...verifiedPatch,
+    ...fiscalPatch,
     razaoSocial: lu.company_name.trim() || prev.razaoSocial,
     nomeFantasia: (lu.trade_name && lu.trade_name.trim()) || lu.company_name.trim() || prev.nomeFantasia,
     regime: nextRegime,
-    ...enrichment,
     endereco: {
       ...prev.endereco,
       logradouro: a?.street ?? prev.endereco?.logradouro,
@@ -248,6 +269,9 @@ export function mergeCnpjLookupToViewData(
 }
 
 export function viewDataToCreatePayload(data: ClientData): ClientCreatePayload {
+  if (!data.type) {
+    throw new Error("Selecione o tipo de cadastro (Pessoa Física ou Pessoa Jurídica).");
+  }
   const tax_id_kind = data.type === "pf" ? "cpf" : "cnpj";
   const document = digitsOnly(data.documento);
   const ibge = digitsOnly(data.addressIbgeCode ?? "").slice(0, 7);
@@ -278,6 +302,11 @@ export function viewDataToCreatePayload(data: ClientData): ClientCreatePayload {
     base.state_registration = data.stateRegistration?.trim() || undefined;
     base.ie_indicator = (data.ieIndicator as "1" | "2" | "9" | undefined) || undefined;
     base.municipal_registration = data.municipalRegistration?.trim() || undefined;
+    base.main_activity_code = data.mainActivityCode?.trim() || undefined;
+    base.main_activity_description = data.mainActivityDescription?.trim() || undefined;
+    base.legal_nature = data.legalNature?.trim() || undefined;
+    base.registration_status = data.registrationStatus?.trim() || undefined;
+    base.founded_at = data.foundedAt?.trim() || undefined;
   } else {
     base.optante_mei = false;
   }
@@ -304,6 +333,11 @@ export function viewDataToUpdatePayload(data: ClientData): ClientUpdatePayload {
     state_registration: create.state_registration ?? null,
     ie_indicator: create.ie_indicator ?? null,
     municipal_registration: create.municipal_registration ?? null,
+    main_activity_code: create.main_activity_code ?? null,
+    main_activity_description: create.main_activity_description ?? null,
+    legal_nature: create.legal_nature ?? null,
+    registration_status: create.registration_status ?? null,
+    founded_at: create.founded_at ?? null,
     ...(create.document ? { document: create.document } : {}),
   };
 }

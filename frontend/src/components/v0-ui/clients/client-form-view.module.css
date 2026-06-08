@@ -1,0 +1,9 @@
+.formContent {
+  padding: var(--card-padding-lg);
+}
+
+@media (max-width: 768px) {
+  .formContent {
+    padding: 1rem;
+  }
+}

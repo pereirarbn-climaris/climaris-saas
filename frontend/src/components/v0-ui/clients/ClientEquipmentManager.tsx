@@ -30,6 +30,14 @@ import { parseScannedQrCode } from "../../../lib/qrcodeScan";
 import { QrCodeScannerModal } from "../../qrcodes/QrCodeScannerModal";
 import { EquipmentSheetModal } from "../../equipment/EquipmentSheetModal";
 import { EquipmentTechnicalSpecsGrid } from "../../equipment/EquipmentTechnicalSpecsGrid";
+import { ClientAddEquipmentModeChoose } from "../../clients/ClientAddEquipmentModeChoose";
+import {
+  ClientAddEquipmentAiPanel,
+  type ClientAddEquipmentAiForm,
+} from "../../clients/ClientAddEquipmentAiPanel";
+import { InstallationSiteField } from "../../clients/ClientAddEquipmentInstallationSiteField";
+import type { EquipmentLabelResolveOut } from "../../../api/equipmentCatalogAi";
+import { categoryFromLabelResolve } from "../../../lib/equipmentLabelResolveCategory";
 
 // ============================================================
 // TIPOS
@@ -1000,59 +1008,6 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-const InstallationSiteField: React.FC<{
-  clientSites: ClientSiteOut[];
-  value: number | null;
-  onChange: (siteId: number | null) => void;
-  highlightedSiteName?: string | null;
-}> = ({ clientSites, value, onChange, highlightedSiteName }) => (
-  <div
-    style={{
-      marginBottom: "1.25rem",
-      padding: "1rem",
-      backgroundColor: "var(--color-surface)",
-      border: "1px solid var(--color-border)",
-      borderRadius: "var(--card-radius)",
-    }}
-  >
-    <label
-      style={{
-        display: "block",
-        marginBottom: "0.5rem",
-        fontSize: "var(--font-size-sm)",
-        fontWeight: "var(--font-weight-medium)",
-        color: "var(--color-text)",
-      }}
-    >
-      Local / Unidade de Instalação
-    </label>
-    <select
-      value={value != null ? String(value) : ""}
-      onChange={(e) => {
-        const raw = e.target.value;
-        onChange(raw === "" ? null : Number(raw));
-      }}
-      style={inputStyle}
-    >
-      <option value="">Endereço Principal / Matriz</option>
-      {clientSites.map((site) => (
-        <option key={site.id} value={String(site.id)}>
-          {site.name}
-        </option>
-      ))}
-    </select>
-    {highlightedSiteName ? (
-      <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-primary)" }}>
-        Vinculando à obra: <strong>{highlightedSiteName}</strong>
-      </p>
-    ) : clientSites.length === 0 ? (
-      <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
-        Cadastre filiais/obras no cadastro do cliente para vincular equipamentos a outras unidades.
-      </p>
-    ) : null}
-  </div>
-);
-
 interface CatalogSearchBlockProps {
   title: string;
   catalog: EquipmentCatalog;
@@ -1465,6 +1420,28 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   onSubmit,
   isSubmitting = false,
 }) => {
+  type RegistrationMode = "choose" | "manual" | "ai";
+  const emptyAiForm = (): ClientAddEquipmentAiForm => ({
+    tag: "",
+    serialNumber: "",
+    installationReference: "",
+    installationDate: "",
+    clientSiteId: null,
+    qrcodeCodeId: "",
+    catalogId: null,
+  });
+
+  const [registrationMode, setRegistrationMode] = useState<RegistrationMode>("choose");
+  const [aiForm, setAiForm] = useState<ClientAddEquipmentAiForm>(emptyAiForm);
+  const [aiCategory, setAiCategory] = useState<EquipmentCategory | null>(null);
+  const [aiCatalogMeta, setAiCatalogMeta] = useState<{
+    categoryName: string;
+    catalogCreated: boolean;
+    equipmentKind: string;
+  } | null>(null);
+  const [aiLabelMsg, setAiLabelMsg] = useState<string | null>(null);
+  const [aiFormError, setAiFormError] = useState("");
+
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [selectedCategory, setSelectedCategory] = useState<EquipmentCategory | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -1488,6 +1465,12 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   const [qrcodeValidating, setQrcodeValidating] = useState(false);
 
   const resetWizard = () => {
+    setRegistrationMode("choose");
+    setAiForm(emptyAiForm());
+    setAiCategory(null);
+    setAiCatalogMeta(null);
+    setAiLabelMsg(null);
+    setAiFormError("");
     setStep(1);
     setSelectedCategory(null);
     setSelectedCategoryId(null);
@@ -1506,6 +1489,77 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     });
     setQrcodeLocked(false);
     setQrcodeMsg("");
+  };
+
+  const applyLabelResolve = (resolved: EquipmentLabelResolveOut) => {
+    const { category } = categoryFromLabelResolve(resolved, categoryOptions);
+    setAiCategory(category);
+    setAiForm((prev) => ({
+      ...prev,
+      tag: prev.tag.trim() || resolved.suggested_identificacao?.trim() || prev.tag,
+      catalogId: resolved.catalog_id,
+    }));
+    setAiCatalogMeta({
+      categoryName: resolved.category_name,
+      catalogCreated: resolved.catalog_created,
+      equipmentKind: resolved.equipment_kind,
+    });
+    const kindLabel =
+      resolved.equipment_kind === "climatizador" ? "Climatizador" : "Ar-condicionado";
+    setAiLabelMsg(
+      resolved.catalog_created
+        ? `${kindLabel}: modelo "${resolved.brand} ${resolved.model_display}" cadastrado no catálogo.`
+        : `${kindLabel}: modelo "${resolved.brand} ${resolved.model_display}" encontrado no catálogo.`,
+    );
+    setAiFormError("");
+  };
+
+  const handleAiSubmit = async () => {
+    if (!aiForm.tag.trim()) {
+      setAiFormError("Informe um nome ou local do aparelho (ex.: Sala, Quarto 1).");
+      return;
+    }
+    if (!aiForm.serialNumber.trim()) {
+      setAiFormError("Informe o número de série do aparelho.");
+      return;
+    }
+    if (!aiForm.catalogId || !aiCategory) {
+      setAiFormError(
+        "Fotografe a etiqueta do aparelho para a IA identificar o modelo no catálogo antes de salvar.",
+      );
+      return;
+    }
+    if (aiForm.qrcodeCodeId.trim()) {
+      const code = parseScannedQrCode(aiForm.qrcodeCodeId);
+      if (!code) {
+        setAiFormError("Informe ou escaneie um código QR válido.");
+        return;
+      }
+      try {
+        const result = await validateQrCode(code);
+        if (!result.found || !result.available) {
+          setAiFormError(result.message || "Código indisponível.");
+          return;
+        }
+        setAiForm((prev) => ({ ...prev, qrcodeCodeId: result.code_id ?? code }));
+      } catch (e) {
+        setAiFormError(e instanceof Error ? e.message : "Falha ao validar código.");
+        return;
+      }
+    }
+    setAiFormError("");
+    const payload: NewEquipmentData = {
+      category: aiCategory,
+      isMultiSplit: false,
+      modelId: aiForm.catalogId,
+      serialNumber: aiForm.serialNumber.trim(),
+      tag: aiForm.tag.trim(),
+      installationReference: aiForm.installationReference,
+      installationDate: aiForm.installationDate,
+      clientSiteId: aiForm.clientSiteId,
+      qrcodeCodeId: aiForm.qrcodeCodeId.trim() || null,
+    };
+    await onSubmit(payload);
   };
 
   const validateAndLockQrcode = async (raw: string): Promise<boolean> => {
@@ -1543,9 +1597,14 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      const siteId = initialClientSiteId ?? null;
       setFormData((prev) => ({
         ...prev,
-        clientSiteId: initialClientSiteId ?? null,
+        clientSiteId: siteId,
+      }));
+      setAiForm((prev) => ({
+        ...prev,
+        clientSiteId: siteId,
       }));
     }
   }, [isOpen, initialClientSiteId]);
@@ -1732,9 +1791,28 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   };
 
   const handleBack = () => {
-    if (step === 1) onClose();
-    else setStep((prev) => (prev - 1) as 1 | 2 | 3 | 4);
+    if (registrationMode === "choose") {
+      onClose();
+      return;
+    }
+    if (registrationMode === "ai") {
+      setRegistrationMode("choose");
+      setAiFormError("");
+      setAiLabelMsg(null);
+      return;
+    }
+    if (step === 1) {
+      setRegistrationMode("choose");
+      return;
+    }
+    setStep((prev) => (prev - 1) as 1 | 2 | 3 | 4);
   };
+
+  const canSubmitAi =
+    Boolean(aiForm.tag.trim()) &&
+    Boolean(aiForm.serialNumber.trim()) &&
+    Boolean(aiForm.catalogId) &&
+    Boolean(aiCategory);
 
   const continueDisabled =
     (step === 1 && !canProceedStep1) ||
@@ -1797,7 +1875,11 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
               Adicionar Equipamento
             </h2>
             <p style={{ margin: "0.25rem 0 0", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
-              Passo {step} de 4
+              {registrationMode === "choose"
+                ? "Escolha como cadastrar"
+                : registrationMode === "ai"
+                  ? "Leitura da etiqueta com IA"
+                  : `Passo ${step} de 4`}
             </p>
           </div>
           <button
@@ -1820,22 +1902,55 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
           </button>
         </div>
 
-        {/* Progress bar */}
-        <div style={{ height: 3, backgroundColor: "var(--color-border)" }}>
-          <div
-            style={{
-              height: "100%",
-              width: `${(step / 4) * 100}%`,
-              backgroundColor: "var(--color-primary)",
-              transition: "width 0.3s ease",
-            }}
-          />
-        </div>
+        {/* Progress bar (manual only) */}
+        {registrationMode === "manual" ? (
+          <div style={{ height: 3, backgroundColor: "var(--color-border)" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${(step / 4) * 100}%`,
+                backgroundColor: "var(--color-primary)",
+                transition: "width 0.3s ease",
+              }}
+            />
+          </div>
+        ) : null}
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
+          {registrationMode === "choose" ? (
+            <ClientAddEquipmentModeChoose
+              onChooseAi={() => {
+                setRegistrationMode("ai");
+                setAiFormError("");
+              }}
+              onChooseManual={() => {
+                setRegistrationMode("manual");
+                setStep(1);
+              }}
+            />
+          ) : null}
+
+          {registrationMode === "ai" ? (
+            <ClientAddEquipmentAiPanel
+              clientSites={clientSites}
+              highlightedSiteName={highlightedSiteName}
+              form={aiForm}
+              onFormChange={(patch) => setAiForm((prev) => ({ ...prev, ...patch }))}
+              catalogMeta={aiCatalogMeta}
+              labelMsg={aiLabelMsg}
+              formError={aiFormError}
+              disabled={isSubmitting}
+              onResolved={applyLabelResolve}
+              onLabelError={(message) => {
+                setAiLabelMsg(null);
+                setAiFormError(message);
+              }}
+            />
+          ) : null}
+
           {/* Step 1: Seleção de categoria */}
-          {step === 1 && (
+          {registrationMode === "manual" && step === 1 && (
             <div>
               <InstallationSiteField
                 clientSites={clientSites}
@@ -1980,7 +2095,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
           )}
 
           {/* Step 2: Busca no catálogo (multi-split ou unidade única) */}
-          {step === 2 && selectedCategory && (
+          {registrationMode === "manual" && step === 2 && selectedCategory && (
             <div>
               <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
                 {multiSplitActive ? "Monte o conjunto Multi-Split" : "Busque no catálogo"}
@@ -2067,7 +2182,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
           )}
 
           {/* Step 3: Ficha técnica autopreenchida */}
-          {step === 3 && selectedCategory && selectedModelsForReview().length > 0 && (
+          {registrationMode === "manual" && step === 3 && selectedCategory && selectedModelsForReview().length > 0 && (
             <div>
               <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
                 {multiSplitActive ? "Resumo do conjunto Multi-Split" : "Ficha técnica do catálogo"}
@@ -2103,7 +2218,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
           )}
 
           {/* Step 4: Dados da instalação */}
-          {step === 4 && (
+          {registrationMode === "manual" && step === 4 && (
             <div>
               <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
                 Dados da instalação
@@ -2367,10 +2482,37 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
             }}
           >
             <ChevronLeftIcon />
-            {step === 1 ? "Cancelar" : "Voltar"}
+            {registrationMode === "choose" || (registrationMode === "manual" && step === 1)
+              ? "Cancelar"
+              : "Voltar"}
           </button>
 
-          {step < 4 ? (
+          {registrationMode === "ai" ? (
+            <button
+              type="button"
+              onClick={() => void handleAiSubmit()}
+              disabled={!canSubmitAi || isSubmitting}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.375rem",
+                height: "var(--btn-height-base)",
+                padding: "0 var(--btn-padding-base)",
+                backgroundColor: canSubmitAi && !isSubmitting ? "var(--color-success)" : "var(--color-border)",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "var(--btn-radius)",
+                fontSize: "var(--font-size-base)",
+                fontWeight: "var(--font-weight-medium)",
+                cursor: canSubmitAi && !isSubmitting ? "pointer" : "not-allowed",
+                transition: "all 0.15s ease",
+                opacity: canSubmitAi && !isSubmitting ? 1 : 0.6,
+              }}
+            >
+              <CheckIcon />
+              {isSubmitting ? "Salvando…" : "Salvar Equipamento"}
+            </button>
+          ) : registrationMode === "choose" ? null : step < 4 ? (
             <button
               type="button"
               onClick={handleContinue}

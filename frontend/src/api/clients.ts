@@ -48,14 +48,22 @@ export type ClientOut = {
   is_active: boolean;
   is_verified_cnpj?: boolean;
   last_cnpj_commercial_update?: string | null;
+  main_activity_code?: string | null;
+  main_activity_description?: string | null;
+  legal_nature?: string | null;
+  registration_status?: string | null;
+  founded_at?: string | null;
 };
 
 export type ClientSiteOut = {
   id: number;
   client_id: number;
   name: string;
+  contact_name: string | null;
+  phone: string | null;
   street: string | null;
   number: string | null;
+  complement: string | null;
   neighborhood: string | null;
   city: string | null;
   state: string | null;
@@ -65,8 +73,11 @@ export type ClientSiteOut = {
 
 export type ClientSitePayload = {
   name: string;
+  contact_name?: string;
+  phone?: string;
   street?: string;
   number?: string;
+  complement?: string;
   neighborhood?: string;
   city?: string;
   state?: string;
@@ -103,6 +114,11 @@ export type ClientCreatePayload = {
   preventive_campaign_opt_out?: boolean;
   is_active?: boolean;
   is_verified_cnpj?: boolean;
+  main_activity_code?: string;
+  main_activity_description?: string;
+  legal_nature?: string;
+  registration_status?: string;
+  founded_at?: string;
 };
 
 export type EquipmentOut = {
@@ -297,6 +313,11 @@ export type ClientUpdatePayload = {
   preventive_campaign_opt_out?: boolean;
   is_active?: boolean;
   is_verified_cnpj?: boolean;
+  main_activity_code?: string | null;
+  main_activity_description?: string | null;
+  legal_nature?: string | null;
+  registration_status?: string | null;
+  founded_at?: string | null;
 };
 
 async function parseBody(response: Response): Promise<unknown> {

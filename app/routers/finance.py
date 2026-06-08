@@ -50,6 +50,7 @@ from app.finance_settlement import (
 )
 from app.finance_asaas_constants import ASAAS_FINANCE_EXTERNAL_REF_PREFIX
 from app.finance_mercadopago_constants import MERCADOPAGO_FINANCE_EXTERNAL_REF_PREFIX
+from app.finance_account_balance_sync import sync_external_finance_account_balances
 from app.finance_mercadopago_service import ensure_mercadopago_webhook_secrets, sync_mercadopago_balance_snapshot
 from app.finance_entry_payer_hints import (
     batch_linked_payers_by_service_order_ids,
@@ -85,6 +86,7 @@ from app.security import decrypt_platform_secret, encrypt_platform_secret
 from app.whatsapp import dispatch_template
 from app.schemas import (
     FinanceBankAccountCreate,
+    FinanceAccountBalanceSyncOut,
     FinanceBankAccountOut,
     FinanceBankAccountUpdate,
     FinanceBankCatalogPublicOut,
@@ -883,6 +885,7 @@ def create_finance_entry(
         )
     paid_at = datetime.now(timezone.utc) if payload.status == FinanceEntryStatus.PAID else None
     installments = int(payload.installments or 1)
+    tenant_tz = (tenant.timezone or "").strip() or "America/Sao_Paulo"
     if payload.recurring is not None:
         if installments > 1:
             raise HTTPException(
@@ -894,6 +897,10 @@ def create_finance_entry(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Recorrência não está disponível para recebimentos vinculados à ordem de serviço.",
             )
+        from app.finance_recurring_service import resolve_first_recurring_due
+
+        first_recurring_due = resolve_first_recurring_due(payload.due_date, payload.recurring)
+        payload = payload.model_copy(update={"due_date": first_recurring_due})
     if payload.notes and payload.notes.strip():
         try:
             notes_data = json.loads(payload.notes)
@@ -920,7 +927,7 @@ def create_finance_entry(
             validate_recurring_spec,
         )
 
-        validate_recurring_spec(payload.recurring, payload.due_date)
+        validate_recurring_spec(payload.recurring, payload.due_date, tz_name=tenant_tz)
         template = build_entry_template_from_payload(payload)
         recurring_rule = create_recurring_rule(
             db,
@@ -928,6 +935,7 @@ def create_finance_entry(
             spec=payload.recurring,
             template=template,
             first_due=payload.due_date,
+            tz_name=tenant_tz,
         )
     created: list[FinanceEntry] = []
     for idx in range(installments):
@@ -967,7 +975,9 @@ def create_finance_entry(
     if recurring_rule is not None:
         from app.finance_recurring_service import materialize_recurring_schedule
 
-        materialize_recurring_schedule(db, recurring_rule)
+        # Flush para materialize ver o 1º vencimento e não duplicar (uq_finance_entry_recurring_due).
+        db.flush()
+        materialize_recurring_schedule(db, recurring_rule, tz_name=tenant_tz)
     db.commit()
     for row in created:
         db.refresh(row)
@@ -1902,6 +1912,16 @@ def delete_finance_entry(
     )
     assert_targets_editable(targets)
 
+    if entry.recurring_transaction_id is not None:
+        from app.finance_recurring_service import apply_recurring_delete_side_effects
+
+        apply_recurring_delete_side_effects(
+            db,
+            tenant_id=current_user.tenant_id,
+            anchor_entry=entry,
+            scope=edit_scope,
+        )
+
     try:
         for row in targets:
             db.delete(row)
@@ -2220,6 +2240,32 @@ def list_finance_accounts(
         .where(FinanceBankAccount.tenant_id == current_user.tenant_id)
         .order_by(FinanceBankAccount.name.asc())
     ).scalars().all()
+
+
+@router.post(
+    "/finance/accounts/sync-balances",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+    response_model=FinanceAccountBalanceSyncOut,
+)
+@limiter.limit("30/minute")
+def sync_finance_account_balances(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Sincroniza saldos via gateways (ex.: Mercado Pago) e devolve contas atualizadas."""
+    del request
+    tenant = _get_tenant_or_404(db, current_user.tenant_id)
+    _require_finance_enabled(db, tenant)
+    _ensure_default_cash_account(db, current_user.tenant_id)
+    results = sync_external_finance_account_balances(db, current_user.tenant_id)
+    db.commit()
+    accounts = db.execute(
+        select(FinanceBankAccount)
+        .where(FinanceBankAccount.tenant_id == current_user.tenant_id)
+        .order_by(FinanceBankAccount.name.asc())
+    ).scalars().all()
+    return {"results": results, "accounts": accounts}
 
 
 @router.post(
@@ -2572,7 +2618,7 @@ def apply_finance_ofx_matches(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Lançamento {entry.id} não está pendente/vencido.",
             )
-        if not finance_entry_matches_bank_account_for_ofx(entry, acc):
+        if entry.finance_account_id is not None and not finance_entry_matches_bank_account_for_ofx(entry, acc):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Lançamento {entry.id} não pertence a esta conta para conciliação OFX.",

@@ -4,6 +4,7 @@
  */
 
 import type { ReactNode } from "react";
+import { ListPaginationBar, type ListPaginationConfig } from "../../ui/list-pagination";
 import tableStyles from "../../../pages/listTableCommon.module.css";
 import listStyles from "../clients/clients-list.module.css";
 import { formatDurationMinutes } from "../../../lib/formatDuration";
@@ -123,9 +124,17 @@ function StatCard({
   );
 }
 
-function ServiceOrdersStatsGrid({ metrics }: { metrics: ServiceOrderMetrics }) {
+function ServiceOrdersStatsGrid({
+  metrics,
+  inventoryEnabled = true,
+}: {
+  metrics: ServiceOrderMetrics;
+  inventoryEnabled?: boolean;
+}) {
   return (
-    <div className={listStyles.heroStats}>
+    <div
+      className={`${listStyles.heroStats} ${inventoryEnabled ? "" : styles.heroStatsThree}`}
+    >
       <StatCard
         label="OS hoje"
         value={metrics.todayTotal}
@@ -150,17 +159,19 @@ function ServiceOrdersStatsGrid({ metrics }: { metrics: ServiceOrderMetrics }) {
           </svg>
         }
       />
-      <StatCard
-        label="Aguardando peças"
-        value={metrics.awaitingParts}
-        hint="Bloqueadas por estoque"
-        icon={
-          <svg viewBox="0 0 24 24" className={listStyles.statIcon}>
-            <path d="M16.5 9.4l-9-5.19M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            <path d="M3.27 6.96 12 12.01 20.73 6.96M12 22.08V12" />
-          </svg>
-        }
-      />
+      {inventoryEnabled ? (
+        <StatCard
+          label="Aguardando peças"
+          value={metrics.awaitingParts}
+          hint="Bloqueadas por estoque"
+          icon={
+            <svg viewBox="0 0 24 24" className={listStyles.statIcon}>
+              <path d="M16.5 9.4l-9-5.19M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <path d="M3.27 6.96 12 12.01 20.73 6.96M12 22.08V12" />
+            </svg>
+          }
+        />
+      ) : null}
       <StatCard
         label="Concluídas (mês)"
         value={metrics.completedMonth}
@@ -368,53 +379,7 @@ export function ServiceOrdersListTable({
 }
 
 
-export interface ListPagination {
-  currentPage: number;
-  totalPages: number;
-  totalItems: number;
-  itemsPerPage: number;
-  onPageChange: (page: number) => void;
-}
-
-function ListPaginationBar({ pagination }: { pagination: ListPagination }) {
-  const { currentPage, totalPages, totalItems, itemsPerPage, onPageChange } = pagination;
-  const startItem = (currentPage - 1) * itemsPerPage + 1;
-  const endItem = Math.min(currentPage * itemsPerPage, totalItems);
-
-  return (
-    <div className={styles.listFootPagination}>
-      <span>
-        Mostrando <strong>{startItem}</strong> a <strong>{endItem}</strong> de{" "}
-        <strong>{totalItems}</strong> resultados
-      </span>
-      <div className={styles.pagerBtns}>
-      <button
-        type="button"
-        className={styles.pagerBtn}
-        disabled={currentPage <= 1}
-        onClick={() => onPageChange(currentPage - 1)}
-        aria-label="Página anterior"
-      >
-        ‹
-      </button>
-      <span className={styles.pagerBtnActive}>
-        {currentPage} / {totalPages}
-      </span>
-      <button
-        type="button"
-        className={styles.pagerBtn}
-        disabled={currentPage >= totalPages}
-        onClick={() => onPageChange(currentPage + 1)}
-        aria-label="Próxima página"
-      >
-        ›
-      </button>
-    </div>
-    </div>
-  );
-}
-
-
+export type ListPagination = ListPaginationConfig;
 
 export interface ServiceOrdersListViewProps {
   orders: ServiceOrder[];
@@ -426,6 +391,7 @@ export interface ServiceOrdersListViewProps {
   onNewOrder?: () => void;
   toolbar: ReactNode;
   pagination?: ListPagination;
+  inventoryEnabled?: boolean;
 }
 
 export function ServiceOrdersListView({
@@ -433,15 +399,16 @@ export function ServiceOrdersListView({
   metrics,
   isLoading = false,
   error = null,
-  totalFiltered,
+  totalFiltered: _totalFiltered,
   onRowClick,
   onNewOrder,
   toolbar,
   pagination,
+  inventoryEnabled = true,
 }: ServiceOrdersListViewProps) {
   return (
     <>
-      <ServiceOrdersStatsGrid metrics={metrics} />
+      <ServiceOrdersStatsGrid metrics={metrics} inventoryEnabled={inventoryEnabled} />
       {toolbar}
       {error ? (
         <p className={listStyles.msgErr} role="alert">
@@ -454,15 +421,14 @@ export function ServiceOrdersListView({
         onRowClick={onRowClick}
         onNewOrder={onNewOrder}
       />
-      {!isLoading && !error && orders.length > 0 ? (
-        <p className={listStyles.listFoot}>
-          <span className={styles.listFootPagination}>
-            <span>
-              Exibindo {orders.length} de {totalFiltered} ordem{totalFiltered === 1 ? "" : "ens"} nesta página
-            </span>
-            {pagination ? <ListPaginationBar pagination={pagination} /> : null}
-          </span>
-        </p>
+      {!isLoading && !error && orders.length > 0 && pagination ? (
+        <div className={listStyles.listFoot}>
+          <ListPaginationBar
+            {...pagination}
+            itemLabel="ordem de serviço"
+            itemLabelPlural="ordens de serviço"
+          />
+        </div>
       ) : null}
     </>
   );

@@ -1,35 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
-import { createProduct, importProductsFile, listProducts, type ProductOut } from "../../api/products";
+import { patchTenantAdmin } from "../../api/auth";
+import {
+  countProducts,
+  createProduct,
+  importProductsFile,
+  listProducts,
+  type ProductListSort,
+  type ProductOut,
+} from "../../api/products";
 import { ProductsListTable } from "../../components/products";
+import { ListPaginationBar } from "../../components/ui/list-pagination";
+import { FormSwitch } from "../../components/ui/form-switch";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ProductsListPage.module.css";
 
-function compareProductName(a: ProductOut, b: ProductOut): number {
-  return (a.name || "").localeCompare(b.name || "", "pt-BR");
-}
+const PRODUCTS_PAGE_SIZE = 20;
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
-}
-
-type ProductSort =
-  | "name_asc"
-  | "name_desc"
-  | "sku_asc"
-  | "sku_desc"
-  | "purchase_asc"
-  | "purchase_desc"
-  | "sale_asc"
-  | "sale_desc"
-  | "margin_asc"
-  | "margin_desc"
-  | "status_active_first"
-  | "status_inactive_first";
-
-function marginOf(p: ProductOut): number {
-  return Number((p.sale_price || p.unit_price || 0) - (p.purchase_price || 0));
 }
 
 function makeDuplicateSku(baseSku: string): string {
@@ -123,15 +113,21 @@ export function ProductsListPage() {
   const navigate = useNavigate();
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<ProductSort>("name_asc");
+  const [sort, setSort] = useState<ProductListSort>("name_asc");
   const [rows, setRows] = useState<ProductOut[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState({ total: 0, active: 0, inactive: 0, avgMargin: 0 });
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
   const [dupBusy, setDupBusy] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [savingInventory, setSavingInventory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const inventoryEnabled = ctx?.tenant.inventory_enabled !== false;
+  const isAdmin = ctx?.user.role === "admin";
   const canEdit = useMemo(() => ctx?.user.role === "admin" || ctx?.user.role === "receptionist", [ctx?.user.role]);
 
   useEffect(() => {
@@ -139,71 +135,72 @@ export function ProductsListPage() {
     return () => window.clearTimeout(t);
   }, [input]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [q, sort]);
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PRODUCTS_PAGE_SIZE));
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setErr("");
+    const safePage = Math.max(1, page);
+    const skip = (safePage - 1) * PRODUCTS_PAGE_SIZE;
     try {
-      const list = await listProducts({ q: q || undefined, limit: 100 });
-      setRows([...list].sort(compareProductName));
+      const [list, counts] = await Promise.all([
+        listProducts({ q: q || undefined, skip, limit: PRODUCTS_PAGE_SIZE, sort }),
+        countProducts({ q: q || undefined }),
+      ]);
+      setRows(list);
+      setTotalCount(counts.total);
+      setStats({
+        total: counts.total,
+        active: counts.active,
+        inactive: counts.inactive,
+        avgMargin: counts.avg_margin,
+      });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setRows([]);
+      setTotalCount(0);
+      setStats({ total: 0, active: 0, inactive: 0, avgMargin: 0 });
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, [q, sort, page]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const stats = useMemo(() => {
-    const total = rows.length;
-    const active = rows.filter(p => p.is_active).length;
-    const inactive = total - active;
-    const avgMargin = total > 0 
-      ? rows.reduce((acc, p) => acc + marginOf(p), 0) / total 
-      : 0;
-    return { total, active, inactive, avgMargin };
-  }, [rows]);
+  const pagination = useMemo(
+    () => ({
+      currentPage: page,
+      totalPages,
+      totalItems: totalCount,
+      itemsPerPage: PRODUCTS_PAGE_SIZE,
+      onPageChange: setPage,
+    }),
+    [page, totalPages, totalCount],
+  );
 
-  const sortedRows = useMemo(() => {
-    const list = [...rows];
-    const cmp = (a: string, b: string) => a.localeCompare(b, "pt-BR", { sensitivity: "base" });
-    const num = (a: number, b: number) => a - b;
-    switch (sort) {
-      case "name_asc":
-        return list.sort(compareProductName);
-      case "name_desc":
-        return list.sort((a, b) => cmp(b.name, a.name));
-      case "sku_asc":
-        return list.sort((a, b) => cmp(a.sku, b.sku));
-      case "sku_desc":
-        return list.sort((a, b) => cmp(b.sku, a.sku));
-      case "purchase_asc":
-        return list.sort((a, b) => num(Number(a.purchase_price || 0), Number(b.purchase_price || 0)));
-      case "purchase_desc":
-        return list.sort((a, b) => num(Number(b.purchase_price || 0), Number(a.purchase_price || 0)));
-      case "sale_asc":
-        return list.sort((a, b) =>
-          num(Number(a.sale_price || a.unit_price || 0), Number(b.sale_price || b.unit_price || 0)),
-        );
-      case "sale_desc":
-        return list.sort((a, b) =>
-          num(Number(b.sale_price || b.unit_price || 0), Number(a.sale_price || a.unit_price || 0)),
-        );
-      case "margin_asc":
-        return list.sort((a, b) => num(marginOf(a), marginOf(b)));
-      case "margin_desc":
-        return list.sort((a, b) => num(marginOf(b), marginOf(a)));
-      case "status_active_first":
-        return list.sort((a, b) => Number(b.is_active) - Number(a.is_active) || cmp(a.name, b.name));
-      case "status_inactive_first":
-        return list.sort((a, b) => Number(a.is_active) - Number(b.is_active) || cmp(a.name, b.name));
-      default:
-        return list.sort(compareProductName);
+  async function toggleInventoryEnabled() {
+    if (!isAdmin || savingInventory) return;
+    setSavingInventory(true);
+    setErr("");
+    try {
+      await patchTenantAdmin({ inventory_enabled: !inventoryEnabled });
+      await ctx?.refreshWorkspace();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Não foi possível salvar a preferência de estoque.");
+    } finally {
+      setSavingInventory(false);
     }
-  }, [rows, sort]);
+  }
 
   async function duplicateProduct(p: ProductOut, e: MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
@@ -262,8 +259,7 @@ export function ProductsListPage() {
 
   return (
     <div className={styles.wrap}>
-      {/* Stats Cards */}
-      <div className={styles.heroStats}>
+      <div className={`${styles.heroStats} ${styles.heroStatsDesktop}`}>
         <div className={styles.statCard}>
           <div className={styles.statHead}>
             <div>
@@ -317,9 +313,8 @@ export function ProductsListPage() {
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className={tableStyles.listToolbar}>
-        <div className={tableStyles.listToolbarSearchCol}>
+      <div className={`${tableStyles.listToolbar} ${styles.productsToolbar}`}>
+        <div className={`${tableStyles.listToolbarSearchCol} ${styles.productsToolbarSearchCol}`}>
           <label className={tableStyles.listToolbarLabel} htmlFor="products-search">
             Buscar
           </label>
@@ -338,7 +333,7 @@ export function ProductsListPage() {
           </div>
         </div>
 
-        <div className={tableStyles.listToolbarFilterCol}>
+        <div className={`${tableStyles.listToolbarFilterCol} ${styles.hideOnMobile}`}>
           <label className={tableStyles.listToolbarLabel} htmlFor="products-sort">
             Ordenar por
           </label>
@@ -346,7 +341,7 @@ export function ProductsListPage() {
             id="products-sort"
             className={tableStyles.listToolbarSelect}
             value={sort}
-            onChange={(e) => setSort(e.target.value as ProductSort)}
+            onChange={(e) => setSort(e.target.value as ProductListSort)}
           >
             <option value="name_asc">Nome (A - Z)</option>
             <option value="name_desc">Nome (Z - A)</option>
@@ -363,7 +358,28 @@ export function ProductsListPage() {
           </select>
         </div>
 
-        <div className={tableStyles.listToolbarActions}>
+        {isAdmin ? (
+          <div className={`${styles.inventoryToggleCol} ${styles.hideOnMobile}`}>
+            <span className={tableStyles.listToolbarLabel}>Controle de estoque</span>
+            <div className={styles.inventoryToggleRow}>
+              <FormSwitch
+                id="products-inventory-enabled"
+                checked={inventoryEnabled}
+                disabled={savingInventory || loading}
+                ariaLabel="Ativar controle de estoque"
+                onChange={() => void toggleInventoryEnabled()}
+              />
+              <span className={styles.inventoryToggleState}>{inventoryEnabled ? "Ligado" : "Desligado"}</span>
+            </div>
+            <p className={styles.inventoryToggleHint}>
+              {inventoryEnabled
+                ? "Exibe fisico, reservado e disponivel na listagem."
+                : "Oculta colunas de estoque para quem nao controla almoxarifado."}
+            </p>
+          </div>
+        ) : null}
+
+        <div className={`${tableStyles.listToolbarActions} ${styles.productsToolbarActions}`}>
           {canEdit ? (
             <>
               <input
@@ -375,7 +391,7 @@ export function ProductsListPage() {
               />
               <button
                 type="button"
-                className={tableStyles.listToolbarIconBtn}
+                className={`${tableStyles.listToolbarIconBtn} ${styles.hideOnMobile}`}
                 title="Importar planilha de produtos"
                 aria-label="Importar planilha de produtos"
                 onClick={() => fileInputRef.current?.click()}
@@ -386,7 +402,7 @@ export function ProductsListPage() {
             </>
           ) : null}
           {canEdit ? (
-            <Link className={tableStyles.listToolbarBtnPrimary} to="/app/products/new">
+            <Link className={`${tableStyles.listToolbarBtnPrimary} ${styles.newProductBtn}`} to="/app/products/new">
               <span className={tableStyles.listToolbarBtnIcon}>
                 <PlusIcon />
               </span>
@@ -399,7 +415,7 @@ export function ProductsListPage() {
       {err ? <p className={styles.msgErr}>{err}</p> : null}
       {ok ? <p className={styles.msgOk}>{ok}</p> : null}
       {canEdit ? (
-        <p className={styles.msgHint}>
+        <p className={`${styles.msgHint} ${styles.hideOnMobile}`}>
           Baixe a planilha modelo em{" "}
           <a href="/modelos/importacao-produtos-modelo.csv" download>
             importacao-produtos-modelo.csv
@@ -409,21 +425,25 @@ export function ProductsListPage() {
       ) : null}
 
       {loading ? <p className={styles.empty}>Carregando...</p> : null}
-      {!loading && !err && rows.length === 0 ? <p className={styles.empty}>Nenhum produto encontrado.</p> : null}
+      {!loading && !err && totalCount === 0 ? <p className={styles.empty}>Nenhum produto encontrado.</p> : null}
 
       {!loading && rows.length > 0 ? (
         <>
           <ProductsListTable
-            rows={sortedRows}
+            rows={rows}
             canEdit={canEdit}
+            canOpenDetail={canEdit}
             dupBusy={dupBusy}
             onDuplicate={(p, e) => void duplicateProduct(p, e)}
             productIcon={<PackageIcon />}
             duplicateIcon={<DuplicateIcon />}
+            showStock={inventoryEnabled}
           />
-          <p className={styles.listFoot}>
-            Mostrando {sortedRows.length} de {rows.length} produtos
-          </p>
+          {totalCount > 0 ? (
+            <div className={styles.listFoot}>
+              <ListPaginationBar {...pagination} itemLabel="produto" />
+            </div>
+          ) : null}
         </>
       ) : null}
     </div>

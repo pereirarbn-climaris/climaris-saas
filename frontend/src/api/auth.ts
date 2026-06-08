@@ -39,6 +39,8 @@ export type TenantOut = {
   active_plan: string;
   active_plan_label?: string | null;
   finance_enabled: boolean;
+  inventory_enabled: boolean;
+  features_enabled?: Record<string, boolean>;
   finance_mode: "basic" | "intermediate" | "management";
   timezone: string;
   business_days: string;
@@ -67,6 +69,17 @@ export type TenantOut = {
   logo_content_type: string | null;
   logo_updated_at: string | null;
   pdf_primary_color: string;
+  cft_number: string | null;
+  trade_name?: string | null;
+  state_registration?: string | null;
+  ie_indicator?: "1" | "2" | "9" | null;
+  main_activity_code?: string | null;
+  main_activity_description?: string | null;
+  legal_nature?: string | null;
+  registration_status?: string | null;
+  founded_at?: string | null;
+  is_verified_cnpj?: boolean;
+  last_cnpj_commercial_update?: string | null;
   registration_complete?: boolean;
 };
 
@@ -105,6 +118,7 @@ export type TenantAdminPatch = {
   name?: string;
   active_plan?: string;
   finance_enabled?: boolean;
+  inventory_enabled?: boolean;
   finance_mode?: "basic" | "intermediate" | "management";
   timezone?: string;
   business_days?: string;
@@ -127,7 +141,11 @@ export type TenantAdminPatch = {
   phone?: string;
   email?: string;
   website?: string;
+  trade_name?: string | null;
+  state_registration?: string | null;
+  ie_indicator?: "1" | "2" | "9" | null;
   pdf_primary_color?: string;
+  cft_number?: string | null;
 };
 
 export type UserSelfPatch = {
@@ -478,6 +496,18 @@ export async function patchTenantAdmin(payload: TenantAdminPatch): Promise<Tenan
   return body as TenantOut;
 }
 
+export async function refreshTenantCnpjCommercial(): Promise<TenantOut> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/tenant/cnpj-commercial-refresh"), {
+    method: "POST",
+    headers: jsonHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível atualizar os dados via CNPJá."));
+  }
+  return body as TenantOut;
+}
+
 export async function getTenantLogoSignedUrl(): Promise<string> {
   const response = await fetch(apiUrl("/api/v1/auth/me/tenant/logo-url"), { headers: bearer() });
   const body = await parseBody(response);
@@ -518,6 +548,33 @@ export async function deleteTenantLogo(): Promise<TenantOut> {
     throw new Error(errorMessage(body, "Não foi possível excluir o logo."));
   }
   return body as TenantOut;
+}
+
+export async function resetTenantOperationalData(payload: {
+  current_password: string;
+}): Promise<{ message: string; deleted_entities: Record<string, number> }> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/tenant/reset-data"), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível restaurar o sistema."));
+  }
+  return body as { message: string; deleted_entities: Record<string, number> };
+}
+
+export async function deleteTenantAccount(payload: { current_password: string }): Promise<void> {
+  const response = await fetch(apiUrl("/api/v1/auth/me/tenant/delete-account"), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível excluir a conta."));
+  }
 }
 
 export async function syncTenantNationalHolidays(): Promise<{ inserted: number; block_national_holidays: boolean }> {

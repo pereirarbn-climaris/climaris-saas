@@ -2,6 +2,7 @@ import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 
 export type EquipmentLabelKind = "ar_condicionado" | "climatizador";
+export type EquipmentLabelKindInput = EquipmentLabelKind | "auto";
 
 export type EquipmentLabelExtractionOut = {
   marca: string | null;
@@ -17,6 +18,19 @@ export type EquipmentLabelExtractionOut = {
   potencia_kw?: string | null;
   tipo_instalacao?: string | null;
   pressao_estatica?: string | null;
+};
+
+export type EquipmentLabelResolveOut = {
+  equipment_kind: string;
+  extraction: EquipmentLabelExtractionOut;
+  catalog_id: string;
+  catalog_created: boolean;
+  category_id: string;
+  category_name: string;
+  brand: string;
+  model_display: string;
+  suggested_identificacao: string | null;
+  capacidade_btu: number | null;
 };
 
 function bearer(): HeadersInit {
@@ -70,4 +84,38 @@ export async function extractEquipmentLabelFromPhotos(params: {
     throw new Error(errorMessage(body, "Não foi possível processar a etiqueta com IA.", response.status));
   }
   return body as EquipmentLabelExtractionOut;
+}
+
+/** Extrai etiqueta, classifica tipo (se auto) e resolve modelo no catálogo. */
+export async function resolveEquipmentLabelFromPhotos(params: {
+  equipmentKind?: EquipmentLabelKindInput;
+  evaporatorImage?: File | null;
+  condenserImage?: File | null;
+  labelImage?: File | null;
+}): Promise<EquipmentLabelResolveOut> {
+  const fd = new FormData();
+  fd.append("equipment_kind", params.equipmentKind ?? "auto");
+  if (params.evaporatorImage) {
+    fd.append("evaporator_image", params.evaporatorImage, params.evaporatorImage.name);
+  }
+  if (params.condenserImage) {
+    fd.append("condenser_image", params.condenserImage, params.condenserImage.name);
+  }
+  if (params.labelImage) {
+    fd.append("label_image", params.labelImage, params.labelImage.name);
+  }
+  const response = await fetch(apiUrl("/api/v1/equipment-catalog/ai/resolve-label"), {
+    method: "POST",
+    headers: bearer(),
+    body: fd,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    const fallback =
+      response.status === 503
+        ? "Não foi possível processar a etiqueta com IA. Verifique a chave Claude em Operação → Chaves APIs."
+        : "Não foi possível identificar o modelo pela etiqueta.";
+    throw new Error(errorMessage(body, fallback, response.status));
+  }
+  return body as EquipmentLabelResolveOut;
 }

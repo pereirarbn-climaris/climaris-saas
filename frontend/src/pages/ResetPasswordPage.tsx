@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { resetPasswordRequest } from "../api/auth";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import styles from "./LoginPage.module.css";
 
 export function ResetPasswordPage() {
@@ -49,10 +50,7 @@ export function ResetPasswordPage() {
     <main className={styles.layout} id="conteudo-principal">
       <section className={styles.hero} aria-labelledby="reset-password-hero-title">
         <div className={styles.heroInner}>
-          <div className={styles.brandRow}>
-            <span className={styles.logoMark} />
-            <span className={styles.brandName}>Climaris</span>
-          </div>
+          <PlatformBrandMark variant="auth-dark" className={styles.brandRow} />
           <h1 id="reset-password-hero-title" className={styles.heroTitle}>
             Nova senha
           </h1>

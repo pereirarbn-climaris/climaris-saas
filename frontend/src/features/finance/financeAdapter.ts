@@ -1,6 +1,5 @@
 import type {
   FinanceBankAccountOut,
-  FinanceCategoryOut,
   FinanceEntryOut,
   FinanceEntryStatus,
   FinanceEntryType,
@@ -18,6 +17,7 @@ import {
   listFinanceEntries,
   listFinancePaymentFees,
 } from '../../api/finance';
+import { resolveCategoryIdByName } from './financeCategoryUtils';
 import { apiFetch } from '../../services/api';
 import { mapToFinanceServiceError } from './financeErrors';
 import {
@@ -32,6 +32,7 @@ import {
   parseBankAccountDomainId,
 } from './financeIds';
 import { mapApiPlanToFinancePlan } from './financePlanUtils';
+import { resolveFirstRecurringDue } from './recurringTransaction';
 import type { Conta, TipoConta } from './account.types';
 import type {
   CreateTransacaoInput,
@@ -325,13 +326,6 @@ export async function fetchPlanoUsuarioFromApi(): Promise<Planos> {
   }
 }
 
-async function resolveCategoryId(categoria: string, categories: FinanceCategoryOut[]): Promise<number | null> {
-  const name = categoria.trim().toLowerCase();
-  if (!name) return null;
-  const found = categories.find((c) => c.name.trim().toLowerCase() === name);
-  return found?.id ?? null;
-}
-
 function resolvePaymentFromConta(contaId: string): {
   finance_account_id: number | null;
   payment_method: string | null;
@@ -360,7 +354,7 @@ export async function mapCreateInputToApiPayload(
   },
 ): Promise<Parameters<typeof createFinanceEntry>[0]> {
   const categories = await listFinanceCategories();
-  const category_id = await resolveCategoryId(input.categoria, categories);
+  const category_id = resolveCategoryIdByName(input.categoria, categories);
   const pay = options?.creditCardId
     ? {
         finance_account_id: null,
@@ -383,11 +377,16 @@ export async function mapCreateInputToApiPayload(
   const competence = options?.competenceDate ?? input.dataPrevista;
   const installments = options?.installments ?? 1;
 
+  const dueDate =
+    options?.recurring != null
+      ? resolveFirstRecurringDue(input.dataPrevista, options.recurring)
+      : input.dataPrevista;
+
   return {
     description: input.descricao,
     entry_type: tipo === 'ENTRADA' ? 'income' : 'expense',
     amount: input.valor,
-    due_date: formatDateOnly(input.dataPrevista),
+    due_date: formatDateOnly(dueDate),
     competence_date: formatDateOnly(competence),
     settlement_plan: options?.settlementPlan ?? 'same_as_due',
     status: mapStatusToApi(input.status ?? 'PENDENTE'),

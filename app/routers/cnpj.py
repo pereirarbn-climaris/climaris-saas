@@ -28,20 +28,41 @@ _LOOKUP_HINT = (
 )
 
 
-def _fetch_office_open_with_commercial_fallback(
-    digits: str, db: Session,
-) -> tuple[dict, str]:
-    """Tenta API pública; se falhar e houver chave comercial, tenta a comercial."""
-    try:
-        return fetch_office_open(digits), "open"
-    except (CnpjaHttpError, OSError) as first:
-        key = resolve_cnpja_api_key(db)
-        if not key:
-            raise first
+def _normalize_lookup_tax_id(out: CnpjLookupOut, digits: str) -> CnpjLookupOut:
+    if out.tax_id != digits:
+        return out.model_copy(update={"tax_id": digits})
+    return out
+
+
+def _lookup_cnpj_best_effort(digits: str, db: Session) -> CnpjLookupOut | None:
+    """Comercial (se houver chave) → open → BrasilAPI. Não levanta exceção."""
+    api_key = resolve_cnpja_api_key(db)
+    if api_key:
         try:
-            return fetch_office_commercial(digits, key), "commercial"
+            raw = fetch_office_commercial(digits, api_key)
+            out = office_payload_to_lookup(raw, "commercial")
+            if out.company_name.strip():
+                return _normalize_lookup_tax_id(out, digits)
         except (CnpjaHttpError, OSError):
-            raise first
+            pass
+
+    try:
+        raw = fetch_office_open(digits)
+        out = office_payload_to_lookup(raw, "open")
+        if out.company_name.strip():
+            return _normalize_lookup_tax_id(out, digits)
+    except (CnpjaHttpError, OSError):
+        pass
+
+    try:
+        br = fetch_brasilapi_cnpj(digits)
+        out = brasilapi_json_to_lookup(br, digits)
+        if out.company_name.strip():
+            return _normalize_lookup_tax_id(out, digits)
+    except Exception:
+        pass
+
+    return None
 
 
 def _http_error_from_cnpja(exc: CnpjaHttpError) -> HTTPException:
@@ -84,35 +105,14 @@ def _run_register_lookup(tax_id: str, db: Session) -> CnpjRegisterLookupOut:
             lookup=None,
         )
 
-    out: CnpjLookupOut | None = None
-    try:
-        raw, src = _fetch_office_open_with_commercial_fallback(digits, db)
-        out = office_payload_to_lookup(raw, src)  # type: ignore[arg-type]
-    except (CnpjaHttpError, OSError):
-        out = None
+    out: CnpjLookupOut | None = _lookup_cnpj_best_effort(digits, db)
 
-    if out is not None and out.company_name.strip():
-        if out.tax_id != digits:
-            out = out.model_copy(update={"tax_id": digits})
+    if out is not None:
         return CnpjRegisterLookupOut(
             already_registered=False,
             registered_tenant_name=None,
             lookup=out,
         )
-
-    try:
-        br = fetch_brasilapi_cnpj(digits)
-        out_b = brasilapi_json_to_lookup(br, digits)
-        if out_b.company_name.strip():
-            if out_b.tax_id != digits:
-                out_b = out_b.model_copy(update={"tax_id": digits})
-            return CnpjRegisterLookupOut(
-                already_registered=False,
-                registered_tenant_name=None,
-                lookup=out_b,
-            )
-    except Exception:
-        pass
 
     return CnpjRegisterLookupOut(
         already_registered=False,
@@ -146,30 +146,23 @@ def register_lookup_cnpj_path(
 
 @router.get("/open/{tax_id}", response_model=CnpjLookupOut)
 @limiter.limit("20/minute")
-def lookup_cnpj_open(request: Request, tax_id: str) -> CnpjLookupOut:
-    """Consulta pública (open.cnpja.com), sem chave — ideal no cadastro. Limite agregado por IP do servidor."""
+def lookup_cnpj_open(
+    request: Request,
+    tax_id: str,
+    db: Annotated[Session, Depends(get_db)],
+) -> CnpjLookupOut:
+    """Consulta Open; se falhar ou vier incompleta, usa comercial (chave CNPJá) e depois BrasilAPI."""
     try:
         digits = normalize_cnpj_digits(tax_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    try:
-        raw = fetch_office_open(digits)
-    except CnpjaHttpError as exc:
-        raise _http_error_from_cnpja(exc) from exc
-    except OSError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Não foi possível contatar o serviço CNPJá.",
-        ) from exc
 
-    out = office_payload_to_lookup(raw, "open")
-    if not out.company_name:
+    out = _lookup_cnpj_best_effort(digits, db)
+    if out is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="CNPJ sem razão social na resposta da CNPJá.",
+            detail="CNPJ não encontrado ou serviços de consulta indisponíveis no momento.",
         )
-    if out.tax_id != digits:
-        out = out.model_copy(update={"tax_id": digits})
     return out
 
 
@@ -187,7 +180,7 @@ def lookup_cnpj_commercial(
         ),
     ] = False,
 ) -> CnpjCommercialLookupOut:
-    """Consulta comercial (api.cnpja.com) — chave em Credenciais da plataforma (CNPJá) ou CNPJA_API_KEY."""
+    """Consulta comercial (api.cnpja.com) — Receita Federal + Cadastro de Contribuintes (registrations=ORIGIN)."""
     api_key = resolve_cnpja_api_key(db)
     if not api_key:
         raise HTTPException(

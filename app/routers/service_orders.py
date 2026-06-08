@@ -10,6 +10,8 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.service_order_pdf import build_service_order_pdf
+from app.service_order_laudo import apply_laudo_patch
+from app.service_order_laudo_pdf import build_service_order_laudo_pdf
 from app.database import get_db
 from app.pagination import clamp_limit
 from app.limiter import limiter
@@ -27,6 +29,7 @@ from app.schemas import (
     ServiceOrderCreate,
     ServiceOrderDetailsUpdate,
     ServiceOrderDiscountUpdate,
+    ServiceOrderLaudoUpdate,
     ServiceOrderOut,
     ServiceOrderStatusUpdate,
     ServiceOrderItemEquipmentUpdate,
@@ -59,6 +62,7 @@ from app.service_order_ops import (
     technician_can_access_order,
 )
 from app.stock_ops import apply_stock_consumption
+from app.tenant_inventory import tenant_inventory_enabled
 from app.stock_reservation import (
     StockReservationError,
     effective_reservation_demand,
@@ -154,6 +158,8 @@ def _sync_stock_after_order_change(
     order: ServiceOrder,
     old_demand: dict,
 ) -> None:
+    if not tenant_inventory_enabled(db, tenant_id):
+        return
     try:
         sync_order_reservation(db, tenant_id=tenant_id, order=order, old_demand=old_demand)
     except StockReservationError as exc:
@@ -1191,6 +1197,94 @@ def get_service_order_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="OS-{order.id}.pdf"'},
+    )
+
+
+def _laudo_payload_to_meta_patch(payload: ServiceOrderLaudoUpdate) -> dict:
+    patch = payload.model_dump(exclude_unset=True, by_alias=True)
+    if payload.checklist is not None:
+        patch["checklist"] = [item.model_dump() for item in payload.checklist]
+    if payload.laudo_fotos is not None:
+        patch["laudoFotos"] = [photo.model_dump(by_alias=True) for photo in payload.laudo_fotos]
+    patch.pop("laudo_fotos", None)
+    return patch
+
+
+@router.patch(
+    "/service-orders/{order_id}/laudo",
+    response_model=ServiceOrderOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+@limiter.limit("60/minute")
+def patch_service_order_laudo(
+    request: Request,
+    order_id: int,
+    payload: ServiceOrderLaudoUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceOrder:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível alterar o laudo de uma OS cancelada.",
+        )
+    try:
+        order.description = apply_laudo_patch(
+            description=order.description,
+            payload=_laudo_payload_to_meta_patch(payload),
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível salvar o laudo: {exc}",
+        ) from exc
+    refreshed = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order.id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one()
+    return refreshed
+
+
+@router.get(
+    "/service-orders/{order_id}/laudo/pdf",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_service_order_laudo_pdf(
+    order_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    client = db.get(Client, order.client_id)
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    pdf_bytes = build_service_order_laudo_pdf(order=order, client=client, tenant=tenant)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="Laudo-OS-{order.id}.pdf"'},
     )
 
 

@@ -71,6 +71,22 @@ Regras:
 
 EXTRACTION_PROMPT = AC_EXTRACTION_PROMPT
 
+CLASSIFY_KIND_PROMPT = """Analise a foto da etiqueta (nameplate) de um equipamento de climatização.
+Retorne SOMENTE um JSON válido (sem markdown):
+{"equipment_kind": "ar_condicionado"} ou {"equipment_kind": "climatizador"}
+
+Use "climatizador" para climatizadores evaporativos (m³/h, ventilação evaporativa).
+Use "ar_condicionado" para ar-condicionado, split, hi-wall, cassete, piso-teto, etc."""
+
+
+def _normalize_kind_classification(raw: dict[str, Any]) -> dict[str, str | None]:
+    kind = str(raw.get("equipment_kind") or "").strip().lower()
+    if "clima" in kind:
+        resolved = "climatizador"
+    else:
+        resolved = "ar_condicionado"
+    return {"equipment_kind": resolved}
+
 
 def _normalize_media_type(content_type: str | None, filename: str | None) -> str:
     ct = (content_type or "").split(";")[0].strip().lower()
@@ -391,6 +407,32 @@ async def extract_ac_label_from_images(
         claude_model=claude_model,
         empty_detail="Envie ao menos uma foto da etiqueta (evaporadora e/ou condensadora).",
     )
+
+
+async def classify_equipment_kind_from_images(
+    *,
+    label_bytes: bytes | None,
+    label_content_type: str | None,
+    label_filename: str | None,
+    claude_api_key: str | None = None,
+    claude_model: str | None = None,
+) -> str:
+    """Classifica o tipo de equipamento a partir de uma foto da etiqueta."""
+    result = await _extract_label_from_images(
+        prompt=CLASSIFY_KIND_PROMPT,
+        normalize=_normalize_kind_classification,
+        evaporator_bytes=label_bytes,
+        evaporator_content_type=label_content_type,
+        evaporator_filename=label_filename,
+        condenser_bytes=None,
+        condenser_content_type=None,
+        condenser_filename=None,
+        claude_api_key=claude_api_key,
+        claude_model=claude_model,
+        empty_detail="Envie ao menos uma foto da etiqueta.",
+    )
+    kind = (result.get("equipment_kind") or "ar_condicionado").strip().lower()
+    return "climatizador" if "clima" in kind else "ar_condicionado"
 
 
 async def extract_climatizador_label_from_images(

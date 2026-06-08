@@ -9,6 +9,7 @@ from urllib import request as urllib_request
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import (
@@ -46,7 +47,9 @@ from app.schemas import (
     RefreshTokenRequest,
     ResetPasswordRequest,
     TenantAdminUpdateRequest,
+    TenantDestructiveActionRequest,
     TenantOut,
+    TenantResetDataOut,
     TokenResponse,
     UserAdminUpdateRequest,
     UserCreateRequest,
@@ -63,6 +66,7 @@ from app.security import (
     hash_password,
     verify_password,
 )
+from app.tenant_lifecycle import delete_tenant_account, reset_tenant_operational_data
 from app.tenant_logo import (
     delete_tenant_logo_if_exists,
     fetch_s3_image_bytes,
@@ -820,9 +824,19 @@ def bootstrap_tenant_admin(
     )
     db.add(user)
     if payload.tax_id_kind == "cnpj":
-        from app.nfse_auto_provider import sync_nfse_auto_from_cnpj_digits
+        from app.tenant_cnpj import sync_tenant_from_cnpj_commercial
 
-        sync_nfse_auto_from_cnpj_digits(db, tenant.id, payload.tax_document, commit=False)
+        try:
+            sync_tenant_from_cnpj_commercial(db, tenant, payload.tax_document, commit=False)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+                if "não configurada" in str(exc).lower()
+                else status.HTTP_502_BAD_GATEWAY
+                if "contatar" in str(exc).lower() or "consultar" in str(exc).lower()
+                else status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
     db.commit()
     db.refresh(tenant)
     return tenant
@@ -907,9 +921,19 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
             ) from exc
         _sync_tenant_national_holidays(db, tenant.id)
         if payload.tax_id_kind == "cnpj":
-            from app.nfse_auto_provider import sync_nfse_auto_from_cnpj_digits
+            from app.tenant_cnpj import sync_tenant_from_cnpj_commercial
 
-            sync_nfse_auto_from_cnpj_digits(db, tenant.id, payload.tax_document, commit=False)
+            try:
+                sync_tenant_from_cnpj_commercial(db, tenant, payload.tax_document, commit=False)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+                    if "não configurada" in str(exc).lower()
+                    else status.HTTP_502_BAD_GATEWAY
+                    if "contatar" in str(exc).lower() or "consultar" in str(exc).lower()
+                    else status.HTTP_404_NOT_FOUND,
+                    detail=str(exc),
+                ) from exc
         db.commit()
         db.refresh(tenant)
         return tenant
@@ -1015,9 +1039,19 @@ def complete_my_tenant_fiscal(
     tenant.tax_id_kind = payload.tax_id_kind
     db.add(tenant)
     if payload.tax_id_kind == "cnpj":
-        from app.nfse_auto_provider import sync_nfse_auto_from_cnpj_digits
+        from app.tenant_cnpj import sync_tenant_from_cnpj_commercial
 
-        sync_nfse_auto_from_cnpj_digits(db, tenant.id, payload.tax_document, commit=False)
+        try:
+            sync_tenant_from_cnpj_commercial(db, tenant, payload.tax_document, commit=False)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+                if "não configurada" in str(exc).lower()
+                else status.HTTP_502_BAD_GATEWAY
+                if "contatar" in str(exc).lower() or "consultar" in str(exc).lower()
+                else status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
     db.commit()
     db.refresh(tenant)
     return tenant
@@ -1043,6 +1077,28 @@ def admin_patch_my_tenant(
 
     tax_kind_in = raw.pop("tax_id_kind", None)
     tax_doc_in = raw.pop("tax_document", None)
+
+    if tenant.is_verified_cnpj and tenant.tax_id_kind == "cnpj":
+        from app.tax_id import digits_only
+
+        if tax_doc_in is not None:
+            new_doc = digits_only(tax_doc_in)
+            if new_doc and new_doc != digits_only(tenant.cnpj or ""):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="CNPJ validado na Receita Federal não pode ser alterado.",
+                )
+        if raw.get("name") is not None and str(raw["name"]).strip() != (tenant.name or "").strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Razão social validada na Receita Federal não pode ser alterada.",
+            )
+        if tax_kind_in is not None and tax_kind_in != tenant.tax_id_kind:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Tipo de pessoa não pode ser alterado após validação do CNPJ.",
+            )
+
     expediente_touched = bool(_TENANT_EXPEDIENTE_FIELDS.intersection(raw.keys()))
     if "active_plan" in raw and raw["active_plan"] is not None:
         raw["active_plan"] = normalize_plan_key(str(raw["active_plan"]))
@@ -1056,7 +1112,7 @@ def admin_patch_my_tenant(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Horário final deve ser maior que o horário inicial.",
         )
-    if expediente_touched:
+    if expediente_touched and "weekday_work_hours" not in raw:
         sync_tenant_weekday_work_hours_from_expediente(tenant)
 
     if tax_kind_in is not None or tax_doc_in is not None:
@@ -1083,9 +1139,19 @@ def admin_patch_my_tenant(
         tenant.cnpj = normalized
         tenant.tax_id_kind = kind
         if kind == "cnpj":
-            from app.nfse_auto_provider import sync_nfse_auto_from_cnpj_digits
+            from app.tenant_cnpj import sync_tenant_from_cnpj_commercial
 
-            sync_nfse_auto_from_cnpj_digits(db, tenant.id, normalized, commit=False)
+            try:
+                sync_tenant_from_cnpj_commercial(db, tenant, normalized, commit=False)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+                    if "não configurada" in str(exc).lower()
+                    else status.HTTP_502_BAD_GATEWAY
+                    if "contatar" in str(exc).lower() or "consultar" in str(exc).lower()
+                    else status.HTTP_404_NOT_FOUND,
+                    detail=str(exc),
+                ) from exc
 
     if tenant.block_national_holidays:
         _sync_tenant_national_holidays(db, tenant.id)
@@ -1093,6 +1159,57 @@ def admin_patch_my_tenant(
         _remove_auto_national_holidays(db, tenant.id)
 
     db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
+    return tenant
+
+
+@router.post("/me/tenant/cnpj-commercial-refresh", response_model=TenantOut)
+@limiter.limit("10/minute")
+def refresh_my_tenant_cnpj_commercial(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+) -> Tenant:
+    """Atualiza cadastro da empresa via CNPJá comercial (Receita + contribuintes)."""
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    if tenant.tax_id_kind != "cnpj":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Atualização comercial disponível apenas para empresas com CNPJ.",
+        )
+    from app.client_cnpj import CNPJ_COMMERCIAL_COOLDOWN_DAYS
+    from app.tax_id import digits_only
+    from app.tenant_cnpj import cnpj_commercial_cooldown_remaining, sync_tenant_from_cnpj_commercial
+
+    digits = digits_only(tenant.cnpj or "")
+    if len(digits) != 14:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="CNPJ inválido para consulta na Receita.",
+        )
+    days_left = cnpj_commercial_cooldown_remaining(tenant)
+    if days_left is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"A última atualização comercial foi há menos de {CNPJ_COMMERCIAL_COOLDOWN_DAYS} dias. "
+                f"Tente novamente em aproximadamente {days_left} dia(s) para economizar créditos da API."
+            ),
+        )
+    try:
+        sync_tenant_from_cnpj_commercial(db, tenant, digits, commit=False)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            if "não configurada" in str(exc).lower()
+            else status.HTTP_502_BAD_GATEWAY
+            if "contatar" in str(exc).lower() or "consultar" in str(exc).lower()
+            else status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     db.commit()
     db.refresh(tenant)
     return tenant
@@ -1200,6 +1317,72 @@ def admin_delete_tenant_logo(
     if old_key:
         delete_tenant_logo_if_exists(old_key, db=db)
     return tenant
+
+
+def _verify_admin_password_or_400(current_user: User, password: str) -> None:
+    if not verify_password(password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Senha atual incorreta.")
+
+
+@router.post("/me/tenant/reset-data", response_model=TenantResetDataOut)
+@limiter.limit("3/hour")
+def admin_reset_tenant_data(
+    request: Request,
+    payload: TenantDestructiveActionRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+) -> TenantResetDataOut:
+    _verify_admin_password_or_400(current_user, payload.current_password)
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    try:
+        deleted = reset_tenant_operational_data(db, tenant)
+        db.commit()
+    except RuntimeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível restaurar o sistema. Tente novamente ou contate o suporte.",
+        ) from exc
+    return TenantResetDataOut(
+        message="Dados operacionais removidos. O cadastro da empresa e os usuários foram preservados.",
+        deleted_entities=deleted,
+    )
+
+
+@router.post("/me/tenant/delete-account", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("3/hour")
+def admin_delete_tenant_account(
+    request: Request,
+    payload: TenantDestructiveActionRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+) -> None:
+    _verify_admin_password_or_400(current_user, payload.current_password)
+    if current_user.is_platform_operator:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contas de operação da plataforma não podem ser excluídas por este fluxo.",
+        )
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    try:
+        delete_tenant_account(db, tenant)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Não foi possível excluir a conta porque existem registros vinculados que bloqueiam a remoção.",
+        ) from exc
 
 
 @router.post("/me/tenant/sync-national-holidays")

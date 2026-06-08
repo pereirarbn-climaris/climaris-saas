@@ -82,7 +82,7 @@ function RowActionsMenu({
   const canSendWa = row.whatsapp_valido && row.historico_servico_id > 0;
   const historyHref =
     row.equipment_id != null && row.equipment_id > 0
-      ? `/app/clients/${row.client_id}?tab=historico`
+      ? `/app/clients/${row.client_id}?tab=preventiva`
       : `/app/clients/${row.client_id}?tab=preventiva`;
 
   return (

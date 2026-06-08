@@ -61,6 +61,16 @@
   background: color-mix(in srgb, var(--color-text) 5%, transparent);
 }
 
+.spinIcon {
+  animation: accountsRefreshSpin 0.85s linear infinite;
+}
+
+@keyframes accountsRefreshSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .cardsGrid {
   display: grid;
   grid-template-columns: 1fr;
@@ -408,4 +418,541 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+
+/* —— Modal de conciliação —— */
+.reconcileOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.52);
+  backdrop-filter: blur(4px);
+  animation: reconcileFadeIn 0.2s ease;
+}
+
+@keyframes reconcileFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.reconcileDialog {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: min(92vh, 900px);
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  background: var(--color-surface-elevated, #fff);
+  box-shadow:
+    0 24px 48px rgba(15, 23, 42, 0.14),
+    0 8px 16px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  animation: reconcileSlideIn 0.22s ease;
+}
+
+@keyframes reconcileSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.reconcileDialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-primary) 6%, var(--color-surface-elevated)) 0%,
+    var(--color-surface-elevated) 100%
+  );
+}
+
+.reconcileDialogTitleWrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.reconcileDialogIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-primary, #2563eb);
+}
+
+.reconcileDialogTitle {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--color-text);
+}
+
+.reconcileDialogSubtitle {
+  margin: 0.2rem 0 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.reconcileDialogClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.reconcileDialogClose:hover {
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text);
+}
+
+.reconcileDialogBody {
+  flex: 1;
+  overflow: auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.reconcileDialogFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface) 50%, var(--color-surface-elevated));
+}
+
+.reconcilePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.reconcilePanelTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.reconcilePanelDesc {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.reconcilePeriodHint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.reconcileFilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem;
+}
+
+.reconcileDateField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.reconcileDateField input {
+  min-width: 10.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  padding: 0.5rem 0.65rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.reconcileDateField input:focus {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  outline-offset: 1px;
+  border-color: var(--color-primary);
+}
+
+.ofxFileInputHidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ofxDropZone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: 7.5rem;
+  padding: 1.25rem 1rem;
+  border: 2px dashed color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface-elevated));
+  color: var(--color-primary, #2563eb);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.ofxDropZone:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-elevated));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.ofxDropZoneBusy {
+  cursor: wait;
+  opacity: 0.85;
+}
+
+.ofxDropZoneTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.ofxDropZoneHint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  max-width: 28rem;
+  text-align: center;
+  word-break: break-word;
+}
+
+.reconcileOfxActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.reconcileOfxCount {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.reconcileCountPill {
+  margin-left: 0.35rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+}
+
+.reconcileList {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-elevated);
+  max-height: 220px;
+  overflow: auto;
+}
+
+.reconcileListOfx {
+  max-height: 280px;
+}
+
+.reconcileRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.reconcileRow:last-child {
+  border-bottom: none;
+}
+
+.reconcileRowMain {
+  min-width: 0;
+  flex: 1;
+}
+
+.reconcileRowMain strong {
+  display: block;
+  font-size: 0.875rem;
+  line-height: 1.35;
+}
+
+.reconcileRowMeta {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.reconcileRowActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
+.reconcileSelect {
+  max-width: min(280px, 42vw);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0.4rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.reconcileBadgeOk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.amountPositive {
+  color: #047857;
+}
+
+.amountNegative {
+  color: #b42318;
+}
+
+.reconcileEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.reconcileEmpty p {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.reconcileEmpty span {
+  font-size: 0.78rem;
+  max-width: 22rem;
+  line-height: 1.45;
+}
+
+.reconcileNoMatch {
+  margin: 0.45rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #b45309;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+/* —— Modal configurar conta —— */
+.configDialog {
+  width: min(800px, 100%);
+}
+
+.configDialogMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.configSummaryPanel {
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 5%, var(--color-surface)) 0%,
+    var(--color-surface-elevated) 100%
+  );
+}
+
+.configSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1.25rem;
+  margin: 0;
+}
+
+@media (min-width: 560px) {
+  .configSummaryGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.configSummaryGrid dt {
+  margin: 0 0 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.configSummaryGrid dd {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.configSummaryBalance {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.configSummaryDetail {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.configStatusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.configForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.configSelect,
+.configInput {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.875rem;
+}
+
+.configSelect:focus,
+.configInput:focus {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  outline-offset: 1px;
+  border-color: var(--color-primary);
+}
+
+.configActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.configProductChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.configChip {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.configWarn {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #b42318;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
 }

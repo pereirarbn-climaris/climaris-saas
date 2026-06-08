@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useFeature } from '../../lib/featureManager';
 import { Check, Repeat, Trash2, X } from 'lucide-react';
 import { ToastHost } from '../../components/ToastHost';
 import { Badge } from '../../components/ui/badge';
@@ -260,6 +261,7 @@ function TransacaoRow({
 }
 
 export function FinanceDashboard() {
+  const dreDashboardEnabled = useFeature('dre_dashboard');
   const month = useMemo(() => currentMonthRange(), []);
   const [dataInicio, setDataInicio] = useState(() => toDateInput(month.inicio));
   const [dataFim, setDataFim] = useState(() => toDateInput(month.fim));
@@ -289,7 +291,11 @@ export function FinanceDashboard() {
     try {
       if (action === 'delete') {
         await deleteFinanceEntry(entryId, { edit_scope: apiScope });
-        toast.success('Lançamento(s) excluído(s).');
+        toast.success(
+        action === 'delete' && detectEditSeriesKindFromTransacao(row) === 'recurring'
+          ? 'Lançamento(s) excluído(s). A série recorrente foi atualizada para não recriar.'
+          : 'Lançamento(s) excluído(s).',
+      );
       } else {
         await patchFinanceEntry(entryId, {
           status: action === 'paid' ? 'paid' : 'cancelled',
@@ -347,6 +353,20 @@ export function FinanceDashboard() {
     setDataInicio(toDateInput(inicio));
     setDataFim(toDateInput(fim));
     setPeriodPreset(preset);
+  }
+
+  function ensurePeriodIncludesTransaction(due: Date) {
+    const d = new Date(due);
+    d.setHours(12, 0, 0, 0);
+    const start = new Date(`${dataInicio}T00:00:00`);
+    const end = new Date(`${dataFim}T23:59:59`);
+    if (d >= start && d <= end) return;
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    setDataInicio(toDateInput(new Date(y, m, 1)));
+    setDataFim(toDateInput(new Date(y, m + 1, 0)));
+    setPeriodPreset('custom');
+    toast.success('Filtro ajustado para o mês do lançamento criado.');
   }
 
   const periodo = useMemo(
@@ -421,11 +441,13 @@ export function FinanceDashboard() {
               Conciliação
             </Button>
           </Link>
-          <Link to="/app/finance/reports/dre" style={{ textDecoration: 'none' }}>
-            <Button type="button" variant="outline">
-              DRE mensal
-            </Button>
-          </Link>
+          {dreDashboardEnabled ? (
+            <Link to="/app/finance/reports/dre" style={{ textDecoration: 'none' }}>
+              <Button type="button" variant="outline">
+                DRE mensal
+              </Button>
+            </Link>
+          ) : null}
           <Button type="button" variant="outline" onClick={() => void refetch()}>
             Atualizar
           </Button>
@@ -605,6 +627,7 @@ export function FinanceDashboard() {
           contas={contas}
           listParams={listParams}
           defaultContaId={filterContaId}
+          onTransactionCreated={(t) => ensurePeriodIncludesTransaction(t.dataPrevista)}
         />
       ) : null}
 

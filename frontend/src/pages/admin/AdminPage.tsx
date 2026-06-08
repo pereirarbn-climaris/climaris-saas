@@ -1,15 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
-import {
-  createTenantUser,
-  listTenantUsers,
-  resetTenantUserPassword,
-  updateTenantUser,
-  type UserOut,
-  type UserProvisionOut,
-  type UserRole,
-} from "../../api/auth";
-import { getTenantId } from "../../lib/authStorage";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, Navigate, useOutletContext, useSearchParams } from "react-router-dom";
 import {
   getNfseSettings,
   listNfseTributacaoNacionalCatalog,
@@ -22,22 +12,84 @@ import { getFinanceGateways, getFinanceSettings, type FinanceGatewaysOut } from 
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import formLayout from "../formLayout.module.css";
+import { ToastHost } from "../../components/ToastHost";
+import { Button } from "../../components/ui/button";
+import { toast } from "../../lib/toast";
 import { AdminApiKeysTab } from "./AdminApiKeysTab";
 import { ManagementView } from "./ManagementView";
+import { SettingsBudgets } from "./SettingsBudgets";
+import { UsersView } from "./UsersView";
 import styles from "./AdminPage.module.css";
+import layout from "./ManagementView.module.css";
 
-function tabFromSearch(tabParam: string | null): "company" | "users" | "pagamentos" | "fiscal" | "apikeys" {
+type FiscalDraftExtras = {
+  meiCertFile: File | null;
+  meiCertPassword: string;
+  meiPortalUser: string;
+  meiPortalPassword: string;
+  focusApiKey: string;
+  changeMeiCertPassword: boolean;
+  changePortalPassword: boolean;
+};
+
+function serializeFiscalDraft(settings: NfseSettingsOut, extras: FiscalDraftExtras): string {
+  return JSON.stringify({
+    mei_opt_in: settings.mei_opt_in,
+    default_optante_mei: settings.default_optante_mei,
+    mei_environment: settings.mei_environment,
+    auto_issue_on_payment: settings.auto_issue_on_payment,
+    auto_nfse_provider: settings.auto_nfse_provider ?? null,
+    focus_opt_in: settings.focus_opt_in,
+    default_codigo_tributacao_nacional: settings.default_codigo_tributacao_nacional?.trim() || null,
+    default_codigo_nbs: settings.default_codigo_nbs?.trim() || null,
+    prestador_inscricao_municipal: settings.prestador_inscricao_municipal?.trim() || null,
+    dps_serie: settings.dps_serie?.trim() || null,
+    meiCertFileName: extras.meiCertFile?.name ?? "",
+    meiCertPassword: extras.meiCertPassword,
+    meiPortalUser: extras.meiPortalUser,
+    meiPortalPassword: extras.meiPortalPassword,
+    focusApiKey: extras.focusApiKey,
+    changeMeiCertPassword: extras.changeMeiCertPassword,
+    changePortalPassword: extras.changePortalPassword,
+  });
+}
+
+const EMPTY_FISCAL_EXTRAS: FiscalDraftExtras = {
+  meiCertFile: null,
+  meiCertPassword: "",
+  meiPortalUser: "",
+  meiPortalPassword: "",
+  focusApiKey: "",
+  changeMeiCertPassword: false,
+  changePortalPassword: false,
+};
+
+function FiscalSettingsHeaderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M8 11h8" />
+      <path d="M8 15h5" />
+      <path d="M16 15h.01" />
+    </svg>
+  );
+}
+
+function tabFromSearch(
+  tabParam: string | null,
+): "company" | "users" | "pagamentos" | "fiscal" | "apikeys" | "budgets" {
   if (tabParam === "empresa" || tabParam === "company") return "company";
   if (tabParam === "usuarios" || tabParam === "users") return "users";
   if (tabParam === "pagamentos" || tabParam === "pagarme" || tabParam === "pagar-me") return "pagamentos";
   if (tabParam === "fiscal") return "fiscal";
   if (tabParam === "api-keys" || tabParam === "chaves") return "apikeys";
+  if (tabParam === "orcamentos" || tabParam === "budget-templates" || tabParam === "budgets") return "budgets";
   return "company";
 }
 
 export function AdminPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tab = tabFromSearch(searchParams.get("tab"));
 
@@ -46,28 +98,11 @@ export function AdminPage() {
   const [payFinanceEnabled, setPayFinanceEnabled] = useState<boolean | null>(null);
   const [payGateways, setPayGateways] = useState<FinanceGatewaysOut | null>(null);
 
-  const [users, setUsers] = useState<UserOut[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [usersErr, setUsersErr] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [newRole, setNewRole] = useState<UserRole>("receptionist");
-  const [creating, setCreating] = useState(false);
-  const [provisioned, setProvisioned] = useState<UserProvisionOut | null>(null);
-  const [createErr, setCreateErr] = useState("");
-
-  const [editing, setEditing] = useState<UserOut | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  const [editRole, setEditRole] = useState<UserRole>("receptionist");
-  const [editActive, setEditActive] = useState(true);
-  const [savingUser, setSavingUser] = useState(false);
-  const [editErr, setEditErr] = useState("");
-  const [resettingPw, setResettingPw] = useState(false);
   const [nfseSettings, setNfseSettings] = useState<NfseSettingsOut | null>(null);
   const [nfseLoading, setNfseLoading] = useState(false);
   const [nfseSaving, setNfseSaving] = useState(false);
-  const [nfseMsg, setNfseMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [fiscalBaseline, setFiscalBaseline] = useState("");
+  const [fiscalSavedSnapshot, setFiscalSavedSnapshot] = useState<NfseSettingsOut | null>(null);
   const [meiCertFile, setMeiCertFile] = useState<File | null>(null);
   const [meiCertPassword, setMeiCertPassword] = useState("");
   const [meiPortalUser, setMeiPortalUser] = useState("");
@@ -78,22 +113,60 @@ export function AdminPage() {
   const [changeMeiCertPassword, setChangeMeiCertPassword] = useState(false);
   const [changePortalPassword, setChangePortalPassword] = useState(false);
   const [tribCatalogAdmin, setTribCatalogAdmin] = useState<NfseTributacaoNacionalItem[]>([]);
-  const loadUsers = useCallback(async () => {
-    setLoadingUsers(true);
-    setUsersErr("");
-    try {
-      const list = await listTenantUsers({ limit: 200 });
-      setUsers(list);
-    } catch (e) {
-      setUsersErr(friendlyError(e instanceof Error ? e.message : "Erro ao carregar usuários."));
-    } finally {
-      setLoadingUsers(false);
-    }
-  }, []);
 
-  useEffect(() => {
-    if (tab === "users") void loadUsers();
-  }, [tab, loadUsers]);
+  const fiscalDraftExtras = useMemo(
+    (): FiscalDraftExtras => ({
+      meiCertFile,
+      meiCertPassword,
+      meiPortalUser,
+      meiPortalPassword,
+      focusApiKey,
+      changeMeiCertPassword,
+      changePortalPassword,
+    }),
+    [
+      meiCertFile,
+      meiCertPassword,
+      meiPortalUser,
+      meiPortalPassword,
+      focusApiKey,
+      changeMeiCertPassword,
+      changePortalPassword,
+    ],
+  );
+
+  const isFiscalDirty = useMemo(() => {
+    if (!fiscalBaseline || !nfseSettings) return false;
+    return serializeFiscalDraft(nfseSettings, fiscalDraftExtras) !== fiscalBaseline;
+  }, [fiscalBaseline, nfseSettings, fiscalDraftExtras]);
+
+  function syncFiscalBaseline(settings: NfseSettingsOut) {
+    const snapshot: NfseSettingsOut = {
+      ...settings,
+      default_codigo_tributacao_nacional: settings.default_codigo_tributacao_nacional ?? null,
+      default_codigo_nbs: settings.default_codigo_nbs ?? null,
+      prestador_inscricao_municipal: settings.prestador_inscricao_municipal ?? null,
+      dps_serie: settings.dps_serie ?? null,
+    };
+    setFiscalSavedSnapshot(snapshot);
+    setFiscalBaseline(serializeFiscalDraft(snapshot, EMPTY_FISCAL_EXTRAS));
+  }
+
+  function clearFiscalDraftExtras() {
+    setMeiCertFile(null);
+    setMeiCertPassword("");
+    setMeiPortalUser("");
+    setMeiPortalPassword("");
+    setFocusApiKey("");
+    setChangeMeiCertPassword(false);
+    setChangePortalPassword(false);
+  }
+
+  function onCancelFiscal() {
+    if (!fiscalSavedSnapshot) return;
+    setNfseSettings({ ...fiscalSavedSnapshot });
+    clearFiscalDraftExtras();
+  }
 
   useEffect(() => {
     if (tab !== "pagamentos") return;
@@ -122,22 +195,24 @@ export function AdminPage() {
     let cancelled = false;
     void (async () => {
       setNfseLoading(true);
-      setNfseMsg(null);
       try {
         const [row, tribCat] = await Promise.all([getNfseSettings(), listNfseTributacaoNacionalCatalog()]);
         if (!cancelled) {
-          setNfseSettings({
+          const normalized: NfseSettingsOut = {
             ...row,
             default_codigo_tributacao_nacional: row.default_codigo_tributacao_nacional ?? null,
             default_codigo_nbs: row.default_codigo_nbs ?? null,
             prestador_inscricao_municipal: row.prestador_inscricao_municipal ?? null,
             dps_serie: row.dps_serie ?? null,
-          });
+          };
+          setNfseSettings(normalized);
+          syncFiscalBaseline(normalized);
+          clearFiscalDraftExtras();
           setTribCatalogAdmin(tribCat);
         }
       } catch (e) {
         if (!cancelled) {
-          setNfseMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao carregar NFS-e." });
+          toast.error(e instanceof Error ? e.message : "Erro ao carregar NFS-e.");
           setTribCatalogAdmin([]);
         }
       } finally {
@@ -149,122 +224,20 @@ export function AdminPage() {
     };
   }, [tab]);
 
-  useEffect(() => {
-    if (!editing) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setEditing(null);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [editing]);
-
   if (!ctx || ctx.user.role !== "admin") {
     return <Navigate to="/app" replace />;
   }
 
   const { tenant: workspaceTenant, user: adminUser, refreshWorkspace } = ctx;
 
-  async function onCreateUser(e: FormEvent) {
-    e.preventDefault();
-    setCreateErr("");
-    const tid = getTenantId();
-    if (tid == null) {
-      setCreateErr("Sessão inválida. Entre novamente.");
-      return;
-    }
-    setCreating(true);
-    try {
-      const row = await createTenantUser({
-        tenant_id: tid,
-        full_name: newName.trim(),
-        email: newEmail.trim().toLowerCase(),
-        role: newRole,
-      });
-      setProvisioned(row);
-      setNewName("");
-      setNewEmail("");
-      setNewRole("receptionist");
-      await loadUsers();
-      await refreshWorkspace();
-    } catch (err) {
-      setCreateErr(friendlyError(err instanceof Error ? err.message : "Erro ao criar usuário."));
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  function openEdit(u: UserOut) {
-    setEditing(u);
-    setEditName(u.full_name);
-    setEditEmail(u.email);
-    setEditRole(u.role);
-    setEditActive(u.is_active);
-    setEditErr("");
-  }
-
-  async function onResetPassword() {
-    if (!editing || editing.id === adminUser.id) return;
-    if (
-      !window.confirm(
-        `Gerar nova senha temporária para ${editing.full_name}? O usuário precisará usar essa senha no próximo login e será obrigado a trocá-la.`,
-      )
-    ) {
-      return;
-    }
-    setEditErr("");
-    setResettingPw(true);
-    try {
-      const row = await resetTenantUserPassword(editing.id);
-      setProvisioned(row);
-      setEditing(null);
-      await loadUsers();
-      await refreshWorkspace();
-    } catch (err) {
-      setEditErr(friendlyError(err instanceof Error ? err.message : "Erro ao redefinir senha."));
-    } finally {
-      setResettingPw(false);
-    }
-  }
-
-  async function onSaveEdit(e: FormEvent) {
-    e.preventDefault();
-    if (!editing) return;
-    setEditErr("");
-    setSavingUser(true);
-    try {
-      const isSelf = editing.id === adminUser.id;
-      if (isSelf) {
-        await updateTenantUser(editing.id, {
-          full_name: editName.trim(),
-          email: editEmail.trim().toLowerCase(),
-        });
-      } else {
-        await updateTenantUser(editing.id, {
-          full_name: editName.trim(),
-          email: editEmail.trim().toLowerCase(),
-          role: editRole,
-          is_active: editActive,
-        });
-      }
-      setEditing(null);
-      await loadUsers();
-      await refreshWorkspace();
-    } catch (err) {
-      setEditErr(friendlyError(err instanceof Error ? err.message : "Erro ao salvar."));
-    } finally {
-      setSavingUser(false);
-    }
-  }
-
   async function onSaveNfse(e: FormEvent) {
     e.preventDefault();
     if (!nfseSettings) return;
     if (meiCertFile && !nfseSettings.has_mei_certificate && !meiCertPassword.trim()) {
-      setNfseMsg({ kind: "err", text: "Para o primeiro cadastro do certificado A1, informe também a senha." });
+      toast.error("Para o primeiro cadastro do certificado A1, informe também a senha.");
       return;
     }
     setNfseSaving(true);
-    setNfseMsg(null);
     try {
       let meiCertificateBase64: string | undefined;
       if (meiCertFile) meiCertificateBase64 = await fileToBase64(meiCertFile);
@@ -283,19 +256,15 @@ export function AdminPage() {
         ...(meiCertPassword ? { mei_certificate_password: meiCertPassword } : {}),
         ...(meiPortalUser ? { mei_portal_username: meiPortalUser } : {}),
         ...(meiPortalPassword ? { mei_portal_password: meiPortalPassword } : {}),
+        focus_opt_in: nfseSettings.focus_opt_in,
         ...(focusApiKey ? { focus_api_key: focusApiKey } : {}),
       });
       setNfseSettings(next);
-      setMeiCertFile(null);
-      setMeiCertPassword("");
-      setMeiPortalUser("");
-      setMeiPortalPassword("");
-      setFocusApiKey("");
-      setChangeMeiCertPassword(false);
-      setChangePortalPassword(false);
-      setNfseMsg({ kind: "ok", text: "Configurações NFS-e salvas." });
+      syncFiscalBaseline(next);
+      clearFiscalDraftExtras();
+      toast.success("Configurações fiscais salvas.");
     } catch (e) {
-      setNfseMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao salvar NFS-e." });
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar configurações fiscais.");
     } finally {
       setNfseSaving(false);
     }
@@ -304,7 +273,6 @@ export function AdminPage() {
   async function onTestMeiCredentials() {
     if (!nfseSettings) return;
     setTestingMei(true);
-    setNfseMsg(null);
     try {
       const mei_certificate_base64 = meiCertFile ? await fileToBase64(meiCertFile) : undefined;
       const out = await testNfseMeiCredentials({
@@ -314,11 +282,14 @@ export function AdminPage() {
         ...(meiPortalPassword ? { mei_portal_password: meiPortalPassword } : {}),
         test_sefin_connectivity: meiTestSefinConnectivity,
       });
-      setNfseMsg({ kind: out.ok ? "ok" : "err", text: out.message });
+      if (out.ok) toast.success(out.message);
+      else toast.error(out.message);
       const refreshed = await getNfseSettings();
       setNfseSettings(refreshed);
+      syncFiscalBaseline(refreshed);
+      clearFiscalDraftExtras();
     } catch (e) {
-      setNfseMsg({ kind: "err", text: e instanceof Error ? e.message : "Falha ao testar credenciais MEI." });
+      toast.error(e instanceof Error ? e.message : "Falha ao testar credenciais MEI.");
     } finally {
       setTestingMei(false);
     }
@@ -328,144 +299,10 @@ export function AdminPage() {
     <div className={styles.wrap}>
       {tab === "company" ? (
         <ManagementView tenant={workspaceTenant} refreshWorkspace={refreshWorkspace} />
+      ) : tab === "budgets" ? (
+        <SettingsBudgets />
       ) : tab === "users" ? (
-        <section className={styles.panel} aria-labelledby="admin-users-title">
-          <h2 id="admin-users-title" className={styles.panelTitle}>
-            Usuários do workspace
-          </h2>
-          <p className={styles.panelLead}>
-            Novos usuários recebem senha temporária e devem alterá-la no primeiro acesso. Perfis: administrador, técnico
-            e recepção.
-          </p>
-
-          {provisioned ? (
-            <div className={styles.provision}>
-              <p className={styles.provisionTitle}>Senha temporária</p>
-              <p className={styles.muted}>
-                Envie este acesso com segurança para <strong>{provisioned.email}</strong> (novo usuário ou redefinição).
-              </p>
-              <div className={styles.provisionRow}>
-                <span>Senha temporária:</span>
-                <code className={styles.code}>{provisioned.temporary_password}</code>
-                <button
-                  type="button"
-                  className={styles.btnGhost}
-                  onClick={() => {
-                    void navigator.clipboard.writeText(provisioned.temporary_password);
-                  }}
-                >
-                  Copiar
-                </button>
-                <button type="button" className={styles.btnGhost} onClick={() => setProvisioned(null)}>
-                  Ocultar
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          <form className={styles.toolbar} onSubmit={onCreateUser}>
-            <div className={styles.toolbarFields}>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="nu-name">
-                  Nome completo
-                </label>
-                <input
-                  id="nu-name"
-                  className={loginStyles.input}
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="nu-email">
-                  E-mail
-                </label>
-                <input
-                  id="nu-email"
-                  className={loginStyles.input}
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div className={formLayout.field}>
-                <label className={loginStyles.label} htmlFor="nu-role">
-                  Perfil
-                </label>
-                <select
-                  id="nu-role"
-                  className={loginStyles.select}
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as UserRole)}
-                >
-                  <option value="receptionist">Recepção</option>
-                  <option value="technician">Técnico</option>
-                  <option value="admin">Administrador</option>
-                </select>
-              </div>
-            </div>
-            <button type="submit" className={styles.btnPrimary} disabled={creating}>
-              {creating ? "Criando…" : "Novo usuário"}
-            </button>
-          </form>
-          {createErr ? <p className={styles.msgErr}>{createErr}</p> : null}
-
-          {loadingUsers ? <p className={styles.empty}>Carregando usuários…</p> : null}
-          {usersErr ? <p className={styles.msgErr}>{usersErr}</p> : null}
-          {!loadingUsers && !usersErr && users.length === 0 ? (
-            <p className={styles.empty}>Nenhum usuário listado.</p>
-          ) : null}
-
-          {!loadingUsers && users.length > 0 ? (
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>E-mail</th>
-                    <th>Perfil</th>
-                    <th>Status</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id}>
-                      <td>{u.full_name}</td>
-                      <td>{u.email}</td>
-                      <td>{roleLabel(u.role)}</td>
-                      <td>
-                        {u.is_active ? <span className={styles.badgeOn}>Ativo</span> : <span className={styles.badgeOff}>Inativo</span>}
-                        {u.must_change_password ? (
-                          <span className={styles.muted} title="Deve alterar a senha no próximo login">
-                            {" "}
-                            · senha provisória
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className={styles.userActionsCell}>
-                        {u.role === "technician" ? (
-                          <button
-                            type="button"
-                            className={styles.btnGhost}
-                            onClick={() => navigate(`/app/agenda?technician_id=${u.id}&mode=config`)}
-                          >
-                            Agenda
-                          </button>
-                        ) : null}
-                        <button type="button" className={styles.btnGhost} onClick={() => openEdit(u)}>
-                          Editar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </section>
+        <UsersView adminUser={adminUser} refreshWorkspace={refreshWorkspace} />
       ) : tab === "pagamentos" ? (
         <section className={styles.panel} aria-labelledby="admin-pagamentos-title">
           <h2 id="admin-pagamentos-title" className={styles.panelTitle}>
@@ -544,18 +381,36 @@ export function AdminPage() {
       ) : tab === "apikeys" ? (
         <AdminApiKeysTab />
       ) : (
-        <section className={styles.panel} aria-labelledby="admin-fiscal-title">
-          <h2 id="admin-fiscal-title" className={styles.panelTitle}>
-            Configurações fiscais e NFS-e
-          </h2>
-          <p className={styles.panelLead}>
-            Certificado digital A1, ambiente de homologação ou produção e tributação no padrão nacional da NFS-e. Clientes
-            enquadrados como MEI utilizam a NFS-e Nacional; demais perfis seguirão para integração Focus quando
-            disponível.
-          </p>
+        <div className={layout.pageWithActionBar}>
+          <ToastHost />
+          <header className={layout.pageHeader}>
+            <nav className={layout.breadcrumb} aria-label="Navegação">
+              <span className={layout.breadcrumbCurrent}>Administração</span>
+              <span className={layout.breadcrumbSep} aria-hidden>
+                /
+              </span>
+              <span>Fiscal</span>
+            </nav>
+            <div className={layout.pageHeaderMain}>
+              <span className={layout.pageHeaderIcon} aria-hidden>
+                <FiscalSettingsHeaderIcon />
+              </span>
+              <div className={layout.pageHeaderText}>
+                <h1 id="admin-fiscal-title" className={layout.pageTitle}>
+                  Configurações fiscais e NFS-e
+                </h1>
+                <p className={layout.pageLead}>
+                  Certificado digital A1, ambiente de homologação ou produção e tributação no padrão nacional da NFS-e.
+                  Clientes enquadrados como MEI utilizam a NFS-e Nacional; demais perfis seguirão para integração Focus
+                  quando disponível.
+                </p>
+              </div>
+            </div>
+          </header>
+          <section className={styles.panel} aria-labelledby="admin-fiscal-title">
           {nfseLoading ? <p className={styles.empty}>Carregando configurações…</p> : null}
           {!nfseLoading && nfseSettings ? (
-            <form className={styles.form} onSubmit={onSaveNfse}>
+            <form id="fiscal-settings-form" className={styles.form} onSubmit={onSaveNfse}>
               <div className={styles.sectionCard}>
                 <h3 className={styles.subsectionTitle}>MEI — NFS-e Nacional</h3>
                 <p className={styles.muted}>
@@ -727,7 +582,7 @@ export function AdminPage() {
                         Último arquivo enviado: <strong>{nfseSettings.mei_certificate_file_name}</strong>.
                       </>
                     ) : null}{" "}
-                    Para substituir, escolha um novo .pfx/.p12 abaixo e clique em &quot;Salvar NFS-e&quot;.
+                    Para substituir, escolha um novo .pfx/.p12 abaixo e clique em &quot;Salvar configurações&quot;.
                   </p>
                 ) : null}
                 <input
@@ -852,143 +707,32 @@ export function AdminPage() {
                 </label>
               </div>
 
-              <div className={styles.actions}>
-                <button type="submit" className={styles.btnPrimary} disabled={nfseSaving}>
-                  {nfseSaving ? "Salvando..." : "Salvar NFS-e"}
-                </button>
-              </div>
-              {nfseMsg?.kind === "ok" ? <p className={styles.msgOk}>{nfseMsg.text}</p> : null}
-              {nfseMsg?.kind === "err" ? <p className={styles.msgErr}>{nfseMsg.text}</p> : null}
             </form>
           ) : null}
         </section>
-      )}
 
-      {editing ? (
-        <div className={styles.modalRoot} role="presentation">
-          <button
-            type="button"
-            className={styles.modalBackdrop}
-            aria-label="Fechar"
-            onClick={() => setEditing(null)}
-          />
-          <div
-            className={styles.modalCard}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="edit-user-title"
-          >
-            <h3 id="edit-user-title" className={styles.modalTitle}>
-              Editar usuário
-            </h3>
-            <form className={styles.form} onSubmit={onSaveEdit}>
-              <div className={formLayout.stack}>
-              <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="eu-name">
-                Nome completo
-              </label>
-              <input
-                id="eu-name"
-                className={loginStyles.input}
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                required
-              />
-              </div>
-              <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="eu-email">
-                E-mail
-              </label>
-              <input
-                id="eu-email"
-                className={loginStyles.input}
-                type="email"
-                value={editEmail}
-                onChange={(e) => setEditEmail(e.target.value)}
-                required
-              />
-              </div>
-              <div className={formLayout.field}>
-              <label className={loginStyles.label} htmlFor="eu-role">
-                Perfil
-              </label>
-              <select
-                id="eu-role"
-                className={loginStyles.select}
-                value={editRole}
-                onChange={(e) => setEditRole(e.target.value as UserRole)}
-                disabled={editing.id === adminUser.id}
-              >
-                <option value="receptionist">Recepção</option>
-                <option value="technician">Técnico</option>
-                <option value="admin">Administrador</option>
-              </select>
-              </div>
-              {editing.id === adminUser.id ? (
-                <p className={styles.muted}>Você não pode alterar o próprio perfil aqui.</p>
-              ) : null}
-              <label className={styles.weekday}>
-                <input
-                  type="checkbox"
-                  checked={editActive}
-                  onChange={(e) => setEditActive(e.target.checked)}
-                  disabled={editing.id === adminUser.id}
-                />
-                Conta ativa
-              </label>
-              {editing.id === adminUser.id ? (
-                <p className={styles.muted}>Não é possível desativar a própria conta.</p>
-              ) : null}
-              {editing.id !== adminUser.id ? (
-                <div className={styles.actions}>
-                  <button
-                    type="button"
-                    className={styles.btnGhost}
-                    disabled={resettingPw || savingUser}
-                    onClick={() => void onResetPassword()}
-                  >
-                    {resettingPw ? "Gerando…" : "Nova senha temporária"}
-                  </button>
-                </div>
-              ) : null}
-              {editErr ? <p className={styles.msgErr}>{editErr}</p> : null}
-              <div className={styles.actions}>
-                <button type="submit" className={styles.btnPrimary} disabled={savingUser}>
-                  {savingUser ? "Salvando…" : "Salvar"}
-                </button>
-                <button type="button" className={styles.btnGhost} onClick={() => setEditing(null)}>
+          <div className={layout.formActionBar} role="toolbar" aria-label="Ações da configuração">
+            <div className={layout.formActionBarInner}>
+              {isFiscalDirty ? (
+                <Button type="button" variant="outline" disabled={nfseSaving} onClick={onCancelFiscal}>
                   Cancelar
-                </button>
-              </div>
-              </div>
-            </form>
+                </Button>
+              ) : null}
+              <Button
+                type="submit"
+                form="fiscal-settings-form"
+                variant="default"
+                disabled={nfseSaving || nfseLoading || !nfseSettings || !isFiscalDirty}
+              >
+                {nfseSaving ? "Salvando…" : "Salvar configurações"}
+              </Button>
+            </div>
           </div>
         </div>
-      ) : null}
+      )}
+
     </div>
   );
-}
-
-function friendlyError(message: string): string {
-  const m = message.trim();
-  if (!m) return "Ocorreu um erro inesperado.";
-  if (m.toLowerCase().includes("network") || m.toLowerCase().includes("failed to fetch")) {
-    return "Falha de conexão. Verifique sua internet e tente novamente.";
-  }
-  return m;
-}
-
-function roleLabel(role: UserRole): string {
-  switch (role) {
-    case "admin":
-      return "Administrador";
-    case "technician":
-      return "Técnico";
-    case "receptionist":
-      return "Recepção";
-    default:
-      return role;
-  }
 }
 
 function formatDateTimePtBr(iso: string | null | undefined): string {

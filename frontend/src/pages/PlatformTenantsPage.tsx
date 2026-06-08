@@ -5,6 +5,7 @@ import {
   getPlatformTenant,
   listPlatformTenantPlanChangeLogs,
   listPlatformTenants,
+  updatePlatformTenantFeatures,
   updatePlatformTenantPlan,
   type PlatformTenantDetail,
   type PlatformTenantListItem,
@@ -16,6 +17,7 @@ import {
   buildPlatformSaasMetrics,
   mapPlatformTenantToView,
 } from "../lib/platformTenantsAdapter";
+import { FEATURE_FLAGS } from "../lib/featureManager";
 import styles from "./PlatformTenantsPage.module.css";
 
 function fmtDate(iso: string): string {
@@ -55,6 +57,11 @@ export function PlatformTenantsPage() {
   const [planHistory, setPlanHistory] = useState<PlatformTenantPlanChangeLog[]>([]);
 
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const [featuresModalTenantId, setFeaturesModalTenantId] = useState<number | null>(null);
+  const [featuresDraft, setFeaturesDraft] = useState<Record<string, boolean>>({});
+  const [featuresModalLoading, setFeaturesModalLoading] = useState(false);
+  const [updatingFeatures, setUpdatingFeatures] = useState(false);
 
   const PLAN_OPTIONS = useMemo(() => {
     if (planCatalog.length === 0) return [...FALLBACK_PLAN_OPTIONS];
@@ -111,6 +118,7 @@ export function PlatformTenantsPage() {
   const metrics = useMemo(() => buildPlatformSaasMetrics(rows), [rows]);
 
   const planModalDetail = planModalTenantId != null ? detailsById[planModalTenantId] : null;
+  const featuresModalDetail = featuresModalTenantId != null ? detailsById[featuresModalTenantId] : null;
   const logsModalRow = logsModalTenantId != null ? rows.find((r) => r.id === logsModalTenantId) : null;
 
   async function ensureDetail(tenantId: number): Promise<PlatformTenantDetail> {
@@ -160,6 +168,45 @@ export function PlatformTenantsPage() {
       setError(e instanceof Error ? e.message : "Não foi possível atualizar o plano.");
     } finally {
       setUpdatingPlan(false);
+    }
+  }
+
+  async function openFeaturesModal(tenantId: string) {
+    const id = Number(tenantId);
+    if (!Number.isFinite(id) || id < 1) return;
+    setFeaturesModalTenantId(id);
+    setFeaturesModalLoading(true);
+    setError("");
+    try {
+      const detail = await ensureDetail(id);
+      const current = detail.features_enabled ?? {};
+      setFeaturesDraft(
+        Object.fromEntries(
+          Object.values(FEATURE_FLAGS).map((flag) => [flag.key, current[flag.key] === true]),
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível carregar funcionalidades.");
+      setFeaturesModalTenantId(null);
+    } finally {
+      setFeaturesModalLoading(false);
+    }
+  }
+
+  async function saveFeaturesChange() {
+    if (featuresModalTenantId == null) return;
+    setUpdatingFeatures(true);
+    setError("");
+    setSuccess("");
+    try {
+      const updated = await updatePlatformTenantFeatures(featuresModalTenantId, featuresDraft);
+      setDetailsById((prev) => ({ ...prev, [featuresModalTenantId]: updated }));
+      setSuccess("Funcionalidades beta atualizadas. O cliente vê a mudança ao recarregar o app.");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Não foi possível salvar funcionalidades.");
+    } finally {
+      setUpdatingFeatures(false);
     }
   }
 
@@ -287,6 +334,7 @@ export function PlatformTenantsPage() {
           setError("Provisionamento manual de tenant ainda não está disponível nesta tela.");
         }}
         onManagePlan={(tenantId) => void openPlanModal(tenantId)}
+        onManageBetaFeatures={(tenantId) => void openFeaturesModal(tenantId)}
         onViewLogs={(tenantId) => void openLogsModal(tenantId)}
         onBlockTenant={() => {
           setError("Bloqueio de tenant via operação ainda não está disponível na API.");
@@ -372,6 +420,69 @@ export function PlatformTenantsPage() {
                       ))}
                     </ul>
                   )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {featuresModalTenantId != null ? (
+        <div className={styles.modalRoot} role="presentation">
+          <button
+            type="button"
+            className={styles.modalBackdrop}
+            aria-label="Fechar"
+            onClick={() => setFeaturesModalTenantId(null)}
+          />
+          <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby="features-modal-title">
+            <h3 id="features-modal-title" className={styles.modalTitle}>
+              Ativar funcionalidades beta
+            </h3>
+            <p className={styles.modalSubtitle}>
+              {featuresModalDetail?.name ?? rows.find((r) => r.id === featuresModalTenantId)?.name ?? "Cliente"}
+            </p>
+
+            {featuresModalLoading ? (
+              <p className={styles.modalHint}>Carregando…</p>
+            ) : (
+              <>
+                <p className={styles.modalHint}>
+                  Ative apenas para clientes piloto. Demais workspaces continuam sem as novidades.
+                </p>
+                <ul className={styles.featureFlagList}>
+                  {Object.values(FEATURE_FLAGS).map((flag) => (
+                    <li key={flag.key} className={styles.featureFlagItem}>
+                      <label className={styles.featureFlagLabel}>
+                        <input
+                          type="checkbox"
+                          checked={featuresDraft[flag.key] === true}
+                          disabled={updatingFeatures}
+                          onChange={(e) =>
+                            setFeaturesDraft((prev) => ({ ...prev, [flag.key]: e.target.checked }))
+                          }
+                        />
+                        <span>
+                          <strong>{flag.label}</strong>
+                          <span className={styles.featureFlagDesc}>{flag.description}</span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+
+                <div className={styles.modalActions}>
+                  <button type="button" className={styles.btnSecondary} onClick={() => setFeaturesModalTenantId(null)}>
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.btnPrimary}
+                    onClick={() => void saveFeaturesChange()}
+                    disabled={updatingFeatures}
+                  >
+                    {updatingFeatures ? "Salvando…" : "Salvar funcionalidades"}
+                  </button>
                 </div>
               </>
             )}

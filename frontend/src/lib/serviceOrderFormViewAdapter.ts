@@ -85,6 +85,15 @@ type OsMeta = {
   tipoServico?: ServiceType;
   descricaoProblema?: string;
   diagnosticoTecnico?: string;
+  objetoLaudo?: string;
+  metodologia?: string;
+  conclusao?: string;
+  planoAcao?: string;
+  pressaoSuccao?: number | null;
+  pressaoDescarga?: number | null;
+  tensaoV?: number | null;
+  correnteA?: number | null;
+  laudoFotos?: Array<{ id: string; dataUrl: string; caption?: string }>;
   observacoesInternas?: string;
   checklist?: ChecklistItem[];
   valorPecas?: number;
@@ -146,6 +155,15 @@ export function expandServiceOrderDescriptionToViewFields(
 ): {
   descricaoProblema: string;
   diagnosticoTecnico: string;
+  objetoLaudo: string;
+  metodologia: string;
+  conclusao: string;
+  planoAcao: string;
+  pressaoSuccao: number | null;
+  pressaoDescarga: number | null;
+  tensaoV: number | null;
+  correnteA: number | null;
+  laudoFotos: Array<{ id: string; dataUrl: string; caption?: string }>;
   checklist: ChecklistItem[];
   tipoServico?: ServiceType;
   observacoesInternas: string;
@@ -161,6 +179,15 @@ export function expandServiceOrderDescriptionToViewFields(
   return {
     descricaoProblema: descFromMeta || freeText || (fallbackTitle ?? ""),
     diagnosticoTecnico: diagFromMeta,
+    objetoLaudo: meta?.objetoLaudo ?? "",
+    metodologia: meta?.metodologia ?? "",
+    conclusao: meta?.conclusao ?? "",
+    planoAcao: meta?.planoAcao ?? "",
+    pressaoSuccao: meta?.pressaoSuccao ?? null,
+    pressaoDescarga: meta?.pressaoDescarga ?? null,
+    tensaoV: meta?.tensaoV ?? null,
+    correnteA: meta?.correnteA ?? null,
+    laudoFotos: Array.isArray(meta?.laudoFotos) ? meta!.laudoFotos! : [],
     checklist: mergeChecklist(meta?.checklist),
     tipoServico: meta?.tipoServico,
     observacoesInternas: meta?.observacoesInternas ?? "",
@@ -185,6 +212,15 @@ function metaFromViewData(data: ServiceOrderData): OsMeta {
     tipoServico: data.tipoServico,
     descricaoProblema: data.descricaoProblema,
     diagnosticoTecnico: data.diagnosticoTecnico,
+    objetoLaudo: data.objetoLaudo,
+    metodologia: data.metodologia,
+    conclusao: data.conclusao,
+    planoAcao: data.planoAcao,
+    pressaoSuccao: data.pressaoSuccao,
+    pressaoDescarga: data.pressaoDescarga,
+    tensaoV: data.tensaoV,
+    correnteA: data.correnteA,
+    laudoFotos: data.laudoFotos,
     observacoesInternas: data.observacoesInternas,
     checklist: data.checklist,
     valorPecas: data.valorPecas,
@@ -401,6 +437,15 @@ export function serviceOrderOutToViewData(order: ServiceOrderOut): ServiceOrderD
     pecas,
     descricaoProblema: laudo.descricaoProblema,
     diagnosticoTecnico: laudo.diagnosticoTecnico,
+    objetoLaudo: laudo.objetoLaudo,
+    metodologia: laudo.metodologia,
+    conclusao: laudo.conclusao,
+    planoAcao: laudo.planoAcao,
+    pressaoSuccao: laudo.pressaoSuccao,
+    pressaoDescarga: laudo.pressaoDescarga,
+    tensaoV: laudo.tensaoV,
+    correnteA: laudo.correnteA,
+    laudoFotos: laudo.laudoFotos,
     checklist: laudo.checklist,
     valorPecas: partsFromItems,
     valorMaoDeObra: laborFromItems,
@@ -558,6 +603,28 @@ export function buildDescriptionFromView(data: ServiceOrderData): string | null 
   return serializeDescription(data.descricaoProblema, metaFromViewData(data));
 }
 
+/** Payload PATCH /service-orders/{id}/laudo */
+export function buildLaudoPatchPayload(data: ServiceOrderData) {
+  return {
+    objetoLaudo: data.objetoLaudo ?? "",
+    metodologia: data.metodologia ?? "",
+    descricaoProblema: data.descricaoProblema ?? "",
+    diagnosticoTecnico: data.diagnosticoTecnico ?? "",
+    conclusao: data.conclusao ?? "",
+    planoAcao: data.planoAcao ?? "",
+    pressaoSuccao: data.pressaoSuccao ?? null,
+    pressaoDescarga: data.pressaoDescarga ?? null,
+    tensaoV: data.tensaoV ?? null,
+    correnteA: data.correnteA ?? null,
+    checklist: data.checklist ?? [],
+    laudoFotos: data.laudoFotos ?? [],
+    clientSignatureBase64: data.clientSignatureBase64 ?? null,
+    clientSignatureName: data.clientSignatureName ?? null,
+    clientSignatureAt: data.clientSignatureAt ?? null,
+    clientSignatureGeo: data.clientSignatureGeo ?? null,
+  };
+}
+
 /** Payload PATCH /service-orders/{id}/details — laudo, checklist e totais do fechamento. */
 export function buildOrderDetailsPayload(data: ServiceOrderData): {
   description: string | null;
@@ -622,6 +689,15 @@ export function serializeServiceOrderFormSnapshot(data: ServiceOrderData): strin
     pecas,
     descricaoProblema: data.descricaoProblema ?? "",
     diagnosticoTecnico: data.diagnosticoTecnico ?? "",
+    objetoLaudo: data.objetoLaudo ?? "",
+    metodologia: data.metodologia ?? "",
+    conclusao: data.conclusao ?? "",
+    planoAcao: data.planoAcao ?? "",
+    pressaoSuccao: data.pressaoSuccao ?? null,
+    pressaoDescarga: data.pressaoDescarga ?? null,
+    tensaoV: data.tensaoV ?? null,
+    correnteA: data.correnteA ?? null,
+    laudoFotos: data.laudoFotos ?? [],
     checklist,
     descontoTipo: data.descontoTipo ?? "fixed",
     descontoValor: data.descontoValor ?? 0,

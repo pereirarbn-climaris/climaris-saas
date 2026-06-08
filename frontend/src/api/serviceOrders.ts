@@ -265,6 +265,33 @@ export async function patchServiceOrderDetails(
   return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
+export type ServiceOrderLaudoPatch = ReturnType<typeof import("../lib/serviceOrderFormViewAdapter").buildLaudoPatchPayload>;
+
+export async function patchServiceOrderLaudo(
+  orderId: number,
+  payload: ServiceOrderLaudoPatch,
+): Promise<ServiceOrderOut> {
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/laudo`), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível salvar o laudo.", response.status));
+  }
+  return normalizeServiceOrderOut(body as ServiceOrderOut);
+}
+
+export async function fetchServiceOrderLaudoPdf(orderId: number): Promise<Blob> {
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/laudo/pdf`), { headers: bearer() });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível gerar o laudo em PDF.", response.status));
+  }
+  return response.blob();
+}
+
 export async function patchServiceOrderDiscount(orderId: number, discount_amount: number): Promise<ServiceOrderOut> {
   if (isDemoMode()) return Promise.resolve(demoUpdateServiceOrder(orderId, { discount_amount }));
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/discount`), {

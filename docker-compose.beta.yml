@@ -1,0 +1,33 @@
+# Overlay Beta: API isolada na porta 8001 + banco climaris_beta (mesmo Postgres erp_db).
+#
+# Uso (com produção já no ar):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.evolution.yml:docker-compose.beta.yml \
+#     docker compose up -d api-beta
+#
+# Variáveis em `.env.beta` (copie de env.docker.beta.example).
+# Antes do primeiro deploy: bash scripts/init-beta-db.sh && bash scripts/db_clone.sh
+
+services:
+  api-beta:
+    image: python:3.12-slim
+    container_name: erp_api_beta
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: >
+      bash -c "pip install --no-cache-dir fastapi uvicorn[standard] sqlalchemy psycopg[binary] alembic pyjwt passlib email-validator slowapi pytest httpx reportlab cryptography boto3 pillow python-multipart lxml signxml openpyxl 'qrcode[pil]' &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 120"
+    env_file:
+      - .env.beta
+    environment:
+      EVOLUTION_API_BASE_URL: http://evolution_api:8080
+    ports:
+      - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app_net
+      - internal_net
+      - evolution_bridge
+    restart: unless-stopped

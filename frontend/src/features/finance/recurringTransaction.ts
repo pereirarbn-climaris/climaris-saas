@@ -49,9 +49,12 @@ function parseIsoDate(iso: string): Date {
 /** Valida datas da recorrência; retorna mensagem de erro ou null. */
 export function validateRecurringForm(
   state: RecurringFormState,
-  firstDue: Date,
+  referenceDate: Date,
 ): string | null {
   if (state.frequency === 'none') return null;
+  const spec = toApiRecurringPayload(state);
+  if (!spec) return null;
+  const firstDue = resolveFirstRecurringDue(referenceDate, spec);
   const today = startOfToday();
   const due = new Date(firstDue);
   due.setHours(0, 0, 0, 0);
@@ -87,14 +90,14 @@ export function buildRecurringPreviewMessage(state: RecurringFormState): string 
   return `O sistema criará todos os lançamentos no calendário (toda ${label}) ${endPart}. Eles aparecem na listagem conforme o filtro de período.`;
 }
 
-export function toApiRecurringPayload(state: RecurringFormState):
-  | {
-      frequency: 'weekly' | 'monthly';
-      day_of_month?: number;
-      weekday?: number;
-      end_date?: string | null;
-    }
-  | undefined {
+export type ApiRecurringPayload = {
+  frequency: 'weekly' | 'monthly';
+  day_of_month?: number;
+  weekday?: number;
+  end_date?: string | null;
+};
+
+export function toApiRecurringPayload(state: RecurringFormState): ApiRecurringPayload | undefined {
   if (state.frequency === 'none') return undefined;
   return {
     frequency: state.frequency,
@@ -102,6 +105,35 @@ export function toApiRecurringPayload(state: RecurringFormState):
     weekday: state.frequency === 'weekly' ? state.weekday : undefined,
     end_date: state.noEnd || !state.endDate ? null : state.endDate,
   };
+}
+
+function addMonthsClamped(ref: Date, months: number, dayOfMonth: number): Date {
+  const monthIndex = ref.getMonth() + months;
+  const year = ref.getFullYear() + Math.floor(monthIndex / 12);
+  const month = ((monthIndex % 12) + 12) % 12;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(dayOfMonth, lastDay);
+  return new Date(year, month, day);
+}
+
+/** Primeira data de vencimento da série (dia do mês / dia da semana) em ou após reference. */
+export function resolveFirstRecurringDue(reference: Date, spec: ApiRecurringPayload): Date {
+  const ref = new Date(reference);
+  ref.setHours(0, 0, 0, 0);
+  if (spec.frequency === 'weekly') {
+    const target = spec.weekday ?? 0;
+    const refWeekday = jsDayToWeekday(ref.getDay());
+    const delta = (target - refWeekday + 7) % 7;
+    const out = new Date(ref);
+    out.setDate(ref.getDate() + delta);
+    return out;
+  }
+  const dom = spec.day_of_month ?? ref.getDate();
+  let candidate = addMonthsClamped(new Date(ref.getFullYear(), ref.getMonth(), 1), 0, dom);
+  if (candidate < ref) {
+    candidate = addMonthsClamped(ref, 1, dom);
+  }
+  return candidate;
 }
 
 export function isRecurringAllowed(opts: {

@@ -15,6 +15,7 @@ import {
   mapOrdersToListView,
   mapTechniciansToListView,
 } from "../../lib/serviceOrderFormViewAdapter";
+import { isInventoryEnabled } from "../../lib/inventoryEnabled";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
 import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
@@ -37,6 +38,7 @@ export function ServiceOrdersListPage() {
   const [listPage, setListPage] = useState(1);
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+  const inventoryEnabled = isInventoryEnabled(ctx?.tenant);
 
   useEffect(() => {
     const t = window.setTimeout(() => setSearchText(searchInput.trim()), 400);
@@ -123,11 +125,13 @@ export function ServiceOrdersListPage() {
 
   const statusOptions = useMemo(
     () =>
-      (Object.keys(statusConfig) as ServiceOrderStatus[]).map((key) => ({
-        value: key,
-        label: statusConfig[key].label,
-      })),
-    [],
+      (Object.keys(statusConfig) as ServiceOrderStatus[])
+        .filter((key) => inventoryEnabled || key !== "aguardando_pecas")
+        .map((key) => ({
+          value: key,
+          label: statusConfig[key].label,
+        })),
+    [inventoryEnabled],
   );
 
   const toolbar = (
@@ -170,6 +174,7 @@ export function ServiceOrdersListPage() {
       <ServiceOrdersListView
         orders={pagedOrders}
         metrics={metrics}
+        inventoryEnabled={inventoryEnabled}
         isLoading={isLoading}
         error={error}
         totalFiltered={totalFiltered}

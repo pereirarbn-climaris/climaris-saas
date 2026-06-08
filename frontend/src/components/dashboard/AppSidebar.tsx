@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { TenantOut, UserOut } from "../../api/auth";
 import { getPlanDisplayLabel } from "../../lib/planRules";
+import { getTenantDisplayName } from "../../lib/tenantDisplay";
 import {
   NavIconAirCompliance,
   NavIconBox,
@@ -13,19 +14,26 @@ import {
   NavIconHome,
   NavIconLogOut,
   NavIconPackage,
+  NavIconShoppingBag,
   NavIconPmoc,
   NavIconPuzzle,
   NavIconSettings,
   NavIconWallet,
   NavIconWrench,
 } from "./NavIcons";
-import { Sidebar } from "../v0-ui/Sidebar";
+import { Sidebar, useSidebar } from "../v0-ui/Sidebar";
+import { PlatformBrandMark } from "../branding/PlatformBrandMark";
 import styles from "../../pages/DashboardPage.module.css";
 
 function userInitial(name: string): string {
   const t = name.trim();
   if (!t) return "?";
   return t[0]!.toUpperCase();
+}
+
+function SidebarBrandMark() {
+  const { expanded, mobileOpen } = useSidebar();
+  return <PlatformBrandMark variant="sidebar" showName={expanded || mobileOpen} />;
 }
 
 export interface AppSidebarProps {
@@ -51,11 +59,8 @@ export function AppSidebar({
 }: AppSidebarProps) {
   return (
     <Sidebar.Container>
-      <Sidebar.Header toggleClassName={styles.collapseDesktopBtn}>
-        <div className={styles.brandRow}>
-          <span className={styles.logoMark} aria-hidden />
-          <span className={styles.brandName}>Climaris</span>
-        </div>
+      <Sidebar.Header showToggle={false}>
+        <SidebarBrandMark />
       </Sidebar.Header>
 
       <Sidebar.Content>
@@ -66,12 +71,19 @@ export function AppSidebar({
         </Sidebar.Group>
 
         <Sidebar.Group label="Operação">
-          <Sidebar.Item to="/app/clients" title="Clientes" icon={<NavIconContact />}>
-            Clientes
-          </Sidebar.Item>
+          {user?.role !== "technician" ? (
+            <Sidebar.Item to="/app/clients" title="Clientes" icon={<NavIconContact />}>
+              Clientes
+            </Sidebar.Item>
+          ) : null}
           <Sidebar.Item to="/app/products" title="Produtos" icon={<NavIconBox />}>
             Produtos
           </Sidebar.Item>
+          {user?.role !== "technician" ? (
+            <Sidebar.Item to="/app/purchases" title="Compras de produtos" icon={<NavIconShoppingBag />}>
+              Compras
+            </Sidebar.Item>
+          ) : null}
           <Sidebar.Item to="/app/services" title="Serviços" icon={<NavIconWrench />}>
             Serviços
           </Sidebar.Item>
@@ -188,13 +200,13 @@ export function AppSidebar({
               aria-haspopup="dialog"
               title="Administração: empresa, usuários, pagamentos, API e fiscal"
             >
-              <span className={styles.workspaceName}>{tenant?.name ?? "—"}</span>
+              <span className={styles.workspaceName}>{getTenantDisplayName(tenant)}</span>
               <span className={styles.workspaceChevron} aria-hidden>
                 <NavIconChevronDown />
               </span>
             </button>
           ) : (
-            <p className={styles.workspaceName}>{tenant?.name ?? "—"}</p>
+            <p className={styles.workspaceName}>{getTenantDisplayName(tenant)}</p>
           )}
           <p className={styles.planLine}>
             Plano{" "}

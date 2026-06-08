@@ -134,3 +134,134 @@ tr:hover .productIcon {
   width: var(--icon-size-base);
   height: var(--icon-size-base);
 }
+
+/* ========== MOBILE TABLE (mesmo padrão da listagem de clientes) ========== */
+.productsTableDense {
+  font-size: 0.8125rem;
+}
+
+.productsTableDense :is(th, td) {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.productCellMobile {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.productIconMobile {
+  width: var(--avatar-size-base);
+  height: var(--avatar-size-base);
+  border-radius: var(--radius-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--color-primary);
+  background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+}
+
+.productIconMobile svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  stroke: currentColor;
+  fill: none;
+  stroke-width: var(--icon-stroke);
+}
+
+.mobileName {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.mobilePrice {
+  font-weight: var(--font-weight-semibold);
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+}
+
+.colMobilePrice {
+  text-align: right;
+}
+
+.mobileTableWrap {
+  display: none;
+}
+
+.desktopTableWrap {
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .mobileTableWrap {
+    display: block;
+  }
+
+  .desktopTableWrap {
+    display: none;
+  }
+
+  .tableContainer {
+    overflow: hidden;
+  }
+
+  .productsTableDense {
+    table-layout: fixed;
+    font-size: 0.8125rem;
+  }
+
+  .productsTableDense :is(th, td) {
+    white-space: normal;
+    padding: 0.75rem 0.65rem;
+    vertical-align: middle;
+  }
+
+  .productsTableDense th:first-child,
+  .productsTableDense td:first-child {
+    width: 58%;
+  }
+
+  .productsTableDense th.colMobilePrice,
+  .productsTableDense td.colMobilePrice {
+    width: 42%;
+  }
+
+  .productsTableDense th {
+    font-size: 0.625rem;
+    letter-spacing: 0.04em;
+  }
+
+  .productCellMobile {
+    gap: 0.5rem;
+  }
+
+  .productIconMobile {
+    width: 1.625rem;
+    height: 1.625rem;
+    border-radius: var(--radius-md);
+  }
+
+  .productIconMobile svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
+  .mobileName,
+  .mobilePrice {
+    font-size: var(--font-size-base);
+    line-height: 1.35;
+  }
+
+  .mobilePrice {
+    font-weight: var(--font-weight-semibold);
+  }
+}

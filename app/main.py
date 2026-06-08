@@ -44,6 +44,7 @@ from app.routers.pmoc import router as pmoc_router
 from app.routers.api_keys import router as api_keys_router
 from app.routers.platform import router as platform_router
 from app.routers.platform_finance_bank_catalog import router as platform_finance_bank_catalog_router
+from app.routers.platform_branding import router as platform_branding_router
 from app.routers.public_portal import equipment_token_router, router as public_portal_router
 from app.routers.reports import router as reports_router
 from app.routers.service_orders import router as service_orders_router
@@ -52,6 +53,7 @@ from app.routers.webhooks_asaas import router as webhooks_asaas_router
 from app.routers.webhooks_mercadopago import router as webhooks_mercadopago_router
 from app.routers.webhooks_stone import router as webhooks_stone_router
 from app.routers.inventory import router as inventory_router
+from app.routers.purchases import router as purchases_router
 from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
 from app.routers.whatsapp import router as whatsapp_router
@@ -402,6 +404,7 @@ app.include_router(public_portal_router, prefix=API_V1_PREFIX)
 app.include_router(auth_router, prefix=API_V1_PREFIX)
 app.include_router(platform_router, prefix=API_V1_PREFIX)
 app.include_router(platform_finance_bank_catalog_router, prefix=API_V1_PREFIX)
+app.include_router(platform_branding_router, prefix=API_V1_PREFIX)
 app.include_router(api_keys_router, prefix=API_V1_PREFIX)
 app.include_router(cep_router, prefix=API_V1_PREFIX)
 app.include_router(cnpj_router, prefix=API_V1_PREFIX)
@@ -425,6 +428,7 @@ app.include_router(webhooks_asaas_router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_mercadopago_router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_stone_router, prefix=API_V1_PREFIX)
 app.include_router(inventory_router, prefix=API_V1_PREFIX)
+app.include_router(purchases_router, prefix=API_V1_PREFIX)
 app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)

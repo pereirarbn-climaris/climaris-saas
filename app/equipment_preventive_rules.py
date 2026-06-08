@@ -15,6 +15,7 @@ from models import (
     Client,
     Equipment,
     EquipmentPreventiveRule,
+    OrderStatus,
     PreventiveIntervalType,
     ServiceOrder,
 )
@@ -45,6 +46,63 @@ def compute_next_due_datetime(
         last_performed.timetz().replace(tzinfo=last_performed.tzinfo),
         tzinfo=last_performed.tzinfo,
     )
+
+
+def preventive_order_completion_at(order: ServiceOrder) -> datetime | None:
+    """Data efetiva da manutenção — alinhada à aba Preventiva do cliente (OS concluída)."""
+    raw = order.stock_consumed_at
+    if raw is not None:
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    sched = order.schedule
+    if sched is not None:
+        if sched.ends_at is not None:
+            ends = sched.ends_at
+            return ends if ends.tzinfo else ends.replace(tzinfo=timezone.utc)
+        if sched.starts_at is not None:
+            starts = sched.starts_at
+            return starts if starts.tzinfo else starts.replace(tzinfo=timezone.utc)
+    return None
+
+
+def last_done_maintenance_at_for_equipment(
+    db: Session,
+    *,
+    tenant_id: int,
+    equipment_id: int,
+) -> datetime | None:
+    """Última OS concluída em que o equipamento consta nos serviços executados."""
+    equipment = db.get(Equipment, equipment_id)
+    if equipment is None:
+        return None
+
+    orders = (
+        db.execute(
+            select(ServiceOrder)
+            .where(
+                ServiceOrder.tenant_id == tenant_id,
+                ServiceOrder.client_id == equipment.client_id,
+                ServiceOrder.status == OrderStatus.DONE,
+            )
+            .options(
+                joinedload(ServiceOrder.service_items),
+                joinedload(ServiceOrder.schedules),
+            )
+        )
+        .unique()
+        .scalars()
+        .all()
+    )
+
+    best: datetime | None = None
+    for order in orders:
+        if not any(int(item.equipment_id or 0) == equipment_id for item in order.service_items):
+            continue
+        completed_at = preventive_order_completion_at(order)
+        if completed_at is None:
+            continue
+        if best is None or completed_at > best:
+            best = completed_at
+    return best
 
 
 def collect_order_equipment_ids(order: ServiceOrder) -> set[int]:
@@ -139,7 +197,11 @@ def list_equipment_preventive_due(
     ).all()
 
     items: list[dict[str, Any]] = []
+    rules_dirty = False
     for rule, equipment, client in rows:
+        if sync_rule_dates_from_service_orders(db, tenant_id=tenant_id, rule=rule):
+            db.add(rule)
+            rules_dirty = True
         if bool(client.preventive_campaign_opt_out):
             continue
         due_dt = rule.next_due_date
@@ -183,6 +245,8 @@ def list_equipment_preventive_due(
         )
 
     items.sort(key=lambda r: (r["dias_ate_vencimento"], r["client_name"], r["equipment_identificacao"]))
+    if rules_dirty:
+        db.commit()
     return items
 
 
@@ -248,19 +312,43 @@ def _parse_interval_type(value: PreventiveIntervalType | str) -> PreventiveInter
     )
 
 
-def refresh_rule_next_due_date(
-    rule: EquipmentPreventiveRule,
+def refresh_rule_next_due_date(rule: EquipmentPreventiveRule) -> None:
+    """Recalcula next_due_date a partir de last_performed_date (sem usar data de criação)."""
+    if rule.last_performed_date is None:
+        rule.next_due_date = None
+        return
+    rule.next_due_date = rule.compute_next_due_date()
+
+
+def sync_rule_dates_from_service_orders(
+    db: Session,
     *,
-    reference: datetime | None = None,
-) -> None:
-    """Recalcula next_due_date via ``EquipmentPreventiveRule.compute_next_due_date``."""
-    ref = reference or datetime.now(timezone.utc)
-    if ref.tzinfo is None:
-        ref = ref.replace(tzinfo=timezone.utc)
-    if rule.last_performed_date is not None:
-        rule.next_due_date = rule.compute_next_due_date()
-    else:
-        rule.next_due_date = rule.compute_next_due_date(from_dt=ref)
+    tenant_id: int,
+    rule: EquipmentPreventiveRule,
+) -> bool:
+    """
+    Preenche last_performed_date a partir de OS concluídas e recalcula next_due_date.
+    Retorna True se algum campo da regra foi alterado.
+    """
+    os_at = last_done_maintenance_at_for_equipment(
+        db,
+        tenant_id=tenant_id,
+        equipment_id=rule.equipment_id,
+    )
+
+    prev_last = rule.last_performed_date
+    prev_next = rule.next_due_date
+
+    if os_at is not None:
+        stored = rule.last_performed_date
+        if stored is not None and stored.tzinfo is None:
+            stored = stored.replace(tzinfo=timezone.utc)
+        if os_at.tzinfo is None:
+            os_at = os_at.replace(tzinfo=timezone.utc)
+        rule.last_performed_date = os_at if stored is None or os_at > stored else stored
+
+    refresh_rule_next_due_date(rule)
+    return rule.last_performed_date != prev_last or rule.next_due_date != prev_next
 
 
 def get_tenant_equipment(
@@ -363,7 +451,7 @@ def upsert_equipment_preventive_rule(
         rule.interval_type = parsed_type
         rule.is_active = bool(is_active)
 
-    refresh_rule_next_due_date(rule)
+    sync_rule_dates_from_service_orders(db, tenant_id=tenant_id, rule=rule)
     db.add(rule)
     db.commit()
     db.refresh(rule)
@@ -427,7 +515,7 @@ def get_equipment_preventive_rule(
     equipment_id: int,
 ) -> EquipmentPreventiveRule | None:
     get_tenant_equipment(db, tenant_id=tenant_id, equipment_id=equipment_id)
-    return db.execute(
+    rule = db.execute(
         select(EquipmentPreventiveRule)
         .join(Equipment, Equipment.id == EquipmentPreventiveRule.equipment_id)
         .join(Client, Client.id == Equipment.client_id)
@@ -437,6 +525,11 @@ def get_equipment_preventive_rule(
         )
         .options(joinedload(EquipmentPreventiveRule.equipment).joinedload(Equipment.client))
     ).scalar_one_or_none()
+    if rule is not None and sync_rule_dates_from_service_orders(db, tenant_id=tenant_id, rule=rule):
+        db.add(rule)
+        db.commit()
+        db.refresh(rule)
+    return rule
 
 
 def update_equipment_preventive_rule(
@@ -456,7 +549,7 @@ def update_equipment_preventive_rule(
     if is_active is not None:
         rule.is_active = bool(is_active)
 
-    refresh_rule_next_due_date(rule)
+    sync_rule_dates_from_service_orders(db, tenant_id=tenant_id, rule=rule)
     db.add(rule)
     db.commit()
     db.refresh(rule)

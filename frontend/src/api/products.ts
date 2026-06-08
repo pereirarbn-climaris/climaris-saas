@@ -85,6 +85,27 @@ export type ProductImportResult = {
   created_products: ProductOut[];
 };
 
+export type ProductListSort =
+  | "name_asc"
+  | "name_desc"
+  | "sku_asc"
+  | "sku_desc"
+  | "purchase_asc"
+  | "purchase_desc"
+  | "sale_asc"
+  | "sale_desc"
+  | "margin_asc"
+  | "margin_desc"
+  | "status_active_first"
+  | "status_inactive_first";
+
+export type ProductCountOut = {
+  total: number;
+  active: number;
+  inactive: number;
+  avg_margin: number;
+};
+
 async function parseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text.trim()) return {};
@@ -119,14 +140,59 @@ function jsonHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
-export async function listProducts(params?: { q?: string; skip?: number; limit?: number }): Promise<ProductOut[]> {
+function compareProductsForSort(a: ProductOut, b: ProductOut, sort: ProductListSort): number {
+  const cmp = (x: string, y: string) => x.localeCompare(y, "pt-BR", { sensitivity: "base" });
+  const num = (x: number, y: number) => x - y;
+  const margin = (p: ProductOut) => Number((p.sale_price || p.unit_price || 0) - (p.purchase_price || 0));
+  switch (sort) {
+    case "name_desc":
+      return cmp(b.name, a.name);
+    case "sku_asc":
+      return cmp(a.sku, b.sku);
+    case "sku_desc":
+      return cmp(b.sku, a.sku);
+    case "purchase_asc":
+      return num(Number(a.purchase_price || 0), Number(b.purchase_price || 0));
+    case "purchase_desc":
+      return num(Number(b.purchase_price || 0), Number(a.purchase_price || 0));
+    case "sale_asc":
+      return num(Number(a.sale_price || a.unit_price || 0), Number(b.sale_price || b.unit_price || 0));
+    case "sale_desc":
+      return num(Number(b.sale_price || b.unit_price || 0), Number(a.sale_price || a.unit_price || 0));
+    case "margin_asc":
+      return num(margin(a), margin(b));
+    case "margin_desc":
+      return num(margin(b), margin(a));
+    case "status_active_first":
+      return Number(b.is_active) - Number(a.is_active) || cmp(a.name, b.name);
+    case "status_inactive_first":
+      return Number(a.is_active) - Number(b.is_active) || cmp(a.name, b.name);
+    default:
+      return cmp(a.name, b.name);
+  }
+}
+
+export async function listProducts(params?: {
+  q?: string;
+  skip?: number;
+  limit?: number;
+  sort?: ProductListSort;
+}): Promise<ProductOut[]> {
+  const sort = params?.sort ?? "name_asc";
   if (isDemoMode()) {
     const q = params?.q?.trim().toLowerCase();
     let filtered = demoListProducts();
     if (q) {
       filtered = filtered.filter((p: ProductOut) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
     }
-    return Promise.resolve(filtered.map(normalizeProductStock));
+    const skip = params?.skip ?? 0;
+    const limit = params?.limit ?? 20;
+    return Promise.resolve(
+      [...filtered]
+        .sort((a, b) => compareProductsForSort(a, b, sort))
+        .slice(skip, skip + limit)
+        .map(normalizeProductStock),
+    );
   }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
@@ -134,6 +200,7 @@ export async function listProducts(params?: { q?: string; skip?: number; limit?:
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
+  sp.set("sort", sort);
   if (q) sp.set("q", q);
   const response = await fetch(apiUrl(`/api/v1/products?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -141,6 +208,37 @@ export async function listProducts(params?: { q?: string; skip?: number; limit?:
     throw new Error(errorMessage(body, "Não foi possível listar produtos.", response.status));
   }
   return (body as ProductOut[]).map(normalizeProductStock);
+}
+
+export async function countProducts(params?: { q?: string }): Promise<ProductCountOut> {
+  if (isDemoMode()) {
+    const q = params?.q?.trim().toLowerCase();
+    let filtered = demoListProducts();
+    if (q) {
+      filtered = filtered.filter((p: ProductOut) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+    }
+    const total = filtered.length;
+    const active = filtered.filter((p) => p.is_active).length;
+    const inactive = total - active;
+    const avgMargin =
+      total > 0
+        ? filtered.reduce(
+            (acc, p) => acc + Number((p.sale_price || p.unit_price || 0) - (p.purchase_price || 0)),
+            0,
+          ) / total
+        : 0;
+    return Promise.resolve({ total, active, inactive, avg_margin: avgMargin });
+  }
+  const q = params?.q?.trim();
+  const sp = new URLSearchParams();
+  if (q) sp.set("q", q);
+  const suffix = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/products/count${suffix ? `?${suffix}` : ""}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível contar produtos.", response.status));
+  }
+  return body as ProductCountOut;
 }
 
 export async function getProduct(productId: number): Promise<ProductDetailOut> {

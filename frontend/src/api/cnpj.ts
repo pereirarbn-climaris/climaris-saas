@@ -19,6 +19,13 @@ export type CnpjLookupResult = {
   status_text: string | null;
   founded: string | null;
   main_activity: string | null;
+  main_activity_code?: string | null;
+  main_activity_description?: string | null;
+  legal_nature?: string | null;
+  state_registration?: string | null;
+  ie_indicator?: "1" | "2" | "9" | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
   address: CnpjAddress | null;
   optante_mei?: boolean | null;
 };

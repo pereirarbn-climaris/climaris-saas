@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { createPmocOccurrence } from "../../api/pmoc";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,17 +25,9 @@ export type ServiceOrderChecklistItem = {
 type Props = {
   items: ServiceOrderChecklistItem[];
   onChange: (items: ServiceOrderChecklistItem[]) => void;
-  pmocPlanId?: string;
-  orderId?: number;
-  equipmentIds?: string[];
   error?: string;
   disabled?: boolean;
 };
-
-function parseEquipmentIdFromChecklistId(id: string): number | null {
-  const match = id.match(/^pmoc_\d+_(\d+)_\d+$/);
-  return match ? Number(match[1]) : null;
-}
 
 function ThreeWaySwitch({
   value,
@@ -112,16 +103,12 @@ function ThreeWaySwitch({
 export function ServiceOrderChecklist({
   items,
   onChange,
-  pmocPlanId,
-  orderId,
-  equipmentIds = [],
   error,
   disabled = false,
 }: Props) {
   const [failureDialogOpen, setFailureDialogOpen] = useState(false);
   const [failureDescription, setFailureDescription] = useState("");
   const [failureItem, setFailureItem] = useState<ServiceOrderChecklistItem | null>(null);
-  const [incidentSaving, setIncidentSaving] = useState(false);
 
   const updateItem = useCallback(
     (updated: ServiceOrderChecklistItem) => {
@@ -136,41 +123,19 @@ export function ServiceOrderChecklist({
     setFailureDialogOpen(true);
   }, []);
 
-  const confirmFailureDialog = useCallback(async () => {
+  const confirmFailureDialog = useCallback(() => {
     const description = failureDescription.trim();
     if (!failureItem || !description) return;
 
-    const updatedItem: ServiceOrderChecklistItem = {
+    updateItem({
       ...failureItem,
       status: "nao",
       observacao: description,
-    };
-    updateItem(updatedItem);
+    });
     setFailureDialogOpen(false);
     setFailureItem(null);
     setFailureDescription("");
-
-    const pmocId = pmocPlanId ? Number(pmocPlanId) : NaN;
-    if (!Number.isFinite(pmocId) || pmocId < 1) return;
-
-    setIncidentSaving(true);
-    try {
-      const equipmentFromChecklist = parseEquipmentIdFromChecklistId(updatedItem.id);
-      const fallbackEquipment = equipmentIds[0] ? Number(equipmentIds[0]) : null;
-      await createPmocOccurrence(pmocId, {
-        equipment_id: equipmentFromChecklist ?? fallbackEquipment,
-        service_order_id: orderId ?? null,
-        checklist_item_id: updatedItem.id,
-        checklist_item_descricao: updatedItem.descricao,
-        failure_description: description,
-      });
-    } catch (e) {
-      console.error("[ServiceOrderChecklist] falha ao registrar incidente", e);
-      window.alert("Item reprovado, mas não foi possível registrar o incidente no PMOC.");
-    } finally {
-      setIncidentSaving(false);
-    }
-  }, [failureDescription, failureItem, equipmentIds, orderId, pmocPlanId, updateItem]);
+  }, [failureDescription, failureItem, updateItem]);
 
   return (
     <>
@@ -240,7 +205,7 @@ export function ServiceOrderChecklist({
             <AlertDialogTitle id="checklist-failure-title">Descrição da falha (obrigatória)</AlertDialogTitle>
             <AlertDialogDescription id="checklist-failure-desc">
               {failureItem
-                ? `Item reprovado: "${failureItem.descricao}". Um incidente será aberto no PMOC vinculado.`
+                ? `Item reprovado: "${failureItem.descricao}". Descreva a falha identificada.`
                 : "Descreva a falha identificada no checklist."}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -251,7 +216,6 @@ export function ServiceOrderChecklist({
               value={failureDescription}
               onChange={setFailureDescription}
               placeholder="Descreva o defeito, sintoma ou não conformidade…"
-              disabled={incidentSaving}
             />
           </AlertDialogBody>
           <AlertDialogFooter>
@@ -261,16 +225,15 @@ export function ServiceOrderChecklist({
                 setFailureItem(null);
                 setFailureDescription("");
               }}
-              disabled={incidentSaving}
             >
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={incidentSaving || !failureDescription.trim()}
-              onClick={() => void confirmFailureDialog()}
+              disabled={!failureDescription.trim()}
+              onClick={confirmFailureDialog}
             >
-              {incidentSaving ? "Registrando…" : "Confirmar reprovação"}
+              Confirmar reprovação
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

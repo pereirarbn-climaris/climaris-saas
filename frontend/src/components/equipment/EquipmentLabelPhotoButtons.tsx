@@ -1,7 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
-import { extractEquipmentLabelFromPhotos } from "../../api/equipmentCatalogAi";
+import {
+  extractEquipmentLabelFromPhotos,
+  resolveEquipmentLabelFromPhotos,
+} from "../../api/equipmentCatalogAi";
 import { prepareImageForVision, revokePreparedPreview } from "../../lib/prepareImageForVision";
-import type { EquipmentLabelExtractionOut, EquipmentLabelKind } from "../../api/equipmentCatalogAi";
+import type {
+  EquipmentLabelExtractionOut,
+  EquipmentLabelKind,
+  EquipmentLabelKindInput,
+  EquipmentLabelResolveOut,
+} from "../../api/equipmentCatalogAi";
 import styles from "./EquipmentLabelPhotoButtons.module.css";
 
 type SlotKey = "evaporator" | "condenser";
@@ -13,9 +21,13 @@ type SlotState = {
 
 type Props = {
   disabled?: boolean;
-  /** split_ac: evaporadora + condensadora; climatizador: etiqueta única */
-  variant?: "split_ac" | "climatizador";
+  /** split_ac: evaporadora + condensadora; climatizador: etiqueta única; field: uma foto (cadastro em campo) */
+  variant?: "split_ac" | "climatizador" | "field";
+  /** extract: só extrai dados; resolve: extrai + catálogo (auto-classifica tipo se equipmentKind=auto) */
+  mode?: "extract" | "resolve";
+  equipmentKind?: EquipmentLabelKindInput;
   onExtracted: (data: EquipmentLabelExtractionOut) => void;
+  onResolved?: (data: EquipmentLabelResolveOut) => void;
   onError?: (message: string) => void;
 };
 
@@ -36,11 +48,19 @@ const IconSpark = () => (
 export function EquipmentLabelPhotoButtons({
   disabled,
   variant = "split_ac",
+  mode = "extract",
+  equipmentKind: equipmentKindProp = "ar_condicionado",
   onExtracted,
+  onResolved,
   onError,
 }: Props) {
+  const isField = variant === "field";
   const isClimatizador = variant === "climatizador";
-  const equipmentKind: EquipmentLabelKind = isClimatizador ? "climatizador" : "ar_condicionado";
+  const isResolve = mode === "resolve";
+  const equipmentKind: EquipmentLabelKind =
+    equipmentKindProp === "climatizador" ? "climatizador" : "ar_condicionado";
+  const kindInput: EquipmentLabelKindInput = equipmentKindProp;
+
   const evapInputRef = useRef<HTMLInputElement>(null);
   const condInputRef = useRef<HTMLInputElement>(null);
   const [slots, setSlots] = useState<Record<SlotKey, SlotState>>({
@@ -74,10 +94,11 @@ export function EquipmentLabelPhotoButtons({
     }
   };
 
-  const handleExtract = async () => {
-    const hasPhoto = isClimatizador
-      ? Boolean(slots.evaporator.file)
-      : Boolean(slots.evaporator.file || slots.condenser.file);
+  const hasPhoto = isField || isClimatizador
+    ? Boolean(slots.evaporator.file)
+    : Boolean(slots.evaporator.file || slots.condenser.file);
+
+  const handleProcess = async () => {
     if (!hasPhoto) {
       const msg = "Envie ao menos uma foto da etiqueta.";
       setError(msg);
@@ -87,13 +108,26 @@ export function EquipmentLabelPhotoButtons({
     setLoading(true);
     setError(null);
     try {
-      const result = await extractEquipmentLabelFromPhotos({
-        equipmentKind,
-        evaporatorImage: isClimatizador ? undefined : slots.evaporator.file,
-        condenserImage: isClimatizador ? undefined : slots.condenser.file,
-        labelImage: isClimatizador ? slots.evaporator.file : undefined,
-      });
-      onExtracted(result);
+      if (isResolve) {
+        if (!onResolved) {
+          throw new Error("Callback onResolved não configurado.");
+        }
+        const result = await resolveEquipmentLabelFromPhotos({
+          equipmentKind: kindInput,
+          evaporatorImage: isField || isClimatizador ? undefined : slots.evaporator.file,
+          condenserImage: isField || isClimatizador ? undefined : slots.condenser.file,
+          labelImage: isField || isClimatizador ? slots.evaporator.file : undefined,
+        });
+        onResolved(result);
+      } else {
+        const result = await extractEquipmentLabelFromPhotos({
+          equipmentKind,
+          evaporatorImage: isClimatizador ? undefined : slots.evaporator.file,
+          condenserImage: isClimatizador ? undefined : slots.condenser.file,
+          labelImage: isClimatizador || isField ? slots.evaporator.file : undefined,
+        });
+        onExtracted(result);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "IA não conseguiu ler a etiqueta.";
       setError(msg);
@@ -112,7 +146,15 @@ export function EquipmentLabelPhotoButtons({
           {slot.previewUrl ? (
             <img src={slot.previewUrl} alt={label} className={styles.preview} />
           ) : (
-            <div className={styles.preview} style={{ display: "grid", placeItems: "center", color: "var(--color-text-muted)", fontSize: "var(--font-size-sm)" }}>
+            <div
+              className={styles.preview}
+              style={{
+                display: "grid",
+                placeItems: "center",
+                color: "var(--color-text-muted)",
+                fontSize: "var(--font-size-sm)",
+              }}
+            >
               Nenhuma foto
             </div>
           )}
@@ -157,6 +199,14 @@ export function EquipmentLabelPhotoButtons({
     );
   };
 
+  const title = isResolve ? "Identificar modelo pela etiqueta" : "Cadastrar via Foto da Etiqueta";
+  const subtitle = isField
+    ? "Fotografe a placa do aparelho. A IA identifica o tipo (ar-condicionado, climatizador, etc.) e busca ou cadastra o modelo no catálogo. Usa a chave Claude de Operação → Chaves APIs."
+    : isClimatizador
+      ? "Fotografe a placa do climatizador e a IA preenche marca, modelo, vazão e demais dados."
+      : "Ideal para o técnico em campo: fotografe a placa de especificações e a IA preenche o formulário.";
+  const actionLabel = isResolve ? "Identificar com IA" : "Extrair dados com IA";
+
   return (
     <section className={styles.root} aria-label="Cadastro via foto da etiqueta">
       <div className={styles.header}>
@@ -164,22 +214,18 @@ export function EquipmentLabelPhotoButtons({
           <IconSpark />
         </div>
         <div>
-          <h3 className={styles.title}>Cadastrar via Foto da Etiqueta</h3>
-          <p className={styles.subtitle}>
-            {isClimatizador
-              ? "Fotografe a placa do climatizador e a IA preenche marca, modelo, vazão e demais dados."
-              : "Ideal para o técnico em campo: fotografe a placa de especificações e a IA preenche o formulário."}
-          </p>
+          <h3 className={styles.title}>{title}</h3>
+          <p className={styles.subtitle}>{subtitle}</p>
         </div>
       </div>
 
-      <div className={isClimatizador ? styles.gridSingle : styles.grid}>
+      <div className={isField || isClimatizador ? styles.gridSingle : styles.grid}>
         {renderSlot(
           "evaporator",
-          isClimatizador ? "Etiqueta do Climatizador" : "Etiqueta da Evaporadora",
+          isField ? "Foto da etiqueta" : isClimatizador ? "Etiqueta do Climatizador" : "Etiqueta da Evaporadora",
           evapInputRef,
         )}
-        {!isClimatizador ? renderSlot("condenser", "Etiqueta da Condensadora", condInputRef) : null}
+        {!isField && !isClimatizador ? renderSlot("condenser", "Etiqueta da Condensadora", condInputRef) : null}
       </div>
 
       {loading ? (
@@ -188,21 +234,15 @@ export function EquipmentLabelPhotoButtons({
           <span className={styles.loadingText}>IA processando etiqueta...</span>
         </div>
       ) : (
-        <button
-          type="button"
-          className={styles.btnPrimary}
-          disabled={
-            disabled ||
-            (isClimatizador ? !slots.evaporator.file : !slots.evaporator.file && !slots.condenser.file)
-          }
-          onClick={() => void handleExtract()}
-        >
+        <button type="button" className={styles.btnPrimary} disabled={disabled || !hasPhoto} onClick={() => void handleProcess()}>
           <IconSpark />
-          Extrair dados com IA
+          {actionLabel}
         </button>
       )}
 
-      <p className={styles.hint}>Revise os campos após a extração antes de salvar.</p>
+      <p className={styles.hint}>
+        {isResolve ? "Revise os dados abaixo antes de salvar o equipamento." : "Revise os campos após a extração antes de salvar."}
+      </p>
       {error ? <p className={styles.error}>{error}</p> : null}
     </section>
   );

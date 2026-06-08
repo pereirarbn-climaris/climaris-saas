@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { SessionMaintenance } from "./components/SessionMaintenance";
+import { PlatformBrandingProvider } from "./context/PlatformBrandingContext";
 import { SmartHomeRedirect } from "./components/SmartHomeRedirect";
 import { getAccessToken } from "./lib/authStorage";
 import { CompleteRegistrationPage } from "./pages/CompleteRegistrationPage";
@@ -18,6 +19,7 @@ import { DashboardHomePage } from "./pages/dashboard/DashboardHomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProductFormPage } from "./pages/products/ProductFormPage";
 import { ProductsListPage } from "./pages/products/ProductsListPage";
+import { PurchasesPage } from "./pages/purchases/PurchasesPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { PlatformAdminLayout } from "./pages/PlatformAdminLayout";
@@ -61,6 +63,7 @@ import { MarketplacePage } from "./pages/marketplace/MarketplacePage";
 import { PlatformMarketplacePage } from "./pages/PlatformMarketplacePage";
 import { PlatformFinanceBanksPage } from "./pages/PlatformFinanceBanksPage";
 import { PlatformPagarmePage } from "./pages/platform/PlatformPagarmePage";
+import { PlatformBrandingPage } from "./pages/PlatformBrandingPage";
 import PmocConformidadePage from "./app/(dashboard)/pmoc/conformidade/[id]/page";
 import PmocExecucaoPage from "./app/(dashboard)/pmoc/execucao/[id]/page";
 import { PmocDetailPage } from "./pages/pmoc/PmocDetailPage";
@@ -87,7 +90,7 @@ function NotFoundRedirect() {
 
 export default function App() {
   return (
-    <>
+    <PlatformBrandingProvider>
       <SessionMaintenance />
       <Routes>
       <Route path="/p/e/:token" element={<PublicEquipmentPage />} />
@@ -110,6 +113,7 @@ export default function App() {
         <Route path="pagar-me" element={<PlatformPagarmePage />} />
         <Route path="catalogo" element={<EquipmentCatalogPage />} />
         <Route path="categorias-equipamentos" element={<EquipmentCategoriesPage />} />
+        <Route path="identidade-visual" element={<PlatformBrandingPage />} />
       </Route>
       <Route path="/app" element={<DashboardPage />}>
         <Route index element={<DashboardHomePage />} />
@@ -122,6 +126,7 @@ export default function App() {
         <Route path="products" element={<ProductsListPage />} />
         <Route path="products/new" element={<ProductFormPage />} />
         <Route path="products/:productId" element={<ProductFormPage />} />
+        <Route path="purchases" element={<PurchasesPage />} />
         <Route path="inventory" element={<Navigate to="/app/products" replace />} />
         <Route path="services" element={<ServicesListPage />} />
         <Route path="services/new" element={<ServiceFormPage />} />
@@ -189,6 +194,6 @@ export default function App() {
       <Route path="/" element={<RootRedirect />} />
       <Route path="*" element={<NotFoundRedirect />} />
     </Routes>
-    </>
+    </PlatformBrandingProvider>
   );
 }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { createBudget, fetchBudgetPdfBlob, getBudget, type BudgetOut } from "../../api/budgets";
+import { fetchBudgetTemplateSettings } from "../../api/budgetTemplates";
+import { defaultBudgetFormTexts } from "../../lib/budgetPdfGenerator";
 import { getClient, type ClientOut } from "../../api/clients";
 import { listProducts, type ProductOut } from "../../api/products";
 import { listServices, type ServiceOut } from "../../api/services";
@@ -117,6 +119,26 @@ export function BudgetFormPage() {
     if (!Number.isFinite(cid) || cid < 1) return;
     setClientId(String(cid));
   }, [isNew, searchParams]);
+
+  useEffect(() => {
+    if (!isNew || !canEdit) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await fetchBudgetTemplateSettings();
+        if (cancelled) return;
+        const defaults = defaultBudgetFormTexts(settings);
+        setPaymentTerms((prev) => prev || defaults.paymentTerms);
+        setWarrantyTerms((prev) => prev || defaults.warrantyTerms);
+        setObservation((prev) => prev || defaults.observation);
+      } catch {
+        /* predefinições opcionais */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew, canEdit]);
 
   useEffect(() => {
     const cid = Number(clientId);

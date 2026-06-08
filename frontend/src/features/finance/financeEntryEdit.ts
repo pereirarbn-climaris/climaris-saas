@@ -47,15 +47,16 @@ export const WIZARD_EDIT_SCOPE_LABELS: ScopeOptionLabels = {
 export const SERIES_ACTION_SCOPE_LABELS: ScopeOptionLabels = {
   single: {
     title: 'Somente nesta',
-    description: 'A ação vale apenas para o lançamento selecionado.',
+    description:
+      'Remove só este vencimento. A série continua ativa e não volta a gerar esta data.',
   },
   following: {
     title: 'Esta e as próximas',
-    description: 'Aplica neste vencimento e em todos os futuros da mesma série.',
+    description: 'Remove deste vencimento em diante e encerra a série a partir daqui.',
   },
   all: {
     title: 'Todas',
-    description: 'Aplica em todos os lançamentos da série (passados e futuros).',
+    description: 'Remove todos os vencimentos da série e encerra a recorrência.',
   },
 };
 

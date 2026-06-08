@@ -95,6 +95,11 @@ _CLIENT_SNAPSHOT_KEYS: tuple[str, ...] = (
     "address_ibge_code",
     "preventive_campaign_opt_out",
     "is_active",
+    "main_activity_code",
+    "main_activity_description",
+    "legal_nature",
+    "registration_status",
+    "founded_at",
 )
 
 
@@ -124,6 +129,11 @@ def _client_snapshot(client: Client) -> dict[str, Any]:
         "preventive_campaign_opt_out": bool(client.preventive_campaign_opt_out),
         "is_active": bool(client.is_active),
         "is_verified_cnpj": bool(client.is_verified_cnpj),
+        "main_activity_code": client.main_activity_code,
+        "main_activity_description": client.main_activity_description,
+        "legal_nature": client.legal_nature,
+        "registration_status": client.registration_status,
+        "founded_at": client.founded_at.isoformat() if client.founded_at else None,
     }
 
 
@@ -667,6 +677,11 @@ def create_client(
         preventive_campaign_opt_out=bool(payload.preventive_campaign_opt_out),
         is_active=bool(payload.is_active),
         is_verified_cnpj=bool(payload.is_verified_cnpj),
+        main_activity_code=(payload.main_activity_code or "").strip() or None,
+        main_activity_description=(payload.main_activity_description or "").strip() or None,
+        legal_nature=(payload.legal_nature or "").strip() or None,
+        registration_status=(payload.registration_status or "").strip() or None,
+        founded_at=payload.founded_at,
     )
     db.add(client)
     try:
@@ -865,6 +880,21 @@ def update_client(
 
     if "is_verified_cnpj" in fields_set and payload.is_verified_cnpj is True:
         client.is_verified_cnpj = True
+
+    if "main_activity_code" in fields_set:
+        client.main_activity_code = _strip_opt(payload.main_activity_code)
+
+    if "main_activity_description" in fields_set:
+        client.main_activity_description = _strip_opt(payload.main_activity_description)
+
+    if "legal_nature" in fields_set:
+        client.legal_nature = _strip_opt(payload.legal_nature)
+
+    if "registration_status" in fields_set:
+        client.registration_status = _strip_opt(payload.registration_status)
+
+    if "founded_at" in fields_set:
+        client.founded_at = payload.founded_at
 
     after = _client_snapshot(client)
     diff = _audit_field_diff(before, after)
@@ -1204,7 +1234,9 @@ def deactivate_client_equipment(
     ).scalar_one_or_none()
     if equipment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipment not found.")
-    equipment.ativo = False
+    from app.services.client_equipment_deactivation import deactivate_legacy_equipment_row
+
+    deactivate_legacy_equipment_row(db, equipment, tenant_id=current_user.tenant_id)
     db.commit()
     return None
 
@@ -1467,8 +1499,11 @@ def create_client_site(
         tenant_id=client.tenant_id,
         client_id=client.id,
         name=payload.name.strip(),
+        contact_name=(payload.contact_name or "").strip() or None,
+        phone=(payload.phone or "").strip() or None,
         street=(payload.street or "").strip() or None,
         number=(payload.number or "").strip() or None,
+        complement=(payload.complement or "").strip() or None,
         neighborhood=(payload.neighborhood or "").strip() or None,
         city=(payload.city or "").strip() or None,
         state=payload.state,
@@ -1505,10 +1540,16 @@ def update_client_site(
     site = _get_client_site_for_client(db, site_id=site_id, client_id=client_id, tenant_id=current_user.tenant_id)
     if payload.name is not None:
         site.name = payload.name.strip()
+    if payload.contact_name is not None:
+        site.contact_name = payload.contact_name.strip() or None
+    if payload.phone is not None:
+        site.phone = payload.phone.strip() or None
     if payload.street is not None:
         site.street = payload.street.strip() or None
     if payload.number is not None:
         site.number = payload.number.strip() or None
+    if payload.complement is not None:
+        site.complement = payload.complement.strip() or None
     if payload.neighborhood is not None:
         site.neighborhood = payload.neighborhood.strip() or None
     if payload.city is not None:

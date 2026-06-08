@@ -1,3 +1,4 @@
+import { syncFinanceAccountBalances } from '../../api/finance';
 import { fetchContasFromApi } from './financeAdapter';
 import { FinanceServiceError } from './financeErrors';
 import { mapToFinanceServiceError } from './financeErrors';
@@ -76,6 +77,7 @@ export const AccountService = {
   },
 
   async syncBalances(_contas: Conta[]): Promise<Conta[]> {
+    await syncFinanceAccountBalances();
     return this.listFromApi();
   },
 };

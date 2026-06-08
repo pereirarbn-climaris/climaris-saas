@@ -80,6 +80,7 @@ export interface SaaSAdminDashboardViewProps {
   isLoading?: boolean;
   onProvisionTenant: () => void;
   onManagePlan: (tenantId: string) => void;
+  onManageBetaFeatures: (tenantId: string) => void;
   onViewLogs: (tenantId: string) => void;
   onBlockTenant: (tenantId: string) => void;
   onUnblockTenant: (tenantId: string) => void;
@@ -684,6 +685,7 @@ interface TenantDetailDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onManagePlan: (tenantId: string) => void;
+  onManageBetaFeatures: (tenantId: string) => void;
   onToggleModule: (tenantId: string, moduleId: string, enabled: boolean) => void;
   planLabels?: Record<string, string>;
 }
@@ -693,6 +695,7 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
   isOpen,
   onClose,
   onManagePlan,
+  onManageBetaFeatures,
   onToggleModule,
   planLabels,
 }) => {
@@ -831,6 +834,25 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
             >
               <IconSettings style={{ width: "14px", height: "14px" }} />
               Gerenciar Plano
+            </button>
+            <button
+              onClick={() => onManageBetaFeatures(tenant.id)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--space-1)",
+                padding: "var(--space-1) var(--space-3)",
+                background: "transparent",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--btn-radius)",
+                fontSize: "var(--font-size-sm)",
+                fontWeight: "var(--font-weight-medium)",
+                color: "var(--color-text)",
+                cursor: "pointer",
+              }}
+            >
+              <IconFileText style={{ width: "14px", height: "14px" }} />
+              Funcionalidades Beta
             </button>
           </div>
 
@@ -1303,6 +1325,7 @@ export const SaaSAdminDashboardView: React.FC<SaaSAdminDashboardViewProps> = ({
   isLoading = false,
   onProvisionTenant,
   onManagePlan,
+  onManageBetaFeatures,
   onViewLogs,
   onBlockTenant,
   onUnblockTenant,
@@ -1838,6 +1861,29 @@ export const SaaSAdminDashboardView: React.FC<SaaSAdminDashboardViewProps> = ({
                             <IconSettings style={{ width: "18px", height: "18px" }} />
                           </button>
                           <button
+                            onClick={() => onManageBetaFeatures(tenant.id)}
+                            title="Ativar Funcionalidades Beta"
+                            style={{
+                              background: "transparent",
+                              border: "none",
+                              padding: "var(--space-2)",
+                              borderRadius: "var(--radius-md)",
+                              cursor: "pointer",
+                              color: "var(--color-text-muted)",
+                              transition: "all var(--motion-duration) var(--motion-easing)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "var(--color-surface)";
+                              e.currentTarget.style.color = "var(--color-primary)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "transparent";
+                              e.currentTarget.style.color = "var(--color-text-muted)";
+                            }}
+                          >
+                            <IconFileText style={{ width: "18px", height: "18px" }} />
+                          </button>
+                          <button
                             onClick={() => onViewLogs(tenant.id)}
                             title="Visualizar Logs"
                             style={{
@@ -1917,6 +1963,7 @@ export const SaaSAdminDashboardView: React.FC<SaaSAdminDashboardViewProps> = ({
         isOpen={isDrawerOpen}
         onClose={handleCloseDrawer}
         onManagePlan={onManagePlan}
+        onManageBetaFeatures={onManageBetaFeatures}
         onToggleModule={onToggleModule}
         planLabels={planLabels}
       />

@@ -18,6 +18,7 @@ from app.pmoc_compliance import compute_pmoc_compliance_summary
 from app.pmoc_pdf import build_pmoc_report_pdf
 from app.pmoc_pending_tasks import compute_pmoc_pending_tasks
 from app.pmoc_schedule import compute_pmoc_estimated_time
+from app.services.client_equipment_deactivation import assert_equipment_active_for_operations
 from app.pmoc_service import (
     DEFAULT_LAW_NOTE,
     apply_pmoc_rt_fields,
@@ -594,7 +595,10 @@ def list_pmoc_equipments(
     rows = db.execute(
         select(PmocPlanEquipment, Equipment)
         .join(Equipment, Equipment.id == PmocPlanEquipment.equipment_id)
-        .where(PmocPlanEquipment.pmoc_id == plan.id)
+        .where(
+            PmocPlanEquipment.pmoc_id == plan.id,
+            Equipment.ativo.is_(True),
+        )
         .order_by(PmocPlanEquipment.sort_order, PmocPlanEquipment.id)
     ).all()
     return [_equipment_row_out(link, eq) for link, eq in rows]
@@ -619,6 +623,7 @@ def replace_pmoc_equipments(
         ).scalar_one_or_none()
         if eq is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Equipamento {eid} não pertence a este cliente.")
+        assert_equipment_active_for_operations(eq)
         if plan.client_site_id is not None and eq.client_site_id != plan.client_site_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1050,7 +1055,11 @@ def list_pmoc_activities(
     _get_plan(db, current_user.tenant_id, pmoc_id)
     acts = db.execute(
         select(PmocScheduledActivity)
-        .where(PmocScheduledActivity.pmoc_id == pmoc_id)
+        .outerjoin(Equipment, Equipment.id == PmocScheduledActivity.equipment_id)
+        .where(
+            PmocScheduledActivity.pmoc_id == pmoc_id,
+            (PmocScheduledActivity.equipment_id.is_(None)) | (Equipment.ativo.is_(True)),
+        )
         .order_by(PmocScheduledActivity.sort_order, PmocScheduledActivity.id)
     ).scalars().all()
     return _activities_to_out(db, current_user.tenant_id, list(acts))
@@ -1078,6 +1087,7 @@ def create_pmoc_activity(
         ).scalar_one_or_none()
         if eq is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Equipamento inválido para este PMOC.")
+        assert_equipment_active_for_operations(eq)
     service: Service | None = None
     if payload.service_id is not None:
         service = _get_service_for_tenant(db, current_user.tenant_id, payload.service_id)
@@ -1129,6 +1139,7 @@ def update_pmoc_activity(
             ).scalar_one_or_none()
             if eq is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Equipamento inválido.")
+            assert_equipment_active_for_operations(eq)
             act.equipment_id = eid
     if "frequency" in payload.model_fields_set and payload.frequency is not None:
         act.frequency = PmocActivityFrequency(payload.frequency)

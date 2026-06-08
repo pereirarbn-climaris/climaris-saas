@@ -436,73 +436,44 @@ tr:hover .avatar {
 .listFoot {
   margin: 0;
   padding: var(--space-4) var(--space-6);
-  font-size: var(--font-size-base);
-  color: var(--color-text-muted);
   border-top: 1px solid var(--color-border);
-  background: var(--table-header-bg);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
 }
 
 .listFootCount {
   font-weight: var(--font-weight-medium);
 }
 
-.listFootPagination {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
+.colMobileOnly {
+  display: none;
 }
 
-.pagerBtns {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
+.colDesktopOnly {
+  display: table-cell;
 }
 
-.pagerBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2rem;
-  height: 2rem;
-  padding: 0 0.5rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-elevated);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
-  cursor: pointer;
+.clientTradeDesktop {
+  display: block;
 }
 
-.pagerBtn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.pagerBtnActive {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2.75rem;
-  height: 2rem;
-  padding: 0 0.5rem;
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+.mobileContactLink {
   color: var(--color-primary);
-  font-size: var(--font-size-sm);
   font-weight: 600;
+  text-decoration: none;
+}
+
+.mobileContactText {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.hideOnMobile {
+  display: inline-flex;
 }
 
 /* ========== RESPONSIVE ========== */
 @media (max-width: 1024px) {
-  .heroStats {
+  .heroStatsDesktop {
     grid-template-columns: repeat(2, 1fr);
   }
 }
@@ -513,32 +484,78 @@ tr:hover .avatar {
     gap: var(--space-4);
   }
 
-  .heroStats {
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-3);
+  .heroStatsDesktop {
+    display: none;
   }
 
-  .statCard {
-    padding: var(--space-4);
-    border-radius: var(--radius-lg);
+  .hideOnMobile {
+    display: none !important;
   }
 
-  .statValue {
-    font-size: 1.75rem;
+  .colMobileOnly {
+    display: table-cell;
   }
 
-  .statHint {
-    font-size: var(--font-size-xs);
+  .colDesktopOnly {
+    display: none !important;
   }
 
-  .statIconWrap {
-    width: 2.25rem;
-    height: 2.25rem;
+  .clientTradeDesktop {
+    display: none;
   }
 
-  .statIcon {
-    width: var(--icon-size-base);
-    height: var(--icon-size-base);
+  .clientsTableDense {
+    table-layout: fixed;
+    font-size: 0.6875rem;
+  }
+
+  .clientsTableDense :is(th, td) {
+    white-space: normal;
+    padding: 0.55rem 0.35rem;
+    vertical-align: middle;
+  }
+
+  .clientsTableDense th:first-child,
+  .clientsTableDense td:first-child {
+    width: 55%;
+  }
+
+  .clientsTableDense th.colMobileOnly,
+  .clientsTableDense td.colMobileOnly {
+    width: 45%;
+  }
+
+  .clientCell {
+    gap: 0.4rem;
+  }
+
+  .avatar {
+    width: 1.625rem;
+    height: 1.625rem;
+    font-size: 0.5625rem;
+  }
+
+  .clientName {
+    font-size: 0.6875rem;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+
+  .mobileContactLink,
+  .mobileContactText {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+
+  .mobileContactLink {
+    font-weight: 600;
+  }
+
+  .clientsTableDense th {
+    font-size: 0.625rem;
+    letter-spacing: 0.04em;
   }
 
   .toolbar {
@@ -566,10 +583,6 @@ tr:hover .avatar {
 }
 
 @media (max-width: 480px) {
-  .heroStats {
-    grid-template-columns: 1fr;
-  }
-
   .statCard {
     display: flex;
     align-items: center;

@@ -55,6 +55,8 @@ export const demoTenant: TenantOut = {
   tax_document: "12345678000199",
   active_plan: "professional",
   finance_enabled: true,
+  inventory_enabled: true,
+  features_enabled: { new_laudo: true, dre_dashboard: true },
   finance_mode: "intermediate",
   timezone: "America/Sao_Paulo",
   business_days: "1,2,3,4,5",
@@ -83,6 +85,7 @@ export const demoTenant: TenantOut = {
   logo_content_type: null,
   logo_updated_at: null,
   pdf_primary_color: "#0ea5e9",
+  cft_number: null,
   registration_complete: true,
 };
 

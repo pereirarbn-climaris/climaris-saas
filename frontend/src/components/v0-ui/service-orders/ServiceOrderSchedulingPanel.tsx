@@ -14,7 +14,6 @@ export interface ServiceOrderSchedulingPanelProps {
   onHoraChange: (time: string) => void;
   tecnicos: Tecnico[];
   estimatedMinutes: number;
-  pmocDurationHint?: string;
   schedulingEnabled: boolean;
   canEditScheduling: boolean;
   orderId?: number;
@@ -54,7 +53,6 @@ export function ServiceOrderSchedulingPanel({
   onHoraChange,
   tecnicos,
   estimatedMinutes,
-  pmocDurationHint,
   schedulingEnabled,
   canEditScheduling,
   orderId,
@@ -195,14 +193,6 @@ export function ServiceOrderSchedulingPanel({
             disabled={disabled}
             style={{ height: "2.5rem", padding: "0 0.5rem", borderRadius: "var(--input-radius)", border: "1px solid var(--color-border)" }}
           />
-          {pmocDurationHint ? (
-            <span
-              title={pmocDurationHint}
-              style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", lineHeight: 1.4 }}
-            >
-              {pmocDurationHint}
-            </span>
-          ) : null}
           {errors.horaAgendamento ? (
             <span style={{ color: "var(--color-error)" }}>{errors.horaAgendamento}</span>
           ) : null}

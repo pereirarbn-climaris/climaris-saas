@@ -949,6 +949,9 @@ def delete_manual_preventive_reminder(
     )
     if hist is not None:
         _cancel_queued_preventive_jobs_for_historico(db, tenant_id=tenant_id, historico_id=hist.id)
+        # Remove lembretes antes do histórico (FK NOT NULL; evita UPDATE null no flush do ORM).
+        for lembrete in list(hist.lembretes):
+            db.delete(lembrete)
         db.delete(hist)
 
     schedule.is_active = False
