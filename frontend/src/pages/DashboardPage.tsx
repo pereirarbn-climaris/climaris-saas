@@ -15,6 +15,7 @@ import {
 } from "../api/auth";
 import { financeQueryKeys } from "../features/finance/hooks/financeQueryKeys";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
+import { isHiddenAppModule, isHiddenAppModulePath } from "../lib/hiddenAppModules";
 import { getPlanDisplayLabel } from "../lib/planRules";
 import { getTenantDisplayName } from "../lib/tenantDisplay";
 import { digitsOnlyPhoneForApi, formatPhoneBrInput } from "../lib/brMask";
@@ -104,14 +105,19 @@ export function DashboardPage() {
   const isFinanceRoute = location.pathname.startsWith("/app/finance");
   const isAgendaRoute = location.pathname.startsWith("/app/agenda");
   const isPreventiveRoute = location.pathname.startsWith("/app/preventive-maintenance");
-  const isFiscalRoute = location.pathname.startsWith("/app/fiscal");
+  const isFiscalRoute = !isHiddenAppModule("nfse") && location.pathname.startsWith("/app/fiscal");
   const isPmocRoute = location.pathname.startsWith("/app/pmoc");
-  const isMarketplaceRoute = location.pathname.startsWith("/app/marketplace");
-  const isWhatsappBotRoute = location.pathname.startsWith("/app/integrations/whatsapp-bot");
-  const isWhatsappCampanhasRoute = location.pathname.startsWith("/app/integrations/whatsapp-campanhas");
+  const isMarketplaceRoute = !isHiddenAppModule("marketplace") && location.pathname.startsWith("/app/marketplace");
+  const isWhatsappBotRoute =
+    !isHiddenAppModule("whatsappBot") && location.pathname.startsWith("/app/integrations/whatsapp-bot");
+  const isWhatsappCampanhasRoute =
+    !isHiddenAppModule("whatsappCampanhas") &&
+    location.pathname.startsWith("/app/integrations/whatsapp-campanhas");
   const isWhatsappRoute = location.pathname.startsWith("/app/integrations/whatsapp");
-  const isChatIaRoute = location.pathname.startsWith("/app/integrations/chat-ia");
-  const isMercadoLivreRoute = location.pathname.startsWith("/app/integrations/mercado-livre");
+  const isChatIaRoute =
+    !isHiddenAppModule("chatIa") && location.pathname.startsWith("/app/integrations/chat-ia");
+  const isMercadoLivreRoute =
+    !isHiddenAppModule("mercadoLivre") && location.pathname.startsWith("/app/integrations/mercado-livre");
   const pageTitle = isAdminRoute
     ? "Administração"
     : isClientsRoute
@@ -405,7 +411,7 @@ export function DashboardPage() {
       ["admin", "/app/admin"],
       ["inicio", "/app"],
       ["início", "/app"],
-    ];
+    ].filter((entry): entry is [string, string] => !isHiddenAppModulePath(entry[1]));
     const hit = rules.find(([k]) => t.includes(k));
     navigate(hit?.[1] ?? "/app");
     setGlobalSearchOpen(false);
@@ -905,18 +911,20 @@ export function DashboardPage() {
                     </span>
                     Modelos de orçamento
                   </Link>
-                  <Link
-                    className={styles.accountDrawerLinkRow}
-                    to="/app/admin?tab=fiscal"
-                    onClick={() => {
-                      setWorkspaceDrawerOpen(false);
-                    }}
-                  >
-                    <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
-                      <NavIconFileQuote />
-                    </span>
-                    Fiscal
-                  </Link>
+                  {!isHiddenAppModule("nfse") ? (
+                    <Link
+                      className={styles.accountDrawerLinkRow}
+                      to="/app/admin?tab=fiscal"
+                      onClick={() => {
+                        setWorkspaceDrawerOpen(false);
+                      }}
+                    >
+                      <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
+                        <NavIconFileQuote />
+                      </span>
+                      Fiscal
+                    </Link>
+                  ) : null}
                 </>
               ) : (
                 <p className={styles.accountDrawerNonAdmin}>Disponível para administradores do workspace.</p>
@@ -966,18 +974,24 @@ export function DashboardPage() {
               <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/budgets")}>
                 Orçamentos
               </button>
-              <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/marketplace")}>
-                Loja de integrações
-              </button>
+              {!isHiddenAppModule("marketplace") ? (
+                <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/marketplace")}>
+                  Loja de integrações
+                </button>
+              ) : null}
               <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp")}>
                 WhatsApp
               </button>
-              <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/chat-ia")}>
-                Chat IA
-              </button>
-              <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp-bot")}>
-                Bot WhatsApp
-              </button>
+              {!isHiddenAppModule("chatIa") ? (
+                <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/chat-ia")}>
+                  Chat IA
+                </button>
+              ) : null}
+              {!isHiddenAppModule("whatsappBot") ? (
+                <button type="button" className={styles.toolPanelQuickBtn} onClick={() => navigate("/app/integrations/whatsapp-bot")}>
+                  Bot WhatsApp
+                </button>
+              ) : null}
             </div>
           </aside>
         </div>

@@ -264,17 +264,6 @@ export function ClientsListPage() {
             </button>
           </>
         ) : null}
-        {canEdit ? (
-          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/clients/new">
-            <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
-              <svg viewBox="0 0 24 24">
-                <path d="M12 5v14" />
-                <path d="M5 12h14" />
-              </svg>
-            </span>
-            Novo cliente
-          </Link>
-        ) : null}
       </div>
     </div>
   );
@@ -341,6 +330,24 @@ export function ClientsListPage() {
 
   return (
     <div className={listStyles.wrap}>
+      <header className={listStyles.pageHeader}>
+        <div>
+          <h1 className={listStyles.pageTitle}>Clientes</h1>
+          <p className={listStyles.pageSubtitle}>Gerencie todos os clientes da sua empresa</p>
+        </div>
+        {canEdit ? (
+          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/clients/new">
+            <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
+              <svg viewBox="0 0 24 24">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </span>
+            Novo cliente
+          </Link>
+        ) : null}
+      </header>
+
       <ClientsListView
         clients={clients}
         isLoading={isLoading}

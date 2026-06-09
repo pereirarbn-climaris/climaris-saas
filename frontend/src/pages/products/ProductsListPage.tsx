@@ -13,6 +13,7 @@ import { ProductsListTable } from "../../components/products";
 import { ListPaginationBar } from "../../components/ui/list-pagination";
 import { FormSwitch } from "../../components/ui/form-switch";
 import type { DashboardOutletContext } from "../dashboardContext";
+import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ProductsListPage.module.css";
 
@@ -259,6 +260,21 @@ export function ProductsListPage() {
 
   return (
     <div className={styles.wrap}>
+      <header className={listStyles.pageHeader}>
+        <div>
+          <h1 className={listStyles.pageTitle}>Produtos</h1>
+          <p className={listStyles.pageSubtitle}>Gerencie todos os produtos da sua empresa</p>
+        </div>
+        {canEdit ? (
+          <Link className={`${tableStyles.listToolbarBtnPrimary} ${styles.newProductBtn}`} to="/app/products/new">
+            <span className={tableStyles.listToolbarBtnIcon}>
+              <PlusIcon />
+            </span>
+            Novo produto
+          </Link>
+        ) : null}
+      </header>
+
       <div className={`${styles.heroStats} ${styles.heroStatsDesktop}`}>
         <div className={styles.statCard}>
           <div className={styles.statHead}>
@@ -400,14 +416,6 @@ export function ProductsListPage() {
                 <ImportIcon />
               </button>
             </>
-          ) : null}
-          {canEdit ? (
-            <Link className={`${tableStyles.listToolbarBtnPrimary} ${styles.newProductBtn}`} to="/app/products/new">
-              <span className={tableStyles.listToolbarBtnIcon}>
-                <PlusIcon />
-              </span>
-              Novo produto
-            </Link>
           ) : null}
         </div>
       </div>

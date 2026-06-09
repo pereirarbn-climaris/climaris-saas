@@ -1,4 +1,8 @@
 .shell {
+  --app-sidebar-width-expanded: 16rem;
+  --app-sidebar-width-collapsed: 4.5rem;
+  --app-sidebar-width: var(--app-sidebar-width-expanded);
+  --app-chrome-height: 4.5rem;
   min-height: 100vh;
   min-height: 100dvh;
   height: 100vh;
@@ -7,6 +11,12 @@
   overflow: hidden;
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+@media (min-width: 901px) {
+  .shell.sidebarCollapsed {
+    --app-sidebar-width: var(--app-sidebar-width-collapsed);
+  }
 }
 
 .srOnly {
@@ -165,6 +175,32 @@
   font-weight: 800;
   color: #ffffff;
   letter-spacing: -0.02em;
+}
+
+.appSidebarHeader {
+  min-height: var(--app-chrome-height);
+  height: var(--app-chrome-height);
+  box-sizing: border-box;
+  padding: 0 0.5rem 0 0.75rem !important;
+  border-bottom: 1px solid var(--color-border) !important;
+  background: #ffffff;
+}
+
+.appSidebarHeader[data-collapsed="true"] {
+  display: grid !important;
+  place-items: center;
+  padding: 0 !important;
+}
+
+.appSidebarHeaderBrand {
+  overflow: visible !important;
+}
+
+.appSidebarHeader[data-collapsed="true"] .appSidebarHeaderBrand {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  width: 100%;
 }
 
 .brandName {
@@ -782,6 +818,8 @@
   gap: 0.65rem;
   flex-wrap: wrap;
   flex-shrink: 0;
+  min-height: calc(var(--app-chrome-height) + var(--space-safe-top));
+  box-sizing: border-box;
   padding: calc(0.72rem + var(--space-safe-top)) calc(var(--space-page) + var(--space-safe-right)) 0.72rem
     calc(var(--space-page) + var(--space-safe-left));
   background: #ffffff;
@@ -793,11 +831,12 @@
 
 .headerSidebarToggle {
   display: none;
-  position: absolute;
-  left: -0.875rem;
-  top: 50%;
+  position: fixed;
+  left: calc(var(--app-sidebar-width) - 0.875rem);
+  top: calc(var(--space-safe-top) + var(--app-chrome-height) / 2);
   transform: translateY(-50%);
-  z-index: 35;
+  z-index: 200;
+  pointer-events: auto;
   align-items: center;
   justify-content: center;
   width: 1.75rem;

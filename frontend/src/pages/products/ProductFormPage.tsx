@@ -18,6 +18,7 @@ import {
   type ProductUpdatePayload,
 } from "../../api/products";
 import { formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
+import { isHiddenAppModule } from "../../lib/hiddenAppModules";
 import { toast } from "../../lib/toast";
 import { ToastHost } from "../../components/ToastHost";
 import type { DashboardOutletContext } from "../dashboardContext";
@@ -162,6 +163,13 @@ export function ProductFormPage() {
   }, [form, formReady, isNew, savedSnapshot]);
 
   const productSaved = !isNew && Number.isFinite(idNum);
+  const mercadoLivreHidden = isHiddenAppModule("mercadoLivre");
+
+  useEffect(() => {
+    if (mercadoLivreHidden && activeTab === "mercado-livre") {
+      setActiveTab("geral");
+    }
+  }, [activeTab, mercadoLivreHidden]);
 
   useEffect(() => {
     if (isNew || !productId || !Number.isFinite(idNum) || idNum < 1) return;
@@ -191,6 +199,7 @@ export function ProductFormPage() {
   }, [isNew, productId, idNum]);
 
   useEffect(() => {
+    if (mercadoLivreHidden) return;
     let cancelled = false;
     void getMercadoLivreStatus()
       .then((s) => {
@@ -202,7 +211,7 @@ export function ProductFormPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mercadoLivreHidden]);
 
   useEffect(() => {
     if (!productSaved || !mlAddon) return;
@@ -490,15 +499,17 @@ export function ProductFormPage() {
               Imagens
               {productImages.length > 0 ? <span className={styles.tabBadge}>{productImages.length}</span> : null}
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "mercado-livre"}
-              className={`${formLayout.formCardTab} ${activeTab === "mercado-livre" ? formLayout.formCardTabActive : ""}`}
-              onClick={() => setActiveTab("mercado-livre")}
-            >
-              Mercado Livre
-            </button>
+            {!mercadoLivreHidden ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === "mercado-livre"}
+                className={`${formLayout.formCardTab} ${activeTab === "mercado-livre" ? formLayout.formCardTabActive : ""}`}
+                onClick={() => setActiveTab("mercado-livre")}
+              >
+                Mercado Livre
+              </button>
+            ) : null}
             <button
               type="button"
               role="tab"
@@ -704,7 +715,7 @@ export function ProductFormPage() {
               </div>
             ) : null}
 
-            {activeTab === "mercado-livre" ? (
+            {!mercadoLivreHidden && activeTab === "mercado-livre" ? (
               <div>
                 <h2 className={styles.sectionTitle}>Mercado Livre</h2>
                 <p className={styles.fieldHint}>

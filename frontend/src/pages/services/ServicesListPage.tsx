@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "reac
 import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { createService, listServices, type ServiceOut } from "../../api/services";
 import type { DashboardOutletContext } from "../dashboardContext";
+import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ServicesListPage.module.css";
 
@@ -241,6 +242,21 @@ export function ServicesListPage() {
 
   return (
     <div className={styles.wrap}>
+      <header className={listStyles.pageHeader}>
+        <div>
+          <h1 className={listStyles.pageTitle}>Serviços</h1>
+          <p className={listStyles.pageSubtitle}>Gerencie todos os serviços da sua empresa</p>
+        </div>
+        {canEdit ? (
+          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/services/new">
+            <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
+              <PlusIcon />
+            </span>
+            Novo serviço
+          </Link>
+        ) : null}
+      </header>
+
       {/* Stats Cards */}
       <div className={styles.heroStats}>
         <div className={styles.statCard}>
@@ -337,12 +353,6 @@ export function ServicesListPage() {
             <option value="status_inactive_first">Status (Inativo primeiro)</option>
           </select>
         </div>
-        {canEdit ? (
-          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/services/new">
-            <PlusIcon />
-            Novo servico
-          </Link>
-        ) : null}
       </div>
 
       {err ? <p className={styles.msgErr}>{err}</p> : null}

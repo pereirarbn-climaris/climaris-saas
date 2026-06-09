@@ -277,6 +277,8 @@ import {
     showCloseOnMobile?: boolean;
     showToggle?: boolean;
     toggleClassName?: string;
+    className?: string;
+    brandClassName?: string;
   }
   
   function SidebarHeader({
@@ -284,28 +286,28 @@ import {
     showCloseOnMobile = true,
     showToggle = true,
     toggleClassName = "",
+    className = "",
+    brandClassName = "",
   }: SidebarHeaderProps) {
     const { expanded, mobileOpen, setMobileOpen } = useSidebarContext();
     const showFull = expanded || mobileOpen;
+    const showActions = showToggle || (showCloseOnMobile && mobileOpen);
   
     return (
       <div
         data-collapsed={showFull ? "false" : "true"}
-        className="sidebar-header"
+        className={`sidebar-header ${className}`.trim()}
         style={{
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
           justifyContent: showFull ? "flex-start" : "center",
-          gap: showFull ? "var(--space-2)" : "var(--space-3)",
-          padding: showFull ? "var(--space-4) var(--space-4) var(--space-4) var(--space-5)" : "var(--space-4) var(--space-2)",
-          borderBottom: "1px solid var(--color-border)",
-          minHeight: "4.5rem",
+          gap: showFull ? "var(--space-2)" : 0,
           flexShrink: 0,
         }}
       >
         <div
-          className="sidebar-header-brand"
+          className={`sidebar-header-brand ${brandClassName}`.trim()}
           style={{
             display: "flex",
             alignItems: "center",
@@ -314,48 +316,48 @@ import {
             minWidth: 0,
             flex: showFull ? 1 : undefined,
             width: showFull ? undefined : "100%",
-            overflow: "hidden",
           }}
         >
           {children}
         </div>
   
-        <div
-          className="sidebar-header-actions"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "var(--space-2)",
-            flexShrink: 0,
-            width: showFull ? undefined : "100%",
-          }}
-        >
-          {showToggle ? <SidebarToggle className={toggleClassName} /> : null}
+        {showActions ? (
+          <div
+            className="sidebar-header-actions"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "var(--space-2)",
+              flexShrink: 0,
+            }}
+          >
+            {showToggle ? <SidebarToggle className={toggleClassName} /> : null}
   
-          {showCloseOnMobile ? (
-            <button
-              type="button"
-              aria-label="Fechar menu"
-              onClick={() => setMobileOpen(false)}
-              className="sidebar-close-mobile"
-              style={{
-                display: "none",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "2rem",
-                height: "2rem",
-                border: "none",
-                background: "transparent",
-                color: "var(--color-text-muted)",
-                borderRadius: "var(--radius-md)",
-                cursor: "pointer",
-              }}
-            >
-              <NavIconX />
-            </button>
-          ) : null}
-        </div>
+            {showCloseOnMobile ? (
+              <button
+                type="button"
+                aria-label="Fechar menu"
+                onClick={() => setMobileOpen(false)}
+                className="sidebar-close-mobile"
+                style={{
+                  display: "none",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "2rem",
+                  height: "2rem",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--color-text-muted)",
+                  borderRadius: "var(--radius-md)",
+                  cursor: "pointer",
+                }}
+              >
+                <NavIconX />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
   
         <style>{`
           @media (max-width: 900px) {

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { TenantOut, UserOut } from "../../api/auth";
+import { isHiddenAppModule } from "../../lib/hiddenAppModules";
 import { getPlanDisplayLabel } from "../../lib/planRules";
 import { getTenantDisplayName } from "../../lib/tenantDisplay";
 import {
@@ -59,7 +60,11 @@ export function AppSidebar({
 }: AppSidebarProps) {
   return (
     <Sidebar.Container>
-      <Sidebar.Header showToggle={false}>
+      <Sidebar.Header
+        showToggle={false}
+        className={styles.appSidebarHeader}
+        brandClassName={styles.appSidebarHeaderBrand}
+      >
         <SidebarBrandMark />
       </Sidebar.Header>
 
@@ -124,35 +129,45 @@ export function AppSidebar({
           >
             Financeiro
           </Sidebar.Item>
-          <Sidebar.Item to="/app/fiscal/nfse" title="NFS-e" icon={<NavIconFileQuote />}>
-            NFS-e
-          </Sidebar.Item>
+          {!isHiddenAppModule("nfse") ? (
+            <Sidebar.Item to="/app/fiscal/nfse" title="NFS-e" icon={<NavIconFileQuote />}>
+              NFS-e
+            </Sidebar.Item>
+          ) : null}
         </Sidebar.Group>
 
         <Sidebar.Group label="Integrações">
-          <Sidebar.Item to="/app/marketplace" title="Loja de integrações" icon={<NavIconPuzzle />}>
-            Loja de integrações
-          </Sidebar.Item>
+          {!isHiddenAppModule("marketplace") ? (
+            <Sidebar.Item to="/app/marketplace" title="Loja de integrações" icon={<NavIconPuzzle />}>
+              Loja de integrações
+            </Sidebar.Item>
+          ) : null}
           <Sidebar.Item to="/app/integrations/whatsapp" title="WhatsApp" icon={<NavIconPackage />}>
             WhatsApp
           </Sidebar.Item>
-          <Sidebar.Item
-            to="/app/integrations/whatsapp-campanhas"
-            title="Campanhas WhatsApp"
-            icon={<NavIconPackage />}
-          >
-            Campanhas WhatsApp
-          </Sidebar.Item>
-          <Sidebar.Item
-            to="/app/integrations/whatsapp-bot"
-            title="Bot WhatsApp"
-            icon={<NavIconPackage />}
-          >
-            Bot WhatsApp
-          </Sidebar.Item>
-          <Sidebar.Item to="/app/integrations/chat-ia" title="Chat IA (Claude)" icon={<NavIconClipboard />}>
-            Chat IA
-          </Sidebar.Item>
+          {!isHiddenAppModule("whatsappCampanhas") ? (
+            <Sidebar.Item
+              to="/app/integrations/whatsapp-campanhas"
+              title="Campanhas WhatsApp"
+              icon={<NavIconPackage />}
+            >
+              Campanhas WhatsApp
+            </Sidebar.Item>
+          ) : null}
+          {!isHiddenAppModule("whatsappBot") ? (
+            <Sidebar.Item
+              to="/app/integrations/whatsapp-bot"
+              title="Bot WhatsApp"
+              icon={<NavIconPackage />}
+            >
+              Bot WhatsApp
+            </Sidebar.Item>
+          ) : null}
+          {!isHiddenAppModule("chatIa") ? (
+            <Sidebar.Item to="/app/integrations/chat-ia" title="Chat IA (Claude)" icon={<NavIconClipboard />}>
+              Chat IA
+            </Sidebar.Item>
+          ) : null}
         </Sidebar.Group>
 
         <div className={styles.sidebarMobileOnly} role="region" aria-label="Conta e sessão">
@@ -198,7 +213,11 @@ export function AppSidebar({
               onClick={onOpenWorkspaceDrawer}
               aria-expanded={workspaceDrawerOpen}
               aria-haspopup="dialog"
-              title="Administração: empresa, usuários, pagamentos, API e fiscal"
+              title={
+                isHiddenAppModule("nfse")
+                  ? "Administração: empresa, usuários, pagamentos e API"
+                  : "Administração: empresa, usuários, pagamentos, API e fiscal"
+              }
             >
               <span className={styles.workspaceName}>{getTenantDisplayName(tenant)}</span>
               <span className={styles.workspaceChevron} aria-hidden>

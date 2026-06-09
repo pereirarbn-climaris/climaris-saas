@@ -13,6 +13,7 @@ import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import formLayout from "../formLayout.module.css";
 import { ToastHost } from "../../components/ToastHost";
+import { isHiddenAppModule } from "../../lib/hiddenAppModules";
 import { Button } from "../../components/ui/button";
 import { toast } from "../../lib/toast";
 import { AdminApiKeysTab } from "./AdminApiKeysTab";
@@ -293,6 +294,10 @@ export function AdminPage() {
     } finally {
       setTestingMei(false);
     }
+  }
+
+  if (tab === "fiscal" && isHiddenAppModule("nfse")) {
+    return <Navigate to="/app/admin?tab=empresa" replace />;
   }
 
   return (

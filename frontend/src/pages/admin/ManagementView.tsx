@@ -15,6 +15,7 @@ import {
   type TenantOut,
 } from "../../api/auth";
 import { clearAccessToken } from "../../lib/authStorage";
+import { isHiddenAppModule } from "../../lib/hiddenAppModules";
 import { formatCepInput, formatPhoneBrInput, formatTaxDocumentInput } from "../../lib/brMask";
 import { fetchCepLookup } from "../../api/cep";
 import { cnpjCommercialCooldownDaysRemaining, CNPJ_COMMERCIAL_COOLDOWN_DAYS } from "../../api/clients";
@@ -534,7 +535,11 @@ export function ManagementView({ tenant, refreshWorkspace }: Props) {
           if (!open) closeDestructiveModal("reset");
         }}
         title="Restaurar o sistema"
-        description="Remove clientes, ordens de serviço, produtos, financeiro, agenda, NFS-e emitidas e demais dados operacionais. O cadastro da empresa e os usuários permanecem."
+        description={
+          isHiddenAppModule("nfse")
+            ? "Remove clientes, ordens de serviço, produtos, financeiro, agenda e demais dados operacionais. O cadastro da empresa e os usuários permanecem."
+            : "Remove clientes, ordens de serviço, produtos, financeiro, agenda, NFS-e emitidas e demais dados operacionais. O cadastro da empresa e os usuários permanecem."
+        }
         hint="Esta ação não pode ser desfeita. Digite sua senha atual para confirmar."
         confirmLabel="Restaurar sistema"
         busyLabel="Restaurando…"
@@ -903,7 +908,11 @@ export function ManagementView({ tenant, refreshWorkspace }: Props) {
               <Field
                 id="company-ibge"
                 label="Código IBGE (município)"
-                hint="Obrigatório para NFS-e nacional; preenchido ao buscar o CEP ou informe manualmente."
+                hint={
+                  isHiddenAppModule("nfse")
+                    ? "Preenchido automaticamente ao buscar o CEP ou informe manualmente."
+                    : "Obrigatório para NFS-e nacional; preenchido ao buscar o CEP ou informe manualmente."
+                }
               >
                 <Input
                   id="company-ibge"
@@ -923,11 +932,18 @@ export function ManagementView({ tenant, refreshWorkspace }: Props) {
           <CardContent className={styles.formStack}>
             <h2 className={styles.sectionTitle}>Operação e agenda</h2>
             <p className={styles.sectionLead}>
-              Expediente por dia da semana, fuso horário e lembretes preventivos. NFS-e na{" "}
-              <Link className={styles.fiscalLink} to="/app/admin?tab=fiscal">
-                aba Fiscal
-              </Link>
-              , financeiro em{" "}
+              Expediente por dia da semana, fuso horário e lembretes preventivos.
+              {!isHiddenAppModule("nfse") ? (
+                <>
+                  {" "}
+                  NFS-e na{" "}
+                  <Link className={styles.fiscalLink} to="/app/admin?tab=fiscal">
+                    aba Fiscal
+                  </Link>
+                  ,
+                </>
+              ) : null}{" "}
+              financeiro em{" "}
               <Link className={styles.fiscalLink} to="/app/finance/settings">
                 Financeiro
               </Link>

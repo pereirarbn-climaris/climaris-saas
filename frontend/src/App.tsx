@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { HiddenModulesGuard } from "./components/routing/HiddenModulesGuard";
 import { SessionMaintenance } from "./components/SessionMaintenance";
 import { PlatformBrandingProvider } from "./context/PlatformBrandingContext";
 import { SmartHomeRedirect } from "./components/SmartHomeRedirect";
@@ -170,17 +171,66 @@ export default function App() {
         <Route path="finance/settings/cards" element={<FinanceCardsPage />} />
         <Route path="finance/settings/machines" element={<FinanceMachinesPage />} />
         <Route path="security/trusted-devices" element={<TrustedDevicesPage />} />
-        <Route path="fiscal/nfse" element={<NfsePage />} />
+        <Route
+          path="fiscal/nfse"
+          element={
+            <HiddenModulesGuard>
+              <NfsePage />
+            </HiddenModulesGuard>
+          }
+        />
         <Route path="agenda" element={<TechnicianSchedulePage />} />
         <Route path="preventive-maintenance" element={<PreventiveMaintenancePage />} />
         <Route path="qrcodes" element={<ManageQrCodesPage />} />
-        <Route path="marketplace" element={<MarketplacePage />} />
-        <Route path="integrations/whatsapp-campanhas" element={<WhatsappBroadcastCampaignsPage />} />
-        <Route path="integrations/whatsapp-bot" element={<WhatsappBotPage />} />
+        <Route
+          path="marketplace"
+          element={
+            <HiddenModulesGuard>
+              <MarketplacePage />
+            </HiddenModulesGuard>
+          }
+        />
+        <Route
+          path="integrations/whatsapp-campanhas"
+          element={
+            <HiddenModulesGuard>
+              <WhatsappBroadcastCampaignsPage />
+            </HiddenModulesGuard>
+          }
+        />
+        <Route
+          path="integrations/whatsapp-bot"
+          element={
+            <HiddenModulesGuard>
+              <WhatsappBotPage />
+            </HiddenModulesGuard>
+          }
+        />
         <Route path="integrations/whatsapp" element={<WhatsappIntegrationPage />} />
-        <Route path="integrations/chat-ia" element={<AiAssistantPage />} />
-        <Route path="integrations/mercado-livre/callback" element={<MercadoLivreCallbackPage />} />
-        <Route path="integrations/mercado-livre" element={<MercadoLivreIntegrationPage />} />
+        <Route
+          path="integrations/chat-ia"
+          element={
+            <HiddenModulesGuard>
+              <AiAssistantPage />
+            </HiddenModulesGuard>
+          }
+        />
+        <Route
+          path="integrations/mercado-livre/callback"
+          element={
+            <HiddenModulesGuard>
+              <MercadoLivreCallbackPage />
+            </HiddenModulesGuard>
+          }
+        />
+        <Route
+          path="integrations/mercado-livre"
+          element={
+            <HiddenModulesGuard>
+              <MercadoLivreIntegrationPage />
+            </HiddenModulesGuard>
+          }
+        />
         <Route path="pmoc/new" element={<PmocNewPage />} />
         <Route path="pmoc/execucao/:id" element={<PmocExecucaoPage />} />
         <Route path="pmoc/conformidade/:id" element={<PmocConformidadePage />} />

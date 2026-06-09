@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
+import { isHiddenAppModule } from "../../lib/hiddenAppModules";
 import {
   fetchPreventiveSettings,
   listPreventiveLeads,
@@ -344,11 +345,13 @@ export function WhatsappIntegrationPage() {
             <p className={styles.heroLead}>
               A conexão e as mensagens automáticas ficam disponíveis após liberação do módulo WhatsApp na Loja.
             </p>
-            <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
-              <Link to="/app/marketplace" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
-                Abrir Loja de integrações
-              </Link>
-            </p>
+            {!isHiddenAppModule("marketplace") ? (
+              <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
+                <Link to="/app/marketplace" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
+                  Abrir Loja de integrações
+                </Link>
+              </p>
+            ) : null}
           </div>
         </header>
         <section className={styles.card}>
@@ -432,12 +435,16 @@ export function WhatsappIntegrationPage() {
             <Link to="/app" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
               Voltar ao painel
             </Link>
-            <Link to="/app/integrations/whatsapp-campanhas" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
-              Campanhas WhatsApp
-            </Link>
-            <Link to="/app/integrations/whatsapp-bot" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
-              Bot WhatsApp
-            </Link>
+            {!isHiddenAppModule("whatsappCampanhas") ? (
+              <Link to="/app/integrations/whatsapp-campanhas" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
+                Campanhas WhatsApp
+              </Link>
+            ) : null}
+            {!isHiddenAppModule("whatsappBot") ? (
+              <Link to="/app/integrations/whatsapp-bot" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
+                Bot WhatsApp
+              </Link>
+            ) : null}
           </p>
         </div>
       </header>

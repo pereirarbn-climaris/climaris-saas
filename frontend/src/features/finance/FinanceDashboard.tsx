@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useFeature } from '../../lib/featureManager';
+import { isHiddenAppModule } from '../../lib/hiddenAppModules';
 import { Check, Repeat, Trash2, X } from 'lucide-react';
 import { ToastHost } from '../../components/ToastHost';
 import { Badge } from '../../components/ui/badge';
@@ -468,7 +469,7 @@ export function FinanceDashboard() {
             Seu plano <strong>SIMPLES</strong> permite visualizar o financeiro. Para registrar transações,
             faça upgrade para <strong>PRO</strong>.
           </span>
-          <Link to="/app/marketplace">Ver planos</Link>
+          {!isHiddenAppModule('marketplace') ? <Link to="/app/marketplace">Ver planos</Link> : null}
         </div>
       ) : null}
 

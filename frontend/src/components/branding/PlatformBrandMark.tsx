@@ -56,11 +56,30 @@ export function PlatformBrandMark({ variant = "sidebar", showName = true, classN
   const initial = (branding.platform_name.trim()[0] ?? "C").toUpperCase();
 
   if (variant === "sidebar") {
+    const rowClass = [
+      dash.brandRow,
+      showName ? styles.sidebarBrandExpanded : styles.sidebarBrandCollapsed,
+      className,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const logoSrcWithCache =
+      logoSrc && branding.logo_updated_at
+        ? `${logoSrc}${logoSrc.includes("?") ? "&" : "?"}t=${encodeURIComponent(branding.logo_updated_at)}`
+        : logoSrc;
+
     return (
-      <div className={`${dash.brandRow} ${className ?? ""}`.trim()}>
+      <div className={rowClass}>
         {hasLogo ? (
-          <span className={styles.markWithLogo} aria-hidden>
-            <img src={logoSrc} alt="" className={styles.logoImageIcon} />
+          <span
+            className={`${styles.markWithLogo} ${showName ? "" : styles.markWithLogoCollapsed}`.trim()}
+            aria-hidden
+          >
+            <img
+              src={logoSrcWithCache}
+              alt=""
+              className={showName ? styles.logoImageSidebarExpanded : styles.logoImageSidebarCollapsed}
+            />
           </span>
         ) : (
           <span className={dash.logoMark} aria-hidden />
