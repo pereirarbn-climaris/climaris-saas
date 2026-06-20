@@ -121,6 +121,52 @@
   margin-top: 0.75rem;
 }
 
+.garantiaTools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.garantiaHintOk {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #047857;
+}
+
+.garantiaHintErr {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-error);
+}
+
+.garantiaMeta {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.qrRow {
+  margin-top: 0.25rem;
+}
+
+.qrInputRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.qrInputRow .input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.fieldHint {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
 .error {
   margin: 0.35rem 0 0;
   font-size: 0.8125rem;

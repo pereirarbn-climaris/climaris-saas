@@ -541,6 +541,25 @@ def update_client_catalog_equipment(
                 )
             row.serial_number = item.serial_number
 
+    if payload.qrcode_code_id and payload.qrcode_code_id.strip():
+        legacy = installation.legacy_equipment
+        if legacy is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Equipamento legado não encontrado para vincular etiqueta QR.",
+            )
+        try:
+            link_qrcode_to_equipment(
+                db,
+                code_id=normalize_code_id(payload.qrcode_code_id),
+                tenant_id=current_user.tenant_id,
+                equipment_id=legacy.id,
+                public_token=legacy.public_token,
+            )
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     _sync_legacy_from_installation(installation, list(installation.components))
 
     db.commit()

@@ -3257,6 +3257,7 @@ class ServiceOrderLaudoUpdate(BaseModel):
     client_signature_name: str | None = Field(default=None, alias="clientSignatureName", max_length=255)
     client_signature_at: str | None = Field(default=None, alias="clientSignatureAt", max_length=64)
     client_signature_geo: dict[str, float] | None = Field(default=None, alias="clientSignatureGeo")
+    garantia: dict | None = None
 
 
 class EquipmentUsageReportRowOut(BaseModel):

@@ -160,5 +160,11 @@ def apply_laudo_patch(*, description: str | None, payload: dict[str, Any]) -> st
     if "laudoFotos" in payload:
         meta["laudoFotos"] = _validate_photos(payload["laudoFotos"])
 
+    if "garantia" in payload and payload["garantia"] is not None:
+        garantia = payload["garantia"]
+        if not isinstance(garantia, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dados de garantia inválidos.")
+        meta["garantia"] = garantia
+
     meta["v"] = 1
     return serialize_description_with_meta(free_text, meta)

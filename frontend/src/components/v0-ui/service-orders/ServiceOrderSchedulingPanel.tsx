@@ -3,6 +3,11 @@ import type { SuggestedSlotOut } from "../../../api/serviceOrders";
 import type { Tecnico } from "./ServiceOrderFormView";
 import { formatEstimatedDuration } from "../../../lib/serviceOrderEstimatedTime";
 import { sortSuggestedSlotsChronologically } from "../../../lib/sortSuggestedSlots";
+import {
+  COMPANY_TECHNICIAN_API_ID,
+  COMPANY_TECHNICIAN_ID,
+  technicianIdToApi,
+} from "../../../lib/serviceOrderCompanyTechnician";
 
 export interface ServiceOrderSchedulingPanelProps {
   tecnicoId: string;
@@ -64,6 +69,7 @@ export function ServiceOrderSchedulingPanel({
   const [suggestErr, setSuggestErr] = useState("");
 
   const disabled = !canEditScheduling || !schedulingEnabled;
+  const companyOnly = tecnicos.length === 1 && tecnicos[0]?.id === COMPANY_TECHNICIAN_ID;
 
   const tecnicoOptions = useMemo(
     () => tecnicos.map((t) => ({ value: t.id, label: t.nome })),
@@ -80,7 +86,7 @@ export function ServiceOrderSchedulingPanel({
       const slots = await onSuggestSlots({
         orderId,
         durationMinutes: estimatedMinutes,
-        technicianId: tecnicoId ? Number(tecnicoId) : undefined,
+        technicianId: technicianIdToApi(tecnicoId),
       });
       setSuggestions(sortSuggestedSlotsChronologically(slots));
       if (slots.length === 0) {
@@ -101,7 +107,11 @@ export function ServiceOrderSchedulingPanel({
       const pad = (n: number) => String(n).padStart(2, "0");
       onDataChange(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
       onHoraChange(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-      onTecnicoChange(String(slot.technician_id));
+      onTecnicoChange(
+        slot.technician_id === COMPANY_TECHNICIAN_API_ID
+          ? COMPANY_TECHNICIAN_ID
+          : String(slot.technician_id),
+      );
     },
     [onDataChange, onHoraChange, onTecnicoChange],
   );
@@ -115,24 +125,26 @@ export function ServiceOrderSchedulingPanel({
         boxShadow: "var(--card-shadow)",
       }}
     >
-      <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Agendamento</h3>
+      <h3 style={{ margin: 0, fontSize: "var(--font-size-lg)" }}>Agendamento</h3>
       {!schedulingEnabled ? (
-        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+        <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
           Adicione ao menos um serviço para liberar data, hora e sugestões inteligentes de agenda.
         </p>
       ) : !canEditScheduling ? (
-        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+        <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
           Agendamento registrado nesta OS. Apenas administradores podem alterar técnico, data e horário.
         </p>
       ) : (
-        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
-          Defina técnico, data e horário do atendimento ou use as sugestões inteligentes de agenda.
+        <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+          {companyOnly
+            ? "Sem técnicos cadastrados — o agendamento usa o expediente da empresa."
+            : "Defina técnico, data e horário do atendimento ou use as sugestões inteligentes de agenda."}
         </p>
       )}
 
       <p
         style={{
-          margin: "0 0 1rem",
+          margin: "var(--form-card-subtitle-to-body) 0 1rem",
           padding: "0.65rem 0.85rem",
           background: "rgba(2, 132, 199, 0.08)",
           borderRadius: "var(--input-radius)",
@@ -160,7 +172,7 @@ export function ServiceOrderSchedulingPanel({
             disabled={disabled}
             style={{ height: "2.5rem", borderRadius: "var(--input-radius)", border: "1px solid var(--color-border)" }}
           >
-            <option value="">Selecione…</option>
+            <option value="">{companyOnly ? "" : "Selecione…"}</option>
             {tecnicoOptions.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -249,7 +261,11 @@ export function ServiceOrderSchedulingPanel({
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
           {suggestions.map((slot, idx) => {
             const techName =
-              slot.technician_name ?? tecnicoNameById.get(String(slot.technician_id)) ?? `Técnico #${slot.technician_id}`;
+              slot.technician_name ??
+              (slot.technician_id === COMPANY_TECHNICIAN_API_ID
+                ? tecnicoNameById.get(COMPANY_TECHNICIAN_ID)
+                : tecnicoNameById.get(String(slot.technician_id))) ??
+              (slot.technician_id === COMPANY_TECHNICIAN_API_ID ? "Empresa" : `Técnico #${slot.technician_id}`);
             return (
               <button
                 key={`${slot.technician_id}-${slot.starts_at}-${idx}`}

@@ -1,32 +1,80 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
-import {
-  demoCreateServiceOrder,
-  demoDeleteServiceOrderProductItem,
-  demoDeleteServiceOrderServiceItem,
-  demoListServiceOrders,
-  demoPatchServiceOrderProductItemQuantity,
-  demoPatchServiceOrderServiceItemQuantity,
-  demoPostServiceOrderProductItem,
-  demoPostServiceOrderServiceItem,
-  demoUpdateServiceOrder,
-  isDemoMode,
-} from "../lib/demoMode";
 import { normalizeServiceOrderOut } from "../lib/serviceOrderNormalize";
-import type { OrderStatus, ServiceOrderCreatePayload, ServiceOrderOut } from "../types/serviceOrders";
+import type { OrderStatus, ServiceOrderCreatePayload, ServiceOrderMissingRequirement, ServiceOrderOut } from "../types/serviceOrders";
 
 export type {
   OrderStatus,
   ServiceOrderCreatePayload,
   ServiceOrderEquipmentCardOut,
   ServiceOrderEquipmentServiceOut,
+  ServiceOrderMissingRequirement,
   ServiceOrderOut,
   ServiceOrderProductItemOut,
   ServiceOrderScheduleOut,
 } from "../types/serviceOrders";
 
 export { normalizeServiceOrderOut } from "../lib/serviceOrderNormalize";
+
+export class ServiceOrderComplianceBlockedError extends Error {
+  readonly code = "compliance_blocked" as const;
+  readonly missingRequirements: ServiceOrderMissingRequirement[];
+  readonly digitalWorkOrderId: string | null;
+
+  constructor(params: {
+    message: string;
+    missingRequirements: ServiceOrderMissingRequirement[];
+    digitalWorkOrderId?: string | null;
+  }) {
+    super(params.message);
+    this.name = "ServiceOrderComplianceBlockedError";
+    this.missingRequirements = params.missingRequirements;
+    this.digitalWorkOrderId = params.digitalWorkOrderId ?? null;
+  }
+}
+
+export function isServiceOrderComplianceBlockedError(
+  error: unknown,
+): error is ServiceOrderComplianceBlockedError {
+  return error instanceof ServiceOrderComplianceBlockedError;
+}
+
+function parseComplianceBlockedError(body: unknown): ServiceOrderComplianceBlockedError | null {
+  if (!body || typeof body !== "object") return null;
+  const detail = (body as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+
+  const payload = detail as Record<string, unknown>;
+  if (payload.code !== "compliance_blocked") return null;
+
+  const missingRequirements: ServiceOrderMissingRequirement[] = (Array.isArray(payload.missing_requirements)
+    ? payload.missing_requirements
+    : []
+  )
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((item) => ({
+      code: String(item.code ?? ""),
+      message: String(item.message ?? ""),
+      field: item.field != null ? String(item.field) : null,
+      blocking: item.blocking !== false,
+    }));
+
+  const message =
+    typeof payload.message === "string" && payload.message.trim()
+      ? payload.message
+      : missingRequirements
+          .map((item) => item.message)
+          .filter(Boolean)
+          .join("; ") || "Não é possível concluir a OS: requisitos de compliance incompletos.";
+
+  return new ServiceOrderComplianceBlockedError({
+    message,
+    missingRequirements,
+    digitalWorkOrderId:
+      typeof payload.digital_work_order_id === "string" ? payload.digital_work_order_id : null,
+  });
+}
 
 export type EquipmentUsageReportRowOut = {
   equipment_id: number;
@@ -147,11 +195,6 @@ export async function getServiceOrder(
   orderId: number,
   opts?: { bustCache?: boolean },
 ): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    const row = demoListServiceOrders().find((item) => item.id === orderId);
-    if (!row) throw new Error("OS não encontrada.");
-    return Promise.resolve(row);
-  }
   const suffix = opts?.bustCache ? `?_=${Date.now()}` : "";
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}${suffix}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -171,11 +214,7 @@ export async function fetchServiceOrderPdf(orderId: number): Promise<Blob> {
 }
 
 export async function cancelServiceOrderSchedule(orderId: number): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(
-      demoUpdateServiceOrder(orderId, { status: "approved", schedule: null }),
-    );
-  }
+
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/cancel-schedule`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -191,11 +230,13 @@ export async function cancelServiceOrderSchedule(orderId: number): Promise<Servi
 export async function patchServiceOrderStatus(
   orderId: number,
   status: "in_progress" | "done" | "cancelled",
-  opts?: { schedule_notes?: string | null; cancel_reason?: string | null },
+  opts?: {
+    schedule_notes?: string | null;
+    cancel_reason?: string | null;
+    force_close?: boolean;
+  },
 ) {
-  if (isDemoMode()) {
-    return Promise.resolve(demoUpdateServiceOrder(orderId, { status, schedule: null }));
-  }
+
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
@@ -203,10 +244,15 @@ export async function patchServiceOrderStatus(
       status,
       schedule_notes: opts?.schedule_notes ?? undefined,
       cancel_reason: opts?.cancel_reason?.trim() || undefined,
+      force_close: opts?.force_close === true ? true : undefined,
     }),
   });
   const body = await parseBody(response);
   if (!response.ok) {
+    if (response.status === 422) {
+      const complianceError = parseComplianceBlockedError(body);
+      if (complianceError) throw complianceError;
+    }
     throw new Error(errorMessage(body, "Não foi possível atualizar o status da OS.", response.status));
   }
   return normalizeServiceOrderOut(body as ServiceOrderOut);
@@ -215,11 +261,6 @@ export async function patchServiceOrderStatus(
 export async function listServiceOrders(params?: { status?: OrderStatus; skip?: number; limit?: number }): Promise<ServiceOrderOut[]> {
   const skip = params?.skip ?? 0;
   const limit = clampApiLimit(params?.limit, 100);
-  if (isDemoMode()) {
-    let rows = demoListServiceOrders();
-    if (params?.status) rows = rows.filter((o) => o.status === params.status);
-    return Promise.resolve(rows.slice(skip, skip + limit));
-  }
   const sp = new URLSearchParams();
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
@@ -235,9 +276,7 @@ export async function listServiceOrders(params?: { status?: OrderStatus; skip?: 
 
 /** Lista todas as OS do tenant (várias requisições se necessário; máx. 200 por página na API). */
 export async function listServiceOrdersAll(params?: { status?: OrderStatus }): Promise<ServiceOrderOut[]> {
-  if (isDemoMode()) {
-    return listServiceOrders({ ...params, skip: 0, limit: 200 });
-  }
+
   const PAGE = 200;
   const MAX_PAGES = 500;
   const all: ServiceOrderOut[] = [];
@@ -293,7 +332,6 @@ export async function fetchServiceOrderLaudoPdf(orderId: number): Promise<Blob> 
 }
 
 export async function patchServiceOrderDiscount(orderId: number, discount_amount: number): Promise<ServiceOrderOut> {
-  if (isDemoMode()) return Promise.resolve(demoUpdateServiceOrder(orderId, { discount_amount }));
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/discount`), {
     method: "PATCH",
     headers: jsonHeaders(),
@@ -307,20 +345,7 @@ export async function patchServiceOrderDiscount(orderId: number, discount_amount
 }
 
 export async function createServiceOrder(payload: ServiceOrderCreatePayload) {
-  if (isDemoMode()) {
-    const { equipment_services, services, ...rest } = payload;
-    const lines = services ?? equipment_services ?? [];
-    return Promise.resolve(
-      demoCreateServiceOrder({
-        ...rest,
-        services: lines.map((line) => ({
-          service_id: line.service_id,
-          quantity: line.quantity ?? 1,
-          equipment_id: line.equipment_id,
-        })),
-      }),
-    );
-  }
+
   const response = await fetch(apiUrl("/api/v1/service-orders"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -376,9 +401,7 @@ export async function postServiceOrderServiceItem(
     unit_price?: number;
   },
 ): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoPostServiceOrderServiceItem(orderId, { service_id: body.service_id, quantity: body.quantity ?? 1 }));
-  }
+
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -402,9 +425,6 @@ export async function patchServiceOrderServiceItemQuantity(
   quantity: number,
   unit_price?: number,
 ): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoPatchServiceOrderServiceItemQuantity(orderId, serviceItemId, quantity));
-  }
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items/${serviceItemId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
@@ -418,9 +438,6 @@ export async function patchServiceOrderServiceItemQuantity(
 }
 
 export async function deleteServiceOrderServiceItem(orderId: number, serviceItemId: number): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoDeleteServiceOrderServiceItem(orderId, serviceItemId));
-  }
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/service-items/${serviceItemId}`), {
     method: "DELETE",
     headers: bearer(),
@@ -436,9 +453,7 @@ export async function postServiceOrderProductItem(
   orderId: number,
   body: { product_id: number; quantity?: number; unit_price?: number },
 ): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoPostServiceOrderProductItem(orderId, { product_id: body.product_id, quantity: body.quantity ?? 1 }));
-  }
+
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -461,9 +476,6 @@ export async function patchServiceOrderProductItemQuantity(
   quantity: number,
   unit_price?: number,
 ): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoPatchServiceOrderProductItemQuantity(orderId, productItemId, quantity));
-  }
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items/${productItemId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
@@ -477,9 +489,6 @@ export async function patchServiceOrderProductItemQuantity(
 }
 
 export async function deleteServiceOrderProductItem(orderId: number, productItemId: number): Promise<ServiceOrderOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoDeleteServiceOrderProductItem(orderId, productItemId));
-  }
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/product-items/${productItemId}`), {
     method: "DELETE",
     headers: bearer(),
@@ -507,26 +516,7 @@ export async function approveServiceOrder(
   orderId: number,
   payload: { starts_at: string; notes?: string; technician_ids?: number[]; allow_overtime?: boolean; split_days?: number },
 ) {
-  if (isDemoMode()) {
-    const updated = demoUpdateServiceOrder(orderId, {
-      status: "approved",
-      schedule: {
-        id: orderId + 1000,
-        tenant_id: 1,
-        client_id: 1,
-        service_order_id: orderId,
-        starts_at: payload.starts_at,
-        ends_at: new Date(Date.parse(payload.starts_at) + 60 * 60 * 1000).toISOString(),
-        status: "confirmed",
-        notes: payload.notes ?? null,
-      },
-    });
-    return Promise.resolve({
-      service_order_id: orderId,
-      schedule_id: updated.schedule?.id ?? orderId + 1000,
-      duration_minutes: 60,
-    });
-  }
+
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/approve`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -568,7 +558,7 @@ export async function getTechnicianNextSlots(params: {
   if (params.duration_minutes != null && params.duration_minutes > 0) {
     sp.set("duration_minutes", String(params.duration_minutes));
   }
-  if (params.technician_id) sp.set("technician_id", String(params.technician_id));
+  if (params.technician_id != null) sp.set("technician_id", String(params.technician_id));
   if (params.allow_overtime) sp.set("allow_overtime", "true");
   if (params.split_days && params.split_days > 1) sp.set("split_days", String(params.split_days));
 
@@ -590,13 +580,6 @@ export async function listSchedules(params?: {
   /** YYYY-MM-DD inclusive (tenant local day) */
   to_day?: string;
 }): Promise<ScheduleOut[]> {
-  if (isDemoMode()) {
-    let rows: ScheduleOut[] = demoListServiceOrders()
-      .filter((item) => item.schedule)
-      .map((item) => item.schedule as ScheduleOut);
-    if (params?.status) rows = rows.filter((row: ScheduleOut) => row.status === params.status);
-    return Promise.resolve(rows);
-  }
   const sp = new URLSearchParams();
   sp.set("skip", String(params?.skip ?? 0));
   sp.set("limit", String(clampApiLimit(params?.limit, 100)));

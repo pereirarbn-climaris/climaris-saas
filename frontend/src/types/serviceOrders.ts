@@ -1,5 +1,12 @@
 /** Tipos da API de ordens de serviço (pivot equipamento ↔ serviço). */
 
+export type ServiceOrderMissingRequirement = {
+  code: string;
+  message: string;
+  field?: string | null;
+  blocking?: boolean;
+};
+
 export type OrderStatus = "open" | "approved" | "scheduled" | "in_progress" | "done" | "cancelled";
 
 export type ServiceOrderEquipmentServiceOut = {

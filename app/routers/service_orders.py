@@ -351,6 +351,7 @@ SHIFT_MORNING_START = time(8, 0)
 SHIFT_MORNING_END = time(12, 59)
 SHIFT_AFTERNOON_START = time(13, 0)
 AUTO_CONTINUATION_TAG = "[AUTO_CONTINUATION]"
+COMPANY_TECHNICIAN_ID = 0
 _FIXED_NATIONAL_HOLIDAYS_MM_DD = {
     "01-01",
     "04-21",
@@ -444,11 +445,89 @@ def _tenant_business_days(tenant: Tenant) -> set[int]:
 
 
 def _enforce_technician_scope(current_user: User, requested_technician_id: int | None) -> int | None:
+    if requested_technician_id == COMPANY_TECHNICIAN_ID:
+        if current_user.role == UserRole.TECHNICIAN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Agendamento pelo expediente da empresa não está disponível para técnicos.",
+            )
+        return COMPANY_TECHNICIAN_ID
     if current_user.role != UserRole.TECHNICIAN:
         return requested_technician_id
     if requested_technician_id is not None and requested_technician_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Você só pode acessar a sua própria agenda.")
     return current_user.id
+
+
+def _is_company_technician_request(technician_ids: list[int] | None) -> bool:
+    if not technician_ids:
+        return True
+    return len(technician_ids) == 1 and technician_ids[0] == COMPANY_TECHNICIAN_ID
+
+
+def _company_technician_label(tenant: Tenant) -> str:
+    name = (tenant.trade_name or tenant.name or "Empresa").strip() or "Empresa"
+    return f"{name} (expediente da empresa)"
+
+
+def _check_company_work_rules(
+    *,
+    starts_at: datetime,
+    ends_at: datetime,
+    tenant: Tenant,
+    tenant_tz: ZoneInfo,
+    holidays: set[date],
+    allow_overtime: bool = False,
+) -> None:
+    local_start = starts_at.astimezone(tenant_tz)
+    local_end = ends_at.astimezone(tenant_tz)
+    if _is_holiday_blocked(local_start.date(), holidays):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A data informada é feriado.")
+    if local_start.weekday() not in _tenant_business_days(tenant):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="O horário está fora dos dias úteis da empresa.")
+    if not allow_overtime and local_start.date() != local_end.date():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O agendamento deve começar e terminar no mesmo dia.",
+        )
+    wd_start, wd_end = _tenant_weekday_workday_bounds(tenant, local_start.weekday())
+    ws = datetime.combine(local_start.date(), wd_start, tzinfo=tenant_tz)
+    we = datetime.combine(local_start.date(), wd_end, tzinfo=tenant_tz)
+    if allow_overtime:
+        if local_start < ws or local_start >= we:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="O início deve estar dentro do expediente da empresa.",
+            )
+    elif local_start < ws or local_end > we:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="O horário está fora do expediente da empresa.",
+        )
+
+
+def _check_company_schedule_conflict(
+    db: Session,
+    *,
+    tenant_id: int,
+    starts_at: datetime,
+    ends_at: datetime,
+    ignore_schedule_id: int | None = None,
+) -> None:
+    query = select(Schedule).where(
+        Schedule.tenant_id == tenant_id,
+        Schedule.status != ScheduleStatus.CANCELLED,
+        Schedule.starts_at < _with_buffer(ends_at),
+        Schedule.ends_at > starts_at,
+    )
+    if ignore_schedule_id is not None:
+        query = query.where(Schedule.id != ignore_schedule_id)
+    conflict = db.execute(query.limit(1)).scalars().first()
+    if conflict is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Já existe outro agendamento neste horário (expediente da empresa).",
+        )
 
 
 def _ensure_technician_order_access(order: ServiceOrder, current_user: User) -> None:
@@ -633,6 +712,128 @@ def _check_technician_start_rules(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Technician {technician_id} start overlaps break window.",
             )
+
+
+def _try_slot_for_company(
+    db: Session,
+    *,
+    tenant: Tenant,
+    tenant_id: int,
+    tenant_tz: ZoneInfo,
+    holidays: set[date],
+    probe: datetime,
+    duration_minutes: int,
+    shift_end: datetime,
+    shift_name: str,
+    allow_overtime: bool,
+) -> SuggestedSlotOut | None:
+    candidate_end = probe + timedelta(minutes=duration_minutes)
+    if not allow_overtime and candidate_end > shift_end:
+        return None
+    try:
+        _check_company_work_rules(
+            starts_at=probe,
+            ends_at=candidate_end,
+            tenant=tenant,
+            tenant_tz=tenant_tz,
+            holidays=holidays,
+            allow_overtime=allow_overtime,
+        )
+        _check_company_schedule_conflict(
+            db,
+            tenant_id=tenant_id,
+            starts_at=probe,
+            ends_at=candidate_end,
+        )
+        return SuggestedSlotOut(
+            technician_id=COMPANY_TECHNICIAN_ID,
+            technician_name=_company_technician_label(tenant),
+            starts_at=probe,
+            ends_at=candidate_end,
+            shift=shift_name,  # type: ignore[arg-type]
+        )
+    except HTTPException:
+        return None
+
+
+def _suggest_company_booking_slots(
+    db: Session,
+    *,
+    tenant: Tenant,
+    tenant_id: int,
+    duration_minutes: int,
+    from_at: datetime,
+    limit: int = 4,
+    allow_overtime: bool = False,
+) -> list[SuggestedSlotOut]:
+    tz = _tenant_tz(tenant)
+    now_utc = datetime.now(timezone.utc)
+    holidays = set(
+        db.execute(select(TenantHoliday.holiday_date).where(TenantHoliday.tenant_id == tenant_id)).scalars().all()
+    )
+    duration_minutes = max(1, int(duration_minutes))
+
+    if from_at.tzinfo is None:
+        from_at = from_at.replace(tzinfo=timezone.utc)
+    from_at_utc = from_at if from_at >= now_utc else now_utc
+    from_local = from_at_utc.astimezone(tz)
+    business_days = _tenant_business_days(tenant)
+
+    morning_slots: list[SuggestedSlotOut] = []
+    afternoon_slots: list[SuggestedSlotOut] = []
+    morning_cap = 2
+    afternoon_cap = 2
+    day_cursor = from_local.date()
+    attempts = 0
+
+    while (len(morning_slots) < morning_cap or len(afternoon_slots) < afternoon_cap) and attempts < 90:
+        attempts += 1
+        if _is_holiday_blocked(day_cursor, holidays) or day_cursor.weekday() not in business_days:
+            day_cursor += timedelta(days=1)
+            continue
+
+        for shift_name, bucket, cap in (
+            ("morning", morning_slots, morning_cap),
+            ("afternoon", afternoon_slots, afternoon_cap),
+        ):
+            if len(bucket) >= cap:
+                continue
+            shift_bounds = _reschedule_shift_bounds(day=day_cursor, shift=shift_name, tenant_tz=tz, tenant=tenant)
+            if shift_bounds is None:
+                continue
+            shift_start, shift_end = shift_bounds
+            probe = shift_start
+            if day_cursor == from_local.date() and from_at_utc > probe:
+                probe = from_at_utc
+            found = False
+            while probe <= shift_end and len(bucket) < cap:
+                local_probe = probe.astimezone(tz)
+                if local_probe < datetime.now(tz):
+                    probe += timedelta(minutes=15)
+                    continue
+                slot = _try_slot_for_company(
+                    db,
+                    tenant=tenant,
+                    tenant_id=tenant_id,
+                    tenant_tz=tz,
+                    holidays=holidays,
+                    probe=probe,
+                    duration_minutes=duration_minutes,
+                    shift_end=shift_end,
+                    shift_name=shift_name,
+                    allow_overtime=allow_overtime,
+                )
+                if slot is not None:
+                    bucket.append(slot)
+                    found = True
+                    break
+                probe += timedelta(minutes=15)
+            if not found and shift_name == "morning":
+                pass
+        day_cursor += timedelta(days=1)
+
+    combined = morning_slots[:morning_cap] + afternoon_slots[:afternoon_cap]
+    return combined[: min(max(1, int(limit)), 4)]
 
 
 def _next_business_day_start(
@@ -1394,6 +1595,31 @@ def patch_service_order_status(
                 )
         _apply_schedule_notes_to_open_schedules(order, payload.schedule_notes)
         try:
+            from app.service_order_closure import assert_can_close_service_order
+            from app.domains.compliance.exceptions import ComplianceValidationError
+
+            assert_can_close_service_order(
+                db,
+                order=order,
+                tenant_id=current_user.tenant_id,
+                user=current_user,
+                force_close=payload.force_close,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        except ComplianceValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "compliance_blocked",
+                    "message": str(exc),
+                    "digital_work_order_id": (
+                        str(exc.digital_work_order_id) if exc.digital_work_order_id else None
+                    ),
+                    "missing_requirements": exc.missing_requirements,
+                },
+            ) from exc
+        try:
             apply_stock_consumption(db, tenant_id=current_user.tenant_id, order=order)
         except StockReservationError as exc:
             db.rollback()
@@ -1424,6 +1650,25 @@ def patch_service_order_status(
             db.rollback()
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Status inválido.")
+
+    if target in ("cancelled", "in_progress", "done"):
+        from app.notifications import dispatch_service_order_status_notification
+
+        status_map = {
+            "cancelled": OrderStatus.CANCELLED,
+            "in_progress": OrderStatus.IN_PROGRESS,
+            "done": OrderStatus.DONE,
+        }
+        try:
+            dispatch_service_order_status_notification(
+                db,
+                order=order,
+                actor=current_user,
+                status=status_map[target],
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
 
     refreshed = db.execute(
         select(ServiceOrder)
@@ -1617,6 +1862,8 @@ def create_service_order(
         )
 
     for technician_id in payload.technician_ids:
+        if technician_id == COMPANY_TECHNICIAN_ID:
+            continue
         technician = db.execute(
             select(User).where(
                 User.id == technician_id,
@@ -1648,6 +1895,14 @@ def create_service_order(
     except HTTPException:
         db.rollback()
         raise
+    from app.notifications import dispatch_service_order_created_notification, safe_commit_notification_dispatch
+
+    safe_commit_notification_dispatch(
+        db,
+        dispatch_service_order_created_notification,
+        order=order,
+        actor=current_user,
+    )
     return {"id": order.id, "status": order.status.value}
 
 
@@ -2316,53 +2571,81 @@ def approve_service_order(
     segment_minutes = [base_minutes + (1 if i < remainder else 0) for i in range(split_days)]
 
     technician_ids = payload.technician_ids if payload.technician_ids is not None else [t.technician_id for t in order.technicians]
+    company_mode = _is_company_technician_request(technician_ids)
     validated_technician_ids: list[int] = []
-    for technician_id in technician_ids:
-        technician = db.execute(
-            select(User).where(
-                User.id == technician_id,
-                User.tenant_id == current_user.tenant_id,
-                User.role == UserRole.TECHNICIAN,
-            )
-        ).scalar_one_or_none()
-        if technician is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Technician {technician_id} not found.")
-        validated_technician_ids.append(technician_id)
+
+    if not company_mode:
+        for technician_id in technician_ids:
+            technician = db.execute(
+                select(User).where(
+                    User.id == technician_id,
+                    User.tenant_id == current_user.tenant_id,
+                    User.role == UserRole.TECHNICIAN,
+                )
+            ).scalar_one_or_none()
+            if technician is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Technician {technician_id} not found.")
+            validated_technician_ids.append(technician_id)
 
     schedule_ids: list[int] = []
     segment_start = payload.starts_at
     for idx, minutes in enumerate(segment_minutes):
         segment_end = segment_start + timedelta(minutes=minutes)
-        if not payload.allow_overtime:
-            _ensure_inside_workday(segment_start, segment_end, tenant=tenant, holidays=holidays)
-        else:
-            _ensure_start_inside_workday(segment_start, tenant=tenant, holidays=holidays)
-
-        for technician_id in validated_technician_ids:
-            _check_technician_conflict(
-                db=db,
+        if company_mode:
+            if not payload.allow_overtime:
+                _check_company_work_rules(
+                    starts_at=segment_start,
+                    ends_at=segment_end,
+                    tenant=tenant,
+                    tenant_tz=tenant_tz,
+                    holidays=holidays,
+                )
+            else:
+                _check_company_work_rules(
+                    starts_at=segment_start,
+                    ends_at=segment_end,
+                    tenant=tenant,
+                    tenant_tz=tenant_tz,
+                    holidays=holidays,
+                    allow_overtime=True,
+                )
+            _check_company_schedule_conflict(
+                db,
                 tenant_id=current_user.tenant_id,
-                technician_id=technician_id,
                 starts_at=segment_start,
                 ends_at=segment_end,
             )
+        else:
             if not payload.allow_overtime:
-                _check_technician_work_rules(
+                _ensure_inside_workday(segment_start, segment_end, tenant=tenant, holidays=holidays)
+            else:
+                _ensure_start_inside_workday(segment_start, tenant=tenant, holidays=holidays)
+
+            for technician_id in validated_technician_ids:
+                _check_technician_conflict(
                     db=db,
                     tenant_id=current_user.tenant_id,
                     technician_id=technician_id,
                     starts_at=segment_start,
                     ends_at=segment_end,
-                    tenant_tz=tenant_tz,
                 )
-            else:
-                _check_technician_start_rules(
-                    db=db,
-                    tenant_id=current_user.tenant_id,
-                    technician_id=technician_id,
-                    starts_at=segment_start,
-                    tenant_tz=tenant_tz,
-                )
+                if not payload.allow_overtime:
+                    _check_technician_work_rules(
+                        db=db,
+                        tenant_id=current_user.tenant_id,
+                        technician_id=technician_id,
+                        starts_at=segment_start,
+                        ends_at=segment_end,
+                        tenant_tz=tenant_tz,
+                    )
+                else:
+                    _check_technician_start_rules(
+                        db=db,
+                        tenant_id=current_user.tenant_id,
+                        technician_id=technician_id,
+                        starts_at=segment_start,
+                        tenant_tz=tenant_tz,
+                    )
 
         segment_label = f" [Parte {idx + 1}/{split_days}]" if split_days > 1 else ""
         schedule = Schedule(
@@ -2384,6 +2667,16 @@ def approve_service_order(
 
     order.status = OrderStatus.SCHEDULED
     db.commit()
+    from app.notifications import dispatch_service_order_scheduled_notification, safe_commit_notification_dispatch
+
+    safe_commit_notification_dispatch(
+        db,
+        dispatch_service_order_scheduled_notification,
+        order=order,
+        actor=current_user,
+        starts_at=payload.starts_at,
+        technician_ids=validated_technician_ids,
+    )
     return {
         "service_order_id": order.id,
         "schedule_id": schedule_ids[0],
@@ -2662,6 +2955,7 @@ def reschedule(
     target_technicians = (
         payload.technician_ids if payload.technician_ids is not None else [t.technician_id for t in schedule.technicians]
     )
+    company_mode = _is_company_technician_request(target_technicians)
     day_end_utc = _workday_end_utc_for_datetime(starts_at=payload.starts_at, tenant=tenant, tenant_tz=tenant_tz)
     integral_ends_at = payload.starts_at + timedelta(minutes=total_minutes)
     is_integral = integral_ends_at <= day_end_utc
@@ -2671,32 +2965,48 @@ def reschedule(
     if first_segment_end <= payload.starts_at:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não há tempo hábil no dia para iniciar o atendimento.")
 
-    for technician_id in target_technicians:
-        tech = db.execute(
-            select(User).where(
-                User.id == technician_id,
-                User.tenant_id == current_user.tenant_id,
-                User.role == UserRole.TECHNICIAN,
-            )
-        ).scalar_one_or_none()
-        if tech is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Technician {technician_id} not found.")
-        _check_technician_conflict(
-            db=db,
+    if company_mode:
+        _check_company_work_rules(
+            starts_at=payload.starts_at,
+            ends_at=first_segment_end,
+            tenant=tenant,
+            tenant_tz=tenant_tz,
+            holidays=holidays,
+        )
+        _check_company_schedule_conflict(
+            db,
             tenant_id=current_user.tenant_id,
-            technician_id=technician_id,
             starts_at=payload.starts_at,
             ends_at=first_segment_end,
             ignore_schedule_id=schedule.id,
         )
-        _check_technician_work_rules(
-            db=db,
-            tenant_id=current_user.tenant_id,
-            technician_id=technician_id,
-            starts_at=payload.starts_at,
-            ends_at=first_segment_end,
-            tenant_tz=tenant_tz,
-        )
+    else:
+        for technician_id in target_technicians:
+            tech = db.execute(
+                select(User).where(
+                    User.id == technician_id,
+                    User.tenant_id == current_user.tenant_id,
+                    User.role == UserRole.TECHNICIAN,
+                )
+            ).scalar_one_or_none()
+            if tech is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Technician {technician_id} not found.")
+            _check_technician_conflict(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                technician_id=technician_id,
+                starts_at=payload.starts_at,
+                ends_at=first_segment_end,
+                ignore_schedule_id=schedule.id,
+            )
+            _check_technician_work_rules(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                technician_id=technician_id,
+                starts_at=payload.starts_at,
+                ends_at=first_segment_end,
+                tenant_tz=tenant_tz,
+            )
 
     auto_continuations = db.execute(
         select(Schedule)
@@ -2720,8 +3030,9 @@ def reschedule(
         for item in list(schedule.technicians):
             db.delete(item)
         db.flush()
-        for technician_id in payload.technician_ids:
-            db.add(ScheduleTechnician(schedule_id=schedule.id, technician_id=technician_id))
+        if not _is_company_technician_request(payload.technician_ids):
+            for technician_id in payload.technician_ids:
+                db.add(ScheduleTechnician(schedule_id=schedule.id, technician_id=technician_id))
 
     if is_integral:
         for extra in auto_continuations:
@@ -2732,23 +3043,39 @@ def reschedule(
         remaining_minutes = max(1, total_minutes - consumed_first_minutes)
         continuation_starts_at = _next_business_day_start(first_segment_end, tenant=tenant, holidays=holidays)
         continuation_ends_at = continuation_starts_at + timedelta(minutes=remaining_minutes)
-        for technician_id in target_technicians:
-            _check_technician_conflict(
-                db=db,
+        if company_mode:
+            _check_company_work_rules(
+                starts_at=continuation_starts_at,
+                ends_at=continuation_ends_at,
+                tenant=tenant,
+                tenant_tz=tenant_tz,
+                holidays=holidays,
+            )
+            _check_company_schedule_conflict(
+                db,
                 tenant_id=current_user.tenant_id,
-                technician_id=technician_id,
                 starts_at=continuation_starts_at,
                 ends_at=continuation_ends_at,
                 ignore_schedule_id=schedule.id,
             )
-            _check_technician_work_rules(
-                db=db,
-                tenant_id=current_user.tenant_id,
-                technician_id=technician_id,
-                starts_at=continuation_starts_at,
-                ends_at=continuation_ends_at,
-                tenant_tz=tenant_tz,
-            )
+        else:
+            for technician_id in target_technicians:
+                _check_technician_conflict(
+                    db=db,
+                    tenant_id=current_user.tenant_id,
+                    technician_id=technician_id,
+                    starts_at=continuation_starts_at,
+                    ends_at=continuation_ends_at,
+                    ignore_schedule_id=schedule.id,
+                )
+                _check_technician_work_rules(
+                    db=db,
+                    tenant_id=current_user.tenant_id,
+                    technician_id=technician_id,
+                    starts_at=continuation_starts_at,
+                    ends_at=continuation_ends_at,
+                    tenant_tz=tenant_tz,
+                )
 
         continuation = auto_continuations[0] if auto_continuations else None
         if continuation is None:
@@ -2955,9 +3282,22 @@ def suggest_booking_slots(
         User.role == UserRole.TECHNICIAN,
         User.is_active.is_(True),
     )
-    if technician_id is not None:
+    use_company_mode = technician_id == COMPANY_TECHNICIAN_ID
+    if technician_id is not None and not use_company_mode:
         tech_query = tech_query.where(User.id == technician_id)
     technicians = db.execute(tech_query).scalars().all()
+
+    if use_company_mode or (technician_id is None and not technicians):
+        return _suggest_company_booking_slots(
+            db,
+            tenant=tenant,
+            tenant_id=tenant_id,
+            duration_minutes=duration_minutes,
+            from_at=from_at,
+            limit=limit,
+            allow_overtime=allow_overtime,
+        )
+
     if not technicians:
         return []
 

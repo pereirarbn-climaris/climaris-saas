@@ -32,6 +32,8 @@ import type {
 import type { ClientOut, EquipmentOut } from "../api/clients";
 import type { ProductOut } from "../api/products";
 import type { ServiceOut } from "../api/services";
+import { normalizeGarantiaFields } from "./serviceOrderGarantia";
+import { technicianIdFromApi, technicianIdsForApi } from "./serviceOrderCompanyTechnician";
 import type {
   OrderStatus,
   ServiceOrderCreatePayload,
@@ -108,6 +110,7 @@ type OsMeta = {
   clientSignatureName?: string | null;
   clientSignatureAt?: string | null;
   clientSignatureGeo?: { lat: number; lng: number } | null;
+  garantia?: Partial<import("./serviceOrderGarantia").ServiceOrderGarantiaFields>;
 };
 
 function mapEquipmentTipo(categoria?: string | null): string {
@@ -171,6 +174,7 @@ export function expandServiceOrderDescriptionToViewFields(
   clientSignatureName?: string | null;
   clientSignatureAt?: string | null;
   clientSignatureGeo?: { lat: number; lng: number } | null;
+  garantia: import("./serviceOrderGarantia").ServiceOrderGarantiaFields;
 } {
   const meta = parseMeta(description);
   const freeText = freeTextFromDescription(description);
@@ -195,6 +199,7 @@ export function expandServiceOrderDescriptionToViewFields(
     clientSignatureName: meta?.clientSignatureName ?? null,
     clientSignatureAt: meta?.clientSignatureAt ?? null,
     clientSignatureGeo: meta?.clientSignatureGeo ?? null,
+    garantia: normalizeGarantiaFields(meta?.garantia),
   };
 }
 
@@ -235,6 +240,7 @@ function metaFromViewData(data: ServiceOrderData): OsMeta {
     clientSignatureName: data.clientSignatureName,
     clientSignatureAt: data.clientSignatureAt,
     clientSignatureGeo: data.clientSignatureGeo,
+    garantia: data.garantia,
   };
 }
 
@@ -427,7 +433,7 @@ export function serviceOrderOutToViewData(order: ServiceOrderOut): ServiceOrderD
     id: String(order.id),
     numero: String(order.id),
     clienteId: String(order.client_id),
-    tecnicoId: order.technician_ids?.[0] ? String(order.technician_ids[0]) : "",
+    tecnicoId: technicianIdFromApi(order.technician_ids, Boolean(order.schedule)),
     status: mapApiStatusToForm(order.status),
     tipoServico: laudo.tipoServico ?? inferServiceType(order, meta),
     dataAgendamento: date,
@@ -464,6 +470,7 @@ export function serviceOrderOutToViewData(order: ServiceOrderOut): ServiceOrderD
     clientSignatureName: laudo.clientSignatureName,
     clientSignatureAt: laudo.clientSignatureAt,
     clientSignatureGeo: laudo.clientSignatureGeo,
+    garantia: laudo.garantia,
   };
 }
 
@@ -592,7 +599,7 @@ export function viewDataToCreatePayload(
     client_id: Number(data.clienteId),
     title: `OS - ${ctx.clientName}`,
     description,
-    technician_ids: data.tecnicoId ? [Number(data.tecnicoId)] : [],
+    technician_ids: technicianIdsForApi(data.tecnicoId) ?? [],
     services: serviceLinesInput,
     products: productLinesInput,
     discount_amount,
@@ -622,6 +629,7 @@ export function buildLaudoPatchPayload(data: ServiceOrderData) {
     clientSignatureName: data.clientSignatureName ?? null,
     clientSignatureAt: data.clientSignatureAt ?? null,
     clientSignatureGeo: data.clientSignatureGeo ?? null,
+    garantia: data.garantia,
   };
 }
 
@@ -702,6 +710,7 @@ export function serializeServiceOrderFormSnapshot(data: ServiceOrderData): strin
     descontoTipo: data.descontoTipo ?? "fixed",
     descontoValor: data.descontoValor ?? 0,
     observacoesInternas: data.observacoesInternas ?? "",
+    garantia: data.garantia,
   });
 }
 

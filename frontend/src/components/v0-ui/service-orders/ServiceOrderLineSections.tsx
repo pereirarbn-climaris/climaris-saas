@@ -41,6 +41,21 @@ const inputStyle: React.CSSProperties = {
   fontSize: "var(--font-size-sm)",
 };
 
+const sectionTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: "var(--font-size-lg)",
+};
+
+const sectionSubtitleStyle: React.CSSProperties = {
+  margin: "0.35rem 0 0",
+  fontSize: "var(--font-size-sm)",
+  color: "var(--color-text-muted)",
+};
+
+const sectionBodyStyle: React.CSSProperties = {
+  marginTop: "var(--form-card-subtitle-to-body)",
+};
+
 export interface ServiceOrderLineSectionsProps {
   servicos: ServiceLineDraft[];
   pecas: ProductLineDraft[];
@@ -55,6 +70,8 @@ export interface ServiceOrderLineSectionsProps {
   showProductLines?: boolean;
   equipamentosCliente: Equipamento[];
   equipamentosIds: string[];
+  /** Vínculo serviço × equipamento — só após a OS existir (técnico em campo). */
+  showEquipmentServices?: boolean;
 }
 
 export function ServiceOrderLineSections({
@@ -69,6 +86,7 @@ export function ServiceOrderLineSections({
   showProductLines = true,
   equipamentosCliente = [],
   equipamentosIds = [],
+  showEquipmentServices = true,
 }: ServiceOrderLineSectionsProps) {
   const canEditLineFields = canEditLines && !readOnly;
   const canEditEquipmentLinks = canEditLines;
@@ -147,11 +165,12 @@ export function ServiceOrderLineSections({
           boxShadow: "var(--card-shadow)",
         }}
       >
-        <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Serviços solicitados</h3>
-        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+        <h3 style={sectionTitleStyle}>Serviços solicitados</h3>
+        <p style={sectionSubtitleStyle}>
           Itens do catálogo de serviços com quantidade e preço unitário editáveis.
         </p>
 
+        <div style={sectionBodyStyle}>
         {canEditLineFields ? (
           <CatalogCombobox
             id="os-add-service"
@@ -283,6 +302,7 @@ export function ServiceOrderLineSections({
           label="Total mão de obra"
           value={servicos.reduce((s, l) => s + Math.max(l.quantity, 1) * Math.max(0, l.unitPrice), 0)}
         />
+        </div>
       </section>
 
       {showProductLines ? (
@@ -294,17 +314,18 @@ export function ServiceOrderLineSections({
             boxShadow: "var(--card-shadow)",
           }}
         >
-          <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Peças / insumos utilizados</h3>
-          <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
-            Produtos do estoque consumidos nesta ordem de serviço.
+          <h3 style={sectionTitleStyle}>Produtos utilizados</h3>
+          <p style={sectionSubtitleStyle}>
+            Produtos do catálogo vinculados a esta ordem de serviço.
           </p>
 
+          <div style={sectionBodyStyle}>
           {canEditLineFields ? (
             <CatalogCombobox
               id="os-add-product"
               items={productComboboxItems}
               onPick={addProductById}
-              placeholder="Adicionar produto do estoque…"
+              placeholder="Adicionar produto do catálogo…"
               searchPlaceholder="Pesquisar produto…"
               emptyMessage="Nenhum produto encontrado."
             />
@@ -321,12 +342,14 @@ export function ServiceOrderLineSections({
             tdStyle={tdStyle}
           />
           <TotalRow
-            label="Total peças"
+            label="Total produtos"
             value={pecas.reduce((s, l) => s + Math.max(l.quantity, 1) * Math.max(0, l.unitPrice), 0)}
           />
+          </div>
         </section>
       ) : null}
 
+      {showEquipmentServices ? (
       <section
         style={{
           backgroundColor: "var(--color-surface-elevated)",
@@ -335,12 +358,13 @@ export function ServiceOrderLineSections({
           boxShadow: "var(--card-shadow)",
         }}
       >
-        <h3 style={{ margin: "0 0 0.35rem", fontSize: "var(--font-size-lg)" }}>Serviços por equipamento</h3>
-        <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+        <h3 style={sectionTitleStyle}>Serviços por equipamento</h3>
+        <p style={sectionSubtitleStyle}>
           {selectedEquipments.length > 0
             ? "Marque em quais aparelhos cada linha de serviço foi executada. A quantidade do serviço aumenta automaticamente conforme você vincula aparelhos."
             : "Opcional: selecione equipamentos na seção acima para vincular serviços a aparelhos específicos."}
         </p>
+        <div style={sectionBodyStyle}>
         {selectedEquipments.length === 0 ? (
           <p
             style={{
@@ -396,7 +420,9 @@ export function ServiceOrderLineSections({
             />
           </>
         )}
+        </div>
       </section>
+      ) : null}
     </>
   );
 }

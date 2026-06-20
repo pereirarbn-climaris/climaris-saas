@@ -440,6 +440,7 @@ export type ClientEquipmentUpdatePayload = {
   installation_date?: string | null;
   is_active?: boolean;
   client_site_id?: number | null;
+  qrcode_code_id?: string | null;
   components?: Array<{ id: string; serial_number: string | null }>;
 };
 

@@ -20,9 +20,19 @@ import {
 import type { ProductOut } from '../../../api/products'
 import type { ServiceOut } from '../../../api/services'
 import type { SuggestedSlotOut } from '../../../api/serviceOrders'
+import type { ServiceOrderMissingRequirement } from '../../../types/serviceOrders'
+import { ComplianceBlockedAlert } from '../../service-orders/ComplianceBlockedAlert'
+import { ServiceOrderForceCloseAdmin } from '../../service-orders/ServiceOrderForceCloseAdmin'
 import { computeEstimatedMinutesFromLines } from '../../../lib/serviceOrderEstimatedTime'
 import type { PmocEstimatedTimeOut } from '../../../api/pmoc'
 import { LaudoAndChecklistTab } from '../../serviceOrders/LaudoAndChecklistTab'
+import { ServiceOrderGarantiaForm } from '../../serviceOrders/ServiceOrderGarantiaForm'
+import {
+  EMPTY_GARANTIA,
+  normalizeGarantiaFields,
+  prefillGarantiaFromEquipments,
+  type ServiceOrderGarantiaFields,
+} from '../../../lib/serviceOrderGarantia'
 import { addMinutesToTimeString } from '../../../lib/pmocOsSchedule'
 import {
   computeLaborTotal,
@@ -175,6 +185,8 @@ export interface ServiceOrderData {
   clientSignatureName?: string | null
   clientSignatureAt?: string | null
   clientSignatureGeo?: { lat: number; lng: number } | null
+  /** Dados de garantia — OS tipo instalação */
+  garantia: ServiceOrderGarantiaFields
 }
 
 export interface ServiceOrderFormViewProps {
@@ -198,6 +210,8 @@ export interface ServiceOrderFormViewProps {
   canEditGeneral?: boolean
   /** Laudo técnico e checklist (admin ou técnico responsável) */
   canEditLaudo?: boolean
+  /** Garantia em OS de instalação (admin, recepção ou técnico responsável) */
+  canEditGarantia?: boolean
   /** Modo do formulário */
   mode: 'create' | 'edit'
   /** Loading state */
@@ -234,8 +248,12 @@ export interface ServiceOrderFormViewProps {
   isCancellingOrder?: boolean
   /** Admin/recepção: concluir OS agendada/em andamento sem passar pelo fluxo de assinatura */
   canCompleteOrder?: boolean
-  onCompleteOrder?: () => void | Promise<void>
+  onCompleteOrder?: (options?: { forceClose?: boolean }) => void | Promise<void>
   isCompletingOrder?: boolean
+  complianceBlock?: ServiceOrderMissingRequirement[] | null
+  digitalWorkOrderId?: string | null
+  isAdmin?: boolean
+  technicianMode?: boolean
   /** Rótulo do badge financeiro no header (ex.: Pago, Pendente). */
   financePaymentLabel?: string | null
   /** Badge de margem de contribuição (insumos vs receita). */
@@ -1014,6 +1032,7 @@ const ValueSummary: React.FC<ValueSummaryProps> = ({
     descricaoProblema: '',
     diagnosticoTecnico: '',
     checklist: [],
+    garantia: EMPTY_GARANTIA,
   })
   const valorTotal = Math.max(0, subtotal - discountPreview)
   
@@ -1118,7 +1137,7 @@ const FormCard: React.FC<FormCardProps> = ({ icon, title, subtitle, children }) 
         {subtitle ? <CardDescription>{subtitle}</CardDescription> : null}
       </div>
     </CardHeader>
-    <CardContent style={{ paddingTop: 0 }}>{children}</CardContent>
+    <CardContent style={{ paddingTop: 'var(--form-card-subtitle-to-body)' }}>{children}</CardContent>
   </Card>
 )
 
@@ -1137,6 +1156,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   canEditLines = true,
   canEditGeneral = true,
   canEditLaudo = true,
+  canEditGarantia = true,
   mode,
   isLoading = false,
   onSave,
@@ -1156,6 +1176,10 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   canCompleteOrder = false,
   onCompleteOrder,
   isCompletingOrder = false,
+  complianceBlock = null,
+  digitalWorkOrderId = null,
+  isAdmin = false,
+  technicianMode = false,
   financePaymentLabel = null,
   profitabilityBadge = null,
   financeSection = null,
@@ -1205,6 +1229,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     clientSignatureName: laudo?.clientSignatureName ?? serviceOrder?.clientSignatureName ?? null,
     clientSignatureAt: laudo?.clientSignatureAt ?? serviceOrder?.clientSignatureAt ?? null,
     clientSignatureGeo: laudo?.clientSignatureGeo ?? serviceOrder?.clientSignatureGeo ?? null,
+    garantia: normalizeGarantiaFields(serviceOrder?.garantia),
   }})
 
 
@@ -1212,8 +1237,18 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   const [cancelScheduleOpen, setCancelScheduleOpen] = useState(false)
   const [cancelOrderOpen, setCancelOrderOpen] = useState(false)
   const [completeOrderOpen, setCompleteOrderOpen] = useState(false)
+  const [forceCloseWithoutCompliance, setForceCloseWithoutCompliance] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const savedSnapshotRef = useRef('')
+
+  const hasComplianceBlock = Boolean(complianceBlock && complianceBlock.length > 0)
+  const canConfirmComplete = !hasComplianceBlock || (isAdmin && forceCloseWithoutCompliance)
+
+  useEffect(() => {
+    if (hasComplianceBlock) {
+      setCompleteOrderOpen(true)
+    }
+  }, [hasComplianceBlock])
 
   const confirmCancelSchedule = useCallback(async () => {
     if (!onCancelSchedule) return
@@ -1223,9 +1258,14 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
 
   const confirmCompleteOrder = useCallback(async () => {
     if (!onCompleteOrder) return
-    setCompleteOrderOpen(false)
-    await onCompleteOrder()
-  }, [onCompleteOrder])
+    try {
+      await onCompleteOrder({ forceClose: isAdmin && forceCloseWithoutCompliance })
+      setCompleteOrderOpen(false)
+      setForceCloseWithoutCompliance(false)
+    } catch {
+      /* Mantém o diálogo aberto para exibir pendências de compliance. */
+    }
+  }, [onCompleteOrder, isAdmin, forceCloseWithoutCompliance])
 
   const confirmCancelOrder = useCallback(async () => {
     if (!onCancelOrder) return
@@ -1279,6 +1319,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
       clientSignatureName: laudoBaseline.clientSignatureName ?? null,
       clientSignatureAt: laudoBaseline.clientSignatureAt ?? null,
       clientSignatureGeo: laudoBaseline.clientSignatureGeo ?? null,
+      garantia: normalizeGarantiaFields(serviceOrder.garantia),
     }
     savedSnapshotRef.current = serializeServiceOrderFormSnapshot(baseline)
   }, [serviceOrder])
@@ -1323,6 +1364,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
       clientSignatureName: laudo.clientSignatureName ?? null,
       clientSignatureAt: laudo.clientSignatureAt ?? null,
       clientSignatureGeo: laudo.clientSignatureGeo ?? null,
+      garantia: normalizeGarantiaFields(serviceOrder.garantia),
     })
   }, [serviceOrder])
 
@@ -1347,12 +1389,12 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
 
   useEffect(() => {
     const labor = computeLaborTotal(formData.servicos)
-    const parts = inventoryEnabled ? computePartsTotal(formData.pecas) : 0
+    const parts = computePartsTotal(formData.pecas)
     setFormData((prev) => {
       if (prev.valorMaoDeObra === labor && prev.valorPecas === parts) return prev
       return { ...prev, valorMaoDeObra: labor, valorPecas: parts }
     })
-  }, [formData.servicos, formData.pecas, inventoryEnabled])
+  }, [formData.servicos, formData.pecas])
   
   const [errors, setErrors] = useState<Record<string, string>>({})
   
@@ -1412,6 +1454,41 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   const handleChecklistChange = useCallback((checklist: ChecklistItem[]) => {
     setFormData((prev) => ({ ...prev, checklist }))
   }, [])
+
+  const handleGarantiaChange = useCallback((patch: Partial<ServiceOrderGarantiaFields>) => {
+    setFormData((prev) => ({
+      ...prev,
+      garantia: { ...prev.garantia, ...patch },
+    }))
+  }, [])
+
+  const isInstalacao = formData.tipoServico === 'instalacao'
+  const secondaryTabLabel = isInstalacao ? 'Garantia' : 'Laudo Técnico'
+
+  const selectedEquipmentsForGarantia = useMemo(
+    () => equipamentosCliente.filter((e) => formData.equipamentosIds.includes(e.id)),
+    [equipamentosCliente, formData.equipamentosIds],
+  )
+
+  useEffect(() => {
+    if (!isInstalacao) return
+    setFormData((prev) => {
+      const prefill = prefillGarantiaFromEquipments(selectedEquipmentsForGarantia)
+      const next = { ...prev.garantia }
+      let changed = false
+      const apply = (key: 'numeroSerie' | 'marcaModelo' | 'capacidade' | 'localInstalacao', value?: string) => {
+        if (value?.trim() && !next[key].trim()) {
+          next[key] = value
+          changed = true
+        }
+      }
+      apply('numeroSerie', prefill.numeroSerie)
+      apply('marcaModelo', prefill.marcaModelo)
+      apply('capacidade', prefill.capacidade)
+      apply('localInstalacao', prefill.localInstalacao)
+      return changed ? { ...prev, garantia: next } : prev
+    })
+  }, [isInstalacao, selectedEquipmentsForGarantia])
   
   const initialStatus = serviceOrder?.status ?? 'pendente'
 
@@ -1527,6 +1604,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
         descontoTipo: 'fixed',
         descontoValor: 0,
         observacoesInternas: '',
+        garantia: EMPTY_GARANTIA,
       })
     }
     return serializeServiceOrderFormSnapshot(formData) !== savedSnapshotRef.current
@@ -1554,7 +1632,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
 
   const headerLead = useMemo(() => {
     if (mode === 'create') {
-      return 'Cadastre cliente, serviços, equipamentos e agenda da ordem de serviço.'
+      return 'Defina status, cliente, serviços e agenda. Equipamentos e execução por aparelho ficam para após criar a OS.'
     }
     const parts: string[] = []
     if (selectedCliente?.nome) {
@@ -1698,11 +1776,43 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'dados' | 'laudo')}>
           <TabsList>
             <TabsTrigger value="dados">Dados Gerais</TabsTrigger>
-            <TabsTrigger value="laudo">Laudo Técnico</TabsTrigger>
+            <TabsTrigger value="laudo">{secondaryTabLabel}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dados">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+          <FormCard
+            icon={<Icons.Clipboard style={{ width: 'var(--icon-size-md)', height: 'var(--icon-size-md)' }} />}
+            title="Status e tipo"
+            subtitle="Situação da OS e classificação do serviço"
+          >
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: 'var(--form-grid-column-gap)',
+                maxWidth: '640px',
+              }}
+            >
+              <FormField label="Status">
+                <Select
+                  options={statusOptions}
+                  value={formData.status}
+                  onChange={(v) => updateField('status', v as ServiceOrderStatus)}
+                  disabled={!canEditGeneral}
+                />
+              </FormField>
+              <FormField label="Tipo de Serviço">
+                <Select
+                  options={tipoServicoOptions}
+                  value={formData.tipoServico}
+                  onChange={(v) => updateField('tipoServico', v as ServiceType)}
+                  disabled={!canEditGeneral}
+                />
+              </FormField>
+            </div>
+          </FormCard>
+
           <FormCard
             icon={<Icons.User style={{ width: 'var(--icon-size-md)', height: 'var(--icon-size-md)' }} />}
             title="Cliente"
@@ -1740,17 +1850,19 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             onPecasChange={(pecas) => setFormData((prev) => ({ ...prev, pecas }))}
             servicesCatalog={servicesCatalog}
             productsCatalog={productsCatalog}
-            showProductLines={inventoryEnabled}
+            showProductLines
             canEditLines={canEditLines}
             readOnly={linesReadOnly}
             equipamentosCliente={equipamentosCliente}
             equipamentosIds={formData.equipamentosIds}
+            showEquipmentServices={mode === 'edit'}
           />
           
+          {mode === 'edit' ? (
           <FormCard
             icon={<Icons.Snowflake style={{ width: 'var(--icon-size-md)', height: 'var(--icon-size-md)' }} />}
             title="Equipamentos"
-            subtitle="Selecione os aparelhos que farão parte desta OS"
+            subtitle="Aparelhos atendidos — o técnico seleciona o que foi feito em cada um"
           >
             {!formData.clienteId ? (
               <div 
@@ -1808,6 +1920,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               </>
             )}
           </FormCard>
+          ) : null}
 
           <ServiceOrderSchedulingPanel
               key={schedulingPanelKey}
@@ -1832,65 +1945,24 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             />
 
           <FormCard
-            icon={<Icons.Clipboard style={{ width: 'var(--icon-size-md)', height: 'var(--icon-size-md)' }} />}
-            title="Status e tipo"
-            subtitle="Situação da OS e classificação do serviço"
-          >
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                gap: 'var(--form-grid-column-gap)',
-              }}
-            >
-              <FormField label="Status">
-                <Select
-                  options={statusOptions}
-                  value={formData.status}
-                  onChange={(v) => updateField('status', v as ServiceOrderStatus)}
-                  disabled={!canEditGeneral}
-                />
-              </FormField>
-              <FormField label="Tipo de Serviço">
-                <Select
-                  options={tipoServicoOptions}
-                  value={formData.tipoServico}
-                  onChange={(v) => updateField('tipoServico', v as ServiceType)}
-                  disabled={!canEditGeneral}
-                />
-              </FormField>
-            </div>
-          </FormCard>
-
-          <FormCard
             icon={<Icons.DollarSign style={{ width: 'var(--icon-size-md)', height: 'var(--icon-size-md)' }} />}
             title="Fechamento e Valores"
             subtitle="Desconto, totais e observações internas"
           >
-            <div 
+            <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                gap: 'var(--space-6)',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr)) minmax(240px, 300px)',
+                columnGap: 'var(--form-grid-column-gap)',
+                rowGap: 'var(--form-grid-row-gap)',
+                alignItems: 'start',
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--form-field-gap-loose)' }}>
-                {inventoryEnabled ? (
-                  <FormField label="Valor das Peças" hint="Calculado automaticamente a partir das peças/insumos">
-                    <Input
-                      type="text"
-                      value={formatCurrency(formData.valorPecas)}
-                      readOnly
-                      disabled
-                      icon={<Icons.DollarSign style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
-                    />
-                  </FormField>
-                ) : null}
-
-                <FormField label="Valor da Mão de Obra" hint="Calculado automaticamente a partir dos serviços">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--form-field-gap)' }}>
+                <FormField label="Valor das Peças" hint="Calculado automaticamente a partir dos produtos">
                   <Input
                     type="text"
-                    value={formatCurrency(formData.valorMaoDeObra)}
+                    value={formatCurrency(formData.valorPecas)}
                     readOnly
                     disabled
                     icon={<Icons.DollarSign style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
@@ -1907,7 +1979,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                       : 'Valor fixo em reais descontado do subtotal'
                   }
                 >
-                  <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'stretch' }}>
+                  <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'stretch', maxWidth: '280px' }}>
                     <select
                       value={formData.descontoTipo ?? 'fixed'}
                       onChange={(e) =>
@@ -1920,9 +1992,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                         padding: '0 var(--input-padding-x)',
                         fontSize: 'var(--font-size-base)',
                         fontWeight: 600,
-                        color: 'var(--color-text)',
-                        backgroundColor: 'var(--input-bg)',
-                        border: 'var(--input-border)',
+                        color: 'var(--color-error, #dc2626)',
+                        backgroundColor: 'rgba(220, 38, 38, 0.04)',
+                        border: '1px solid var(--color-error, #dc2626)',
                         borderRadius: 'var(--input-radius)',
                         cursor: 'pointer',
                       }}
@@ -1941,39 +2013,63 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                       }
                       disabled={linesReadOnly && !canEditGeneral}
                       placeholder={formData.descontoTipo === 'percent' ? '0' : '0,00'}
+                      style={{
+                        borderColor: 'var(--color-error, #dc2626)',
+                        backgroundColor: 'rgba(220, 38, 38, 0.04)',
+                      }}
                     />
                   </div>
                 </FormField>
-                
-                <FormField label="Observações Internas" hint="Notas internas (não aparecem no relatório)">
-                  <Textarea
-                    value={formData.observacoesInternas || ''}
-                    onChange={(e) => updateField('observacoesInternas', e.target.value)}
-                    placeholder="Observações internas da equipe..."
-                    rows={3}
-                  />
-                </FormField>
               </div>
-              
-              <div>
-                <p 
+
+              <FormField label="Valor da Mão de Obra" hint="Calculado automaticamente a partir dos serviços">
+                <Input
+                  type="text"
+                  value={formatCurrency(formData.valorMaoDeObra)}
+                  readOnly
+                  disabled
+                  icon={<Icons.DollarSign style={{ width: 'var(--icon-size-sm)', height: 'var(--icon-size-sm)' }} />}
+                />
+              </FormField>
+
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--form-label-to-control)',
+                }}
+              >
+                <span
                   style={{
                     fontSize: 'var(--font-size-sm)',
                     fontWeight: 'var(--font-weight-medium)',
                     color: 'var(--color-text)',
-                    marginBottom: 'var(--space-3)',
+                    lineHeight: 1.25,
                   }}
                 >
                   Resumo dos Valores
-                </p>
+                </span>
                 <ValueSummary
                   valorPecas={formData.valorPecas}
                   valorMaoDeObra={formData.valorMaoDeObra}
                   descontoTipo={formData.descontoTipo ?? 'fixed'}
                   descontoValor={formData.descontoValor ?? 0}
-                  showParts={inventoryEnabled}
+                  showParts
                 />
               </div>
+
+              <FormField
+                label="Observações Internas"
+                hint="Notas internas (não aparecem no relatório)"
+                fullWidth
+              >
+                <Textarea
+                  value={formData.observacoesInternas || ''}
+                  onChange={(e) => updateField('observacoesInternas', e.target.value)}
+                  placeholder="Observações internas da equipe..."
+                  rows={3}
+                />
+              </FormField>
             </div>
           </FormCard>
 
@@ -1982,23 +2078,39 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
           </TabsContent>
 
           <TabsContent value="laudo">
-            {canEditLaudo ? (
-              <LaudoAndChecklistTab
-                formData={formData}
-                canEdit={canEditLaudo}
-                errors={errors}
-                selectedClienteNome={selectedCliente?.nome}
-                onFieldChange={updateField}
-                onChecklistChange={handleChecklistChange}
-                onSaveLaudo={onSaveLaudo ? () => onSaveLaudo(formData) : undefined}
-                onGenerateLaudoPdf={onGenerateLaudoPdf}
-                isSavingLaudo={isSavingLaudo}
-                isGeneratingLaudoPdf={isGeneratingLaudoPdf}
-                showSignature={formData.status === 'em_andamento' || formData.status === 'concluida'}
-              />
+            {(isInstalacao ? canEditGarantia : canEditLaudo) ? (
+              isInstalacao ? (
+                <ServiceOrderGarantiaForm
+                  formData={formData}
+                  canEdit={canEditGarantia}
+                  errors={errors}
+                  selectedClienteNome={selectedCliente?.nome}
+                  onFieldChange={updateField}
+                  onGarantiaChange={handleGarantiaChange}
+                  onSaveGarantia={onSaveLaudo ? () => onSaveLaudo(formData) : undefined}
+                  isSavingGarantia={isSavingLaudo}
+                  showSignature={formData.status === 'em_andamento' || formData.status === 'concluida'}
+                />
+              ) : (
+                <LaudoAndChecklistTab
+                  formData={formData}
+                  canEdit={canEditLaudo}
+                  errors={errors}
+                  selectedClienteNome={selectedCliente?.nome}
+                  onFieldChange={updateField}
+                  onChecklistChange={handleChecklistChange}
+                  onSaveLaudo={onSaveLaudo ? () => onSaveLaudo(formData) : undefined}
+                  onGenerateLaudoPdf={onGenerateLaudoPdf}
+                  isSavingLaudo={isSavingLaudo}
+                  isGeneratingLaudoPdf={isGeneratingLaudoPdf}
+                  showSignature={formData.status === 'em_andamento' || formData.status === 'concluida'}
+                />
+              )
             ) : (
               <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-                Você não tem permissão para editar o laudo desta ordem de serviço.
+                {isInstalacao
+                  ? 'Você não tem permissão para editar a garantia desta ordem de serviço.'
+                  : 'Você não tem permissão para editar o laudo desta ordem de serviço.'}
               </p>
             )}
           </TabsContent>
@@ -2167,7 +2279,13 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={completeOrderOpen} onOpenChange={setCompleteOrderOpen}>
+      <AlertDialog
+        open={completeOrderOpen}
+        onOpenChange={(open) => {
+          setCompleteOrderOpen(open)
+          if (!open) setForceCloseWithoutCompliance(false)
+        }}
+      >
         <AlertDialogContent labelledBy="os-complete-order-title" describedBy="os-complete-order-desc">
           <AlertDialogHeader>
             <AlertDialogTitle id="os-complete-order-title">Concluir ordem de serviço?</AlertDialogTitle>
@@ -2177,12 +2295,35 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               {inventoryEnabled ? " e consome estoque reservado" : ""} — sem exigir assinatura do cliente.
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          {hasComplianceBlock && orderId ? (
+            <ComplianceBlockedAlert
+              missingRequirements={complianceBlock ?? []}
+              serviceOrderId={Number(orderId)}
+              digitalWorkOrderId={digitalWorkOrderId}
+              technicianMode={technicianMode}
+            />
+          ) : null}
+
+          {isAdmin ? (
+            <ServiceOrderForceCloseAdmin
+              checked={forceCloseWithoutCompliance}
+              onChange={setForceCloseWithoutCompliance}
+            />
+          ) : null}
+
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setCompleteOrderOpen(false)} disabled={isCompletingOrder}>
+            <AlertDialogCancel
+              onClick={() => {
+                setCompleteOrderOpen(false)
+                setForceCloseWithoutCompliance(false)
+              }}
+              disabled={isCompletingOrder}
+            >
               Voltar
             </AlertDialogCancel>
             <AlertDialogAction
-              disabled={isCompletingOrder}
+              disabled={isCompletingOrder || !canConfirmComplete}
               onClick={() => void confirmCompleteOrder()}
             >
               {isCompletingOrder ? 'Concluindo…' : 'Sim, concluir OS'}

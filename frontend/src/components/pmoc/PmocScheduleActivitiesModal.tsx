@@ -28,6 +28,7 @@ import {
 } from "../../lib/pmocOsSchedule";
 import { formatEquipmentLocationLabel } from "../../lib/equipmentLocation";
 import { mapTechniciansToFormView, viewDataToCreatePayload } from "../../lib/serviceOrderFormViewAdapter";
+import { EMPTY_GARANTIA } from "../../lib/serviceOrderGarantia";
 import { toast } from "../../lib/toast";
 import type { ServiceOrderData } from "../v0-ui/service-orders/ServiceOrderFormView";
 import styles from "./PmocScheduleActivitiesModal.module.css";
@@ -324,6 +325,7 @@ export function PmocScheduleActivitiesModal({
         valorPecas: 0,
         valorMaoDeObra: servicos.reduce((s, l) => s + Math.max(l.quantity, 1) * l.unitPrice, 0),
         observacoesInternas: buildPmocRtNotes(plan),
+        garantia: EMPTY_GARANTIA,
       };
 
       const payload = viewDataToCreatePayload(viewData, {

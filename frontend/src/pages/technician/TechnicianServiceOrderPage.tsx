@@ -6,10 +6,12 @@ import { listProducts } from "../../api/products";
 import { listServices } from "../../api/services";
 import {
   getServiceOrder,
+  isServiceOrderComplianceBlockedError,
   patchServiceOrderStatus,
   postServiceOrderServiceItem,
 } from "../../api/serviceOrders";
-import type { ServiceOrderOut } from "../../types/serviceOrders";
+import type { ServiceOrderOut, ServiceOrderMissingRequirement } from "../../types/serviceOrders";
+import { ComplianceBlockedAlert } from "../../components/service-orders/ComplianceBlockedAlert";
 import { API_MAX_PAGE_LIMIT } from "../../lib/apiPagination";
 import {
   loadCompletedServiceItemIds,
@@ -37,6 +39,8 @@ export function TechnicianServiceOrderPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [complianceBlock, setComplianceBlock] = useState<ServiceOrderMissingRequirement[] | null>(null);
+  const [digitalWorkOrderId, setDigitalWorkOrderId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   useEffect(() => {
@@ -51,7 +55,7 @@ export function TechnicianServiceOrderPage() {
       try {
         const [row, products, services] = await Promise.all([
           getServiceOrder(idNum, { bustCache: true }),
-          inventoryEnabled ? listProducts({ limit: API_MAX_PAGE_LIMIT }) : Promise.resolve([]),
+          listProducts({ limit: API_MAX_PAGE_LIMIT }),
           listServices({ limit: API_MAX_PAGE_LIMIT }),
         ]);
         if (cancelled) return;
@@ -82,7 +86,7 @@ export function TechnicianServiceOrderPage() {
     return () => {
       cancelled = true;
     };
-  }, [idNum, inventoryEnabled]);
+  }, [idNum]);
 
   const readOnly = useMemo(() => {
     if (!order) return true;
@@ -140,11 +144,17 @@ export function TechnicianServiceOrderPage() {
     if (!order) return;
     setBusy(true);
     setToast(null);
+    setComplianceBlock(null);
     try {
       const updated = await patchServiceOrderStatus(order.id, "done");
       setOrder(updated);
       setToast({ kind: "ok", text: "OS concluída com sucesso." });
     } catch (e) {
+      if (isServiceOrderComplianceBlockedError(e)) {
+        setComplianceBlock(e.missingRequirements);
+        setDigitalWorkOrderId(e.digitalWorkOrderId);
+        return;
+      }
       setToast({ kind: "err", text: e instanceof Error ? e.message : "Erro ao concluir a OS." });
     } finally {
       setBusy(false);
@@ -186,6 +196,15 @@ export function TechnicianServiceOrderPage() {
 
       {toast ? (
         <p className={`${styles.toast} ${toast.kind === "ok" ? styles.toastOk : styles.toastErr}`}>{toast.text}</p>
+      ) : null}
+
+      {complianceBlock && order ? (
+        <ComplianceBlockedAlert
+          missingRequirements={complianceBlock}
+          serviceOrderId={order.id}
+          digitalWorkOrderId={digitalWorkOrderId}
+          technicianMode
+        />
       ) : null}
 
       <TechnicianServiceOrderView
