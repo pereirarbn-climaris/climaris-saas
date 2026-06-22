@@ -28,7 +28,8 @@ from models import (
     CampaignExternalLead,
     CampaignLog,
     Client,
-    HistoricoServico,
+    OrderStatus,
+    ServiceOrder,
     Tenant,
     User,
     WhatsappMessageStatus,
@@ -175,22 +176,26 @@ def segmented_clients_query(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="segment_kind inválido.")
 
     days = max(1, min(int(segment_params.get("inactive_days") or 180), 3650))
-    cutoff = date.today() - timedelta(days=days)
-    last_service_sq = (
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    last_os_sq = (
         select(
-            HistoricoServico.client_id.label("client_id"),
-            func.max(HistoricoServico.data_realizacao).label("last_service_date"),
+            ServiceOrder.client_id.label("client_id"),
+            func.max(ServiceOrder.closed_at).label("last_service_at"),
         )
-        .where(HistoricoServico.tenant_id == tenant_id)
-        .group_by(HistoricoServico.client_id)
+        .where(
+            ServiceOrder.tenant_id == tenant_id,
+            ServiceOrder.status == OrderStatus.DONE,
+            ServiceOrder.closed_at.isnot(None),
+        )
+        .group_by(ServiceOrder.client_id)
         .subquery()
     )
     return (
-        select(Client, last_service_sq.c.last_service_date)
-        .outerjoin(last_service_sq, last_service_sq.c.client_id == Client.id)
+        select(Client, last_os_sq.c.last_service_at)
+        .outerjoin(last_os_sq, last_os_sq.c.client_id == Client.id)
         .where(*base)
-        .where(or_(last_service_sq.c.last_service_date.is_(None), last_service_sq.c.last_service_date <= cutoff))
-        .order_by(last_service_sq.c.last_service_date.asc().nullsfirst(), Client.name.asc())
+        .where(or_(last_os_sq.c.last_service_at.is_(None), last_os_sq.c.last_service_at < cutoff))
+        .order_by(last_os_sq.c.last_service_at.asc().nullsfirst(), Client.name.asc())
     )
 
 
@@ -199,7 +204,7 @@ def manual_clients_query(db: Session, *, tenant_id: int, client_ids: list[int]):
     if not ids:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selecione ao menos um cliente.")
     return (
-        select(Client, func.cast(None, HistoricoServico.data_realizacao.type).label("last_service_date"))
+        select(Client, func.cast(None, ServiceOrder.closed_at.type).label("last_service_at"))
         .where(
             Client.tenant_id == tenant_id,
             Client.id.in_(ids),
@@ -224,8 +229,9 @@ def list_segmented_clients(
     total = int(db.execute(select(func.count()).select_from(count_sq)).scalar_one() or 0)
     rows = db.execute(stmt.limit(max(1, min(limit, 500)))).all()
     clients = []
-    for client, last_service_date in rows:
+    for client, last_service_at in rows:
         ok, dest = client_whatsapp_destination(client)
+        last_service_date = last_service_at.date() if isinstance(last_service_at, datetime) else last_service_at
         clients.append(
             {
                 "id": client.id,

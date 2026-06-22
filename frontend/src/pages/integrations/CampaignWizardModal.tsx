@@ -280,7 +280,7 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
                   onClick={() => changeSelectionMode("automatic")}
                 >
                   <p className={styles.selectCardTitle}>Segmentação automática</p>
-                  <p className={styles.selectCardSub}>Clientes inativos há X dias</p>
+                  <p className={styles.selectCardSub}>Sem OS concluída há X dias</p>
                 </button>
                 <button
                   type="button"
@@ -323,7 +323,7 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
                     onChange={(e) => setInactiveDays(Number(e.target.value) || 180)}
                   />
                   <span className={styles.hint} style={{ margin: 0 }}>
-                    dias sem atendimento
+                    dias sem OS concluída
                   </span>
                 </div>
               ) : (
