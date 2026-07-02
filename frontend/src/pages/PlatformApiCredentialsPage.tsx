@@ -4,7 +4,7 @@ import {
   upsertPlatformApiCredential,
   type PlatformApiCredentialOut,
 } from "../api/platformApiCredentials";
-import styles from "./saas/SaasDashboardPage.module.css";
+import styles from "./PlatformApiCredentialsPage.module.css";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -22,7 +22,10 @@ export function PlatformApiCredentialsPage() {
   const [cnpjaMsg, setCnpjaMsg] = useState("");
   const [awsMsg, setAwsMsg] = useState("");
   const [smtpMsg, setSmtpMsg] = useState("");
+  const [googleMsg, setGoogleMsg] = useState("");
   const [claudeMsg, setClaudeMsg] = useState("");
+  const [stripeMsg, setStripeMsg] = useState("");
+  const [whatsOfficialMsg, setWhatsOfficialMsg] = useState("");
 
   const [cnpjaDisplayName, setCnpjaDisplayName] = useState("CNPJA");
   const [cnpjaBaseUrl, setCnpjaBaseUrl] = useState("https://api.cnpja.com/");
@@ -55,16 +58,39 @@ export function PlatformApiCredentialsPage() {
   const [clearSmtpPassword, setClearSmtpPassword] = useState(false);
   const [savingSmtp, setSavingSmtp] = useState(false);
 
+  const [googleDisplayName, setGoogleDisplayName] = useState("Google OAuth");
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [clearGoogleClientSecret, setClearGoogleClientSecret] = useState(false);
+  const [savingGoogle, setSavingGoogle] = useState(false);
+
   const [claudeDisplayName, setClaudeDisplayName] = useState("IA Claude (Anthropic)");
   const [claudeModel, setClaudeModel] = useState("claude-haiku-4-5-20251001");
   const [claudeApiKey, setClaudeApiKey] = useState("");
   const [clearClaudeKey, setClearClaudeKey] = useState(false);
   const [savingClaude, setSavingClaude] = useState(false);
 
+  const [stripeDisplayName, setStripeDisplayName] = useState("Stripe (planos de acesso)");
+  const [stripeSecretKey, setStripeSecretKey] = useState("");
+  const [stripePublishableKey, setStripePublishableKey] = useState("");
+  const [stripeWebhookSecret, setStripeWebhookSecret] = useState("");
+  const [clearStripeSecretKey, setClearStripeSecretKey] = useState(false);
+  const [savingStripe, setSavingStripe] = useState(false);
+
+  const [whatsOfficialDisplayName, setWhatsOfficialDisplayName] = useState("WhatsApp API oficial (Meta)");
+  const [whatsOfficialAccessToken, setWhatsOfficialAccessToken] = useState("");
+  const [whatsOfficialPhoneNumberId, setWhatsOfficialPhoneNumberId] = useState("");
+  const [whatsOfficialApiVersion, setWhatsOfficialApiVersion] = useState("v20.0");
+  const [clearWhatsOfficialToken, setClearWhatsOfficialToken] = useState(false);
+  const [savingWhatsOfficial, setSavingWhatsOfficial] = useState(false);
+
   const cnpja = useMemo(() => rows.find((r) => r.provider_slug === "cnpja") ?? null, [rows]);
   const aws = useMemo(() => rows.find((r) => r.provider_slug === "aws-s3") ?? null, [rows]);
   const smtp = useMemo(() => rows.find((r) => r.provider_slug === "smtp") ?? null, [rows]);
+  const google = useMemo(() => rows.find((r) => r.provider_slug === "google-oauth") ?? null, [rows]);
   const claude = useMemo(() => rows.find((r) => r.provider_slug === "claude") ?? null, [rows]);
+  const stripe = useMemo(() => rows.find((r) => r.provider_slug === "stripe") ?? null, [rows]);
+  const whatsOfficial = useMemo(() => rows.find((r) => r.provider_slug === "whatsapp-official") ?? null, [rows]);
 
   async function refresh() {
     setPageErr("");
@@ -137,6 +163,14 @@ export function PlatformApiCredentialsPage() {
   }, [smtp?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!google) return;
+    setGoogleDisplayName(google.display_name || "Google OAuth");
+    setGoogleClientId(typeof google.extra_config?.client_id === "string" ? google.extra_config.client_id : "");
+    setGoogleClientSecret("");
+    setClearGoogleClientSecret(false);
+  }, [google?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!claude) return;
     setClaudeDisplayName(claude.display_name || "IA Claude (Anthropic)");
     setClaudeModel(
@@ -147,6 +181,34 @@ export function PlatformApiCredentialsPage() {
     setClaudeApiKey("");
     setClearClaudeKey(false);
   }, [claude?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!stripe) return;
+    setStripeDisplayName(stripe.display_name || "Stripe (planos de acesso)");
+    setStripePublishableKey(
+      typeof stripe.extra_config?.publishable_key === "string" ? stripe.extra_config.publishable_key : "",
+    );
+    setStripeWebhookSecret(
+      typeof stripe.extra_config?.webhook_secret === "string" ? stripe.extra_config.webhook_secret : "",
+    );
+    setStripeSecretKey("");
+    setClearStripeSecretKey(false);
+  }, [stripe?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!whatsOfficial) return;
+    setWhatsOfficialDisplayName(whatsOfficial.display_name || "WhatsApp API oficial (Meta)");
+    setWhatsOfficialPhoneNumberId(
+      typeof whatsOfficial.extra_config?.phone_number_id === "string" ? whatsOfficial.extra_config.phone_number_id : "",
+    );
+    setWhatsOfficialApiVersion(
+      typeof whatsOfficial.extra_config?.api_version === "string" && whatsOfficial.extra_config.api_version.trim()
+        ? whatsOfficial.extra_config.api_version
+        : "v20.0",
+    );
+    setWhatsOfficialAccessToken("");
+    setClearWhatsOfficialToken(false);
+  }, [whatsOfficial?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function onSubmitCnpja(e: FormEvent) {
     e.preventDefault();
@@ -280,6 +342,75 @@ export function PlatformApiCredentialsPage() {
     }
   }
 
+  async function onSubmitGoogle(e: FormEvent) {
+    e.preventDefault();
+    setPageErr("");
+    setGoogleMsg("");
+    if (!googleClientId.trim()) {
+      setGoogleMsg("Informe o Google Client ID.");
+      return;
+    }
+    setSavingGoogle(true);
+    try {
+      const saved = await upsertPlatformApiCredential("google-oauth", {
+        display_name: googleDisplayName.trim() || "Google OAuth",
+        api_base_url: "https://accounts.google.com",
+        api_key: googleClientSecret.trim() || undefined,
+        extra_config: {
+          client_id: googleClientId.trim(),
+        },
+        clear_api_key: clearGoogleClientSecret,
+      });
+      setGoogleClientSecret("");
+      setClearGoogleClientSecret(false);
+      setGoogleMsg(
+        saved.has_api_key
+          ? "Google OAuth salvo (Client ID + segredo)."
+          : "Google OAuth salvo sem segredo ativo (Client ID já disponível para login).",
+      );
+      await refresh();
+    } catch (error) {
+      setGoogleMsg(error instanceof Error ? error.message : "Não foi possível salvar Google OAuth.");
+    } finally {
+      setSavingGoogle(false);
+    }
+  }
+
+  async function onSubmitStripe(e: FormEvent) {
+    e.preventDefault();
+    setPageErr("");
+    setStripeMsg("");
+    setSavingStripe(true);
+    try {
+      const saved = await upsertPlatformApiCredential("stripe", {
+        display_name: stripeDisplayName.trim() || "Stripe (planos de acesso)",
+        api_base_url: "https://api.stripe.com",
+        api_key: stripeSecretKey.trim() || undefined,
+        extra_config: {
+          ...(stripe?.extra_config ?? {}),
+          ...(stripePublishableKey.trim() ? { publishable_key: stripePublishableKey.trim() } : {}),
+          ...(stripeWebhookSecret.trim() ? { webhook_secret: stripeWebhookSecret.trim() } : {}),
+        },
+        clear_api_key: clearStripeSecretKey,
+      });
+      setStripeSecretKey("");
+      setClearStripeSecretKey(false);
+      const hasWebhook = Boolean(stripeWebhookSecret.trim() || stripe?.extra_config?.webhook_secret);
+      setStripeMsg(
+        saved.has_api_key
+          ? hasWebhook
+            ? "Stripe salvo (secret key + webhook)."
+            : "Secret key salva. Informe o webhook secret para receber eventos de assinatura."
+          : "Configuração salva sem secret key ativa.",
+      );
+      await refresh();
+    } catch (error) {
+      setStripeMsg(error instanceof Error ? error.message : "Não foi possível salvar Stripe.");
+    } finally {
+      setSavingStripe(false);
+    }
+  }
+
   async function onSubmitClaude(e: FormEvent) {
     e.preventDefault();
     setPageErr("");
@@ -310,6 +441,39 @@ export function PlatformApiCredentialsPage() {
     }
   }
 
+  async function onSubmitWhatsOfficial(e: FormEvent) {
+    e.preventDefault();
+    setPageErr("");
+    setWhatsOfficialMsg("");
+    const phoneNumberId = whatsOfficialPhoneNumberId.trim();
+    if (!phoneNumberId) {
+      setWhatsOfficialMsg("Informe o Phone Number ID da Cloud API.");
+      return;
+    }
+    const apiVersion = whatsOfficialApiVersion.trim() || "v20.0";
+    setSavingWhatsOfficial(true);
+    try {
+      const saved = await upsertPlatformApiCredential("whatsapp-official", {
+        display_name: whatsOfficialDisplayName.trim() || "WhatsApp API oficial (Meta)",
+        api_base_url: "https://graph.facebook.com",
+        api_key: whatsOfficialAccessToken.trim() || undefined,
+        extra_config: {
+          phone_number_id: phoneNumberId,
+          api_version: apiVersion,
+        },
+        clear_api_key: clearWhatsOfficialToken,
+      });
+      setWhatsOfficialAccessToken("");
+      setClearWhatsOfficialToken(false);
+      setWhatsOfficialMsg(saved.has_api_key ? "Credenciais WhatsApp oficial salvas." : "Configuração salva sem token ativo.");
+      await refresh();
+    } catch (error) {
+      setWhatsOfficialMsg(error instanceof Error ? error.message : "Não foi possível salvar WhatsApp oficial.");
+    } finally {
+      setSavingWhatsOfficial(false);
+    }
+  }
+
   return (
     <div className={styles.panel}>
       <section className={styles.heroCard}>
@@ -317,7 +481,8 @@ export function PlatformApiCredentialsPage() {
           <p className={styles.eyebrow}>Operação · Integrações</p>
           <h2 className={styles.heroTitle}>Chaves APIs do SaaS</h2>
           <p className={styles.heroLead}>
-            CNPJA, AWS, SMTP e IA Claude ficam separados em blocos independentes. Assim, salvar um provedor nunca altera dados do outro.
+            CNPJA, AWS, SMTP, WhatsApp oficial, Google OAuth, Stripe e IA Claude ficam separados em blocos independentes. Assim, salvar um
+            provedor nunca altera dados do outro.
           </p>
         </div>
         <div className={styles.heroAccent} aria-hidden />
@@ -521,6 +686,182 @@ export function PlatformApiCredentialsPage() {
               {savingSmtp ? "Salvando..." : "Salvar SMTP"}
             </button>
             {smtpMsg ? <p className={styles.contactHint}>{smtpMsg}</p> : null}
+          </form>
+        </article>
+
+        <article className={styles.integrationCard}>
+          <div className={styles.integrationHeader}>
+            <h3 className={styles.cardTitle}>WhatsApp API oficial (Meta)</h3>
+            <span className={`${styles.badge} ${whatsOfficial?.has_api_key ? styles.badgeActive : styles.badgeSuspended}`}>
+              {whatsOfficial?.has_api_key ? "Conectado" : "Pendente"}
+            </span>
+          </div>
+          <p className={styles.integrationMeta}>
+            Usada no provedor oficial do WhatsApp em Operação &gt; WhatsApp. Última atualização:{" "}
+            {fmtDate(whatsOfficial?.key_updated_at ?? whatsOfficial?.updated_at ?? null)}
+          </p>
+          <form onSubmit={onSubmitWhatsOfficial} className={styles.section}>
+            <input
+              className={styles.link}
+              value={whatsOfficialDisplayName}
+              onChange={(e) => setWhatsOfficialDisplayName(e.target.value)}
+              placeholder="Nome de exibição"
+            />
+            <input className={styles.link} value="https://graph.facebook.com" disabled aria-readonly />
+            <input
+              className={styles.link}
+              value={whatsOfficialPhoneNumberId}
+              onChange={(e) => setWhatsOfficialPhoneNumberId(e.target.value)}
+              placeholder="Phone Number ID (Meta)"
+              autoComplete="off"
+            />
+            <input
+              className={styles.link}
+              value={whatsOfficialApiVersion}
+              onChange={(e) => setWhatsOfficialApiVersion(e.target.value)}
+              placeholder="Versão da API (ex.: v20.0)"
+              autoComplete="off"
+            />
+            <input
+              className={styles.link}
+              type="password"
+              value={whatsOfficialAccessToken}
+              onChange={(e) => setWhatsOfficialAccessToken(e.target.value)}
+              placeholder="Access Token permanente (vazio = manter)"
+              autoComplete="new-password"
+            />
+            <label className={styles.note}>
+              <input
+                type="checkbox"
+                checked={clearWhatsOfficialToken}
+                onChange={(e) => setClearWhatsOfficialToken(e.target.checked)}
+              />{" "}
+              Remover access token salvo
+            </label>
+            <button className={`${styles.link} ${styles.linkPrimary}`} disabled={savingWhatsOfficial} type="submit">
+              {savingWhatsOfficial ? "Salvando..." : "Salvar WhatsApp oficial"}
+            </button>
+            {whatsOfficialMsg ? <p className={styles.contactHint}>{whatsOfficialMsg}</p> : null}
+          </form>
+        </article>
+
+        <article className={styles.integrationCard}>
+          <div className={styles.integrationHeader}>
+            <h3 className={styles.cardTitle}>Google OAuth (login e cadastro)</h3>
+            <span
+              className={`${styles.badge} ${
+                googleClientId.trim() ? styles.badgeActive : styles.badgeSuspended
+              }`}
+            >
+              {googleClientId.trim() ? "Conectado" : "Pendente"}
+            </span>
+          </div>
+          <p className={styles.integrationMeta}>
+            Configure o Client ID do Google Cloud para liberar o botão &quot;Entrar com Google&quot; no login/cadastro.
+            Última atualização: {fmtDate(google?.key_updated_at ?? google?.updated_at ?? null)}
+          </p>
+          <form onSubmit={onSubmitGoogle} className={styles.section}>
+            <input
+              className={styles.link}
+              value={googleDisplayName}
+              onChange={(e) => setGoogleDisplayName(e.target.value)}
+              placeholder="Nome de exibição"
+            />
+            <input className={styles.link} value="https://accounts.google.com" disabled aria-readonly />
+            <input
+              className={styles.link}
+              value={googleClientId}
+              onChange={(e) => setGoogleClientId(e.target.value)}
+              placeholder="Google Client ID (obrigatório)"
+              autoComplete="off"
+            />
+            <input
+              className={styles.link}
+              type="password"
+              value={googleClientSecret}
+              onChange={(e) => setGoogleClientSecret(e.target.value)}
+              placeholder="Google Client Secret (opcional, vazio = manter)"
+              autoComplete="new-password"
+            />
+            <label className={styles.note}>
+              <input
+                type="checkbox"
+                checked={clearGoogleClientSecret}
+                onChange={(e) => setClearGoogleClientSecret(e.target.checked)}
+              />{" "}
+              Remover Client Secret salvo
+            </label>
+            <button className={`${styles.link} ${styles.linkPrimary}`} disabled={savingGoogle} type="submit">
+              {savingGoogle ? "Salvando..." : "Salvar Google OAuth"}
+            </button>
+            {googleMsg ? <p className={styles.contactHint}>{googleMsg}</p> : null}
+          </form>
+        </article>
+
+        <article className={styles.integrationCard}>
+          <div className={styles.integrationHeader}>
+            <h3 className={styles.cardTitle}>Stripe (planos de acesso)</h3>
+            <span className={`${styles.badge} ${stripe?.has_api_key ? styles.badgeActive : styles.badgeSuspended}`}>
+              {stripe?.has_api_key ? "Conectado" : "Pendente"}
+            </span>
+          </div>
+          <p className={styles.integrationMeta}>
+            Cobrança de planos SaaS e add-ons da loja. Webhook:{" "}
+            <code className={styles.inlineCode}>/api/v1/webhooks/stripe</code>. Última atualização:{" "}
+            {fmtDate(stripe?.key_updated_at ?? stripe?.updated_at ?? null)}
+          </p>
+          <form onSubmit={onSubmitStripe} className={styles.section}>
+            <input
+              className={styles.link}
+              value={stripeDisplayName}
+              onChange={(e) => setStripeDisplayName(e.target.value)}
+              placeholder="Nome de exibição"
+            />
+            <input className={styles.link} value="https://api.stripe.com" disabled aria-readonly />
+            <input
+              className={styles.link}
+              type="password"
+              value={stripeSecretKey}
+              onChange={(e) => setStripeSecretKey(e.target.value)}
+              placeholder="Secret key (sk_test_... ou sk_live_..., vazio = manter)"
+              autoComplete="new-password"
+            />
+            <input
+              className={styles.link}
+              type="password"
+              value={stripePublishableKey}
+              onChange={(e) => setStripePublishableKey(e.target.value)}
+              placeholder="Publishable key (pk_test_... ou pk_live_...)"
+              autoComplete="new-password"
+            />
+            <input
+              className={styles.link}
+              type="password"
+              value={stripeWebhookSecret}
+              onChange={(e) => setStripeWebhookSecret(e.target.value)}
+              placeholder="Webhook signing secret (whsec_...)"
+              autoComplete="new-password"
+            />
+            <p className={styles.note}>
+              No painel Stripe, crie o endpoint apontando para{" "}
+              <strong>https://beta.climaris.com.br/api/v1/webhooks/stripe</strong> (ou o domínio de produção) e
+              escute: <code className={styles.inlineCode}>checkout.session.completed</code>,{" "}
+              <code className={styles.inlineCode}>customer.subscription.*</code>,{" "}
+              <code className={styles.inlineCode}>invoice.paid</code>,{" "}
+              <code className={styles.inlineCode}>invoice.payment_failed</code>.
+            </p>
+            <label className={styles.note}>
+              <input
+                type="checkbox"
+                checked={clearStripeSecretKey}
+                onChange={(e) => setClearStripeSecretKey(e.target.checked)}
+              />{" "}
+              Remover secret key Stripe salva
+            </label>
+            <button className={`${styles.link} ${styles.linkPrimary}`} disabled={savingStripe} type="submit">
+              {savingStripe ? "Salvando..." : "Salvar Stripe"}
+            </button>
+            {stripeMsg ? <p className={styles.contactHint}>{stripeMsg}</p> : null}
           </form>
         </article>
 

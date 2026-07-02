@@ -29,7 +29,6 @@ import { PmocFormCard } from "../../components/pmoc/PmocFormCard";
 import { PmocPlanningTab } from "../../components/pmoc/PmocPlanningTab";
 import { PmocScheduleActivitiesModal } from "../../components/pmoc/PmocScheduleActivitiesModal";
 import { Button } from "../../components/ui/button";
-import { ToastHost } from "../../components/ToastHost";
 import { formatDurationMinutes } from "../../lib/formatDuration";
 import { pmocEstablishmentLabel, pmocIdentificationFields } from "../../lib/pmocEstablishment";
 import { importOfficialPmocTemplateActivities } from "../../lib/pmocOfficialTemplate";
@@ -42,6 +41,17 @@ import pmocStyles from "./PmocPages.module.css";
 import createStyles from "./PmocCreatePage.module.css";
 
 type Tab = PmocCreateTab;
+
+type EnvironmentDraftRow = {
+  id: string;
+  environmentName: string;
+  areaM2: string;
+  ceilingHeightM: string;
+  airVolumeM3: string;
+  avgOccupants: string;
+  activityType: string;
+  equipmentIds: number[];
+};
 
 const VALID_TABS: Tab[] = ["identification", "schedule", "air", "planning"];
 
@@ -111,9 +121,42 @@ export function PmocDetailPage() {
     responsible_name: "",
     responsible_council: "",
     responsible_registration: "",
+    responsible_formation: "",
     art_number: "",
+    maintenance_company: "",
     art_issued_at: "",
     next_air_analysis_due: "",
+  });
+  const [companyDraft, setCompanyDraft] = useState({
+    legalRepresentative: "",
+    stateRegistration: "",
+    activityExercised: "",
+    phone: "",
+    email: "",
+  });
+  const [buildingDraft, setBuildingDraft] = useState({
+    totalClimatizedAreaM2: "",
+    floorsCount: "",
+    avgOccupants: "",
+    operationHours: "",
+    occupancyType: "",
+  });
+  const [environmentDrafts, setEnvironmentDrafts] = useState<EnvironmentDraftRow[]>([
+    {
+      id: "env-1",
+      environmentName: "",
+      areaM2: "",
+      ceilingHeightM: "",
+      airVolumeM3: "",
+      avgOccupants: "",
+      activityType: "",
+      equipmentIds: [],
+    },
+  ]);
+  const [emergencyDraft, setEmergencyDraft] = useState({
+    powerOutageProcedure: "",
+    criticalFailureProcedure: "",
+    annualLoadReviewDue: "",
   });
   const [savingPlan, setSavingPlan] = useState(false);
   const [savingArtFields, setSavingArtFields] = useState(false);
@@ -175,6 +218,10 @@ export function PmocDetailPage() {
     setMsgOk("");
     try {
       const p = await getPmocPlan(pmocId);
+      const rtExtended =
+        typeof p.extras?.rt_extended === "object" && p.extras.rt_extended != null
+          ? (p.extras.rt_extended as Record<string, unknown>)
+          : {};
       setPlan(p);
       setDraft({
         title: p.title,
@@ -184,9 +231,80 @@ export function PmocDetailPage() {
         responsible_name: p.responsible_name ?? "",
         responsible_council: p.responsible_council ?? "",
         responsible_registration: p.responsible_registration ?? "",
+        responsible_formation: String(rtExtended.responsible_formation ?? ""),
         art_number: p.art_number ?? "",
+        maintenance_company: String(rtExtended.maintenance_company ?? ""),
         art_issued_at: toInputDate(p.art_issued_at),
         next_air_analysis_due: toInputDate(p.next_air_analysis_due),
+      });
+      const companyData =
+        typeof p.extras?.company_data === "object" && p.extras.company_data != null
+          ? (p.extras.company_data as Record<string, unknown>)
+          : {};
+      const buildingData =
+        typeof p.extras?.building_data === "object" && p.extras.building_data != null
+          ? (p.extras.building_data as Record<string, unknown>)
+          : {};
+      const emergencyData =
+        typeof p.extras?.emergency_plan === "object" && p.extras.emergency_plan != null
+          ? (p.extras.emergency_plan as Record<string, unknown>)
+          : {};
+      const environments = Array.isArray(p.extras?.environments_data)
+        ? (p.extras.environments_data as Array<Record<string, unknown>>)
+        : [];
+      const normalizedEnvironments: EnvironmentDraftRow[] =
+        environments.length > 0
+          ? environments.map((row, idx) => {
+              const rawIds = Array.isArray(row.equipment_ids)
+                ? row.equipment_ids
+                : row.equipment_id != null
+                  ? [row.equipment_id]
+                  : [];
+              const equipmentIds = rawIds
+                .map((value) => Number(value))
+                .filter((value, i, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === i);
+              return {
+                id: `env-${idx + 1}`,
+                environmentName: String(row.environment_name ?? ""),
+                areaM2: String(row.area_m2 ?? ""),
+                ceilingHeightM: String(row.ceiling_height_m ?? ""),
+                airVolumeM3: String(row.air_volume_m3 ?? ""),
+                avgOccupants: String(row.avg_occupants ?? ""),
+                activityType: String(row.activity_type ?? ""),
+                equipmentIds,
+              };
+            })
+          : [
+              {
+                id: "env-1",
+                environmentName: "",
+                areaM2: "",
+                ceilingHeightM: "",
+                airVolumeM3: "",
+                avgOccupants: "",
+                activityType: "",
+                equipmentIds: [],
+              },
+            ];
+      setCompanyDraft({
+        legalRepresentative: String(companyData.legal_representative ?? ""),
+        stateRegistration: String(companyData.state_registration ?? ""),
+        activityExercised: String(companyData.activity_exercised ?? ""),
+        phone: String(companyData.phone ?? ""),
+        email: String(companyData.email ?? ""),
+      });
+      setBuildingDraft({
+        totalClimatizedAreaM2: String(buildingData.total_climatized_area_m2 ?? ""),
+        floorsCount: String(buildingData.floors_count ?? ""),
+        avgOccupants: String(buildingData.avg_occupants ?? ""),
+        operationHours: String(buildingData.operation_hours ?? ""),
+        occupancyType: String(buildingData.occupancy_type ?? ""),
+      });
+      setEnvironmentDrafts(normalizedEnvironments);
+      setEmergencyDraft({
+        powerOutageProcedure: String(emergencyData.power_outage_procedure ?? ""),
+        criticalFailureProcedure: String(emergencyData.critical_failure_procedure ?? ""),
+        annualLoadReviewDue: String(p.extras?.annual_load_review_due ?? "").slice(0, 10),
       });
       const [eq, acts, ce] = await Promise.all([
         listPmocEquipments(pmocId),
@@ -340,6 +458,13 @@ export function PmocDetailPage() {
         art_number: draft.art_number.trim() || null,
         art_issued_at: draft.art_issued_at ? draft.art_issued_at : null,
         next_air_analysis_due: draft.next_air_analysis_due ? draft.next_air_analysis_due : null,
+        extras: {
+          ...plan.extras,
+          rt_extended: {
+            responsible_formation: draft.responsible_formation.trim(),
+            maintenance_company: draft.maintenance_company.trim(),
+          },
+        },
       });
       setPlan(updated);
       toast.success("Dados da ART e responsável técnico salvos.");
@@ -473,6 +598,42 @@ export function PmocDetailPage() {
           version_label: draft.version_label.trim(),
           law_reference_note: draft.law_reference_note.trim() || null,
           internal_notes: draft.internal_notes.trim() || null,
+          extras: {
+            ...plan.extras,
+            company_data: {
+              legal_representative: companyDraft.legalRepresentative.trim(),
+              state_registration: companyDraft.stateRegistration.trim(),
+              activity_exercised: companyDraft.activityExercised.trim(),
+              phone: companyDraft.phone.trim(),
+              email: companyDraft.email.trim(),
+            },
+            building_data: {
+              total_climatized_area_m2: buildingDraft.totalClimatizedAreaM2
+                ? Number(buildingDraft.totalClimatizedAreaM2)
+                : null,
+              floors_count: buildingDraft.floorsCount ? Number(buildingDraft.floorsCount) : null,
+              avg_occupants: buildingDraft.avgOccupants ? Number(buildingDraft.avgOccupants) : null,
+              operation_hours: buildingDraft.operationHours.trim(),
+              occupancy_type: buildingDraft.occupancyType.trim(),
+            },
+            environments_data: environmentDrafts
+              .filter((row) => row.environmentName.trim())
+              .map((row) => ({
+                environment_name: row.environmentName.trim(),
+                area_m2: row.areaM2 ? Number(row.areaM2) : null,
+                ceiling_height_m: row.ceilingHeightM ? Number(row.ceilingHeightM) : null,
+                air_volume_m3: row.airVolumeM3 ? Number(row.airVolumeM3) : null,
+                avg_occupants: row.avgOccupants ? Number(row.avgOccupants) : null,
+                activity_type: row.activityType.trim() || null,
+                equipment_ids: row.equipmentIds,
+                equipment_id: row.equipmentIds[0] ?? null,
+              })),
+            emergency_plan: {
+              power_outage_procedure: emergencyDraft.powerOutageProcedure.trim(),
+              critical_failure_procedure: emergencyDraft.criticalFailureProcedure.trim(),
+            },
+            annual_load_review_due: emergencyDraft.annualLoadReviewDue || "",
+          },
         });
         setPlan(updated);
         const orderedSelected = clientEquipments
@@ -496,6 +657,30 @@ export function PmocDetailPage() {
 
   function toggleEquip(id: number) {
     setSelectedEquipIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function updateEnvironmentDraft(id: string, patch: Partial<EnvironmentDraftRow>) {
+    setEnvironmentDrafts((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
+  function addEnvironmentDraft() {
+    setEnvironmentDrafts((rows) => [
+      ...rows,
+      {
+        id: `env-${Date.now()}-${rows.length}`,
+        environmentName: "",
+        areaM2: "",
+        ceilingHeightM: "",
+        airVolumeM3: "",
+        avgOccupants: "",
+        activityType: "",
+        equipmentIds: [],
+      },
+    ]);
+  }
+
+  function removeEnvironmentDraft(id: string) {
+    setEnvironmentDrafts((rows) => (rows.length <= 1 ? rows : rows.filter((row) => row.id !== id)));
   }
 
   /** Live BTU sum — recalculated on every checkbox toggle */
@@ -762,6 +947,230 @@ export function PmocDetailPage() {
                   rows={2}
                   value={draft.internal_notes}
                   onChange={(e) => setDraft((d) => ({ ...d, internal_notes: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+            </div>
+          </PmocFormCard>
+
+          <PmocFormCard
+            icon={<Building2 size={20} />}
+            title="Dados da empresa e edificação"
+            subtitle="Informações para gestão e conformidade do PMOC"
+          >
+            <div className={pmocStyles.grid2}>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Responsável legal</span>
+                <input
+                  className={loginStyles.input}
+                  value={companyDraft.legalRepresentative}
+                  onChange={(e) => setCompanyDraft((d) => ({ ...d, legalRepresentative: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Inscrição estadual</span>
+                <input
+                  className={loginStyles.input}
+                  value={companyDraft.stateRegistration}
+                  onChange={(e) => setCompanyDraft((d) => ({ ...d, stateRegistration: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Atividade exercida</span>
+                <input
+                  className={loginStyles.input}
+                  value={companyDraft.activityExercised}
+                  onChange={(e) => setCompanyDraft((d) => ({ ...d, activityExercised: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Área climatizada total (m²)</span>
+                <input
+                  type="number"
+                  className={loginStyles.input}
+                  value={buildingDraft.totalClimatizedAreaM2}
+                  onChange={(e) => setBuildingDraft((d) => ({ ...d, totalClimatizedAreaM2: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Nº pavimentos</span>
+                <input
+                  type="number"
+                  className={loginStyles.input}
+                  value={buildingDraft.floorsCount}
+                  onChange={(e) => setBuildingDraft((d) => ({ ...d, floorsCount: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Média de ocupantes</span>
+                <input
+                  type="number"
+                  className={loginStyles.input}
+                  value={buildingDraft.avgOccupants}
+                  onChange={(e) => setBuildingDraft((d) => ({ ...d, avgOccupants: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Horário de funcionamento</span>
+                <input
+                  className={loginStyles.input}
+                  value={buildingDraft.operationHours}
+                  onChange={(e) => setBuildingDraft((d) => ({ ...d, operationHours: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Tipo de ocupação</span>
+                <input
+                  className={loginStyles.input}
+                  value={buildingDraft.occupancyType}
+                  onChange={(e) => setBuildingDraft((d) => ({ ...d, occupancyType: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+            </div>
+          </PmocFormCard>
+
+          <PmocFormCard
+            icon={<Snowflake size={20} />}
+            title="Ambiente e contingência"
+            subtitle="Dados para operação técnica e cenários de emergência"
+          >
+            <div className={pmocStyles.grid2}>
+              {environmentDrafts.map((environment, index) => (
+                <div key={environment.id} style={{ gridColumn: "1 / -1", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "0.75rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                    <span className={pmocStyles.metaMuted}>Ambiente #{index + 1}</span>
+                    {canEdit && environmentDrafts.length > 1 ? (
+                      <Button type="button" variant="outline" onClick={() => removeEnvironmentDraft(environment.id)}>
+                        Remover
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className={pmocStyles.grid2}>
+                    <label className={formLayout.field}>
+                      <span className={pmocStyles.metaMuted}>Nome do ambiente</span>
+                      <input
+                        className={loginStyles.input}
+                        value={environment.environmentName}
+                        onChange={(e) => updateEnvironmentDraft(environment.id, { environmentName: e.target.value })}
+                        disabled={!canEdit}
+                      />
+                    </label>
+                    <label className={formLayout.field}>
+                      <span className={pmocStyles.metaMuted}>Área (m²)</span>
+                      <input
+                        type="number"
+                        className={loginStyles.input}
+                        value={environment.areaM2}
+                        onChange={(e) => updateEnvironmentDraft(environment.id, { areaM2: e.target.value })}
+                        disabled={!canEdit}
+                      />
+                    </label>
+                    <label className={formLayout.field}>
+                      <span className={pmocStyles.metaMuted}>Pé-direito (m)</span>
+                      <input
+                        type="number"
+                        className={loginStyles.input}
+                        value={environment.ceilingHeightM}
+                        onChange={(e) => updateEnvironmentDraft(environment.id, { ceilingHeightM: e.target.value })}
+                        disabled={!canEdit}
+                      />
+                    </label>
+                    <label className={formLayout.field}>
+                      <span className={pmocStyles.metaMuted}>Volume (m³)</span>
+                      <input
+                        type="number"
+                        className={loginStyles.input}
+                        value={environment.airVolumeM3}
+                        onChange={(e) => updateEnvironmentDraft(environment.id, { airVolumeM3: e.target.value })}
+                        disabled={!canEdit}
+                      />
+                    </label>
+                    <label className={formLayout.field}>
+                      <span className={pmocStyles.metaMuted}>Média de ocupantes</span>
+                      <input
+                        type="number"
+                        className={loginStyles.input}
+                        value={environment.avgOccupants}
+                        onChange={(e) => updateEnvironmentDraft(environment.id, { avgOccupants: e.target.value })}
+                        disabled={!canEdit}
+                      />
+                    </label>
+                    <label className={formLayout.field}>
+                      <span className={pmocStyles.metaMuted}>Tipo de atividade</span>
+                      <input
+                        className={loginStyles.input}
+                        value={environment.activityType}
+                        onChange={(e) => updateEnvironmentDraft(environment.id, { activityType: e.target.value })}
+                        disabled={!canEdit}
+                      />
+                    </label>
+                  </div>
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <span className={pmocStyles.metaMuted}>Equipamentos atendentes (múltipla seleção)</span>
+                    <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.35rem" }}>
+                      {pmocEquipments.map((eq) => (
+                        <label key={`${environment.id}-${eq.equipment_id}`} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.86rem" }}>
+                          <input
+                            type="checkbox"
+                            checked={environment.equipmentIds.includes(eq.equipment_id)}
+                            onChange={() =>
+                              updateEnvironmentDraft(environment.id, {
+                                equipmentIds: environment.equipmentIds.includes(eq.equipment_id)
+                                  ? environment.equipmentIds.filter((id) => id !== eq.equipment_id)
+                                  : [...environment.equipmentIds, eq.equipment_id],
+                              })
+                            }
+                            disabled={!canEdit}
+                          />
+                          {eq.identificacao ?? `#${eq.equipment_id}`}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {canEdit ? (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <Button type="button" variant="outline" onClick={addEnvironmentDraft}>
+                    Adicionar ambiente
+                  </Button>
+                </div>
+              ) : null}
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Plano de contingência (falta de energia)</span>
+                <textarea
+                  className={loginStyles.input}
+                  rows={2}
+                  value={emergencyDraft.powerOutageProcedure}
+                  onChange={(e) => setEmergencyDraft((d) => ({ ...d, powerOutageProcedure: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Plano de contingência (falha crítica)</span>
+                <textarea
+                  className={loginStyles.input}
+                  rows={2}
+                  value={emergencyDraft.criticalFailureProcedure}
+                  onChange={(e) => setEmergencyDraft((d) => ({ ...d, criticalFailureProcedure: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Revisão anual de carga térmica</span>
+                <input
+                  type="date"
+                  className={loginStyles.input}
+                  value={emergencyDraft.annualLoadReviewDue}
+                  onChange={(e) => setEmergencyDraft((d) => ({ ...d, annualLoadReviewDue: e.target.value }))}
                   disabled={!canEdit}
                 />
               </label>
@@ -1162,7 +1571,6 @@ export function PmocDetailPage() {
 
       {tab === "air" ? (
         <>
-          <ToastHost />
           <PmocFormCard icon={<Shield size={20} />} title="Central de conformidade legal" subtitle="RT, ART e análise de ar (Lei 13.589/2018)">
             <p className={pmocStyles.metaMuted} style={{ margin: 0 }}>
               Informe responsável técnico, ART e laudos laboratoriais exigidos para o plano.
@@ -1198,6 +1606,15 @@ export function PmocDetailPage() {
                   disabled={!canEdit}
                 />
               </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Formação</span>
+                <input
+                  className={loginStyles.input}
+                  value={draft.responsible_formation}
+                  onChange={(e) => setDraft((d) => ({ ...d, responsible_formation: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
             </div>
           </PmocFormCard>
 
@@ -1229,6 +1646,15 @@ export function PmocDetailPage() {
                   className={loginStyles.input}
                   value={draft.next_air_analysis_due}
                   onChange={(e) => setDraft((d) => ({ ...d, next_air_analysis_due: e.target.value }))}
+                  disabled={!canEdit}
+                />
+              </label>
+              <label className={formLayout.field}>
+                <span className={pmocStyles.metaMuted}>Empresa mantenedora</span>
+                <input
+                  className={loginStyles.input}
+                  value={draft.maintenance_company}
+                  onChange={(e) => setDraft((d) => ({ ...d, maintenance_company: e.target.value }))}
                   disabled={!canEdit}
                 />
               </label>

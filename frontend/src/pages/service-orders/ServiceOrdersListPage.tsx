@@ -19,8 +19,39 @@ import { isInventoryEnabled } from "../../lib/inventoryEnabled";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
 import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
+import styles from "./ServiceOrdersListPage.module.css";
 
 const SERVICE_ORDERS_UI_PAGE_SIZE = 25;
+type DateFilter = "current" | "today" | "week" | "month" | "all";
+
+function isWithinCurrentWeek(dateValue: Date, now: Date): boolean {
+  const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(now.getDate() + diffToMonday);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 7);
+  return dateValue >= weekStart && dateValue < weekEnd;
+}
+
+function matchesDateFilter(order: ServiceOrder, filter: DateFilter): boolean {
+  if (filter === "all") return true;
+  const source = order.scheduledAt ?? order.openedAt;
+  const value = new Date(source);
+  if (Number.isNaN(value.getTime())) return false;
+  const now = new Date();
+  if (filter === "today") {
+    return value.toDateString() === now.toDateString();
+  }
+  if (filter === "week") {
+    return isWithinCurrentWeek(value, now);
+  }
+  if (filter === "month" || filter === "current") {
+    return value.getMonth() === now.getMonth() && value.getFullYear() === now.getFullYear();
+  }
+  return true;
+}
 
 export function ServiceOrdersListPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -35,7 +66,11 @@ export function ServiceOrdersListPage() {
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceOrderStatus | "">("");
   const [technicianFilter, setTechnicianFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("current");
   const [listPage, setListPage] = useState(1);
+  const [isMobileLayout, setIsMobileLayout] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
+  );
 
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const inventoryEnabled = isInventoryEnabled(ctx?.tenant);
@@ -69,6 +104,14 @@ export function ServiceOrdersListPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 900px)");
+    const sync = () => setIsMobileLayout(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   const allOrders = useMemo(
     () => mapOrdersToListView(allRows, clientsById),
     [allRows, clientsById],
@@ -84,6 +127,9 @@ export function ServiceOrdersListPage() {
     if (technicianFilter) {
       rows = rows.filter((o) => o.technician?.id === technicianFilter);
     }
+    if (dateFilter) {
+      rows = rows.filter((o) => matchesDateFilter(o, dateFilter));
+    }
     const q = searchText.toLowerCase();
     if (q) {
       rows = rows.filter((o) => {
@@ -97,7 +143,7 @@ export function ServiceOrdersListPage() {
       });
     }
     return rows;
-  }, [allOrders, statusFilter, technicianFilter, searchText]);
+  }, [allOrders, statusFilter, technicianFilter, dateFilter, searchText]);
 
   const totalFiltered = filteredOrders.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / SERVICE_ORDERS_UI_PAGE_SIZE));
@@ -110,7 +156,7 @@ export function ServiceOrdersListPage() {
 
   useEffect(() => {
     setListPage(1);
-  }, [statusFilter, technicianFilter, searchText]);
+  }, [statusFilter, technicianFilter, dateFilter, searchText]);
 
   useEffect(() => {
     if (listPage > totalPages) setListPage(totalPages);
@@ -140,10 +186,13 @@ export function ServiceOrdersListPage() {
       onSearchInput={setSearchInput}
       statusFilter={statusFilter}
       technicianFilter={technicianFilter}
+      dateFilter={dateFilter}
       statusOptions={statusOptions}
       technicians={technicians}
       onStatusFilter={setStatusFilter}
       onTechnicianFilter={setTechnicianFilter}
+      onDateFilter={setDateFilter}
+      isMobileLayout={isMobileLayout}
     />
   );
 
@@ -152,14 +201,14 @@ export function ServiceOrdersListPage() {
   }
 
   return (
-    <div className={listStyles.wrap}>
+    <div className={`${listStyles.wrap} ${styles.wrap}`}>
       <header className={listStyles.pageHeader}>
         <div>
           <h1 className={listStyles.pageTitle}>Ordens de serviço</h1>
           <p className={listStyles.pageSubtitle}>Gerencie todas as OS da sua empresa</p>
         </div>
-        {canEdit ? (
-          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/service-orders/new">
+        {canEdit && !isMobileLayout ? (
+          <Link className={`${tableStyles.listToolbarBtnPrimary} ${styles.newOsDesktopBtn}`} to="/app/service-orders/new">
             <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
               <svg viewBox="0 0 24 24">
                 <path d="M12 5v14" />
@@ -202,23 +251,29 @@ function OsListToolbar({
   onSearchInput,
   statusFilter,
   technicianFilter,
+  dateFilter,
   statusOptions,
   technicians,
   onStatusFilter,
   onTechnicianFilter,
+  onDateFilter,
+  isMobileLayout,
 }: {
   searchInput: string;
   onSearchInput: (v: string) => void;
   statusFilter: ServiceOrderStatus | "";
   technicianFilter: string;
+  dateFilter: DateFilter;
   statusOptions: { value: ServiceOrderStatus; label: string }[];
   technicians: { id: string; name: string }[];
   onStatusFilter: (v: ServiceOrderStatus | "") => void;
   onTechnicianFilter: (v: string) => void;
+  onDateFilter: (v: DateFilter) => void;
+  isMobileLayout: boolean;
 }) {
   return (
-    <div className={tableStyles.listToolbar}>
-      <div className={tableStyles.listToolbarSearchCol}>
+    <div className={`${tableStyles.listToolbar} ${styles.osToolbar}`}>
+      <div className={`${tableStyles.listToolbarSearchCol} ${isMobileLayout ? styles.toolbarSearchMobile : ""}`}>
         <label className={tableStyles.listToolbarLabel} htmlFor="os-search">
           Buscar
         </label>
@@ -234,20 +289,20 @@ function OsListToolbar({
             className={tableStyles.listToolbarSearchInput}
             value={searchInput}
             onChange={(e) => onSearchInput(e.target.value)}
-            placeholder="Número da OS, cliente ou técnico"
+            placeholder="Buscar nº OS, cliente ou técnico..."
             autoComplete="off"
           />
         </div>
       </div>
 
-      <div className={tableStyles.listToolbarActions}>
-        <div className={tableStyles.listToolbarFilterBlock}>
+      <div className={`${tableStyles.listToolbarActions} ${isMobileLayout ? styles.toolbarActionsMobile : ""}`}>
+        <div className={`${tableStyles.listToolbarFilterBlock} ${isMobileLayout ? styles.toolbarFilterMobile : ""}`}>
           <label className={tableStyles.listToolbarLabel} htmlFor="os-status">
             Status
           </label>
           <select
             id="os-status"
-            className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectShrink}`}
+            className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectShrink} ${isMobileLayout ? styles.toolbarSelectMobile : ""}`}
             value={statusFilter}
             onChange={(e) => onStatusFilter((e.target.value || "") as ServiceOrderStatus | "")}
           >
@@ -263,7 +318,25 @@ function OsListToolbar({
           technicianFilter={technicianFilter}
           technicians={technicians}
           onTechnicianFilter={onTechnicianFilter}
+          isMobileLayout={isMobileLayout}
         />
+        <div className={`${tableStyles.listToolbarFilterBlock} ${isMobileLayout ? styles.toolbarFilterMobile : ""}`}>
+          <label className={tableStyles.listToolbarLabel} htmlFor="os-date">
+            Data
+          </label>
+          <select
+            id="os-date"
+            className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectShrink} ${isMobileLayout ? styles.toolbarSelectMobile : ""}`}
+            value={dateFilter}
+            onChange={(e) => onDateFilter(e.target.value as DateFilter)}
+          >
+            <option value="current">Período atual</option>
+            <option value="today">Hoje</option>
+            <option value="week">Esta semana</option>
+            <option value="month">Este mês</option>
+            <option value="all">Todas</option>
+          </select>
+        </div>
       </div>
     </div>
   );
@@ -273,19 +346,21 @@ function OsTechnicianFilter({
   technicianFilter,
   technicians,
   onTechnicianFilter,
+  isMobileLayout,
 }: {
   technicianFilter: string;
   technicians: { id: string; name: string }[];
   onTechnicianFilter: (v: string) => void;
+  isMobileLayout: boolean;
 }) {
   return (
-    <div className={tableStyles.listToolbarFilterBlock}>
+    <div className={`${tableStyles.listToolbarFilterBlock} ${isMobileLayout ? styles.toolbarFilterMobile : ""}`}>
       <label className={tableStyles.listToolbarLabel} htmlFor="os-tech">
         Técnico
       </label>
       <select
         id="os-tech"
-        className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectShrink}`}
+        className={`${tableStyles.listToolbarSelect} ${tableStyles.listToolbarSelectShrink} ${isMobileLayout ? styles.toolbarSelectMobile : ""}`}
         value={technicianFilter}
         onChange={(e) => onTechnicianFilter(e.target.value)}
       >

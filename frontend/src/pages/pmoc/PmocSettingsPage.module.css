@@ -1,0 +1,387 @@
+.settingsPage {
+  max-width: 80rem;
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--space-6);
+  box-sizing: border-box;
+}
+
+.pageHeader {
+  padding: 1rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border-radius: var(--radius-xl);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-elevated)) 0%,
+    var(--color-surface-elevated) 55%
+  );
+}
+
+.heroTag {
+  display: inline-flex;
+  align-items: center;
+  height: 1.65rem;
+  padding: 0 0.65rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface-elevated));
+  color: color-mix(in srgb, var(--color-primary) 85%, #1f2937);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.45rem;
+}
+
+.pageTitle {
+  font-size: clamp(1.45rem, 2.2vw, 1.95rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.pageSubtitle {
+  max-width: 88ch;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.headerActions {
+  margin-top: 0;
+}
+
+.backButton {
+  height: 2.35rem;
+  border-radius: 0.75rem;
+  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-elevated));
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.2rem;
+}
+
+.kpiCard {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(160deg, var(--color-surface-elevated) 0%, color-mix(in srgb, var(--color-primary) 6%, #fff) 100%);
+  padding: 1.05rem 1.05rem 1rem;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+
+.kpiCard::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--color-hero-start), var(--color-hero-mid));
+}
+
+.kpiLabel {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.kpiHead {
+  display: flex;
+  align-items: center;
+  gap: 0.52rem;
+}
+
+.kpiIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-surface-elevated));
+  color: color-mix(in srgb, var(--color-primary) 85%, #0f172a);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.kpiValue {
+  margin: 0.35rem 0 0;
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--color-text);
+}
+
+.kpiHint {
+  margin: 0.25rem 0 0;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+}
+
+.panelCard {
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, var(--color-border));
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.panelHeader {
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-elevated)) 0%,
+    color-mix(in srgb, var(--color-primary) 3%, var(--color-surface-elevated)) 100%
+  );
+}
+
+.panelContent {
+  padding-top: 1.15rem;
+}
+
+.tablePanel {
+  margin-top: 1.15rem;
+}
+
+.formStack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.formStack input,
+.formStack select {
+  min-height: 2.65rem;
+  border-radius: 0.72rem;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 15%, var(--color-border));
+  background: #fff;
+  font-size: 0.92rem;
+}
+
+.formStack input:focus,
+.formStack select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.15rem;
+}
+
+.fieldLabel {
+  font-size: 0.77rem !important;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.typesTitle {
+  font-size: 0.8rem !important;
+  font-weight: 600;
+}
+
+.typesHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.typesActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.linkButton {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.25rem 0.6rem;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.linkButton:hover {
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+}
+
+.typesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+}
+
+.typesPanel {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border-radius: 0.95rem;
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface-elevated));
+  padding: 0.75rem;
+}
+
+.coverageBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.55rem;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-surface-elevated));
+  color: color-mix(in srgb, var(--color-primary) 80%, #0f172a);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.typeCard {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  padding: 0.62rem 0.72rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 95%, var(--color-primary) 5%);
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-text);
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.typeCard:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 32%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--color-surface-elevated));
+}
+
+.typeCardSelected {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-elevated));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+.typeCard input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--color-primary);
+}
+
+.selectionSummary {
+  margin: 0.55rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.errorBanner {
+  margin: 0 0 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface-elevated));
+  color: var(--color-error);
+  font-size: 0.8rem;
+}
+
+.serviceName {
+  font-weight: 700;
+}
+
+.badgeActive,
+.badgeInactive {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5.2rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.badgeActive {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.badgeInactive {
+  color: #9a3412;
+  background: #ffedd5;
+}
+
+.rowActionsCell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.settingsTable thead th {
+  white-space: nowrap;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settingsTable td {
+  font-size: 0.87rem;
+  padding-top: 0.66rem;
+  padding-bottom: 0.66rem;
+}
+
+.tableWrapPremium {
+  border-radius: 0.9rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 4px 16px rgba(15, 23, 42, 0.06);
+}
+
+.settingsTable tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-primary) 3%, transparent);
+}
+
+.settingsTable tbody tr:hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.dataRow td {
+  vertical-align: top;
+}
+
+.emptyStateCell {
+  padding: 1.2rem 0.9rem !important;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 960px) {
+  .kpiGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .kpiGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .typesHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -75,12 +75,16 @@ def _confirm_payment(db: Session, tenant_id: int, payment: dict[str, Any]) -> di
     if entry.status == FinanceEntryStatus.PAID:
         return {"received": True, "matched": True, "entry_id": entry.id, "already_paid": True}
 
+    was_paid = entry.status == FinanceEntryStatus.PAID
     entry.status = FinanceEntryStatus.PAID
     entry.paid_at = datetime.now(timezone.utc)
     if pid and not entry.gateway_payment_id:
         entry.gateway_payment_id = pid
     db.add(entry)
     db.commit()
+    from app.notifications import notify_finance_entry_paid_if_needed
+
+    notify_finance_entry_paid_if_needed(db, entry=entry, was_paid=was_paid, source_label="Asaas")
     _try_auto_issue_nfse(db, tenant_id, entry)
     logger.info("Baixa automática Asaas entry_id=%s tenant=%s payment=%s", entry.id, tenant_id, pid)
     return {"received": True, "matched": True, "entry_id": entry.id}

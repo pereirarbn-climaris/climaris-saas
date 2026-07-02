@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
-import { Link, useNavigate, useOutletContext } from "react-router-dom";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+} from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { patchTenantAdmin } from "../../api/auth";
 import {
   countProducts,
@@ -10,10 +16,13 @@ import {
   type ProductOut,
 } from "../../api/products";
 import { ProductsListTable } from "../../components/products";
+import { CatalogListHeaderActions } from "../../components/ui/CatalogListHeaderActions";
 import { ListPaginationBar } from "../../components/ui/list-pagination";
 import { FormSwitch } from "../../components/ui/form-switch";
+import { ImportSpreadsheetModal } from "../../components/ui/ImportSpreadsheetModal";
 import type { DashboardOutletContext } from "../dashboardContext";
 import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
+import { isInventoryActive, isInventoryAllowedByPlan } from "../../lib/planProducts";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ProductsListPage.module.css";
 
@@ -86,28 +95,9 @@ function DuplicateIcon() {
   );
 }
 
-function ImportIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 4v10m0 0l-4-4m4 4l4-4M5 16.5v1A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-1"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden>
-      <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
+const PRODUCT_IMPORT_CSV_TEMPLATE = "/modelos/importacao-produtos-modelo.csv";
+const PRODUCT_IMPORT_XLSX_TEMPLATE = "/modelos/importacao-produtos-modelo.xlsx";
+const ACCEPTED_IMPORT_EXTENSIONS = [".csv", ".xlsx"];
 
 export function ProductsListPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -124,10 +114,16 @@ export function ProductsListPage() {
   const [ok, setOk] = useState("");
   const [dupBusy, setDupBusy] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importDragActive, setImportDragActive] = useState(false);
+  const [importFileLabel, setImportFileLabel] = useState<string | null>(null);
   const [savingInventory, setSavingInventory] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
+  );
 
-  const inventoryEnabled = ctx?.tenant.inventory_enabled !== false;
+  const inventoryAllowed = isInventoryAllowedByPlan(ctx?.tenant);
+  const inventoryEnabled = isInventoryActive(ctx?.tenant);
   const isAdmin = ctx?.user.role === "admin";
   const canEdit = useMemo(() => ctx?.user.role === "admin" || ctx?.user.role === "receptionist", [ctx?.user.role]);
 
@@ -190,7 +186,7 @@ export function ProductsListPage() {
   );
 
   async function toggleInventoryEnabled() {
-    if (!isAdmin || savingInventory) return;
+    if (!isAdmin || savingInventory || !inventoryAllowed) return;
     setSavingInventory(true);
     setErr("");
     try {
@@ -225,21 +221,30 @@ export function ProductsListPage() {
     }
   }
 
-  async function onPickFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  function closeImportModal() {
+    setImportModalOpen(false);
+    setImportDragActive(false);
+    setImportFileLabel(null);
+  }
+
+  function isAcceptedImportFile(file: File): boolean {
+    const lowerName = file.name.toLowerCase();
+    return ACCEPTED_IMPORT_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+  }
+
+  async function importFile(file: File) {
     if (!canEdit) return;
+    if (!isAcceptedImportFile(file)) {
+      throw new Error("Formato invalido. Selecione um arquivo .csv ou .xlsx.");
+    }
 
     setImporting(true);
     setErr("");
     setOk("");
     try {
-      const lowerName = file.name.toLowerCase();
-      if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".csv")) {
-        throw new Error("Formato invalido. Selecione um arquivo .xlsx ou .csv.");
-      }
       const result = await importProductsFile(file);
+      closeImportModal();
+      setPage(1);
       await load();
       const base = `Importacao finalizada: ${result.created_count} criados`;
       const skipped = result.skipped_count ? `, ${result.skipped_count} ignorados (SKU ja existente/duplicado).` : ".";
@@ -258,20 +263,39 @@ export function ProductsListPage() {
     }
   }
 
+  useEffect(() => {
+    if (!importModalOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && !importing) closeImportModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [importModalOpen, importing]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 900px)");
+    const sync = () => setIsMobileLayout(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   return (
-    <div className={styles.wrap}>
-      <header className={listStyles.pageHeader}>
+    <div className={`${styles.wrap} ${isMobileLayout ? styles.wrapMobile : ""}`}>
+      <header className={`${listStyles.pageHeader} ${isMobileLayout ? styles.mobileHeader : ""}`}>
         <div>
           <h1 className={listStyles.pageTitle}>Produtos</h1>
           <p className={listStyles.pageSubtitle}>Gerencie todos os produtos da sua empresa</p>
         </div>
-        {canEdit ? (
-          <Link className={`${tableStyles.listToolbarBtnPrimary} ${styles.newProductBtn}`} to="/app/products/new">
-            <span className={tableStyles.listToolbarBtnIcon}>
-              <PlusIcon />
-            </span>
-            Novo produto
-          </Link>
+        {canEdit && !isMobileLayout ? (
+          <CatalogListHeaderActions
+            showImport
+            importing={importing}
+            onImport={() => setImportModalOpen(true)}
+            importTitle="Importar planilha de produtos"
+            newHref="/app/products/new"
+            newLabel="Novo produto"
+          />
         ) : null}
       </header>
 
@@ -374,7 +398,7 @@ export function ProductsListPage() {
           </select>
         </div>
 
-        {isAdmin ? (
+        {isAdmin && inventoryAllowed ? (
           <div className={`${styles.inventoryToggleCol} ${styles.hideOnMobile}`}>
             <span className={tableStyles.listToolbarLabel}>Controle de estoque</span>
             <div className={styles.inventoryToggleRow}>
@@ -394,65 +418,89 @@ export function ProductsListPage() {
             </p>
           </div>
         ) : null}
-
-        <div className={`${tableStyles.listToolbarActions} ${styles.productsToolbarActions}`}>
-          {canEdit ? (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.csv"
-                className={styles.fileInputHidden}
-                onChange={(e) => void onPickFile(e)}
-              />
-              <button
-                type="button"
-                className={`${tableStyles.listToolbarIconBtn} ${styles.hideOnMobile}`}
-                title="Importar planilha de produtos"
-                aria-label="Importar planilha de produtos"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={importing}
-              >
-                <ImportIcon />
-              </button>
-            </>
-          ) : null}
-        </div>
       </div>
 
       {err ? <p className={styles.msgErr}>{err}</p> : null}
       {ok ? <p className={styles.msgOk}>{ok}</p> : null}
-      {canEdit ? (
-        <p className={`${styles.msgHint} ${styles.hideOnMobile}`}>
-          Baixe a planilha modelo em{" "}
-          <a href="/modelos/importacao-produtos-modelo.csv" download>
-            importacao-produtos-modelo.csv
-          </a>{" "}
-          e preencha uma informacao por coluna (nome, sku, preco_compra, preco_venda, estoque_inicial, ativo).
-        </p>
-      ) : null}
+
+      <ImportSpreadsheetModal
+        open={importModalOpen}
+        title="Importar produtos"
+        titleId="products-import-title"
+        importing={importing}
+        dragActive={importDragActive}
+        fileLabel={importFileLabel}
+        csvTemplateUrl={PRODUCT_IMPORT_CSV_TEMPLATE}
+        xlsxTemplateUrl={PRODUCT_IMPORT_XLSX_TEMPLATE}
+        formatsMeta="Formatos aceitos: CSV, XLSX. Colunas obrigatorias: nome e sku. Opcionais: preco_compra, preco_venda, estoque_inicial e ativo."
+        onClose={closeImportModal}
+        onDragActiveChange={setImportDragActive}
+        onFile={(file) => {
+          setImportFileLabel(file.name);
+          void importFile(file);
+        }}
+      />
 
       {loading ? <p className={styles.empty}>Carregando...</p> : null}
       {!loading && !err && totalCount === 0 ? <p className={styles.empty}>Nenhum produto encontrado.</p> : null}
 
       {!loading && rows.length > 0 ? (
         <>
-          <ProductsListTable
-            rows={rows}
-            canEdit={canEdit}
-            canOpenDetail={canEdit}
-            dupBusy={dupBusy}
-            onDuplicate={(p, e) => void duplicateProduct(p, e)}
-            productIcon={<PackageIcon />}
-            duplicateIcon={<DuplicateIcon />}
-            showStock={inventoryEnabled}
-          />
+          {isMobileLayout ? (
+            <div className={styles.mobileCardsGrid}>
+              {rows.map((p) => (
+                <article key={p.id} className={styles.mobileProductCard}>
+                  <button
+                    type="button"
+                    className={styles.mobileProductCardTap}
+                    onClick={() => navigate(`/app/products/${p.id}`)}
+                    aria-label={`Abrir produto ${p.name}`}
+                  >
+                    <div className={styles.mobileProductTop}>
+                      <div className={styles.mobileProductImageWrap}>
+                        {p.primary_image_url ? (
+                          <img src={p.primary_image_url} alt="" className={styles.mobileProductImage} />
+                        ) : (
+                          <span className={styles.mobileProductImageFallback} aria-hidden>
+                            <PackageIcon />
+                          </span>
+                        )}
+                      </div>
+                      <div className={styles.mobileProductInfo}>
+                        <h3 className={styles.mobileProductName}>{p.name}</h3>
+                        <p className={styles.mobileProductSku}>SKU: {p.sku}</p>
+                      </div>
+                    </div>
+                    <p className={styles.mobileProductPrice}>{formatCurrency(Number(p.sale_price || p.unit_price || 0))}</p>
+                    <span className={styles.mobileProductAction}>Ver Detalhes</span>
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <ProductsListTable
+              rows={rows}
+              canEdit={canEdit}
+              canOpenDetail={canEdit}
+              dupBusy={dupBusy}
+              onDuplicate={(p, e) => void duplicateProduct(p, e)}
+              productIcon={<PackageIcon />}
+              duplicateIcon={<DuplicateIcon />}
+              showStock={inventoryEnabled}
+            />
+          )}
           {totalCount > 0 ? (
             <div className={styles.listFoot}>
               <ListPaginationBar {...pagination} itemLabel="produto" />
             </div>
           ) : null}
         </>
+      ) : null}
+
+      {isMobileLayout && canEdit ? (
+        <button type="button" className={styles.mobileNewProductFab} onClick={() => navigate("/app/products/new")}>
+          + Adicionar Novo Produto
+        </button>
       ) : null}
     </div>
   );

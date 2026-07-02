@@ -4,8 +4,8 @@ import { validateQrCode } from "../../api/qrcodes";
 import { EquipmentLabelPhotoButtons } from "../equipment/EquipmentLabelPhotoButtons";
 import { QrCodeScannerModal } from "../qrcodes/QrCodeScannerModal";
 import { parseScannedQrCode } from "../../lib/qrcodeScan";
-import type { ServiceOrderGarantiaFields } from "../../lib/serviceOrderGarantia";
-import styles from "./ServiceOrderLaudoForm.module.css";
+import { buildGarantiaSerialPatch, type ServiceOrderGarantiaFields } from "../../lib/serviceOrderGarantia";
+import styles from "./ServiceOrderGarantiaForm.module.css";
 
 type Props = {
   garantia: ServiceOrderGarantiaFields;
@@ -22,15 +22,19 @@ export function ServiceOrderGarantiaIdentificacaoPanel({ garantia, canEdit, onGa
   const [qrcodeValidating, setQrcodeValidating] = useState(false);
 
   const handleResolved = (resolved: EquipmentLabelResolveOut) => {
+    const ext = resolved.extraction;
     const marcaModelo = `${resolved.brand} ${resolved.model_display}`.trim();
     const capacidade =
       resolved.capacidade_btu != null && resolved.capacidade_btu > 0
         ? `${resolved.capacidade_btu} BTU`
-        : resolved.extraction.capacidade_btus?.trim() ?? "";
+        : ext.capacidade_btus?.trim() ?? "";
     const suggestedTag = resolved.suggested_identificacao?.trim() ?? "";
     const kindLabel = resolved.equipment_kind === "climatizador" ? "Climatizador" : "Ar-condicionado";
+    const serieEvap = ext.serie_evaporadora?.trim() || ext.numero_serie?.trim() || "";
+    const serieCond = ext.serie_condensadora?.trim() || "";
+    const tipoAparelho = ext.tipo_equipamento?.trim() || ext.tipo_instalacao?.trim() || "";
 
-    onGarantiaChange({
+    const serialPatch = buildGarantiaSerialPatch(garantia, {
       catalogId: resolved.catalog_id,
       catalogLabel: marcaModelo,
       catalogCategoryName: resolved.category_name,
@@ -38,13 +42,22 @@ export function ServiceOrderGarantiaIdentificacaoPanel({ garantia, canEdit, onGa
       capacidade: capacidade || garantia.capacidade,
       equipmentTag: garantia.equipmentTag.trim() || suggestedTag || garantia.equipmentTag,
       localInstalacao: garantia.localInstalacao.trim() || suggestedTag || garantia.localInstalacao,
+      tipoAparelho: tipoAparelho || garantia.tipoAparelho,
+      serieEvaporadora: serieEvap || garantia.serieEvaporadora,
+      serieCondensadora: serieCond || garantia.serieCondensadora,
     });
 
+    onGarantiaChange(serialPatch);
+
     setLabelErr(null);
+    const serialHint =
+      serieEvap || serieCond
+        ? ` Série${serieEvap && serieCond ? "s" : ""}: ${[serieEvap, serieCond].filter(Boolean).join(" / ")}.`
+        : "";
     setLabelMsg(
-      resolved.catalog_created
+      (resolved.catalog_created
         ? `${kindLabel}: modelo "${marcaModelo}" cadastrado no catálogo pela leitura da etiqueta.`
-        : `${kindLabel}: modelo "${marcaModelo}" identificado no catálogo.`,
+        : `${kindLabel}: modelo "${marcaModelo}" identificado no catálogo.`) + serialHint,
     );
   };
 
@@ -85,26 +98,26 @@ export function ServiceOrderGarantiaIdentificacaoPanel({ garantia, canEdit, onGa
         onScan={(code) => void validateAndLockQrcode(code)}
       />
 
-      <EquipmentLabelPhotoButtons
-        variant="field"
-        mode="resolve"
-        equipmentKind="auto"
-        disabled={!canEdit}
-        onExtracted={() => {}}
-        onResolved={handleResolved}
-        onError={(message) => {
-          setLabelErr(message);
-          setLabelMsg(null);
-        }}
-      />
+        <EquipmentLabelPhotoButtons
+          variant="split_ac"
+          mode="resolve"
+          equipmentKind="auto"
+          disabled={!canEdit}
+          onExtracted={() => {}}
+          onResolved={handleResolved}
+          onError={(msg) => {
+            setLabelErr(msg);
+            setLabelMsg(null);
+          }}
+        />
 
-      {labelMsg ? <p className={styles.garantiaHintOk}>{labelMsg}</p> : null}
-      {labelErr ? <p className={styles.garantiaHintErr}>{labelErr}</p> : null}
+      {labelMsg ? <p className={styles.alertOk}>{labelMsg}</p> : null}
+      {labelErr ? <p className={styles.alertErr}>{labelErr}</p> : null}
       {garantia.catalogLabel ? (
-        <p className={styles.garantiaMeta}>
-          Modelo no catálogo: <strong>{garantia.catalogLabel}</strong>
+        <div className={styles.catalogBadge}>
+          <strong>{garantia.catalogLabel}</strong>
           {garantia.catalogCategoryName ? ` · ${garantia.catalogCategoryName}` : ""}
-        </p>
+        </div>
       ) : null}
 
       <div className={styles.qrRow}>
@@ -143,7 +156,7 @@ export function ServiceOrderGarantiaIdentificacaoPanel({ garantia, canEdit, onGa
             </button>
           </div>
           {qrcodeMsg ? (
-            <span className={qrcodeLocked ? styles.garantiaHintOk : styles.garantiaHintErr}>{qrcodeMsg}</span>
+            <span className={qrcodeLocked ? styles.alertOk : styles.alertErr}>{qrcodeMsg}</span>
           ) : (
             <span className={styles.fieldHint}>Opcional — vincula a cartela física ao equipamento do cliente</span>
           )}

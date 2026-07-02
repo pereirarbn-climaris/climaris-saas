@@ -3,7 +3,7 @@
  * Dados e filtros ficam em ServiceOrdersListPage.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ListPaginationBar, type ListPaginationConfig } from "../../ui/list-pagination";
 import tableStyles from "../../../pages/listTableCommon.module.css";
 import listStyles from "../clients/clients-list.module.css";
@@ -133,7 +133,7 @@ function ServiceOrdersStatsGrid({
 }) {
   return (
     <div
-      className={`${listStyles.heroStats} ${inventoryEnabled ? "" : styles.heroStatsThree}`}
+      className={`${listStyles.heroStats} ${styles.mobileStatsGrid} ${inventoryEnabled ? "" : styles.heroStatsThree}`}
     >
       <StatCard
         label="OS hoje"
@@ -275,6 +275,18 @@ export function ServiceOrdersListTable({
   onRowClick,
   onNewOrder,
 }: ServiceOrdersListTableProps) {
+  const [isMobileLayout, setIsMobileLayout] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const sync = () => setIsMobileLayout(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   if (isLoading) return <TableSkeleton />;
 
   if (orders.length === 0) {
@@ -286,6 +298,67 @@ export function ServiceOrdersListTable({
             Nova OS
           </button>
         ) : null}
+      </div>
+    );
+  }
+
+  if (isMobileLayout) {
+    return (
+      <div className={styles.mobileOrderList} aria-label="Lista mobile de ordens de serviço">
+        {orders.map((order) => {
+          const statusLabel = statusConfig[order.status].label;
+          const efficiencyAlert = isActualDurationOverEstimate(order.actualMinutes, order.estimatedMinutes);
+          const openedLabel = formatDate(order.openedAt);
+          const technicianName = order.technician?.name ?? "Não alocado";
+          return (
+            <article
+              key={order.id}
+              className={`${styles.mobileOrderCard} ${efficiencyAlert ? styles.mobileOrderCardAlert : ""}`}
+            >
+              <div
+                className={styles.mobileOrderCardBody}
+                onClick={() => onRowClick(order)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onRowClick(order);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label={`Abrir OS ${order.number}`}
+              >
+                <div className={styles.mobileOrderLeft}>
+                  <span className={`${styles.mobileStatusPill} ${statusClassMap[order.status]}`}>{statusLabel}</span>
+                  <p className={styles.mobileOrderDate}>{openedLabel}</p>
+                  <p className={styles.mobileOrderDateLabel}>Abertura</p>
+                </div>
+
+                <div className={styles.mobileOrderRight}>
+                  <p className={styles.mobileInfoRow}><strong>Cliente:</strong> {order.clientName}</p>
+                  <p className={styles.mobileInfoRow}><strong>Técnico:</strong> {technicianName}</p>
+                  <p className={styles.mobileInfoRow}>
+                    <strong>Valor:</strong> {formatCurrency(order.totalValue)}
+                  </p>
+                </div>
+              </div>
+              <div className={styles.mobileOrderFooter}>
+                <div className={styles.mobileOrderIdBlock}>
+                  <p className={styles.mobileOrderNumber}>#{order.number}</p>
+                  <p className={styles.mobileOrderType}>{serviceTypeLabels[order.serviceType]}</p>
+                </div>
+                <div className={styles.mobileOrderActions}>
+                  <button type="button" className={styles.mobileOrderDetailsBtn} onClick={() => onRowClick(order)}>
+                    Ver Detalhes
+                  </button>
+                  <button type="button" className={styles.mobileOrderGhostBtn} onClick={() => onRowClick(order)}>
+                    Ações
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
       </div>
     );
   }

@@ -29,6 +29,21 @@
   --color-hero-start: #0ea5e9;
   --color-hero-mid: #0284c7;
   --color-hero-end: #0369a1;
+  --mobile-surface-elevated: #0f2a58;
+  --mobile-surface-gradient: linear-gradient(165deg, #0b2557 0%, #1e3a8a 46%, #1d4ed8 100%);
+  --mobile-card-bg: linear-gradient(160deg, rgba(30, 64, 175, 0.72), rgba(30, 58, 138, 0.88));
+  --mobile-card-bg-pressed: linear-gradient(160deg, rgba(29, 78, 216, 0.86), rgba(30, 64, 175, 0.96));
+  --mobile-card-border: rgba(191, 219, 254, 0.46);
+  --mobile-card-text-strong: #f8fafc;
+  --mobile-card-text-soft: #dbeafe;
+  --mobile-page-title: #0f172a;
+  --mobile-page-subtitle: #334155;
+  --mobile-nav-surface: color-mix(in srgb, #0f2a58 86%, #ffffff);
+  --mobile-nav-bg: color-mix(in srgb, #1d4ed8 26%, #0f172a);
+  --mobile-nav-border: rgba(191, 219, 254, 0.42);
+  --mobile-nav-text: #dbeafe;
+  --mobile-nav-text-strong: #f8fafc;
+  --mobile-danger-text: #fecaca;
 
   /* ========== TIPOGRAFIA ========== */
   /* Tamanhos de fonte padronizados */
@@ -184,6 +199,21 @@
     --color-hero-start: #0369a1;
     --color-hero-mid: #075985;
     --color-hero-end: #0c4a6e;
+    --mobile-surface-elevated: #08152e;
+    --mobile-surface-gradient: linear-gradient(165deg, #06142f 0%, #0f2a58 46%, #1e3a8a 100%);
+    --mobile-card-bg: linear-gradient(160deg, rgba(30, 58, 138, 0.82), rgba(30, 64, 175, 0.95));
+    --mobile-card-bg-pressed: linear-gradient(160deg, rgba(29, 78, 216, 0.9), rgba(30, 64, 175, 0.98));
+    --mobile-card-border: rgba(125, 211, 252, 0.44);
+    --mobile-card-text-strong: #f8fafc;
+    --mobile-card-text-soft: #e2e8f0;
+    --mobile-page-title: #f8fafc;
+    --mobile-page-subtitle: #cbd5e1;
+    --mobile-nav-surface: color-mix(in srgb, #08152e 90%, #1e293b);
+    --mobile-nav-bg: color-mix(in srgb, #1d4ed8 30%, #08152e);
+    --mobile-nav-border: rgba(125, 211, 252, 0.4);
+    --mobile-nav-text: #cbd5e1;
+    --mobile-nav-text-strong: #f8fafc;
+    --mobile-danger-text: #fca5a5;
   }
 }
 

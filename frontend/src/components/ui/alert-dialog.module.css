@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 3000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -173,9 +173,35 @@
   transform: translateY(-1px);
 }
 
+.btnPrimary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0 1.1rem;
+  border-radius: var(--radius-md);
+  border: none;
+  background: linear-gradient(135deg, var(--color-primary-light, #0ea5e9) 0%, var(--color-primary, #0284c7) 100%);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.28);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  opacity: 0.94;
+  transform: translateY(-1px);
+}
+
 .btnOutline:disabled,
 .btnWarning:disabled,
-.btnDestructive:disabled {
+.btnDestructive:disabled,
+.btnPrimary:disabled {
   opacity: 0.55;
   cursor: not-allowed;
   transform: none;

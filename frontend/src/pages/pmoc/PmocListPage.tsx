@@ -1,6 +1,14 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useOutletContext, useSearchParams } from "react-router-dom";
-import { listPmocPlans, type PmocPlanOut, type PmocPlanStatus } from "../../api/pmoc";
+import {
+  exportPmocPortfolioCsv,
+  fetchPmocPortfolioReportPdf,
+  getPmocPortfolioSummary,
+  listPmocPlans,
+  type PmocPlanOut,
+  type PmocPlanStatus,
+  type PmocPortfolioSummaryOut,
+} from "../../api/pmoc";
 import { pmocEstablishmentLabel, pmocSiteLocationHint } from "../../lib/pmocEstablishment";
 import type { DashboardOutletContext } from "../dashboardContext";
 import listUi from "../../components/pmoc/PmocListUi.module.css";
@@ -29,6 +37,11 @@ export function formatBtu(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(".", ",")}M BTU`;
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1).replace(".", ",")}k BTU`;
   return `${n} BTU`;
+}
+
+function statusFromPreset(preset: PmocListPreset): PmocPlanStatus | undefined {
+  if (preset === "all") return undefined;
+  return preset;
 }
 
 export function presetFromSearch(statusParam: string | null): PmocListPreset {
@@ -95,7 +108,11 @@ export function PmocListPage() {
 
   // ── state ──────────────────────────────────────────────────────────────────
   const [allRows, setAllRows]       = useState<PmocPlanOut[]>([]);
+  const [portfolio, setPortfolio]   = useState<PmocPortfolioSummaryOut | null>(null);
   const [loading, setLoading]       = useState(true);
+  const [exportingCsv, setExportingCsv] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [legalProvider, setLegalProvider] = useState("ICP-Brasil / ClickSign");
   const [err,     setErr]           = useState("");
   const [input,   setInput]         = useState("");
   const [q,       setQ]             = useState("");
@@ -118,15 +135,20 @@ export function PmocListPage() {
     setLoading(true);
     setErr("");
     try {
-      const list = await listPmocPlans({ limit: 200 });
+      const [list, portfolioSummary] = await Promise.all([
+        listPmocPlans({ limit: 200 }),
+        getPmocPortfolioSummary({ status: statusFromPreset(preset) }),
+      ]);
       setAllRows(list);
+      setPortfolio(portfolioSummary);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Erro ao carregar.");
       setAllRows([]);
+      setPortfolio(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [preset]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -156,6 +178,50 @@ export function PmocListPage() {
   const canCreatePmoc =
     ctx?.user.role === "admin" || ctx?.user.role === "receptionist" || ctx?.user.role === "technician";
 
+  const canExportExecutive = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+  const canManagePmocSettings = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+
+  const handleExportCsv = useCallback(async () => {
+    try {
+      setExportingCsv(true);
+      const blob = await exportPmocPortfolioCsv({ status: statusFromPreset(preset) });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pmoc-portfolio-${preset}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Não foi possível exportar o CSV executivo.");
+    } finally {
+      setExportingCsv(false);
+    }
+  }, [preset]);
+
+  const handleExportPdf = useCallback(async () => {
+    try {
+      setExportingPdf(true);
+      const blob = await fetchPmocPortfolioReportPdf({
+        status: statusFromPreset(preset),
+        legalProvider: legalProvider.trim() || undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pmoc-portfolio-executivo-${preset}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Não foi possível gerar o PDF executivo.");
+    } finally {
+      setExportingPdf(false);
+    }
+  }, [legalProvider, preset]);
+
   if (!ctx) return <Navigate to="/login" replace />;
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -176,14 +242,21 @@ export function PmocListPage() {
             Plano de Manutenção, Operação e Controle — Lei Federal nº 13.589/2018 e ANVISA. Soma acima de 60.000 BTUs exige análise de ar e responsável técnico habilitado.
           </p>
         </div>
-        {canCreatePmoc ? (
-          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/pmoc/new">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.125rem", height: "1.125rem" }}>
-              <path d="M5 12h14" /><path d="M12 5v14" />
-            </svg>
-            Nova PMOC
-          </Link>
-        ) : null}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+          {canManagePmocSettings ? (
+            <Link className={tableStyles.listToolbarBtnSecondary} to="/app/pmoc/settings">
+              Configurações do PMOC
+            </Link>
+          ) : null}
+          {canCreatePmoc ? (
+            <Link className={tableStyles.listToolbarBtnPrimary} to="/app/pmoc/new">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.125rem", height: "1.125rem" }}>
+                <path d="M5 12h14" /><path d="M12 5v14" />
+              </svg>
+              Nova PMOC
+            </Link>
+          ) : null}
+        </div>
       </header>
 
       {/* ── Stat cards ──────────────────────────────────────────────────────── */}
@@ -221,6 +294,158 @@ export function PmocListPage() {
           icon={<><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></>}
         />
       </div>
+
+      {portfolio ? (
+        <section
+          style={{
+            border: "1px solid #e2e8f0",
+            borderRadius: "0.9rem",
+            background: "#fff",
+            padding: "1rem",
+            display: "grid",
+            gap: "1rem",
+          }}
+        >
+          <header style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: "0.75rem" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.05rem", color: "#0f172a" }}>
+                Consolidação gerencial PMOC
+              </h2>
+              <p style={{ margin: "0.2rem 0 0", fontSize: "0.84rem", color: "#64748b" }}>
+                Score médio de conformidade e ranking de clientes/unidades para auditoria e diretoria.
+              </p>
+            </div>
+            <p style={{ margin: 0, fontSize: "0.8rem", color: "#64748b" }}>
+              Atualizado em {new Date(portfolio.generated_at).toLocaleString("pt-BR")}
+            </p>
+          </header>
+          {canExportExecutive ? (
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                type="text"
+                className={tableStyles.listToolbarSearchInput}
+                style={{ minWidth: "260px" }}
+                value={legalProvider}
+                onChange={(e) => setLegalProvider(e.target.value)}
+                placeholder="Validação jurídica (ex.: ICP-Brasil / ClickSign)"
+              />
+              <button
+                type="button"
+                className={tableStyles.listToolbarBtnGhost}
+                onClick={() => void handleExportCsv()}
+                disabled={exportingCsv}
+              >
+                {exportingCsv ? "Exportando CSV..." : "Baixar consolidado CSV"}
+              </button>
+              <button
+                type="button"
+                className={tableStyles.listToolbarBtnPrimary}
+                onClick={() => void handleExportPdf()}
+                disabled={exportingPdf}
+              >
+                {exportingPdf ? "Gerando PDF..." : "Baixar relatório executivo PDF"}
+              </button>
+            </div>
+          ) : null}
+
+          <div style={{ display: "grid", gap: "0.7rem", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: "0.7rem", padding: "0.7rem" }}>
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "#64748b" }}>Score médio</p>
+              <p style={{ margin: "0.15rem 0 0", fontWeight: 700, fontSize: "1.2rem", color: "#0f172a" }}>
+                {portfolio.avg_conformity_score}%
+              </p>
+            </div>
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: "0.7rem", padding: "0.7rem" }}>
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "#64748b" }}>PMOCs críticos</p>
+              <p style={{ margin: "0.15rem 0 0", fontWeight: 700, fontSize: "1.2rem", color: "#0f172a" }}>
+                {portfolio.critical_plans_count}
+              </p>
+            </div>
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: "0.7rem", padding: "0.7rem" }}>
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "#64748b" }}>Ocorrências abertas</p>
+              <p style={{ margin: "0.15rem 0 0", fontWeight: 700, fontSize: "1.2rem", color: "#0f172a" }}>
+                {portfolio.total_open_occurrences}
+              </p>
+            </div>
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: "0.7rem", padding: "0.7rem" }}>
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "#64748b" }}>PMOCs no escopo</p>
+              <p style={{ margin: "0.15rem 0 0", fontWeight: 700, fontSize: "1.2rem", color: "#0f172a" }}>
+                {portfolio.total_plans}
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: "0.9rem", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: "0.7rem", overflow: "hidden" }}>
+              <div style={{ padding: "0.7rem 0.8rem", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", fontWeight: 600, fontSize: "0.86rem", color: "#334155" }}>
+                Ranking por cliente (menor score primeiro)
+              </div>
+              <table className={tableStyles.table}>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Planos</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {portfolio.client_ranking.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: "center", color: "#64748b" }}>Sem dados de ranking.</td>
+                    </tr>
+                  ) : (
+                    portfolio.client_ranking.map((row) => (
+                      <tr key={row.client_id}>
+                        <td>{row.client_name}</td>
+                        <td>{row.plans_count}</td>
+                        <td>
+                          {row.avg_conformity_score}% ({row.open_occurrences} ocor.)
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: "0.7rem", overflow: "hidden" }}>
+              <div style={{ padding: "0.7rem 0.8rem", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", fontWeight: 600, fontSize: "0.86rem", color: "#334155" }}>
+                Unidades prioritárias para ação
+              </div>
+              <table className={tableStyles.table}>
+                <thead>
+                  <tr>
+                    <th>Unidade</th>
+                    <th>Cliente</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {portfolio.plan_ranking.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: "center", color: "#64748b" }}>Sem dados de unidades.</td>
+                    </tr>
+                  ) : (
+                    portfolio.plan_ranking.slice(0, 8).map((row) => (
+                      <tr key={row.pmoc_id}>
+                        <td>
+                          <Link to={`/app/pmoc/conformidade/${row.pmoc_id}`} style={{ color: "#0f172a", fontWeight: 600 }}>
+                            {row.establishment_name}
+                          </Link>
+                        </td>
+                        <td>{row.client_name}</td>
+                        <td>
+                          {row.conformity_score}% ({row.open_occurrences} ocor.)
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <div className={tableStyles.listToolbar}>

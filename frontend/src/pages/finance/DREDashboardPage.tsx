@@ -3,7 +3,6 @@ import { Link, Navigate } from 'react-router-dom';
 import { useFeature } from '../../lib/featureManager';
 import { useQuery } from '@tanstack/react-query';
 import { Download, ChevronLeft } from 'lucide-react';
-import { ToastHost } from '../../components/ToastHost';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { getFinanceDREReport } from '../../api/finance';
@@ -71,7 +70,6 @@ export function DREDashboardPage() {
 
   return (
     <div className={styles.page}>
-      <ToastHost />
       <header className={styles.header}>
         <div>
           <Link to="/app/finance/dashboard" className={styles.backLink}>

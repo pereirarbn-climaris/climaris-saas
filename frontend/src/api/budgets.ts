@@ -1,13 +1,13 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
-import { demoCreateBudget, demoListBudgets, demoUpdateBudget, isDemoMode } from "../lib/demoMode";
 export type BudgetStatus = "draft" | "sent" | "approved" | "rejected" | "expired";
 
 export type BudgetOut = {
   id: number;
   tenant_id: number;
   client_id: number;
+  scope_text: string | null;
   observation: string | null;
   status: BudgetStatus;
   payment_method: string | null;
@@ -38,6 +38,7 @@ export type BudgetOut = {
 
 export type BudgetCreatePayload = {
   client_id: number;
+  scope_text?: string | null;
   observation?: string | null;
   payment_method?: string | null;
   payment_terms?: string | null;
@@ -96,13 +97,6 @@ export function parseBudgetListBody(body: unknown): BudgetOut[] {
 }
 
 export async function listBudgets(params?: { status?: BudgetStatus; skip?: number; limit?: number }): Promise<BudgetOut[]> {
-  if (isDemoMode()) {
-    let rows = demoListBudgets();
-    if (params?.status) rows = rows.filter((b: BudgetOut) => b.status === params.status);
-    const skip = params?.skip ?? 0;
-    const limit = params?.limit ?? 100;
-    return Promise.resolve(rows.slice(skip, skip + limit));
-  }
   const sp = new URLSearchParams();
   sp.set("skip", String(params?.skip ?? 0));
   sp.set("limit", String(clampApiLimit(params?.limit, 100, 100)));
@@ -123,10 +117,7 @@ export async function listBudgetsWithAlerts(params?: {
   skip?: number;
   limit?: number;
 }): Promise<BudgetListResult> {
-  if (isDemoMode()) {
-    const items = await listBudgets(params);
-    return { items, storage_alerts: [] };
-  }
+
   const sp = new URLSearchParams();
   sp.set("skip", String(params?.skip ?? 0));
   sp.set("limit", String(clampApiLimit(params?.limit, 100, 100)));
@@ -144,7 +135,6 @@ export async function listBudgetsWithAlerts(params?: {
 }
 
 export async function createBudget(payload: BudgetCreatePayload): Promise<{ id: number; status: BudgetStatus }> {
-  if (isDemoMode()) return Promise.resolve(demoCreateBudget(payload));
   const response = await fetch(apiUrl("/api/v1/budgets"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -155,12 +145,19 @@ export async function createBudget(payload: BudgetCreatePayload): Promise<{ id: 
   return body as { id: number; status: BudgetStatus };
 }
 
+export async function updateBudget(budgetId: number, payload: BudgetCreatePayload): Promise<BudgetOut> {
+
+  const response = await fetch(apiUrl(`/api/v1/budgets/${budgetId}`), {
+    method: "PATCH",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível salvar o orçamento."));
+  return body as BudgetOut;
+}
+
 export async function getBudget(budgetId: number): Promise<BudgetOut> {
-  if (isDemoMode()) {
-    const row = demoListBudgets().find((item) => item.id === budgetId);
-    if (!row) throw new Error("Orçamento não encontrado.");
-    return Promise.resolve(row);
-  }
   const response = await fetch(apiUrl(`/api/v1/budgets/${budgetId}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o orçamento."));
@@ -168,7 +165,6 @@ export async function getBudget(budgetId: number): Promise<BudgetOut> {
 }
 
 export async function sendBudget(budgetId: number): Promise<BudgetOut> {
-  if (isDemoMode()) return Promise.resolve(demoUpdateBudget(budgetId, { status: "sent", sent_at: new Date().toISOString() }));
   const response = await fetch(apiUrl(`/api/v1/budgets/${budgetId}/send`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -180,7 +176,6 @@ export async function sendBudget(budgetId: number): Promise<BudgetOut> {
 }
 
 export async function rejectBudget(budgetId: number, reason?: string): Promise<BudgetOut> {
-  if (isDemoMode()) return Promise.resolve(demoUpdateBudget(budgetId, { status: "rejected", observation: reason ?? null }));
   const response = await fetch(apiUrl(`/api/v1/budgets/${budgetId}/reject`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -194,15 +189,7 @@ export async function rejectBudget(budgetId: number, reason?: string): Promise<B
 export async function approveBudget(
   budgetId: number,
 ): Promise<{ budget_id: number; budget_status: BudgetStatus; service_order_id: number; service_order_status: string }> {
-  if (isDemoMode()) {
-    const updated = demoUpdateBudget(budgetId, { status: "approved", approved_at: new Date().toISOString() });
-    return Promise.resolve({
-      budget_id: budgetId,
-      budget_status: updated.status,
-      service_order_id: budgetId + 1000,
-      service_order_status: "open",
-    });
-  }
+
   const response = await fetch(apiUrl(`/api/v1/budgets/${budgetId}/approve`), {
     method: "POST",
     headers: jsonHeaders(),

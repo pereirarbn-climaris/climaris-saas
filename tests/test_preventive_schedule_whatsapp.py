@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.preventive_schedule_whatsapp import (
+    _build_appliance_count_prompt,
     _build_equipment_prompt,
     _build_slot_prompt,
     _deserialize_items,
@@ -38,7 +39,7 @@ def test_parse_pick_number():
     assert _parse_pick_number("abc") is None
 
 
-def test_build_equipment_prompt_lists_todos_last():
+def test_build_equipment_prompt_asks_appliance_count():
     items = [
         {
             "equipment_identificacao": "Sala 01",
@@ -52,10 +53,13 @@ def test_build_equipment_prompt_lists_todos_last():
         },
     ]
     text = _build_equipment_prompt(items)
-    assert "1- Sala 01" in text
-    assert "2- Sala 02" in text
-    assert "3- Todos os equipamentos" in text
-    assert "Responda com o número (1 a 3)" in text
+    assert "Quantos aparelhos" in text
+    assert "1 a 2" in text
+
+
+def test_build_appliance_count_prompt_single():
+    text = _build_appliance_count_prompt(1)
+    assert "Responda com 1" in text
 
 
 def test_serialize_deserialize_items_roundtrip():

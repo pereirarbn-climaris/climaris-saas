@@ -1,4 +1,4 @@
-"""Sanity check e reindexação de arquivos S3 (etiquetas QR e orçamentos)."""
+"""Sanity check e reindexação de arquivos S3 (etiquetas QR). PDFs de orçamento são gerados sob demanda."""
 
 from __future__ import annotations
 
@@ -10,21 +10,17 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.budget_pdf import build_budget_pdf
 from app.config import public_app_base_url
-from app.qrcode_storage import regenerate_qr_label_files, s3_object_exists, upload_qr_label_bytes
+from app.qrcode_storage import regenerate_qr_label_files, s3_object_exists
 from app.services.qrcode_labels import _max_sequence, build_qrcode_public_url, format_code_id
-from app.tenant_logo import _build_public_url, _resolve_s3_runtime_config, s3_bucket_for
+from app.tenant_logo import _resolve_s3_runtime_config, s3_bucket_for
 from models import (
     Budget,
-    BudgetProductItem,
-    BudgetServiceItem,
     BudgetStatus,
     Client,
     Equipment,
     QrCode,
     QrCodeStatus,
-    Tenant,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,8 +90,8 @@ def get_storage_alerts(tenant_id: int) -> list[str]:
 
 
 def get_budget_storage_alerts(tenant_id: int) -> list[str]:
-    """Alertas de PDF de orçamento — não inclui etiquetas QR."""
-    return [msg for msg in get_storage_alerts(tenant_id) if msg.startswith("Orçamento ")]
+    """Orçamentos geram PDF sob demanda — sem alertas de S3."""
+    return []
 
 
 def get_qrcode_storage_alerts(tenant_id: int) -> list[str]:
@@ -154,40 +150,10 @@ def repair_budget_statuses(db: Session, *, tenant_id: int | None = None) -> int:
     return repaired
 
 
-def _resolve_budget_tracking_url(budget: Budget, db: Session) -> str:
+def _budget_app_tracking_url(budget: Budget) -> str:
     if budget.tracking_url and budget.tracking_url.strip():
         return budget.tracking_url.strip()
-    if budget.pdf_s3_key:
-        cfg = _resolve_s3_runtime_config(db)
-        bucket = s3_bucket_for(cfg, "imagens")
-        region = cfg.region or "us-east-1"
-        public_base = cfg.public_base_url or ""
-        if public_base:
-            return f"{public_base.rstrip('/')}/{budget.pdf_s3_key}"
-        return _build_public_url(bucket, region, cfg.endpoint_url, budget.pdf_s3_key)
-    return f"{public_app_base_url()}/app/budgets/{budget.id}"
-
-
-def upload_budget_pdf_to_s3(budget: Budget, tenant: Tenant, db: Session) -> str:
-    from app.tenant_logo import generate_tenant_logo_presigned_url
-
-    logo_url: str | None = getattr(tenant, "logo_url", None)
-    logo_s3_key = getattr(tenant, "logo_s3_key", None)
-    if logo_s3_key:
-        try:
-            logo_url = generate_tenant_logo_presigned_url(logo_s3_key, db=db, expires_seconds=600)
-        except Exception:
-            pass
-    pdf_bytes = build_budget_pdf(budget, tenant, logo_url=logo_url, db=db)
-    result = upload_qr_label_bytes(
-        tenant_id=budget.tenant_id,
-        qrcode_id=budget.id,
-        file_bytes=pdf_bytes,
-        extension="pdf",
-        content_type="application/pdf",
-        db=db,
-    )
-    return result.s3_key
+    return f"{public_app_base_url().rstrip('/')}/app/budgets/{budget.id}"
 
 
 def sync_qrcodes_from_equipments(db: Session, *, tenant_id: int | None = None) -> int:
@@ -269,50 +235,12 @@ def repair_broken_qrcode_equipment_links(db: Session, *, tenant_id: int | None =
     return cleared
 
 
-def verify_budget_storage(budget: Budget, db: Session, *, reupload_missing: bool = False) -> str | None:
-    """
-    Verifica PDF no S3. Retorna mensagem de alerta ou None se OK.
-    Atualiza budget.pdf_file_missing e tracking_url.
-    """
-    budget.tracking_url = _resolve_budget_tracking_url(budget, db)
-    if not budget.pdf_s3_key:
-        budget.pdf_file_missing = True
-        if reupload_missing:
-            tenant = db.get(Tenant, budget.tenant_id)
-            if tenant:
-                try:
-                    budget.pdf_s3_key = upload_budget_pdf_to_s3(budget, tenant, db)
-                    budget.pdf_file_missing = False
-                    budget.tracking_url = _resolve_budget_tracking_url(budget, db)
-                    return None
-                except Exception as exc:
-                    return f"Orçamento {budget.id} indisponível: falha ao gerar PDF ({exc})"
-        return f"Orçamento {budget.id} indisponível: arquivo não encontrado"
-
-    if cached_s3_exists(budget.pdf_s3_key, db=db):
-        budget.pdf_file_missing = False
-        return None
-
-    budget.pdf_file_missing = True
-    if reupload_missing:
-        tenant = db.get(Tenant, budget.tenant_id)
-        if tenant:
-            try:
-                budget.pdf_s3_key = upload_budget_pdf_to_s3(budget, tenant, db)
-                budget.pdf_file_missing = False
-                budget.tracking_url = _resolve_budget_tracking_url(budget, db)
-                return None
-            except Exception as exc:
-                return f"Orçamento {budget.id} indisponível: falha ao reenviar PDF ({exc})"
-    return f"Orçamento {budget.id} indisponível: arquivo não encontrado"
-
-
 def run_storage_reindex(
     db: Session,
     *,
     tenant_id: int | None = None,
     regenerate_invalid_qr: bool = True,
-    reupload_missing_budget_pdfs: bool = False,
+    reupload_missing_budget_pdfs: bool = False,  # noqa: ARG001 — ignorado; PDF sob demanda
 ) -> StorageIntegrityReport:
     clear_storage_caches()
     report = StorageIntegrityReport(tenant_id=tenant_id)
@@ -349,24 +277,19 @@ def run_storage_reindex(
         elif was_invalid and valid:
             report.qrcodes_regenerated += 1
 
-    b_query = select(Budget).options(
-        selectinload(Budget.client),
-        selectinload(Budget.service_items).selectinload(BudgetServiceItem.service),
-        selectinload(Budget.product_items).selectinload(BudgetProductItem.product),
-    )
+    b_query = select(Budget)
     if tenant_id is not None:
         b_query = b_query.where(Budget.tenant_id == tenant_id)
     for budget in db.execute(b_query).scalars().all():
         report.budgets_checked += 1
-        old_tracking = budget.tracking_url
-        alert = verify_budget_storage(budget, db, reupload_missing=reupload_missing_budget_pdfs)
-        if budget.tracking_url != old_tracking and old_tracking:
+        app_url = _budget_app_tracking_url(budget)
+        if budget.tracking_url != app_url:
+            budget.tracking_url = app_url
             report.budgets_tracking_repaired += 1
-        if alert:
-            report.budgets_pdf_missing += 1
-            report.alerts.append(alert)
-        elif reupload_missing_budget_pdfs and budget.pdf_s3_key:
-            report.budgets_pdf_uploaded += 1
+        if budget.pdf_file_missing:
+            budget.pdf_file_missing = False
+        if budget.pdf_s3_key:
+            budget.pdf_s3_key = None
 
     db.commit()
 
@@ -383,14 +306,14 @@ def run_storage_reindex(
 
 
 def run_startup_storage_validation(db: Session) -> None:
-    """Na inicialização: verifica S3 e registra alertas (não remove linhas do painel)."""
+    """Na inicialização: verifica etiquetas QR no S3 e registra alertas."""
     clear_storage_caches()
     try:
         for budget in db.execute(select(Budget)).scalars().all():
-            alert = verify_budget_storage(budget, db, reupload_missing=False)
-            if alert:
-                logger.error("storage_integrity: %s (tenant_id=%s)", alert, budget.tenant_id)
-                _startup_alerts_by_tenant.setdefault(budget.tenant_id, []).append(alert)
+            budget.tracking_url = _budget_app_tracking_url(budget)
+            budget.pdf_file_missing = False
+            if budget.pdf_s3_key:
+                budget.pdf_s3_key = None
         for row in db.execute(select(QrCode)).scalars().all():
             if not sanity_check_qrcode_row(row, db, regenerate=False):
                 msg = f"Etiqueta QR {row.id} inválida: arquivo ausente no S3"

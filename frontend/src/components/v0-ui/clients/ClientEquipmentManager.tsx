@@ -23,6 +23,7 @@
 
 import React, { useState, useEffect } from "react";
 import { listClientSites, type ClientSiteOut } from "../../../api/clients";
+import { useKnowledgeChatContextOptional } from "../../../context/KnowledgeChatContext";
 import { updateClientCatalogEquipmentSite } from "../../../api/equipmentCatalog";
 import type { CategoryFieldDefinition, TechnicalSpecRow } from "../../../lib/categoryFieldDefinitions";
 import { validateQrCode } from "../../../api/qrcodes";
@@ -2613,6 +2614,26 @@ export const ClientEquipmentManager: React.FC<ClientEquipmentManagerProps> = ({
   const sheetEquipment = sheetEquipmentId
     ? equipments.find((e) => e.id === sheetEquipmentId) ?? null
     : null;
+  const knowledgeChat = useKnowledgeChatContextOptional();
+
+  useEffect(() => {
+    if (!knowledgeChat) return;
+    if (sheetEquipment) {
+      knowledgeChat.setEquipmentDetail({
+        equipmentId: sheetEquipment.id,
+        brand: sheetEquipment.brandName?.trim() || null,
+        model: sheetEquipment.modelName?.trim() || null,
+        label: sheetEquipment.tag?.trim() || null,
+      });
+      return;
+    }
+    knowledgeChat.setEquipmentDetail(null);
+  }, [sheetEquipment, knowledgeChat]);
+
+  useEffect(() => {
+    if (!knowledgeChat) return;
+    return () => knowledgeChat.setEquipmentDetail(null);
+  }, [knowledgeChat]);
 
   useEffect(() => {
     if (!modalOpenRequest) return;

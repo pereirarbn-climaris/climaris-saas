@@ -395,6 +395,16 @@
   gap: var(--space-3);
 }
 
+.msgOk {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--font-size-base);
+  color: var(--color-success);
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+  border: 1px solid #a7f3d0;
+  border-radius: var(--radius-lg);
+}
+
 .empty {
   margin: 0;
   padding: var(--space-12) var(--space-6);

@@ -6,6 +6,7 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.knowledge_base.ingestion import schedule_manual_ingestion
 from app.services.s3 import upload_manual_pdf
 from models import EquipmentManual
 
@@ -42,6 +43,7 @@ async def create_equipment_manual_from_pdf(
     manual = EquipmentManual(tenant_id=tenant_id, title=title_clean, s3_url=s3_url)
     db.add(manual)
     db.flush()
+    schedule_manual_ingestion(manual_id=manual.id, tenant_id=tenant_id)
     return manual
 
 

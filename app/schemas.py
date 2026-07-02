@@ -75,6 +75,31 @@ class LoginRequest(BaseModel):
     )
 
 
+class GoogleLoginRequest(BaseModel):
+    """Login com Google (OIDC id_token)."""
+
+    id_token: str = Field(..., min_length=20, max_length=8192)
+    tenant_id: int | None = Field(default=None, ge=1)
+    two_factor_token: str | None = Field(default=None, min_length=20, max_length=256)
+    two_factor_code: str | None = Field(default=None, min_length=4, max_length=12)
+    trust_this_device: bool = Field(
+        default=False,
+        description="Após validar o código 2FA, criar cookie HTTP-only de dispositivo confiável (admin).",
+    )
+
+
+class GoogleRegisterRequest(BaseModel):
+    """Cadastro público com Google: valida id_token e cria tenant + admin."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id_token: str = Field(..., min_length=20, max_length=8192)
+    tenant_name: str = Field(..., min_length=2, max_length=200)
+    active_plan: str = "free_30d"
+    timezone: str = "America/Sao_Paulo"
+    business_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+
+
 class TrustedDeviceOut(BaseModel):
     """Dispositivo/navegador confiável para pular 2FA."""
 
@@ -1225,6 +1250,11 @@ class ClientCountOut(BaseModel):
     ativos: int = 0
 
 
+class ClientDuplicateCheckOut(BaseModel):
+    document_exists: bool
+    whatsapp_exists: bool
+
+
 class ProductCountOut(BaseModel):
     total: int
     active: int = 0
@@ -1917,6 +1947,94 @@ class PmocAirQualityAnalysisCreate(BaseModel):
     next_due_date: date | None = None
 
 
+class PmocEquipmentTypeOptionOut(BaseModel):
+    key: str
+    label: str
+
+
+class PmocServiceCatalogOut(BaseModel):
+    id: int
+    name: str
+    frequency: str
+    equipment_types: list[str] = Field(default_factory=list)
+    sort_order: int = 0
+    is_active: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+
+class PmocServiceCatalogCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    frequency: str
+    equipment_types: list[str] = Field(default_factory=list)
+    sort_order: int = 0
+    is_active: bool = True
+
+
+class PmocServiceCatalogUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    frequency: str | None = None
+    equipment_types: list[str] | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class PmocAnalyticsTopConsumableOut(BaseModel):
+    name: str
+    usage_count: int
+    traceable_count: int
+
+
+class PmocAnalyticsSummaryOut(BaseModel):
+    pmoc_id: int
+    generated_at: datetime
+    total_executions: int
+    done_executions: int
+    executions_with_measurements: int
+    executions_with_consumables: int
+    measurement_coverage_pct: int
+    consumable_traceability_pct: int
+    avg_delta_t_c: float | None = None
+    avg_current_a: float | None = None
+    avg_co2_ppm: float | None = None
+    total_consumables_used: int
+    top_consumables: list[PmocAnalyticsTopConsumableOut] = Field(default_factory=list)
+    environments_count: int
+    environments_linked_equipment_count: int
+    unresolved_occurrences: int
+
+
+class PmocPortfolioClientRankOut(BaseModel):
+    client_id: int
+    client_name: str
+    plans_count: int
+    avg_conformity_score: int
+    open_occurrences: int
+
+
+class PmocPortfolioPlanRankOut(BaseModel):
+    pmoc_id: int
+    pmoc_title: str
+    client_name: str
+    establishment_name: str
+    status: str
+    conformity_score: int
+    measurement_coverage_pct: int
+    consumable_traceability_pct: int
+    open_occurrences: int
+
+
+class PmocPortfolioSummaryOut(BaseModel):
+    generated_at: datetime
+    total_plans: int
+    active_plans: int
+    avg_conformity_score: int
+    critical_plans_count: int
+    total_open_occurrences: int
+    client_ranking: list[PmocPortfolioClientRankOut] = Field(default_factory=list)
+    plan_ranking: list[PmocPortfolioPlanRankOut] = Field(default_factory=list)
+
+
 class ProductCreate(BaseModel):
     name: str
     sku: str
@@ -1990,6 +2108,32 @@ class ProductImportResultOut(BaseModel):
     error_count: int
     errors: list[ProductImportErrorOut] = Field(default_factory=list)
     created_products: list[ProductOut] = Field(default_factory=list)
+
+
+class ServiceImportRow(BaseModel):
+    row_number: int = Field(..., ge=2)
+    name: str
+    description: str | None = None
+    price: float = Field(default=0, ge=0)
+    duration_minutes: int = Field(default=30, ge=1)
+    is_active: bool = True
+
+
+class ServiceImportRequest(BaseModel):
+    items: list[ServiceImportRow] = Field(default_factory=list, max_length=500)
+
+
+class ServiceImportErrorOut(BaseModel):
+    row_number: int
+    name: str | None = None
+    message: str
+
+
+class ServiceImportResultOut(BaseModel):
+    created_count: int
+    skipped_count: int
+    error_count: int
+    errors: list[ServiceImportErrorOut] = Field(default_factory=list)
 
 
 class ProductImageOut(BaseModel):
@@ -2291,6 +2435,19 @@ class BudgetProductItemInput(BaseModel):
 
 class BudgetCreate(BaseModel):
     client_id: int
+    scope_text: str | None = None
+    observation: str | None = None
+    payment_method: str | None = None
+    payment_terms: str | None = None
+    warranty_terms: str | None = None
+    validity_days: int = 7
+    services: list[BudgetServiceItemInput]
+    products: list[BudgetProductItemInput] = []
+
+
+class BudgetUpdate(BaseModel):
+    client_id: int
+    scope_text: str | None = None
     observation: str | None = None
     payment_method: str | None = None
     payment_terms: str | None = None
@@ -3238,6 +3395,41 @@ class ServiceOrderLaudoChecklistItemIn(BaseModel):
     observacao: str | None = Field(default=None, max_length=2000)
 
 
+class GarantiaVacuoEvidenceOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    storage_key: str = Field(alias="storageKey")
+    public_url: str = Field(alias="publicUrl")
+    file_name: str = Field(alias="fileName")
+    mime_type: str = Field(alias="mimeType")
+    size_bytes: int = Field(alias="sizeBytes")
+    vacuo_final_microns: str | None = Field(default=None, alias="vacuoFinalMicrons")
+    device_name: str | None = Field(default=None, alias="deviceName")
+    device_serial: str | None = Field(default=None, alias="deviceSerial")
+    latitude: float
+    longitude: float
+    accuracy_meters: float | None = Field(default=None, alias="accuracyMeters")
+    captured_at: str = Field(alias="capturedAt")
+    captured_offline: bool = Field(alias="capturedOffline")
+
+
+class GarantiaStartupEvidenceOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    metric_key: str = Field(alias="metricKey")
+    storage_key: str = Field(alias="storageKey")
+    public_url: str = Field(alias="publicUrl")
+    file_name: str = Field(alias="fileName")
+    mime_type: str = Field(alias="mimeType")
+    size_bytes: int = Field(alias="sizeBytes")
+    extracted_value: str | None = Field(default=None, alias="extractedValue")
+    latitude: float
+    longitude: float
+    accuracy_meters: float | None = Field(default=None, alias="accuracyMeters")
+    captured_at: str = Field(alias="capturedAt")
+    captured_offline: bool = Field(alias="capturedOffline")
+
+
 class ServiceOrderLaudoUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -3609,6 +3801,18 @@ class MarketplaceRequestOut(BaseModel):
     requested_at: datetime
 
 
+class MarketplaceCheckoutIn(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=64)
+    quantity: int = Field(default=1, ge=1, le=500)
+
+
+class MarketplaceCheckoutOut(BaseModel):
+    slug: str
+    status: str
+    quantity: int
+    activated_via_stripe: bool
+
+
 class PlatformMarketplaceAppCreate(BaseModel):
     slug: str = Field(..., min_length=1, max_length=64)
     display_name: str = Field(..., min_length=1, max_length=120)
@@ -3757,6 +3961,64 @@ class DashboardRecentOrderOut(BaseModel):
     title: str | None = None
 
 
+class DashboardTierOut(BaseModel):
+    tier: Literal["basic", "advanced", "complete"]
+    tier_label: str
+    tier_description: str
+    plan_key: str
+    finance_max_mode: str
+
+
+class DashboardExtendedKpisOut(BaseModel):
+    period_year: int
+    period_month: int
+    completed_orders_month: int
+    pending_budgets: int
+    schedules_today: int
+    revenue_growth_percent: float | None = None
+    previous_month_revenue: float
+    new_clients_month: int
+    budget_conversion_rate: float | None = None
+
+
+class DashboardOrderStatusBreakdownItemOut(BaseModel):
+    status: str
+    label: str
+    count: int
+
+
+class DashboardUpcomingScheduleOut(BaseModel):
+    id: int
+    client_name: str
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+    technician_names: list[str] = Field(default_factory=list)
+    service_order_id: int | None = None
+
+
+class DashboardFinancialSnapshotOut(BaseModel):
+    finance_enabled: bool
+    accounts_receivable: float
+    accounts_payable: float
+    overdue_receivable: float
+    overdue_payable: float
+    overdue_receivable_count: int
+    overdue_payable_count: int
+    net_cash_position: float
+
+
+class DashboardPmocSummaryOut(BaseModel):
+    active_pmoc_plans: int
+    open_occurrences: int
+
+
+class DashboardTechnicianWorkloadOut(BaseModel):
+    technician_id: int
+    technician_name: str
+    schedules_count: int
+
+
 class EquipmentManualBriefOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -3792,6 +4054,8 @@ class ClientEquipmentManualOut(BaseModel):
     url: str
     kind: str
     component_label: str | None = None
+    ingestion_status: str | None = None
+    ingestion_error: str | None = None
 
 
 class ClientEquipmentManualListOut(BaseModel):
@@ -4264,3 +4528,53 @@ class ClientEquipmentUpdate(BaseModel):
         ):
             raise ValueError("Informe ao menos um campo para atualizar.")
         return self
+
+
+class KnowledgeAskIn(BaseModel):
+    question: str = Field(..., min_length=2, max_length=2000)
+    brand: str | None = Field(default=None, max_length=120)
+    model: str | None = Field(default=None, max_length=120)
+    equipment_id: uuid.UUID | None = None
+
+    @field_validator("question")
+    @classmethod
+    def _strip_question(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Pergunta é obrigatória.")
+        return s
+
+    @field_validator("brand", "model")
+    @classmethod
+    def _strip_optional(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+
+class KnowledgeManualUsedOut(BaseModel):
+    manual_id: str
+    title: str
+    brand: str | None = None
+    model: str | None = None
+
+
+class KnowledgeAskOut(BaseModel):
+    answer: str
+    manuals_used: list[KnowledgeManualUsedOut] = Field(default_factory=list)
+    chunks_found: int = 0
+    has_context: bool = False
+
+
+class KnowledgeIngestOut(BaseModel):
+    manual_id: str
+    ingestion_status: str
+    ingestion_error: str | None = None
+    ingested_at: datetime | None = None
+    chunks_count: int = 0
+
+
+class KnowledgeIngestAllOut(BaseModel):
+    scheduled: int
+    message: str

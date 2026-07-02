@@ -42,6 +42,7 @@ export interface Tenant {
   legalName: string;
   document: string; // CNPJ
   ownerEmail: string;
+  phone: string;
   ownerName: string;
   plan: string;
   status: TenantStatus;
@@ -54,8 +55,13 @@ export interface Tenant {
   modules: TenantModule[];
   recentLogs: TenantLog[];
   address?: {
-    city: string;
-    state: string;
+    street?: string | null;
+    number?: string | null;
+    complement?: string | null;
+    district?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postalCode?: string | null;
   };
 }
 
@@ -687,6 +693,7 @@ interface TenantDetailDrawerProps {
   onManagePlan: (tenantId: string) => void;
   onManageBetaFeatures: (tenantId: string) => void;
   onToggleModule: (tenantId: string, moduleId: string, enabled: boolean) => void;
+  onDeleteTenant: (tenantId: string) => void;
   planLabels?: Record<string, string>;
 }
 
@@ -697,6 +704,7 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
   onManagePlan,
   onManageBetaFeatures,
   onToggleModule,
+  onDeleteTenant,
   planLabels,
 }) => {
   if (!tenant) return null;
@@ -718,6 +726,26 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
       hour: "2-digit",
       minute: "2-digit",
     });
+
+  const hasAddress =
+    Boolean(tenant.address?.street) ||
+    Boolean(tenant.address?.number) ||
+    Boolean(tenant.address?.complement) ||
+    Boolean(tenant.address?.district) ||
+    Boolean(tenant.address?.city) ||
+    Boolean(tenant.address?.state) ||
+    Boolean(tenant.address?.postalCode);
+
+  const addressLine = [
+    tenant.address?.street,
+    tenant.address?.number ? `, ${tenant.address.number}` : "",
+    tenant.address?.complement ? ` - ${tenant.address.complement}` : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  const districtLine = tenant.address?.district ?? "";
+  const cityStateLine = [tenant.address?.city, tenant.address?.state].filter(Boolean).join(" - ");
+  const postalCodeLine = tenant.address?.postalCode ?? "";
 
   return (
     <>
@@ -906,6 +934,14 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+                  Telefone
+                </span>
+                <span style={{ fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)" }}>
+                  {tenant.phone || "—"}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
                   Data de Adesao
                 </span>
                 <span
@@ -921,14 +957,40 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
                   {formatDate(tenant.createdAt)}
                 </span>
               </div>
-              {tenant.address && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+                  Ultimo Acesso
+                </span>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--space-1)",
+                    fontSize: "var(--font-size-sm)",
+                    fontWeight: "var(--font-weight-medium)",
+                  }}
+                >
+                  <IconCalendar style={{ width: "14px", height: "14px", color: "var(--color-text-muted)" }} />
+                  {tenant.lastActivityAt ? formatDateTime(tenant.lastActivityAt) : "—"}
+                </span>
+              </div>
+              {hasAddress && (
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span style={{ fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
-                    Localizacao
+                    Endereco
                   </span>
-                  <span style={{ fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)" }}>
-                    {tenant.address.city}, {tenant.address.state}
-                  </span>
+                  <div
+                    style={{
+                      fontSize: "var(--font-size-sm)",
+                      fontWeight: "var(--font-weight-medium)",
+                      textAlign: "right",
+                    }}
+                  >
+                    {addressLine ? <div>{addressLine}</div> : null}
+                    {districtLine ? <div>{districtLine}</div> : null}
+                    {cityStateLine ? <div>{cityStateLine}</div> : null}
+                    {postalCodeLine ? <div>CEP: {postalCodeLine}</div> : null}
+                  </div>
                 </div>
               )}
             </div>
@@ -1205,6 +1267,62 @@ const TenantDetailDrawer: React.FC<TenantDetailDrawerProps> = ({
               ))}
             </div>
           </section>
+
+          {/* Danger zone */}
+          <section>
+            <h3
+              style={{
+                margin: "0 0 var(--space-3) 0",
+                fontSize: "var(--font-size-sm)",
+                fontWeight: "var(--font-weight-semibold)",
+                color: "var(--color-text-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Zona de Perigo
+            </h3>
+            <div
+              style={{
+                background: "var(--color-surface)",
+                borderRadius: "var(--radius-lg)",
+                padding: "var(--space-4)",
+                border: "1px solid color-mix(in srgb, var(--color-error) 25%, var(--color-border))",
+              }}
+            >
+              <p
+                style={{
+                  margin: "0 0 var(--space-3) 0",
+                  fontSize: "var(--font-size-sm)",
+                  color: "var(--color-text-muted)",
+                  lineHeight: 1.5,
+                }}
+              >
+                Remove permanentemente a conta, usuarios e dados operacionais deste cliente. Esta acao nao pode ser
+                desfeita.
+              </p>
+              <button
+                type="button"
+                onClick={() => onDeleteTenant(tenant.id)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--space-2)",
+                  padding: "var(--space-2) var(--space-4)",
+                  background: "transparent",
+                  border: "1px solid var(--color-error)",
+                  borderRadius: "var(--btn-radius)",
+                  fontSize: "var(--font-size-sm)",
+                  fontWeight: "var(--font-weight-medium)",
+                  color: "var(--color-error)",
+                  cursor: "pointer",
+                }}
+              >
+                <IconTrash style={{ width: "14px", height: "14px" }} />
+                Excluir conta
+              </button>
+            </div>
+          </section>
         </div>
       </div>
     </>
@@ -1390,6 +1508,14 @@ export const SaaSAdminDashboardView: React.FC<SaaSAdminDashboardViewProps> = ({
     setIsDrawerOpen(false);
     setTimeout(() => setSelectedTenant(null), 300);
   };
+
+  useEffect(() => {
+    if (!selectedTenant) return;
+    if (!tenants.some((t) => t.id === selectedTenant.id)) {
+      handleCloseDrawer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- close when tenant list no longer includes selection
+  }, [tenants, selectedTenant]);
 
   return (
     <>
@@ -1927,7 +2053,7 @@ export const SaaSAdminDashboardView: React.FC<SaaSAdminDashboardViewProps> = ({
                                 onClick: () => onResetAdminPassword(tenant.id),
                               },
                               {
-                                label: "Deletar Tenant",
+                                label: "Excluir conta",
                                 icon: <IconTrash style={{ width: "16px", height: "16px" }} />,
                                 onClick: () => onDeleteTenant(tenant.id),
                                 variant: "danger",
@@ -1965,6 +2091,7 @@ export const SaaSAdminDashboardView: React.FC<SaaSAdminDashboardViewProps> = ({
         onManagePlan={onManagePlan}
         onManageBetaFeatures={onManageBetaFeatures}
         onToggleModule={onToggleModule}
+        onDeleteTenant={onDeleteTenant}
         planLabels={planLabels}
       />
     </>
@@ -1997,6 +2124,7 @@ export const mockTenants: Tenant[] = [
     legalName: "Frio Norte Servicos de Climatizacao LTDA",
     document: "12.345.678/0001-90",
     ownerEmail: "contato@frionorte.com.br",
+    phone: "(11) 99999-1111",
     ownerName: "Carlos Silva",
     plan: "pro",
     status: "active",
@@ -2028,6 +2156,7 @@ export const mockTenants: Tenant[] = [
     legalName: "Gelo Sul Comercio e Servicos EIRELI",
     document: "98.765.432/0001-10",
     ownerEmail: "admin@gelosul.com.br",
+    phone: "(51) 98888-2222",
     ownerName: "Maria Oliveira",
     plan: "starter",
     status: "trial",
@@ -2051,6 +2180,7 @@ export const mockTenants: Tenant[] = [
     legalName: "ArctiCool Manutencao Industrial S.A.",
     document: "11.222.333/0001-44",
     ownerEmail: "diretor@arcticool.com.br",
+    phone: "(21) 97777-3333",
     ownerName: "Roberto Santos",
     plan: "enterprise",
     status: "active",
@@ -2080,6 +2210,7 @@ export const mockTenants: Tenant[] = [
     legalName: "Clima Certo Assistencia Tecnica LTDA",
     document: "55.666.777/0001-88",
     ownerEmail: "suporte@climacerto.com.br",
+    phone: "(31) 96666-4444",
     ownerName: "Ana Costa",
     plan: "pro",
     status: "blocked",

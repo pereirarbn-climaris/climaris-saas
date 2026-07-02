@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { Link, Navigate, useOutletContext } from "react-router-dom";
 import {
   createProductPurchase,
   listProductPurchases,
@@ -25,6 +25,7 @@ import { Button } from "../../components/ui/button";
 import { Input, Select } from "../../components/ui/input";
 import type { DashboardOutletContext } from "../dashboardContext";
 import { isInventoryEnabled } from "../../lib/inventoryEnabled";
+import { isPurchasesEnabled } from "../../lib/planProducts";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./PurchasesPage.module.css";
 
@@ -153,6 +154,7 @@ function IconChevronRight() {
 export function PurchasesPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const inventoryOn = isInventoryEnabled(ctx?.tenant);
+  const purchasesAllowed = isPurchasesEnabled(ctx?.tenant);
 
   const [tab, setTab] = useState<TabId>("new");
   const [products, setProducts] = useState<ProductOut[]>([]);
@@ -449,6 +451,10 @@ export function PurchasesPage() {
       </div>
     </aside>
   );
+
+  if (ctx && !purchasesAllowed) {
+    return <Navigate to="/app/products" replace />;
+  }
 
   return (
     <div className={styles.wrap}>

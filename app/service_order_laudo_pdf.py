@@ -223,7 +223,7 @@ def _draw_body_paragraph(
     width_chars: int = 98,
 ) -> float:
     c.setFont(font, 7.5)
-    c.setFillColor(colors.HexColor("#334155"))
+    c.setFillColor(colors.black)
     for line in _wrap_text(text, width_chars):
         if y < 42 * mm:
             c.showPage()
@@ -268,7 +268,7 @@ def _draw_tech_table(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
                 ("FONTNAME", (0, 0), (-1, 0), font_bold),
                 ("FONTNAME", (0, 1), (-1, -1), font),
                 ("FONTSIZE", (0, 0), (-1, -1), 7.4),
@@ -381,7 +381,7 @@ def _draw_photo_annex_pages(
         c.setFont(font_bold, 11)
         c.drawString(margin_x, y_top, "ANEXO — EVIDÊNCIAS FOTOGRÁFICAS")
         c.setFont(font, 7.5)
-        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFillColor(colors.black)
         c.drawString(margin_x, y_top - 5 * mm, "Registros visuais vinculados à ordem de serviço")
         draw_professional_horizontal_rule(
             c,
@@ -404,7 +404,7 @@ def _draw_photo_annex_pages(
             except Exception:
                 pass
             c.setFont(font, 7.2)
-            c.setFillColor(colors.HexColor("#475569"))
+            c.setFillColor(colors.black)
             for line_i, line in enumerate(_wrap_text(caption, max_chars=42)[:2]):
                 c.drawString(px, py - 4 * mm - line_i * 3.2 * mm, line)
 
@@ -551,7 +551,7 @@ def build_service_order_laudo_pdf(*, order: ServiceOrder, client: Client | None,
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
                     ("FONTNAME", (0, 0), (-1, 0), font_bold),
                     ("FONTNAME", (0, 1), (-1, -1), font),
                     ("FONTSIZE", (0, 0), (-1, -1), 7.2),
@@ -594,7 +594,7 @@ def build_service_order_laudo_pdf(*, order: ServiceOrder, client: Client | None,
         )
 
     c.setFont(font, 7)
-    c.setFillColor(colors.HexColor("#94A3B8"))
+    c.setFillColor(colors.black)
     c.drawCentredString(width / 2, 10 * mm, "Documento gerado pelo Climaris — laudo técnico de ordem de serviço.")
 
     c.save()

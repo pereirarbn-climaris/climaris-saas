@@ -6,7 +6,7 @@ import {
 } from "../api/equipmentCatalog";
 import { validateQrCode } from "../api/qrcodes";
 import { parseScannedQrCode } from "./qrcodeScan";
-import type { ServiceOrderGarantiaFields } from "./serviceOrderGarantia";
+import { resolveGarantiaSerial, type ServiceOrderGarantiaFields } from "./serviceOrderGarantia";
 
 export type GarantiaEquipmentSyncResult = {
   clientEquipmentId: string;
@@ -34,7 +34,7 @@ export async function syncGarantiaEquipmentToClient(
   garantia: ServiceOrderGarantiaFields,
 ): Promise<GarantiaEquipmentSyncResult | null> {
   const catalogId = garantia.catalogId?.trim();
-  const serial = garantia.numeroSerie.trim();
+  const serial = resolveGarantiaSerial(garantia);
   const tag = resolveEquipmentTag(garantia);
   if (!catalogId || !serial || !tag) return null;
 

@@ -137,6 +137,7 @@ def process_stone_webhook_payload(db: Session, row: TenantFinanceGateway, body: 
     pm = (entry.payment_method or "").strip().lower() or "pix"
     entry.payment_method = pm if pm else "pix"
 
+    was_paid = entry.status == FinanceEntryStatus.PAID
     if entry.status != FinanceEntryStatus.PAID:
         entry.status = FinanceEntryStatus.PAID
         entry.paid_at = datetime.now(timezone.utc)
@@ -151,4 +152,7 @@ def process_stone_webhook_payload(db: Session, row: TenantFinanceGateway, body: 
     except Exception:
         db.rollback()
         raise
+    from app.notifications import notify_finance_entry_paid_if_needed
+
+    notify_finance_entry_paid_if_needed(db, entry=entry, was_paid=was_paid, source_label="Stone")
     return {"received": True, "matched": True, "entry_id": entry.id, "order_id": order_id}

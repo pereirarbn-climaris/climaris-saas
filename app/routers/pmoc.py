@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import json
 import re
+import csv
+from io import StringIO
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.pmoc_compliance import compute_pmoc_compliance_summary
+from app.pmoc_analytics import compute_pmoc_analytics_summary, compute_pmoc_portfolio_summary
+from app.pmoc_portfolio_pdf import build_pmoc_portfolio_report_pdf
 from app.pmoc_pdf import build_pmoc_report_pdf
 from app.pmoc_pending_tasks import compute_pmoc_pending_tasks
 from app.pmoc_schedule import compute_pmoc_estimated_time
@@ -23,6 +28,7 @@ from app.pmoc_service import (
     DEFAULT_LAW_NOTE,
     apply_pmoc_rt_fields,
     build_pmoc_create_validation_issues,
+    client_snapshot_dict,
     client_site_snapshot_dict,
     deactivate_other_active_plans,
     extras_default,
@@ -43,12 +49,18 @@ from app.schemas import (
     PmocClientSummaryOut,
     PmocExecutionCreate,
     PmocExecutionOut,
+    PmocEquipmentTypeOptionOut,
     PmocEstimatedTimeLineOut,
     PmocEstimatedTimeOut,
     PmocFieldInspectionCreate,
     PmocFieldInspectionOut,
     PmocComplianceIndicatorOut,
     PmocComplianceSummaryOut,
+    PmocAnalyticsSummaryOut,
+    PmocAnalyticsTopConsumableOut,
+    PmocPortfolioClientRankOut,
+    PmocPortfolioPlanRankOut,
+    PmocPortfolioSummaryOut,
     PmocOccurrenceAlertOut,
     PmocOccurrenceCreate,
     PmocOccurrenceOut,
@@ -61,6 +73,9 @@ from app.schemas import (
     PmocPlanEquipmentsReplace,
     PmocPlanOut,
     PmocPlanUpdate,
+    PmocServiceCatalogCreate,
+    PmocServiceCatalogOut,
+    PmocServiceCatalogUpdate,
     PmocPlanningScheduleCreate,
     PmocActivityServiceOut,
     PmocScheduledActivityCreate,
@@ -77,16 +92,24 @@ from app.routers.service_orders import (
 from models import (
     Client,
     ClientSite,
+    BudgetTemplateSettings,
     Equipment,
     PmocActivityFrequency,
     PmocAirQualityAnalysis,
     PmocExecution,
     PmocExecutionCompletion,
+    PmocExecutionConsumable,
+    PmocExecutionMeasurement,
+    PmocExecutionServiceLog,
+    PmocBuildingProfile,
+    PmocEnvironment,
+    PmocEnvironmentEquipment,
     PmocOccurrence,
     PmocOccurrenceStatus,
     PmocPlan,
     PmocPlanEquipment,
     PmocPlanStatus,
+    PmocServiceCatalog,
     PmocScheduledActivity,
     Schedule,
     ScheduleStatus,
@@ -99,6 +122,65 @@ from models import (
 )
 
 router = APIRouter(prefix="/pmoc", tags=["pmoc"])
+
+PMOC_EQUIPMENT_TYPE_OPTIONS: list[tuple[str, str]] = [
+    ("hi_wall", "Hi-wall"),
+    ("piso_teto", "Piso teto"),
+    ("cassete", "Cassete"),
+    ("vrf", "VRF"),
+    ("multi_split", "Multi split"),
+    ("self_contained", "Self contained"),
+    ("chiller", "Chiller"),
+    ("fancoil", "Fancoil"),
+    ("janela", "Janela"),
+    ("portatil", "Portátil"),
+    ("roof_top", "Roof top"),
+    ("splito", "Splitão"),
+]
+PMOC_EQUIPMENT_TYPE_KEYS = {key for key, _label in PMOC_EQUIPMENT_TYPE_OPTIONS}
+
+
+def _parse_equipment_types_json(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[str] = []
+    for value in data:
+        if not isinstance(value, str):
+            continue
+        key = value.strip().lower()
+        if key and key in PMOC_EQUIPMENT_TYPE_KEYS and key not in out:
+            out.append(key)
+    return out
+
+
+def _serialize_equipment_types_json(values: list[str] | None) -> str:
+    if not values:
+        return "[]"
+    out: list[str] = []
+    for raw in values:
+        key = str(raw).strip().lower()
+        if key and key in PMOC_EQUIPMENT_TYPE_KEYS and key not in out:
+            out.append(key)
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _pmoc_service_catalog_out(row: PmocServiceCatalog) -> PmocServiceCatalogOut:
+    return PmocServiceCatalogOut(
+        id=row.id,
+        name=row.name,
+        frequency=row.frequency.value,
+        equipment_types=_parse_equipment_types_json(row.equipment_types_json),
+        sort_order=row.sort_order,
+        is_active=row.is_active,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 def _get_plan(db: Session, tenant_id: int, pmoc_id: int) -> PmocPlan:
@@ -181,6 +263,217 @@ def _equipment_row_out(link: PmocPlanEquipment, eq: Equipment | None) -> PmocPla
         local_instalacao=eq.local_instalacao if eq else None,
         installation_reference=eq.installation_reference if eq else None,
     )
+
+
+def _pick_dict_value(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in data:
+            return data[key]
+    return None
+
+
+def _sync_pmoc_building_profile(
+    db: Session,
+    *,
+    plan: PmocPlan,
+    company_data: dict[str, Any] | None,
+    building_data: dict[str, Any] | None,
+    emergency_plan: dict[str, Any] | None,
+    annual_load_review_due: Any,
+) -> None:
+    payload_present = any(
+        part is not None for part in (company_data, building_data, emergency_plan, annual_load_review_due)
+    )
+    if not payload_present:
+        return
+    profile = db.execute(
+        select(PmocBuildingProfile).where(PmocBuildingProfile.pmoc_id == plan.id)
+    ).scalar_one_or_none()
+    if profile is None:
+        profile = PmocBuildingProfile(pmoc_id=plan.id)
+        db.add(profile)
+
+    company = company_data or {}
+    building = building_data or {}
+    emergency = emergency_plan or {}
+
+    profile.legal_representative = _pick_dict_value(company, "legal_representative", "legalRepresentative")
+    profile.state_registration = _pick_dict_value(company, "state_registration", "stateRegistration")
+    profile.activity_exercised = _pick_dict_value(company, "activity_exercised", "activityExercised")
+    profile.contact_phone = _pick_dict_value(company, "phone")
+    profile.contact_email = _pick_dict_value(company, "email")
+    profile.total_climatized_area_m2 = _pick_dict_value(
+        building, "total_climatized_area_m2", "totalClimatizedAreaM2"
+    )
+    profile.floors_count = _pick_dict_value(building, "floors_count", "floorsCount")
+    profile.avg_occupants = _pick_dict_value(building, "avg_occupants", "avgOccupants")
+    profile.operation_hours = _pick_dict_value(building, "operation_hours", "operationHours")
+    profile.occupancy_type = _pick_dict_value(building, "occupancy_type", "occupancyType")
+    profile.power_outage_procedure = _pick_dict_value(
+        emergency, "power_outage_procedure", "powerOutageProcedure"
+    )
+    profile.critical_failure_procedure = _pick_dict_value(
+        emergency, "critical_failure_procedure", "criticalFailureProcedure"
+    )
+
+    if isinstance(annual_load_review_due, date):
+        profile.annual_load_review_due = annual_load_review_due
+    elif isinstance(annual_load_review_due, str) and annual_load_review_due.strip():
+        try:
+            profile.annual_load_review_due = date.fromisoformat(annual_load_review_due.strip())
+        except ValueError:
+            pass
+
+
+def _replace_pmoc_environments(db: Session, *, plan: PmocPlan, environments_data: list[dict[str, Any]]) -> None:
+    db.execute(delete(PmocEnvironment).where(PmocEnvironment.pmoc_id == plan.id))
+    for idx, row in enumerate(environments_data):
+        name = _pick_dict_value(row, "environment_name", "environmentName")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        legacy_equipment_id = _pick_dict_value(row, "equipment_id", "equipmentId")
+        equipment_ids_raw = _pick_dict_value(row, "equipment_ids", "equipmentIds")
+        normalized_equipment_ids: list[int] = []
+        if isinstance(equipment_ids_raw, list):
+            for item in equipment_ids_raw:
+                if isinstance(item, int) and item > 0 and item not in normalized_equipment_ids:
+                    normalized_equipment_ids.append(item)
+        if isinstance(legacy_equipment_id, int) and legacy_equipment_id > 0 and legacy_equipment_id not in normalized_equipment_ids:
+            normalized_equipment_ids.append(legacy_equipment_id)
+        env = PmocEnvironment(
+            pmoc_id=plan.id,
+            equipment_id=(normalized_equipment_ids[0] if normalized_equipment_ids else None),
+            sort_order=idx,
+            environment_name=name.strip()[:180],
+            area_m2=_pick_dict_value(row, "area_m2", "areaM2"),
+            ceiling_height_m=_pick_dict_value(row, "ceiling_height_m", "ceilingHeightM"),
+            air_volume_m3=_pick_dict_value(row, "air_volume_m3", "airVolumeM3"),
+            avg_occupants=_pick_dict_value(row, "avg_occupants", "avgOccupants"),
+            activity_type=_pick_dict_value(row, "activity_type", "activityType"),
+        )
+        db.add(env)
+        db.flush()
+        for equipment_id in normalized_equipment_ids:
+            db.add(
+                PmocEnvironmentEquipment(
+                    pmoc_environment_id=env.id,
+                    equipment_id=equipment_id,
+                )
+            )
+
+
+def _persist_execution_normalized_data(
+    db: Session,
+    *,
+    execution: PmocExecution,
+    operational_data: dict[str, Any] | None,
+    indoor_air_quality: dict[str, Any] | None,
+    service_log: dict[str, Any] | None,
+) -> None:
+    metric_rows: list[tuple[str, str, Any, str | None]] = []
+    op = operational_data or {}
+    electrical = op.get("electrical") if isinstance(op.get("electrical"), dict) else {}
+    refrigeration = op.get("refrigeration") if isinstance(op.get("refrigeration"), dict) else {}
+    temperatures = op.get("temperatures") if isinstance(op.get("temperatures"), dict) else {}
+    performance = op.get("performance") if isinstance(op.get("performance"), dict) else {}
+    iaq = indoor_air_quality or {}
+
+    metric_rows.extend(
+        [
+            ("electrical", "voltage_phase_phase", _pick_dict_value(electrical, "voltage_phase_phase", "voltagePhasePhase"), "V"),
+            ("electrical", "voltage_phase_neutral", _pick_dict_value(electrical, "voltage_phase_neutral", "voltagePhaseNeutral"), "V"),
+            ("electrical", "current_a", _pick_dict_value(electrical, "current_a", "currentA"), "A"),
+            ("electrical", "power_kw", _pick_dict_value(electrical, "power_kw", "powerKw"), "kW"),
+            ("electrical", "power_factor", _pick_dict_value(electrical, "power_factor", "powerFactor"), None),
+            ("refrigeration", "suction_pressure", _pick_dict_value(refrigeration, "suction_pressure", "suctionPressure"), None),
+            ("refrigeration", "discharge_pressure", _pick_dict_value(refrigeration, "discharge_pressure", "dischargePressure"), None),
+            ("refrigeration", "superheat_c", _pick_dict_value(refrigeration, "superheat_c", "superheatC"), "C"),
+            ("refrigeration", "subcooling_c", _pick_dict_value(refrigeration, "subcooling_c", "subcoolingC"), "C"),
+            ("temperatures", "return_c", _pick_dict_value(temperatures, "return_c", "returnC"), "C"),
+            ("temperatures", "supply_c", _pick_dict_value(temperatures, "supply_c", "supplyC"), "C"),
+            ("temperatures", "ambient_c", _pick_dict_value(temperatures, "ambient_c", "ambientC"), "C"),
+            ("temperatures", "external_c", _pick_dict_value(temperatures, "external_c", "externalC"), "C"),
+            ("performance", "delta_t_c", _pick_dict_value(performance, "delta_t_c", "deltaTC"), "C"),
+            ("performance", "observed_performance", _pick_dict_value(performance, "observed_performance", "observedPerformance"), None),
+            ("iaq", "ambient_temperature_c", _pick_dict_value(iaq, "ambient_temperature_c", "ambientTemperatureC"), "C"),
+            ("iaq", "relative_humidity_pct", _pick_dict_value(iaq, "relative_humidity_pct", "relativeHumidityPct"), "%"),
+            ("iaq", "co2_ppm", _pick_dict_value(iaq, "co2_ppm", "co2Ppm"), "ppm"),
+            ("iaq", "air_renewal_rate", _pick_dict_value(iaq, "air_renewal_rate", "airRenewalRate"), None),
+            ("iaq", "particulate_matter", _pick_dict_value(iaq, "particulate_matter", "particulateMatter"), None),
+            ("iaq", "fungi_bacteria", _pick_dict_value(iaq, "fungi_bacteria", "fungiBacteria"), None),
+        ]
+    )
+
+    for metric_group, metric_key, raw_value, unit in metric_rows:
+        if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
+            continue
+        numeric_value: float | None = None
+        text_value: str | None = None
+        if isinstance(raw_value, (int, float)):
+            numeric_value = float(raw_value)
+        else:
+            text_value = str(raw_value).strip()[:255]
+        db.add(
+            PmocExecutionMeasurement(
+                pmoc_execution_id=execution.id,
+                metric_group=metric_group,
+                metric_key=metric_key,
+                value_numeric=numeric_value,
+                value_text=text_value,
+                unit=unit,
+            )
+        )
+
+    if service_log and isinstance(service_log, dict):
+        has_log_data = any(
+            [
+                bool(_pick_dict_value(service_log, "technician_name", "technicianName")),
+                bool(_pick_dict_value(service_log, "executed_service", "executedService")),
+                bool(_pick_dict_value(service_log, "worked_hours", "workedHours")),
+                bool(_pick_dict_value(service_log, "observations")),
+                bool(_pick_dict_value(service_log, "legal_signature_provider", "legalSignatureProvider")),
+            ]
+        )
+        if has_log_data:
+            db.add(
+                PmocExecutionServiceLog(
+                    pmoc_execution_id=execution.id,
+                    technician_name=_pick_dict_value(service_log, "technician_name", "technicianName"),
+                    executed_service=_pick_dict_value(service_log, "executed_service", "executedService"),
+                    worked_hours=_pick_dict_value(service_log, "worked_hours", "workedHours"),
+                    observations=_pick_dict_value(service_log, "observations"),
+                    legal_signature_provider=_pick_dict_value(
+                        service_log, "legal_signature_provider", "legalSignatureProvider"
+                    ),
+                )
+            )
+
+        materials = service_log.get("materials")
+        if isinstance(materials, list):
+            for item in materials:
+                if not isinstance(item, dict):
+                    continue
+                name = _pick_dict_value(item, "name")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                validity_value = _pick_dict_value(item, "validity_date", "validityDate")
+                validity_date: date | None = None
+                if isinstance(validity_value, date):
+                    validity_date = validity_value
+                elif isinstance(validity_value, str) and validity_value.strip():
+                    try:
+                        validity_date = date.fromisoformat(validity_value.strip())
+                    except ValueError:
+                        validity_date = None
+                db.add(
+                    PmocExecutionConsumable(
+                        pmoc_execution_id=execution.id,
+                        name=name.strip()[:180],
+                        lot_number=_pick_dict_value(item, "lot_number", "lotNumber"),
+                        validity_date=validity_date,
+                        quantity=_pick_dict_value(item, "quantity"),
+                    )
+                )
 
 
 def _air_analysis_next_semester_due(analysis_date: date) -> date:
@@ -357,9 +650,15 @@ def create_pmoc_full(
 ) -> PmocPlanOut:
     """Cadastro completo: plano + equipamentos + cronograma customizado + dados RT/ART."""
     rt_name = payload.rt_data.responsible_name if payload.rt_data else None
+    has_client_sites = db.execute(
+        select(func.count())
+        .select_from(ClientSite)
+        .where(ClientSite.client_id == payload.client_id, ClientSite.tenant_id == current_user.tenant_id)
+    ).scalar_one()
     issues = build_pmoc_create_validation_issues(
         client_id=payload.client_id,
         client_site_id=payload.client_site_id,
+        requires_site=bool(has_client_sites),
         equipment_ids=payload.equipment_ids,
         responsible_name=rt_name,
     )
@@ -377,11 +676,15 @@ def create_pmoc_full(
     ).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente não encontrado.")
-    site = get_client_site_for_client(
-        db, site_id=payload.client_site_id, client_id=client.id, tenant_id=current_user.tenant_id
-    )
-    if site is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Obra/filial inválida para este cliente.")
+    site: ClientSite | None = None
+    if payload.client_site_id is not None:
+        site = get_client_site_for_client(
+            db, site_id=payload.client_site_id, client_id=client.id, tenant_id=current_user.tenant_id
+        )
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Obra/filial inválida para este cliente.")
+    elif has_client_sites:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selecione a obra/filial do cliente.")
 
     equipment_ids = list(dict.fromkeys(payload.equipment_ids))
     for eid in equipment_ids:
@@ -393,17 +696,17 @@ def create_pmoc_full(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Equipamento {eid} não pertence a este cliente.",
             )
-        if eq.client_site_id != site.id:
+        if site is not None and eq.client_site_id != site.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Equipamento {eid} não pertence à obra/unidade selecionada.",
             )
 
-    snap = client_site_snapshot_dict(client, site)
+    snap = client_site_snapshot_dict(client, site) if site is not None else client_snapshot_dict(client)
     plan = PmocPlan(
         tenant_id=current_user.tenant_id,
         client_id=client.id,
-        client_site_id=site.id,
+        client_site_id=site.id if site is not None else None,
         status=PmocPlanStatus.DRAFT,
         title=payload.title.strip(),
         establishment_snapshot_json=json.dumps(snap, ensure_ascii=False),
@@ -418,18 +721,66 @@ def create_pmoc_full(
         db.add(PmocPlanEquipment(pmoc_id=plan.id, equipment_id=eid, sort_order=idx))
 
     apply_pmoc_rt_fields(plan, payload.rt_data)
+    extras = parse_extras(plan.extras_json)
+    if payload.company_data is not None:
+        extras["company_data"] = payload.company_data.model_dump(mode="json", by_alias=False, exclude_none=True)
+    if payload.building_data is not None:
+        extras["building_data"] = payload.building_data.model_dump(mode="json", by_alias=False, exclude_none=True)
+    if payload.environments_data:
+        extras["environments_data"] = [
+            row.model_dump(mode="json", by_alias=False, exclude_none=True) for row in payload.environments_data
+        ]
+    if payload.emergency_plan is not None:
+        extras["emergency_plan"] = payload.emergency_plan.model_dump(mode="json", by_alias=False, exclude_none=True)
+    if payload.annual_load_review_due is not None:
+        extras["annual_load_review_due"] = payload.annual_load_review_due.isoformat()
+    if payload.rt_data is not None:
+        extras["rt_extended"] = {
+            "responsible_formation": payload.rt_data.responsible_formation or "",
+            "maintenance_company": payload.rt_data.maintenance_company or "",
+        }
+    plan.extras_json = serialize_extras(extras)
+    _sync_pmoc_building_profile(
+        db,
+        plan=plan,
+        company_data=(
+            payload.company_data.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.company_data is not None
+            else None
+        ),
+        building_data=(
+            payload.building_data.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.building_data is not None
+            else None
+        ),
+        emergency_plan=(
+            payload.emergency_plan.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.emergency_plan is not None
+            else None
+        ),
+        annual_load_review_due=payload.annual_load_review_due,
+    )
+    _replace_pmoc_environments(
+        db,
+        plan=plan,
+        environments_data=[
+            row.model_dump(mode="json", by_alias=True, exclude_none=True) for row in payload.environments_data
+        ],
+    )
 
     if payload.activities:
         db.execute(delete(PmocScheduledActivity).where(PmocScheduledActivity.pmoc_id == plan.id))
         for idx, act_in in enumerate(payload.activities):
-            service = db.execute(
-                select(Service).where(Service.id == act_in.service_id, Service.tenant_id == current_user.tenant_id)
-            ).scalar_one_or_none()
-            if service is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Serviço {act_in.service_id} inválido ou inexistente.",
-                )
+            service: Service | None = None
+            if act_in.service_id is not None:
+                service = db.execute(
+                    select(Service).where(Service.id == act_in.service_id, Service.tenant_id == current_user.tenant_id)
+                ).scalar_one_or_none()
+                if service is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Serviço {act_in.service_id} inválido ou inexistente.",
+                    )
             if act_in.equipment_id is not None:
                 eq = db.execute(
                     select(Equipment).where(
@@ -442,7 +793,7 @@ def create_pmoc_full(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Equipamento {act_in.equipment_id} inválido para atividade do cronograma.",
                     )
-            title = (act_in.title or service.name or "").strip()
+            title = (act_in.title or (service.name if service is not None else "")).strip()
             if len(title) < 2:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -452,7 +803,7 @@ def create_pmoc_full(
                 PmocScheduledActivity(
                     pmoc_id=plan.id,
                     equipment_id=act_in.equipment_id,
-                    service_id=act_in.service_id,
+                    service_id=act_in.service_id if service is not None else None,
                     frequency=PmocActivityFrequency(act_in.frequency),
                     task_code=act_in.task_code,
                     title=title[:200],
@@ -500,8 +851,35 @@ def update_pmoc_plan(
         plan.internal_notes = payload.internal_notes.strip() or None
     if payload.extras is not None:
         merged = extras_default()
-        merged.update({k: str(v)[:8000] for k, v in payload.extras.items() if isinstance(v, str)})
+        for key, default_value in merged.items():
+            if key not in payload.extras:
+                continue
+            incoming = payload.extras[key]
+            if isinstance(default_value, str):
+                if isinstance(incoming, str):
+                    merged[key] = incoming[:8000]
+            elif isinstance(default_value, dict):
+                if isinstance(incoming, dict):
+                    merged[key] = incoming
+            elif isinstance(default_value, list):
+                if isinstance(incoming, list):
+                    merged[key] = incoming
         plan.extras_json = serialize_extras(merged)
+        _sync_pmoc_building_profile(
+            db,
+            plan=plan,
+            company_data=merged.get("company_data") if isinstance(merged.get("company_data"), dict) else None,
+            building_data=merged.get("building_data") if isinstance(merged.get("building_data"), dict) else None,
+            emergency_plan=merged.get("emergency_plan") if isinstance(merged.get("emergency_plan"), dict) else None,
+            annual_load_review_due=merged.get("annual_load_review_due"),
+        )
+        _replace_pmoc_environments(
+            db,
+            plan=plan,
+            environments_data=(
+                merged.get("environments_data") if isinstance(merged.get("environments_data"), list) else []
+            ),
+        )
     if payload.responsible_name is not None:
         plan.responsible_name = payload.responsible_name.strip() or None
     if payload.responsible_council is not None:
@@ -635,6 +1013,122 @@ def replace_pmoc_equipments(
     refresh_pmoc_computed_fields(db, plan)
     db.commit()
     return list_pmoc_equipments(pmoc_id, db, current_user)
+
+
+@router.get("/settings/equipment-types", response_model=list[PmocEquipmentTypeOptionOut])
+def list_pmoc_equipment_type_options(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[PmocEquipmentTypeOptionOut]:
+    del current_user
+    return [PmocEquipmentTypeOptionOut(key=key, label=label) for key, label in PMOC_EQUIPMENT_TYPE_OPTIONS]
+
+
+@router.get("/settings/services", response_model=list[PmocServiceCatalogOut])
+def list_pmoc_service_catalog(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    include_inactive: Annotated[bool, Query(alias="includeInactive")] = False,
+) -> list[PmocServiceCatalogOut]:
+    stmt = (
+        select(PmocServiceCatalog)
+        .where(PmocServiceCatalog.tenant_id == current_user.tenant_id)
+        .order_by(PmocServiceCatalog.sort_order.asc(), PmocServiceCatalog.name.asc(), PmocServiceCatalog.id.asc())
+    )
+    if not include_inactive:
+        stmt = stmt.where(PmocServiceCatalog.is_active.is_(True))
+    rows = db.execute(stmt).scalars().all()
+    return [_pmoc_service_catalog_out(row) for row in rows]
+
+
+@router.post(
+    "/settings/services",
+    response_model=PmocServiceCatalogOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_pmoc_service_catalog(
+    payload: PmocServiceCatalogCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PmocServiceCatalogOut:
+    row = PmocServiceCatalog(
+        tenant_id=current_user.tenant_id,
+        name=payload.name.strip()[:200],
+        frequency=PmocActivityFrequency(payload.frequency),
+        equipment_types_json=_serialize_equipment_types_json(payload.equipment_types),
+        sort_order=payload.sort_order,
+        is_active=payload.is_active,
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe um serviço PMOC com este nome.")
+    db.refresh(row)
+    return _pmoc_service_catalog_out(row)
+
+
+@router.put(
+    "/settings/services/{catalog_id}",
+    response_model=PmocServiceCatalogOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_pmoc_service_catalog(
+    catalog_id: int,
+    payload: PmocServiceCatalogUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PmocServiceCatalogOut:
+    row = db.execute(
+        select(PmocServiceCatalog).where(
+            PmocServiceCatalog.id == catalog_id,
+            PmocServiceCatalog.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Serviço PMOC não encontrado.")
+
+    if payload.name is not None:
+        row.name = payload.name.strip()[:200]
+    if payload.frequency is not None:
+        row.frequency = PmocActivityFrequency(payload.frequency)
+    if payload.equipment_types is not None:
+        row.equipment_types_json = _serialize_equipment_types_json(payload.equipment_types)
+    if payload.sort_order is not None:
+        row.sort_order = payload.sort_order
+    if payload.is_active is not None:
+        row.is_active = payload.is_active
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe um serviço PMOC com este nome.")
+    db.refresh(row)
+    return _pmoc_service_catalog_out(row)
+
+
+@router.delete(
+    "/settings/services/{catalog_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_pmoc_service_catalog(
+    catalog_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    row = db.execute(
+        select(PmocServiceCatalog).where(
+            PmocServiceCatalog.id == catalog_id,
+            PmocServiceCatalog.tenant_id == current_user.tenant_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Serviço PMOC não encontrado.")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _get_service_for_tenant(db: Session, tenant_id: int, service_id: int) -> Service:
@@ -954,6 +1448,216 @@ def pmoc_compliance_summary(
     )
 
 
+@router.get("/plans/{pmoc_id}/analytics-summary", response_model=PmocAnalyticsSummaryOut)
+def pmoc_analytics_summary(
+    pmoc_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> PmocAnalyticsSummaryOut:
+    _get_plan(db, current_user.tenant_id, pmoc_id)
+    result = compute_pmoc_analytics_summary(db, pmoc_id=pmoc_id)
+    return PmocAnalyticsSummaryOut(
+        pmoc_id=result.pmoc_id,
+        generated_at=result.generated_at,
+        total_executions=result.total_executions,
+        done_executions=result.done_executions,
+        executions_with_measurements=result.executions_with_measurements,
+        executions_with_consumables=result.executions_with_consumables,
+        measurement_coverage_pct=result.measurement_coverage_pct,
+        consumable_traceability_pct=result.consumable_traceability_pct,
+        avg_delta_t_c=result.avg_delta_t_c,
+        avg_current_a=result.avg_current_a,
+        avg_co2_ppm=result.avg_co2_ppm,
+        total_consumables_used=result.total_consumables_used,
+        top_consumables=[
+            PmocAnalyticsTopConsumableOut(
+                name=row.name,
+                usage_count=row.usage_count,
+                traceable_count=row.traceable_count,
+            )
+            for row in result.top_consumables
+        ],
+        environments_count=result.environments_count,
+        environments_linked_equipment_count=result.environments_linked_equipment_count,
+        unresolved_occurrences=result.unresolved_occurrences,
+    )
+
+
+@router.get("/portfolio-summary", response_model=PmocPortfolioSummaryOut)
+def pmoc_portfolio_summary(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+) -> PmocPortfolioSummaryOut:
+    parsed_status: PmocPlanStatus | None = None
+    if status_filter:
+        try:
+            parsed_status = PmocPlanStatus(status_filter)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Status de PMOC inválido.") from exc
+    result = compute_pmoc_portfolio_summary(
+        db,
+        tenant_id=current_user.tenant_id,
+        status_filter=parsed_status,
+    )
+    return PmocPortfolioSummaryOut(
+        generated_at=result.generated_at,
+        total_plans=result.total_plans,
+        active_plans=result.active_plans,
+        avg_conformity_score=result.avg_conformity_score,
+        critical_plans_count=result.critical_plans_count,
+        total_open_occurrences=result.total_open_occurrences,
+        client_ranking=[
+            PmocPortfolioClientRankOut(
+                client_id=row.client_id,
+                client_name=row.client_name,
+                plans_count=row.plans_count,
+                avg_conformity_score=row.avg_conformity_score,
+                open_occurrences=row.open_occurrences,
+            )
+            for row in result.client_ranking
+        ],
+        plan_ranking=[
+            PmocPortfolioPlanRankOut(
+                pmoc_id=row.pmoc_id,
+                pmoc_title=row.pmoc_title,
+                client_name=row.client_name,
+                establishment_name=row.establishment_name,
+                status=row.status,
+                conformity_score=row.conformity_score,
+                measurement_coverage_pct=row.measurement_coverage_pct,
+                consumable_traceability_pct=row.consumable_traceability_pct,
+                open_occurrences=row.open_occurrences,
+            )
+            for row in result.plan_ranking
+        ],
+    )
+
+
+@router.get("/portfolio-summary/export.csv")
+def pmoc_portfolio_summary_csv(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+) -> Response:
+    parsed_status: PmocPlanStatus | None = None
+    if status_filter:
+        try:
+            parsed_status = PmocPlanStatus(status_filter)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Status de PMOC inválido.") from exc
+    result = compute_pmoc_portfolio_summary(
+        db,
+        tenant_id=current_user.tenant_id,
+        status_filter=parsed_status,
+        client_rank_limit=500,
+        plan_rank_limit=2000,
+    )
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["secao", "campo_1", "campo_2", "campo_3", "campo_4", "campo_5", "campo_6"])
+    writer.writerow(
+        [
+            "resumo",
+            f"total_plans={result.total_plans}",
+            f"active_plans={result.active_plans}",
+            f"avg_conformity_score={result.avg_conformity_score}",
+            f"critical_plans_count={result.critical_plans_count}",
+            f"total_open_occurrences={result.total_open_occurrences}",
+            result.generated_at.isoformat(),
+        ]
+    )
+    writer.writerow(["ranking_clientes", "cliente", "planos", "score_medio", "ocorrencias_abertas", "", ""])
+    for row in result.client_ranking:
+        writer.writerow(
+            [
+                "ranking_clientes",
+                row.client_name,
+                row.plans_count,
+                row.avg_conformity_score,
+                row.open_occurrences,
+                "",
+                "",
+            ]
+        )
+    writer.writerow(["ranking_unidades", "pmoc_id", "unidade", "cliente", "status", "score", "ocorrencias_abertas"])
+    for row in result.plan_ranking:
+        writer.writerow(
+            [
+                "ranking_unidades",
+                row.pmoc_id,
+                row.establishment_name,
+                row.client_name,
+                row.status,
+                row.conformity_score,
+                row.open_occurrences,
+            ]
+        )
+    suffix = parsed_status.value if parsed_status is not None else "all"
+    filename = f"pmoc-portfolio-summary-{suffix}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/portfolio-summary/report")
+def pmoc_portfolio_summary_pdf(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    legal_provider: Annotated[str | None, Query(alias="legal_provider")] = None,
+) -> Response:
+    parsed_status: PmocPlanStatus | None = None
+    if status_filter:
+        try:
+            parsed_status = PmocPlanStatus(status_filter)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Status de PMOC inválido.") from exc
+    result = compute_pmoc_portfolio_summary(
+        db,
+        tenant_id=current_user.tenant_id,
+        status_filter=parsed_status,
+        client_rank_limit=30,
+        plan_rank_limit=60,
+    )
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    logo_url: str | None = getattr(tenant, "logo_url", None)
+    logo_s3_key = getattr(tenant, "logo_s3_key", None)
+    if logo_s3_key:
+        try:
+            logo_url = generate_tenant_logo_presigned_url(logo_s3_key, db=db, expires_seconds=600)
+        except Exception:
+            logo_url = logo_url
+
+    signature_url: str | None = None
+    settings = db.get(BudgetTemplateSettings, current_user.tenant_id)
+    if settings is not None:
+        signature_url = settings.signature_url
+        if settings.signature_s3_key:
+            try:
+                signature_url = generate_tenant_logo_presigned_url(settings.signature_s3_key, db=db, expires_seconds=600)
+            except Exception:
+                signature_url = signature_url
+
+    pdf_bytes = build_pmoc_portfolio_report_pdf(
+        result,
+        generated_by_name=current_user.full_name,
+        logo_url=logo_url,
+        signature_url=signature_url,
+        legal_validation_note=legal_provider,
+    )
+    suffix = parsed_status.value if parsed_status is not None else "all"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="PMOC-Portfolio-{suffix}.pdf"'},
+    )
+
+
 @router.get("/plans/{pmoc_id}/occurrences", response_model=list[PmocOccurrenceOut])
 def list_pmoc_occurrences(
     pmoc_id: int,
@@ -1217,6 +1921,21 @@ def submit_pmoc_field_inspection(
         "generalNotes": payload.generalNotes.strip(),
         "checklist": [item.model_dump() for item in payload.checklist],
         "signatureBase64": payload.signatureBase64,
+        "operationalData": (
+            payload.operational_data.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.operational_data is not None
+            else None
+        ),
+        "indoorAirQuality": (
+            payload.indoor_air_quality.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.indoor_air_quality is not None
+            else None
+        ),
+        "serviceLog": (
+            payload.service_log.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.service_log is not None
+            else None
+        ),
     }
     row = PmocExecution(
         pmoc_id=plan.id,
@@ -1227,6 +1946,26 @@ def submit_pmoc_field_inspection(
         performed_by_user_id=current_user.id,
     )
     db.add(row)
+    db.flush()
+    _persist_execution_normalized_data(
+        db,
+        execution=row,
+        operational_data=(
+            payload.operational_data.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.operational_data is not None
+            else None
+        ),
+        indoor_air_quality=(
+            payload.indoor_air_quality.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.indoor_air_quality is not None
+            else None
+        ),
+        service_log=(
+            payload.service_log.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if payload.service_log is not None
+            else None
+        ),
+    )
     db.commit()
     db.refresh(row)
     return PmocFieldInspectionOut(

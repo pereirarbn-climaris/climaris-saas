@@ -42,6 +42,7 @@ import type {
 import type { ServiceOrderEquipmentServiceInput } from "../types/serviceOrders";
 import type { UserOut } from "../api/auth";
 import { addMinutesToTimeString } from "./pmocOsSchedule";
+import { formatClientAddressLine, formatClientComboboxContato } from "./clientComboboxAdapter";
 import { formatPhoneBrInput, formatTaxDocumentInput } from "./brMask";
 
 const META_MARKER = "\n---CLIMARIS_OS_META---\n";
@@ -343,23 +344,16 @@ export function mapClientsToFormView(clients: ClientOut[]): Cliente[] {
   );
   return sorted.map((c) => {
     const type = c.tax_id_kind === "cpf" ? "cpf" : "cnpj";
-    const parts = [
-      c.address_street,
-      c.address_number,
-      c.address_district,
-      c.address_city,
-      c.address_state,
-    ]
-      .map((p) => (p ?? "").trim())
-      .filter(Boolean);
     const tradeName = (c.trade_name ?? "").trim();
+    const contato = formatClientComboboxContato(c);
     return {
       id: String(c.id),
       nome: c.name,
       nomeFantasia: tradeName || undefined,
       documento: formatTaxDocumentInput(c.document ?? "", type),
-      telefone: formatPhoneBrInput(c.whatsapp ?? c.phone ?? ""),
-      endereco: parts.length ? parts.join(", ") : undefined,
+      telefone: contato ?? formatPhoneBrInput(c.whatsapp ?? c.phone ?? ""),
+      contato,
+      endereco: formatClientAddressLine(c),
     };
   });
 }

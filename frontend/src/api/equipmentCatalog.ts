@@ -150,6 +150,8 @@ export type ClientEquipmentManualOut = {
   url: string;
   kind: string;
   component_label?: string | null;
+  ingestion_status?: string | null;
+  ingestion_error?: string | null;
 };
 
 export type ClientEquipmentComponentCreatePayload = {

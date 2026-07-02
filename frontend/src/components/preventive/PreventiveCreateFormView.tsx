@@ -13,7 +13,15 @@ import { Button } from "../ui/button";
 import { CatalogCombobox } from "../ui/catalog-combobox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { ClientCombobox } from "../ui/client-combobox";
+import comboboxStyles from "../ui/catalog-combobox.module.css";
+import { clientOutToComboboxItem } from "../../lib/clientComboboxAdapter";
 import { Input, Select } from "../ui/input";
+import { toast } from "../../lib/toast";
+import {
+  preventiveModelOptions,
+  tenantDefaultTemplateKind,
+  type PreventiveTemplateKind,
+} from "../../lib/preventiveMessageTemplate";
 import styles from "./PreventiveCreateFormView.module.css";
 
 type ReminderSend = "none" | "now" | "scheduled";
@@ -34,6 +42,7 @@ type FormSnapshot = {
   reminderLocalDate: string;
   reminderLocalTime: string;
   notes: string;
+  messageTemplateKind: PreventiveTemplateKind;
 };
 
 export type PreventiveCreateFormViewProps = {
@@ -71,6 +80,7 @@ function emptySnapshot(): FormSnapshot {
     reminderLocalDate: today,
     reminderLocalTime: "09:00",
     notes: "",
+    messageTemplateKind: "returning",
   };
 }
 
@@ -79,13 +89,7 @@ function serializeSnapshot(s: FormSnapshot): string {
 }
 
 function clientToComboboxItem(c: ClientOut) {
-  const doc = (c.document ?? "").trim();
-  return {
-    id: String(c.id),
-    nome: c.name,
-    nomeFantasia: c.trade_name ?? undefined,
-    documento: doc || `#${c.id}`,
-  };
+  return clientOutToComboboxItem(c);
 }
 
 function equipmentLabel(eq: EquipmentOut): string {
@@ -169,6 +173,10 @@ export function PreventiveCreateFormView({
   editScheduleId = null,
   onUpdated,
 }: PreventiveCreateFormViewProps) {
+  const templateKindOptions = useMemo(
+    () => preventiveModelOptions(preventiveSettings),
+    [preventiveSettings],
+  );
   const isEditMode = editScheduleId != null && editScheduleId > 0;
   const [form, setForm] = useState<FormSnapshot>(emptySnapshot);
   const [, setBaseline] = useState("");
@@ -187,6 +195,14 @@ export function PreventiveCreateFormView({
   const [services, setServices] = useState<ServiceOut[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
   const [servicesErr, setServicesErr] = useState("");
+
+  useEffect(() => {
+    if (error) toast.error(error);
+  }, [error]);
+
+  useEffect(() => {
+    if (servicesErr) toast.error(servicesErr);
+  }, [servicesErr]);
 
   const clientItems = useMemo(() => clients.map(clientToComboboxItem), [clients]);
 
@@ -227,11 +243,14 @@ export function PreventiveCreateFormView({
   }, [selectedService, form.dataRealizacao]);
 
   const resetForm = useCallback(() => {
-    const next = emptySnapshot();
+    const next = {
+      ...emptySnapshot(),
+      messageTemplateKind: tenantDefaultTemplateKind(preventiveSettings),
+    };
     setForm(next);
     setBaseline(serializeSnapshot(next));
     setError("");
-  }, []);
+  }, [preventiveSettings]);
 
   useEffect(() => {
     if (!open) return;
@@ -264,6 +283,10 @@ export function PreventiveCreateFormView({
           reminderLocalDate: isoDateOnly(detail.data_realizacao),
           reminderLocalTime: "09:00",
           notes: detail.notes ?? "",
+          messageTemplateKind:
+            detail.message_template_kind === "first" || detail.message_template_kind === "returning"
+              ? detail.message_template_kind
+              : tenantDefaultTemplateKind(preventiveSettings),
         };
         setForm(next);
         setBaseline(serializeSnapshot(next));
@@ -278,7 +301,7 @@ export function PreventiveCreateFormView({
     return () => {
       cancelled = true;
     };
-  }, [open, isEditMode, editScheduleId]);
+  }, [open, isEditMode, editScheduleId, preventiveSettings]);
 
   useEffect(() => {
     if (!open) return;
@@ -387,6 +410,7 @@ export function PreventiveCreateFormView({
           data_realizacao: form.dataRealizacao,
           equipment_label: editTemporaryEquipment ? equipmentLabel : undefined,
           notes: form.notes.trim() || null,
+          message_template_kind: form.messageTemplateKind,
         });
         await onUpdated?.();
         onClose();
@@ -444,6 +468,7 @@ export function PreventiveCreateFormView({
       ...(!form.equipmentId && equipmentLabel ? { equipment_label: equipmentLabel } : {}),
       promo_image_url: preventiveSettings?.preventive_promo_image_url ?? null,
       technical_problem_hint: preventiveSettings?.preventive_technical_problem_hint ?? null,
+      message_template_kind: form.messageTemplateKind,
       ...(form.reminderSend === "scheduled"
         ? {
             reminder_local_date: form.reminderLocalDate,
@@ -645,6 +670,7 @@ export function PreventiveCreateFormView({
                     <>
                       <Field label="Cliente" className={styles.span2}>
                         <ClientCombobox
+                          className={comboboxStyles.cardField}
                           clientes={clientItems}
                           value={form.clientId}
                           onChange={(id) => {
@@ -757,7 +783,7 @@ export function PreventiveCreateFormView({
                         emptyMessage="Nenhum serviço com gestão preventiva ativa."
                       />
                     )}
-                    {servicesErr ? <p className={styles.msgErr}>{servicesErr}</p> : null}
+
                   </Field>
 
                   <Field label="Periodicidade">
@@ -786,6 +812,25 @@ export function PreventiveCreateFormView({
               </CardHeader>
               <CardContent>
                 <div className={`${styles.grid} ${styles.gridMd2}`}>
+                  <Field
+                    label="Modelo da mensagem"
+                    hint="Usado ao enviar o lembrete por WhatsApp. O padrão vem das configurações da empresa."
+                    className={styles.span2}
+                  >
+                    <Select
+                      value={form.messageTemplateKind}
+                      onChange={(ev) =>
+                        patchForm("messageTemplateKind", ev.target.value as PreventiveTemplateKind)
+                      }
+                    >
+                      {templateKindOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+
                   {!isEditMode ? (
                   <Field label="Lembrete WhatsApp">
                     <Select
@@ -832,7 +877,6 @@ export function PreventiveCreateFormView({
               </CardContent>
             </Card>
 
-            {error ? <p className={styles.msgErr}>{error}</p> : null}
           </div>
 
           <footer className={styles.footerBar}>

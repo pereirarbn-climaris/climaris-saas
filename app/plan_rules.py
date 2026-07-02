@@ -11,6 +11,7 @@ class PlanDefinition:
     is_beta_internal: bool = False
     can_contract: bool = True
     whatsapp_automation_allowed: bool = False
+    whatsapp_module_included: bool = False
 
 
 _PLAN_ALIAS: dict[str, str] = {
@@ -38,6 +39,7 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
         max_users=2,
         can_contract=True,
         whatsapp_automation_allowed=False,
+        whatsapp_module_included=True,
     ),
     "basic": PlanDefinition(
         key="basic",

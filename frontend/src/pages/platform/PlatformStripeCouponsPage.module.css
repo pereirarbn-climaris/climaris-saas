@@ -1,0 +1,129 @@
+.embeddedPanel {
+  margin-top: 0;
+}
+
+.hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted, #5c6470);
+  line-height: 1.45;
+}
+
+.summary {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted, #5c6470);
+}
+
+.formCard {
+  border: 1px solid var(--color-border, #e4e6eb);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-surface-elevated, #fff);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.formTitle {
+  margin: 0 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.fieldGrid {
+  display: grid;
+  gap: 0.85rem 1rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 720px) {
+  .fieldGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #5c6470);
+}
+
+.field input,
+.field select {
+  font-size: 0.9rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--color-border, #e4e6eb);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #111);
+}
+
+.checkField {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--color-text, #111);
+  align-self: end;
+}
+
+.productFieldset {
+  margin: 1rem 0 0;
+  border: 1px solid var(--color-border, #e4e6eb);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.productFieldset legend {
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #5c6470);
+  padding: 0 0.25rem;
+}
+
+.productList {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+
+.productCheck {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.formActions {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.emptyCell {
+  text-align: center;
+  color: var(--color-text-muted, #5c6470);
+  padding: 1.5rem !important;
+}
+
+.subId {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #5c6470);
+  font-family: ui-monospace, monospace;
+}
+
+.rowSelected {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 8%, transparent);
+}
+
+.promoSection {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border, #e4e6eb);
+}
+
+.restrictions {
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #5c6470);
+}

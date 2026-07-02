@@ -33,6 +33,7 @@ from app.security import encrypt_platform_secret
 from models import (
     Client,
     LoginAttemptAudit,
+    LoginRefreshToken,
     MarketplaceApp,
     MarketplaceEntitlementStatus,
     PlatformApiCredential,
@@ -104,6 +105,31 @@ def _mask_api_key(raw: str) -> str:
     return f"{raw[:4]}...{raw[-2:]}"
 
 
+def _tenant_last_access_map(db: Session, tenant_ids: list[int]) -> dict[int, datetime]:
+    if not tenant_ids:
+        return {}
+    result: dict[int, datetime] = {}
+    login_rows = db.execute(
+        select(LoginAttemptAudit.tenant_id, func.max(LoginAttemptAudit.created_at))
+        .where(LoginAttemptAudit.tenant_id.in_(tenant_ids), LoginAttemptAudit.outcome == "success")
+        .group_by(LoginAttemptAudit.tenant_id)
+    ).all()
+    refresh_rows = db.execute(
+        select(User.tenant_id, func.max(LoginRefreshToken.last_used_at))
+        .join(LoginRefreshToken, LoginRefreshToken.user_id == User.id)
+        .where(User.tenant_id.in_(tenant_ids), LoginRefreshToken.last_used_at.isnot(None))
+        .group_by(User.tenant_id)
+    ).all()
+    for tid, dt in (*login_rows, *refresh_rows):
+        if dt is None or tid is None:
+            continue
+        tid_int = int(tid)
+        prev = result.get(tid_int)
+        if prev is None or dt > prev:
+            result[tid_int] = dt
+    return result
+
+
 def _to_tenant_list_item(
     tenant: Tenant,
     *,
@@ -115,6 +141,7 @@ def _to_tenant_list_item(
     clients_count: int = 0,
     service_orders_count: int = 0,
     schedules_count: int = 0,
+    last_access_at: datetime | None = None,
 ) -> PlatformTenantListItemOut:
     return PlatformTenantListItemOut(
         id=tenant.id,
@@ -127,6 +154,14 @@ def _to_tenant_list_item(
         timezone=tenant.timezone,
         created_at=tenant.created_at,
         registration_email=registration_email,
+        phone=tenant.phone,
+        address_street=tenant.address_street,
+        address_number=tenant.address_number,
+        address_complement=tenant.address_complement,
+        address_district=tenant.address_district,
+        address_city=tenant.address_city,
+        address_state=tenant.address_state,
+        address_postal_code=tenant.address_postal_code,
         users_count=users_count,
         base_user_limit=base_user_limit,
         extra_user_seats=extra_user_seats,
@@ -134,6 +169,7 @@ def _to_tenant_list_item(
         clients_count=clients_count,
         service_orders_count=service_orders_count,
         schedules_count=schedules_count,
+        last_access_at=last_access_at,
     )
 
 
@@ -153,6 +189,7 @@ def _to_tenant_detail_out(db: Session, tenant: Tenant) -> PlatformTenantDetailOu
         .limit(30)
     ).scalars().all()
     base_user_limit, extra_user_seats, total_user_limit = _tenant_user_capacity(db, tenant)
+    last_access_map = _tenant_last_access_map(db, [tenant_id])
     return PlatformTenantDetailOut(
         **_to_tenant_list_item(
             tenant,
@@ -164,6 +201,7 @@ def _to_tenant_detail_out(db: Session, tenant: Tenant) -> PlatformTenantDetailOu
             clients_count=int(clients_count),
             service_orders_count=int(orders_count),
             schedules_count=int(schedules_count),
+            last_access_at=last_access_map.get(tenant_id),
         ).model_dump(),
         business_days=tenant.business_days,
         workday_start=tenant.workday_start,
@@ -296,6 +334,8 @@ def list_platform_tenants(
         if int(tid) not in admin_email_map:
             admin_email_map[int(tid)] = str(email)
 
+    last_access_map = _tenant_last_access_map(db, tenant_ids)
+
     return [
         _to_tenant_list_item(
             t,
@@ -307,6 +347,7 @@ def list_platform_tenants(
             clients_count=clients_map.get(t.id, 0),
             service_orders_count=orders_map.get(t.id, 0),
             schedules_count=schedules_map.get(t.id, 0),
+            last_access_at=last_access_map.get(t.id),
         )
         for t in rows
     ]
@@ -645,12 +686,17 @@ def create_saas_plan(
         description=(payload.description or "").strip(),
         footnote=(payload.footnote or "").strip(),
         finance_max_mode=payload.finance_max_mode,
+        dashboard_tier=payload.dashboard_tier,
         max_users=payload.max_users,
         sort_order=payload.sort_order,
         is_beta_internal=payload.is_beta_internal,
         can_contract=payload.can_contract,
         is_selectable_for_tenants=payload.is_selectable_for_tenants,
         show_in_matrix=payload.show_in_matrix,
+        monthly_price_brl=payload.monthly_price_brl,
+        products_inventory_enabled=payload.products_inventory_enabled,
+        products_purchases_enabled=payload.products_purchases_enabled,
+        products_max_images=payload.products_max_images,
     )
     db.add(row)
     db.commit()

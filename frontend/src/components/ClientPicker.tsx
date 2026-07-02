@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listClients, type ClientOut } from "../api/clients";
+import { formatClientAddressLine, formatClientComboboxContato } from "../lib/clientComboboxAdapter";
 import { sortByNameAsc } from "../lib/localeSort";
 import loginStyles from "../pages/LoginPage.module.css";
 import styles from "./ClientPicker.module.css";
@@ -112,7 +113,10 @@ export function ClientPicker({ inputId, value: _value, onChange, disabled, pinne
       </label>
       {open && visible.length > 0 ? (
         <div className={styles.resultList} role="listbox">
-          {visible.map((c) => (
+          {visible.map((c) => {
+            const endereco = formatClientAddressLine(c);
+            const contato = formatClientComboboxContato(c);
+            return (
             <button
               key={c.id}
               type="button"
@@ -128,9 +132,11 @@ export function ClientPicker({ inputId, value: _value, onChange, disabled, pinne
                 {c.name}
                 {c.is_active === false ? <span className={styles.inactiveBadge}>inativo</span> : null}
               </span>
-              <small className={styles.resultMeta}>{c.document ?? "—"}</small>
+              {endereco ? <small className={styles.resultMeta}>{endereco}</small> : null}
+              {contato ? <small className={styles.resultMeta}>{contato}</small> : null}
             </button>
-          ))}
+            );
+          })}
           {hasMore ? (
             <button
               type="button"

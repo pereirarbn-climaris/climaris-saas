@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { verifyEmailRequest } from "../api/auth";
+import { isPaidContractPlan, readPendingCheckoutPlan } from "../lib/paidPlanCheckout";
 import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import styles from "./LoginPage.module.css";
 
@@ -24,7 +25,13 @@ export function VerifyEmailPage() {
         const result = await verifyEmailRequest(token);
         if (cancelled) return;
         setState("success");
-        setMessage(result.message || "E-mail confirmado com sucesso. Você já pode entrar.");
+        const pendingPlan = readPendingCheckoutPlan();
+        const paid = pendingPlan && isPaidContractPlan(pendingPlan);
+        setMessage(
+          paid
+            ? "E-mail confirmado! Entre na sua conta para concluir o pagamento do plano no Stripe."
+            : result.message || "E-mail confirmado com sucesso. Você já pode entrar.",
+        );
       } catch (err) {
         if (cancelled) return;
         const text = err instanceof Error ? err.message : "Não foi possível confirmar o e-mail.";

@@ -21,6 +21,7 @@ import {
 } from "../../api/technicianCalendar";
 import { listTenantUsers, type UserOut } from "../../api/auth";
 import { listSchedules, type ScheduleOut } from "../../api/serviceOrders";
+import { getWhatsappModuleStatus, sendScheduleWhatsappReminder } from "../../api/whatsapp";
 import { AgendaBlockTimeModal } from "../../components/agenda/AgendaBlockTimeModal";
 import { PmocAgendaEventModal, type PmocAgendaEventSchedule } from "../../components/agenda/PmocAgendaEventModal";
 import { listPmocMockAgendaEntries, pmocMockAgendaEntryToScheduleShape } from "../../lib/pmocAgendaMock";
@@ -47,6 +48,16 @@ function countOsPerDay(schedulesByDay: Map<string, AgendaVisualSchedule[]>, dayK
 
 function countBlocksPerDay(blocks: Unavailability[], dayKey: string): number {
   return blocks.filter((b) => blockOverlapsDayKey(b, dayKey)).length;
+}
+
+function serviceOrderPath(role: string | undefined, serviceOrderId: number): string {
+  return role === "technician" ? `/app/tecnico/os/${serviceOrderId}` : `/app/service-orders/${serviceOrderId}`;
+}
+
+function scheduleAllowsWhatsappReminder(schedule: ScheduleOut): boolean {
+  const status = String(schedule.status || "").toLowerCase();
+  if (status !== "pending" && status !== "confirmed") return false;
+  return Boolean(schedule.client_whatsapp?.trim() || schedule.client_phone?.trim());
 }
 
 const WEEKDAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"] as const;
@@ -293,6 +304,8 @@ export function TechnicianSchedulePage() {
     anchorMinutes: number;
     currentMinutes: number;
   } | null>(null);
+  const [whatsappModuleActive, setWhatsappModuleActive] = useState(false);
+  const [sendingReminderScheduleId, setSendingReminderScheduleId] = useState<number | null>(null);
   const overlayPointerRef = useRef<{
     day: Date;
     overlay: HTMLElement;
@@ -519,6 +532,25 @@ export function TechnicianSchedulePage() {
   useEffect(() => {
     if (isMobile && calendarView === "week") setCalendarView("day");
   }, [isMobile, calendarView]);
+
+  useEffect(() => {
+    if (!canManage || agendaMode !== "visual") {
+      setWhatsappModuleActive(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await getWhatsappModuleStatus();
+        if (!cancelled) setWhatsappModuleActive(Boolean(status.entitlement_active));
+      } catch {
+        if (!cancelled) setWhatsappModuleActive(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, agendaMode]);
 
   useEffect(() => {
     if (!technicianId) return;
@@ -974,6 +1006,22 @@ export function TechnicianSchedulePage() {
     setFocusedDate(nextWeek);
   }
 
+  async function handleSendScheduleReminder(schedule: AgendaVisualSchedule) {
+    if (sendingReminderScheduleId === schedule.id) return;
+    setSendingReminderScheduleId(schedule.id);
+    try {
+      await sendScheduleWhatsappReminder(schedule.id);
+      setMsg({ kind: "ok", text: "Lembrete enviado pelo WhatsApp." });
+    } catch (e) {
+      setMsg({
+        kind: "err",
+        text: e instanceof Error ? e.message : "Não foi possível enviar o lembrete pelo WhatsApp.",
+      });
+    } finally {
+      setSendingReminderScheduleId(null);
+    }
+  }
+
   return (
     <div className={styles.wrap}>
       {agendaMode === "config" ? (
@@ -1170,15 +1218,13 @@ export function TechnicianSchedulePage() {
                 >
                   Dia
                 </button>
-                {!isMobile ? (
-                  <button
-                    type="button"
-                    className={`${styles.viewToggleBtn} ${calendarView === "week" ? styles.viewToggleBtnActive : ""}`}
-                    onClick={() => setCalendarView("week")}
-                  >
-                    Semana
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className={`${styles.viewToggleBtn} ${calendarView === "week" ? styles.viewToggleBtnActive : ""}`}
+                  onClick={() => setCalendarView("week")}
+                >
+                  Semana
+                </button>
                 <button
                   type="button"
                   className={`${styles.viewToggleBtn} ${calendarView === "month" ? styles.viewToggleBtnActive : ""}`}
@@ -1318,8 +1364,9 @@ export function TechnicianSchedulePage() {
                 </div>
               ))}
             </div>
-            {visibleDates.map((day) => {
+            {visibleDates.map((day, dayIndex) => {
               const isToday = localDateKey(day) === localDateKey(new Date());
+              const actionsOpenLeft = dayIndex >= visibleDates.length - 1;
               return (
               <article
                 key={localDateKey(day)}
@@ -1480,29 +1527,38 @@ export function TechnicianSchedulePage() {
                     const height = (Math.max(endMinutes - startMinutes, 15) / minutesPerDay) * 100;
                     const isConfirmed = String(s.status || "").toLowerCase() === "confirmed";
                     const isPmoc = Boolean(s.is_pmoc);
+                    const showReminderAction =
+                      canManage && whatsappModuleActive && !isPmoc && scheduleAllowsWhatsappReminder(s);
+                    const showOsAction = !isPmoc && Boolean(s.service_order_id);
+                    const showHoverActions = showReminderAction || showOsAction;
+                    const sendingReminder = sendingReminderScheduleId === s.id;
                     return (
                       <div
                         key={s.id}
-                        className={`${styles.calendarEvent} ${isPmoc ? styles.calendarEventPmoc : ""} ${isConfirmed && !isPmoc ? styles.calendarEventConfirmed : ""}`}
+                        className={`${styles.calendarEvent} ${showHoverActions ? styles.calendarEventWithActions : ""} ${isPmoc ? styles.calendarEventPmoc : ""} ${isConfirmed && !isPmoc ? styles.calendarEventConfirmed : ""}`}
                         style={{ top: `${Math.max(top, 0)}%`, height: `${Math.max(height, 8)}%` }}
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (showHoverActions) return;
                           if (isPmoc) {
                             setSelectedPmoc(s);
                             return;
                           }
                           if (s.service_order_id) {
-                            const osPath =
-                              ctx?.user.role === "technician"
-                                ? `/app/tecnico/os/${s.service_order_id}`
-                                : `/app/service-orders/${s.service_order_id}`;
-                            navigate(osPath);
+                            navigate(serviceOrderPath(ctx?.user.role, s.service_order_id));
                           }
                         }}
-                        title={isPmoc ? "Compromisso PMOC (planejamento)" : s.service_order_id ? "Abrir OS" : "Agendamento sem OS vinculada"}
-                        role="button"
-                        tabIndex={0}
+                        title={
+                          isPmoc
+                            ? "Compromisso PMOC (planejamento)"
+                            : s.service_order_id
+                              ? "Abrir OS"
+                              : "Agendamento sem OS vinculada"
+                        }
+                        role={showHoverActions ? undefined : "button"}
+                        tabIndex={showHoverActions ? -1 : 0}
                         onKeyDown={(e) => {
+                          if (showHoverActions) return;
                           if (isPmoc) {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
@@ -1512,14 +1568,11 @@ export function TechnicianSchedulePage() {
                           }
                           if ((e.key === "Enter" || e.key === " ") && s.service_order_id) {
                             e.preventDefault();
-                            const osPath =
-                              ctx?.user.role === "technician"
-                                ? `/app/tecnico/os/${s.service_order_id}`
-                                : `/app/service-orders/${s.service_order_id}`;
-                            navigate(osPath);
+                            navigate(serviceOrderPath(ctx?.user.role, s.service_order_id));
                           }
                         }}
                       >
+                        <div className={styles.calendarEventBody}>
                         <p className={styles.scheduleTime}>
                           {formatHourRange(s.starts_at, s.ends_at)} {isConfirmed ? "· Confirmado" : ""}
                           {isPmoc ? (
@@ -1572,6 +1625,38 @@ export function TechnicianSchedulePage() {
                               Endereço: {ellipsis(s.client_address, 36)}
                             </p>
                           )
+                        ) : null}
+                        </div>
+                        {showHoverActions ? (
+                          <div
+                            className={`${styles.calendarEventActions} ${actionsOpenLeft ? styles.calendarEventActionsLeft : ""} ${isMobile ? styles.calendarEventActionsVisible : ""}`}
+                          >
+                            {showOsAction ? (
+                              <button
+                                type="button"
+                                className={styles.calendarEventActionBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(serviceOrderPath(ctx?.user.role, s.service_order_id!));
+                                }}
+                              >
+                                Abrir OS
+                              </button>
+                            ) : null}
+                            {showReminderAction ? (
+                              <button
+                                type="button"
+                                className={`${styles.calendarEventActionBtn} ${styles.calendarEventActionBtnPrimary}`}
+                                disabled={sendingReminder}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleSendScheduleReminder(s);
+                                }}
+                              >
+                                {sendingReminder ? "Enviando…" : "Enviar lembrete"}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     );

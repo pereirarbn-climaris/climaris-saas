@@ -1,8 +1,6 @@
 import type { ScheduleOut } from "./serviceOrders";
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
-import { demoCreatePmocPlan, demoListPmocPlans, demoPatchPmocPlan, isDemoMode } from "../lib/demoMode";
-
 export type PmocPlanStatus = "draft" | "active" | "inactive" | "archived";
 export type PmocFrequency = "monthly" | "quarterly" | "semiannual" | "annual" | "custom";
 export type PmocExecutionCompletion = "done" | "partial" | "skipped";
@@ -15,12 +13,64 @@ export type PmocFieldChecklistItemIn = {
   photoReference: string | null;
 };
 
+export type PmocOperationalDataPayload = {
+  electrical?: {
+    voltagePhasePhase?: number | null;
+    voltagePhaseNeutral?: number | null;
+    currentA?: number | null;
+    powerKw?: number | null;
+    powerFactor?: number | null;
+  } | null;
+  refrigeration?: {
+    suctionPressure?: number | null;
+    dischargePressure?: number | null;
+    superheatC?: number | null;
+    subcoolingC?: number | null;
+  } | null;
+  temperatures?: {
+    returnC?: number | null;
+    supplyC?: number | null;
+    ambientC?: number | null;
+    externalC?: number | null;
+  } | null;
+  performance?: {
+    deltaTC?: number | null;
+    observedPerformance?: string | null;
+  } | null;
+};
+
+export type PmocIndoorAirQualityPayload = {
+  ambientTemperatureC?: number | null;
+  relativeHumidityPct?: number | null;
+  co2Ppm?: number | null;
+  airRenewalRate?: string | null;
+  particulateMatter?: string | null;
+  fungiBacteria?: string | null;
+};
+
+export type PmocServiceLogPayload = {
+  technicianName?: string | null;
+  executedService?: string | null;
+  materials?: Array<{
+    name: string;
+    lotNumber?: string | null;
+    validityDate?: string | null;
+    quantity?: string | null;
+  }>;
+  workedHours?: number | null;
+  observations?: string | null;
+  legalSignatureProvider?: string | null;
+};
+
 export type PmocFieldInspectionPayload = {
   pmocId: number;
   equipmentId?: number | null;
   checklist: PmocFieldChecklistItemIn[];
   generalNotes: string;
   signatureBase64: string | null;
+  operationalData?: PmocOperationalDataPayload | null;
+  indoorAirQuality?: PmocIndoorAirQualityPayload | null;
+  serviceLog?: PmocServiceLogPayload | null;
 };
 
 export type PmocFieldInspectionOut = {
@@ -52,7 +102,7 @@ export type PmocPlanOut = {
   establishment_snapshot: Record<string, unknown>;
   law_reference_note: string | null;
   internal_notes: string | null;
-  extras: Record<string, string>;
+  extras: Record<string, unknown>;
   total_btu_sum: number;
   air_analysis_required: boolean;
   next_air_analysis_due: string | null;
@@ -157,6 +207,72 @@ export type PmocComplianceSummaryOut = {
   indicators: PmocComplianceIndicatorOut[];
   monthly_execution_pct: number;
   open_occurrences: number;
+};
+
+export type PmocAnalyticsSummaryOut = {
+  pmoc_id: number;
+  generated_at: string;
+  total_executions: number;
+  done_executions: number;
+  executions_with_measurements: number;
+  executions_with_consumables: number;
+  measurement_coverage_pct: number;
+  consumable_traceability_pct: number;
+  avg_delta_t_c: number | null;
+  avg_current_a: number | null;
+  avg_co2_ppm: number | null;
+  total_consumables_used: number;
+  top_consumables: Array<{
+    name: string;
+    usage_count: number;
+    traceable_count: number;
+  }>;
+  environments_count: number;
+  environments_linked_equipment_count: number;
+  unresolved_occurrences: number;
+};
+
+export type PmocPortfolioSummaryOut = {
+  generated_at: string;
+  total_plans: number;
+  active_plans: number;
+  avg_conformity_score: number;
+  critical_plans_count: number;
+  total_open_occurrences: number;
+  client_ranking: Array<{
+    client_id: number;
+    client_name: string;
+    plans_count: number;
+    avg_conformity_score: number;
+    open_occurrences: number;
+  }>;
+  plan_ranking: Array<{
+    pmoc_id: number;
+    pmoc_title: string;
+    client_name: string;
+    establishment_name: string;
+    status: PmocPlanStatus;
+    conformity_score: number;
+    measurement_coverage_pct: number;
+    consumable_traceability_pct: number;
+    open_occurrences: number;
+  }>;
+};
+
+export type PmocEquipmentTypeOptionOut = {
+  key: string;
+  label: string;
+};
+
+export type PmocServiceCatalogOut = {
+  id: number;
+  name: string;
+  frequency: PmocFrequency;
+  equipment_types: string[];
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type PmocOccurrenceOut = {
@@ -266,16 +382,6 @@ export async function listPmocPlans(params?: {
   skip?: number;
   limit?: number;
 }): Promise<PmocPlanOut[]> {
-  if (isDemoMode()) {
-    let rows: PmocPlanOut[] = demoListPmocPlans();
-    if (params?.status) rows = rows.filter((item: PmocPlanOut) => item.status === params.status);
-    if (params?.client_id) rows = rows.filter((item: PmocPlanOut) => item.client_id === params.client_id);
-    if (params?.q?.trim()) {
-      const q = params.q.trim().toLowerCase();
-      rows = rows.filter((item: PmocPlanOut) => item.title.toLowerCase().includes(q));
-    }
-    return Promise.resolve(rows);
-  }
   const sp = new URLSearchParams();
   if (params?.status) sp.set("status", params.status);
   if (params?.client_id) sp.set("client_id", String(params.client_id));
@@ -310,7 +416,6 @@ export async function createPmocPlan(payload: {
   client_site_id: number;
   title: string;
 }): Promise<PmocPlanOut> {
-  if (isDemoMode()) return Promise.resolve(demoCreatePmocPlan(payload));
   const response = await fetch(apiUrl("/api/v1/pmoc/plans"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -323,11 +428,11 @@ export async function createPmocPlan(payload: {
 
 export type PmocCreateFullPayload = {
   clientId: number;
-  siteId: number;
+  siteId?: number | null;
   title: string;
   equipmentIds: number[];
   activities: Array<{
-    serviceId: number;
+    serviceId?: number | null;
     frequency: PmocFrequency;
     equipmentId?: number | null;
     title?: string;
@@ -338,40 +443,56 @@ export type PmocCreateFullPayload = {
     responsibleName?: string;
     responsibleCouncil?: string;
     responsibleRegistration?: string;
+    responsibleFormation?: string;
     artNumber?: string;
+    maintenanceCompany?: string;
     artIssuedAt?: string;
     nextAirAnalysisDue?: string;
   };
+  companyData?: {
+    legalRepresentative?: string;
+    stateRegistration?: string;
+    activityExercised?: string;
+    phone?: string;
+    email?: string;
+  };
+  buildingData?: {
+    totalClimatizedAreaM2?: number;
+    floorsCount?: number;
+    avgOccupants?: number;
+    operationHours?: string;
+    occupancyType?: string;
+  };
+  environmentsData?: Array<{
+    environmentName: string;
+    areaM2?: number;
+    ceilingHeightM?: number;
+    airVolumeM3?: number;
+    avgOccupants?: number;
+    activityType?: string;
+    equipmentId?: number | null;
+    equipmentIds?: number[];
+  }>;
+  emergencyPlan?: {
+    powerOutageProcedure?: string;
+    criticalFailureProcedure?: string;
+  };
+  annualLoadReviewDue?: string;
 };
 
 export async function createPmocFull(payload: PmocCreateFullPayload): Promise<PmocPlanOut> {
-  if (isDemoMode()) {
-    const plan = demoCreatePmocPlan({
-      client_id: payload.clientId,
-      client_site_id: payload.siteId,
-      title: payload.title,
-    });
-    return demoPatchPmocPlan(plan.id, {
-      responsible_name: payload.rtData?.responsibleName ?? null,
-      responsible_council: payload.rtData?.responsibleCouncil ?? null,
-      responsible_registration: payload.rtData?.responsibleRegistration ?? null,
-      art_number: payload.rtData?.artNumber ?? null,
-      art_issued_at: payload.rtData?.artIssuedAt ?? null,
-      next_air_analysis_due: payload.rtData?.nextAirAnalysisDue ?? null,
-      total_btu_sum: 0,
-    });
-  }
+
 
   const response = await fetch(apiUrl("/api/v1/pmoc/create"), {
     method: "POST",
     headers: jsonHeaders(),
     body: JSON.stringify({
       clientId: payload.clientId,
-      siteId: payload.siteId,
+      siteId: payload.siteId ?? undefined,
       title: payload.title,
       equipmentIds: payload.equipmentIds,
       activities: payload.activities.map((row) => ({
-        serviceId: row.serviceId,
+        serviceId: row.serviceId ?? undefined,
         frequency: row.frequency,
         equipmentId: row.equipmentId ?? null,
         title: row.title,
@@ -383,11 +504,18 @@ export async function createPmocFull(payload: PmocCreateFullPayload): Promise<Pm
             responsibleName: payload.rtData.responsibleName,
             responsibleCouncil: payload.rtData.responsibleCouncil,
             responsibleRegistration: payload.rtData.responsibleRegistration,
+            responsibleFormation: payload.rtData.responsibleFormation,
             artNumber: payload.rtData.artNumber,
+            maintenanceCompany: payload.rtData.maintenanceCompany,
             artIssuedAt: payload.rtData.artIssuedAt || undefined,
             nextAirAnalysisDue: payload.rtData.nextAirAnalysisDue || undefined,
           }
         : undefined,
+      companyData: payload.companyData,
+      buildingData: payload.buildingData,
+      environmentsData: payload.environmentsData,
+      emergencyPlan: payload.emergencyPlan,
+      annualLoadReviewDue: payload.annualLoadReviewDue || undefined,
     }),
   });
   const body = await parseBody(response);
@@ -414,11 +542,6 @@ export async function createPmocFull(payload: PmocCreateFullPayload): Promise<Pm
 }
 
 export async function getPmocPlan(pmocId: number): Promise<PmocPlanOut> {
-  if (isDemoMode()) {
-    const row = demoListPmocPlans().find((item) => item.id === pmocId);
-    if (!row) throw new Error("PMOC não encontrado.");
-    return Promise.resolve(row);
-  }
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(pmocApiErrorMessage(body, "PMOC não encontrado."));
@@ -432,7 +555,7 @@ export async function updatePmocPlan(
     version_label: string;
     law_reference_note: string | null;
     internal_notes: string | null;
-    extras: Record<string, string>;
+    extras: Record<string, unknown>;
     responsible_name: string | null;
     responsible_council: string | null;
     responsible_registration: string | null;
@@ -441,7 +564,6 @@ export async function updatePmocPlan(
     next_air_analysis_due: string | null;
   }>,
 ): Promise<PmocPlanOut> {
-  if (isDemoMode()) return Promise.resolve(demoPatchPmocPlan(pmocId, payload as Partial<PmocPlanOut>));
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}`), {
     method: "PATCH",
     headers: jsonHeaders(),
@@ -453,7 +575,6 @@ export async function updatePmocPlan(
 }
 
 export async function activatePmocPlan(pmocId: number): Promise<PmocPlanOut> {
-  if (isDemoMode()) return Promise.resolve(demoPatchPmocPlan(pmocId, { status: "active", activated_at: new Date().toISOString() }));
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/activate`), {
     method: "POST",
     headers: bearer(),
@@ -464,7 +585,6 @@ export async function activatePmocPlan(pmocId: number): Promise<PmocPlanOut> {
 }
 
 export async function deactivatePmocPlan(pmocId: number): Promise<PmocPlanOut> {
-  if (isDemoMode()) return Promise.resolve(demoPatchPmocPlan(pmocId, { status: "inactive", deactivated_at: new Date().toISOString() }));
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/deactivate`), {
     method: "POST",
     headers: bearer(),
@@ -475,7 +595,6 @@ export async function deactivatePmocPlan(pmocId: number): Promise<PmocPlanOut> {
 }
 
 export async function archivePmocPlan(pmocId: number): Promise<PmocPlanOut> {
-  if (isDemoMode()) return Promise.resolve(demoPatchPmocPlan(pmocId, { status: "archived" }));
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/archive`), {
     method: "POST",
     headers: bearer(),
@@ -486,7 +605,6 @@ export async function archivePmocPlan(pmocId: number): Promise<PmocPlanOut> {
 }
 
 export async function listPmocEquipments(pmocId: number): Promise<PmocPlanEquipmentOut[]> {
-  if (isDemoMode()) return Promise.resolve([]);
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/equipments`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível listar equipamentos do PMOC."));
@@ -551,18 +669,7 @@ export async function createPmocPlanningSchedule(
     activity_count: number;
   },
 ): Promise<ScheduleOut> {
-  if (isDemoMode()) {
-    return Promise.resolve({
-      id: Date.now(),
-      tenant_id: 0,
-      client_id: 0,
-      service_order_id: null,
-      starts_at: payload.starts_at,
-      ends_at: payload.starts_at,
-      status: "confirmed",
-      notes: "[PMOC] demo",
-    });
-  }
+
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/planning-schedule`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -578,6 +685,119 @@ export async function getPmocComplianceSummary(pmocId: number): Promise<PmocComp
   const body = await parseBody(response);
   if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível carregar o painel de conformidade."));
   return body as PmocComplianceSummaryOut;
+}
+
+export async function getPmocAnalyticsSummary(pmocId: number): Promise<PmocAnalyticsSummaryOut> {
+  const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/analytics-summary`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível carregar analytics do PMOC."));
+  return body as PmocAnalyticsSummaryOut;
+}
+
+export async function getPmocPortfolioSummary(params?: {
+  status?: PmocPlanStatus;
+}): Promise<PmocPortfolioSummaryOut> {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set("status", params.status);
+  const qs = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/pmoc/portfolio-summary${qs ? `?${qs}` : ""}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível carregar visão consolidada do PMOC."));
+  return body as PmocPortfolioSummaryOut;
+}
+
+export async function listPmocEquipmentTypeOptions(): Promise<PmocEquipmentTypeOptionOut[]> {
+  const response = await fetch(apiUrl("/api/v1/pmoc/settings/equipment-types"), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível listar tipos de equipamento PMOC."));
+  return body as PmocEquipmentTypeOptionOut[];
+}
+
+export async function listPmocServiceCatalog(params?: { includeInactive?: boolean }): Promise<PmocServiceCatalogOut[]> {
+  const sp = new URLSearchParams();
+  if (params?.includeInactive) sp.set("includeInactive", "true");
+  const suffix = sp.toString() ? `?${sp.toString()}` : "";
+  const response = await fetch(apiUrl(`/api/v1/pmoc/settings/services${suffix}`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível listar serviços PMOC."));
+  return body as PmocServiceCatalogOut[];
+}
+
+export async function createPmocServiceCatalog(payload: {
+  name: string;
+  frequency: PmocFrequency;
+  equipment_types: string[];
+  sort_order?: number;
+  is_active?: boolean;
+}): Promise<PmocServiceCatalogOut> {
+  const response = await fetch(apiUrl("/api/v1/pmoc/settings/services"), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível criar serviço PMOC."));
+  return body as PmocServiceCatalogOut;
+}
+
+export async function updatePmocServiceCatalog(
+  catalogId: number,
+  payload: Partial<{
+    name: string;
+    frequency: PmocFrequency;
+    equipment_types: string[];
+    sort_order: number;
+    is_active: boolean;
+  }>,
+): Promise<PmocServiceCatalogOut> {
+  const response = await fetch(apiUrl(`/api/v1/pmoc/settings/services/${catalogId}`), {
+    method: "PUT",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível atualizar serviço PMOC."));
+  return body as PmocServiceCatalogOut;
+}
+
+export async function deletePmocServiceCatalog(catalogId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/pmoc/settings/services/${catalogId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  throw new Error(pmocApiErrorMessage(body, "Não foi possível excluir serviço PMOC."));
+}
+
+export async function exportPmocPortfolioCsv(params?: {
+  status?: PmocPlanStatus;
+}): Promise<Blob> {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set("status", params.status);
+  const qs = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/pmoc/portfolio-summary/export.csv${qs ? `?${qs}` : ""}`), { headers: bearer() });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(pmocApiErrorMessage(body, "Não foi possível exportar CSV executivo do PMOC."));
+  }
+  return response.blob();
+}
+
+export async function fetchPmocPortfolioReportPdf(params?: {
+  status?: PmocPlanStatus;
+  legalProvider?: string;
+}): Promise<Blob> {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set("status", params.status);
+  if (params?.legalProvider?.trim()) sp.set("legal_provider", params.legalProvider.trim());
+  const qs = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/pmoc/portfolio-summary/report${qs ? `?${qs}` : ""}`), { headers: bearer() });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(pmocApiErrorMessage(body, "Não foi possível gerar relatório executivo do PMOC."));
+  }
+  return response.blob();
 }
 
 export async function listPmocOccurrences(
@@ -623,7 +843,6 @@ export async function listPmocOccurrenceAlerts(limit = 10): Promise<PmocOccurren
 }
 
 export async function listPmocActivities(pmocId: number): Promise<PmocScheduledActivityOut[]> {
-  if (isDemoMode()) return Promise.resolve([]);
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/activities`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(pmocApiErrorMessage(body, "Não foi possível carregar atividades."));
@@ -642,21 +861,7 @@ export async function createPmocActivity(
     sort_order?: number;
   },
 ): Promise<PmocScheduledActivityOut> {
-  if (isDemoMode()) {
-    return Promise.resolve({
-      id: Date.now(),
-      pmoc_id: pmocId,
-      equipment_id: payload.equipment_id ?? null,
-      service_id: payload.service_id ?? null,
-      service: null,
-      frequency: payload.frequency,
-      task_code: payload.task_code ?? null,
-      title: payload.title,
-      description: payload.description ?? null,
-      sort_order: payload.sort_order ?? 1,
-      is_system_seed: false,
-    });
-  }
+
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/activities`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -832,9 +1037,6 @@ export async function uploadPmocAirAnalysisFile(pmocId: number, analysisId: numb
  * Endpoint esperado: GET /api/v1/pmoc/plans/{pmocId}/report  (Content-Type: application/pdf)
  */
 export async function fetchPmocReportPdf(pmocId: number): Promise<Blob> {
-  if (isDemoMode()) {
-    throw new Error("Geração de relatório PDF não disponível no modo demonstração.");
-  }
   const response = await fetch(apiUrl(`/api/v1/pmoc/plans/${pmocId}/report`), { headers: bearer() });
   if (!response.ok) {
     const body = await parseBody(response);

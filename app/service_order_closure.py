@@ -8,11 +8,76 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domains.compliance.exceptions import ComplianceValidationError
+from app.domains.work_orders.digital_os_service import DigitalWorkOrderService
 from app.equipment_preventive_rules import sync_preventive_rules_on_order_closure
 from app.equipment_service_preventive import sync_service_preventive_schedules_on_order_closure
-from models import CustomerBillingAutomation, ServiceOrder
+from models import CustomerBillingAutomation, ServiceOrder, User, UserRole
 
 logger = logging.getLogger("erp.service_order_closure")
+audit_logger = logging.getLogger("erp.audit.service_order_closure")
+
+
+def resolve_technician_id_for_compliance(order: ServiceOrder, user: User) -> int | None:
+    if user.role == UserRole.TECHNICIAN:
+        return user.id
+    if order.technicians:
+        return order.technicians[0].technician_id
+    for schedule in order.schedules:
+        if schedule.technicians:
+            return schedule.technicians[0].technician_id
+    return None
+
+
+def assert_can_close_service_order(
+    db: Session,
+    *,
+    order: ServiceOrder,
+    tenant_id: int,
+    user: User,
+    force_close: bool = False,
+) -> None:
+    """
+    Valida compliance da OS digital antes de concluir a ServiceOrder legada.
+
+    - Sem OS digital vinculada: não bloqueia (fluxo legado).
+    - Com OS digital: exige ``can_finalize_service_order`` == True, salvo ``force_close`` (admin).
+  """
+    if force_close and user.role != UserRole.ADMIN:
+        raise PermissionError("Apenas administradores podem forçar o encerramento sem compliance.")
+
+    service = DigitalWorkOrderService(db, tenant_id=tenant_id)
+    digital = service.get_by_service_order_id(order.id)
+    if digital is None:
+        return
+
+    technician_id = resolve_technician_id_for_compliance(order, user)
+    can_finalize, result = service.evaluate_finalize(digital, technician_id=technician_id)
+
+    if can_finalize:
+        return
+
+    missing = [err.model_dump() for err in result.errors]
+
+    if force_close:
+        audit_logger.warning(
+            "service_order_force_close_without_compliance",
+            extra={
+                "event": "service_order_force_close_without_compliance",
+                "service_order_id": order.id,
+                "digital_work_order_id": str(digital.id),
+                "tenant_id": tenant_id,
+                "user_id": user.id,
+                "user_role": user.role.value if hasattr(user.role, "value") else str(user.role),
+                "missing_requirements": missing,
+            },
+        )
+        return
+
+    raise ComplianceValidationError(
+        missing_requirements=missing,
+        digital_work_order_id=digital.id,
+    )
 
 
 def execute_post_closure_automations(

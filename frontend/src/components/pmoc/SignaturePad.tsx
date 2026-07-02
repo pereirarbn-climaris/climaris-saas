@@ -3,12 +3,20 @@ import { useCallback, useEffect, useRef } from "react";
 export type SignaturePadProps = {
   onChange?: (dataUrl: string | null) => void;
   className?: string;
+  /** Assinatura já salva (restaura no canvas). */
+  value?: string | null;
+  disabled?: boolean;
 };
 
-export function SignaturePad({ onChange, className }: SignaturePadProps) {
+export function SignaturePad({ onChange, className, value, disabled = false }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
   const hasStrokeRef = useRef(false);
+  const valueRef = useRef(value);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   const getPoint = useCallback((event: PointerEvent, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
@@ -20,7 +28,33 @@ export function SignaturePad({ onChange, className }: SignaturePadProps) {
     };
   }, []);
 
-  const resizeCanvas = useCallback(() => {
+  const paintBackground = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+  }, []);
+
+  const drawValue = useCallback(
+    (ctx: CanvasRenderingContext2D, width: number, height: number, dataUrl: string) =>
+      new Promise<boolean>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(width / img.width, height / img.height, 1);
+          const w = img.width * scale;
+          const h = img.height * scale;
+          const x = (width - w) / 2;
+          const y = (height - h) / 2;
+          paintBackground(ctx, width, height);
+          ctx.drawImage(img, x, y, w, h);
+          hasStrokeRef.current = true;
+          resolve(true);
+        };
+        img.onerror = () => resolve(false);
+        img.src = dataUrl;
+      }),
+    [paintBackground],
+  );
+
+  const setupCanvas = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -34,17 +68,23 @@ export function SignaturePad({ onChange, className }: SignaturePadProps) {
     ctx.lineJoin = "round";
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = "#0f172a";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, rect.width, rect.height);
+
+    const saved = valueRef.current;
+    if (saved) {
+      await drawValue(ctx, rect.width, rect.height, saved);
+      return;
+    }
+
+    paintBackground(ctx, rect.width, rect.height);
     hasStrokeRef.current = false;
-    onChange?.(null);
-  }, [onChange]);
+  }, [drawValue, paintBackground]);
 
   useEffect(() => {
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-    return () => window.removeEventListener("resize", resizeCanvas);
-  }, [resizeCanvas]);
+    void setupCanvas();
+    const onResize = () => void setupCanvas();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [setupCanvas, value]);
 
   const emitSignature = useCallback(() => {
     const canvas = canvasRef.current;
@@ -56,6 +96,7 @@ export function SignaturePad({ onChange, className }: SignaturePadProps) {
   }, [onChange]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (disabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     drawingRef.current = true;
@@ -69,7 +110,7 @@ export function SignaturePad({ onChange, className }: SignaturePadProps) {
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
+    if (disabled || !drawingRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -80,7 +121,7 @@ export function SignaturePad({ onChange, className }: SignaturePadProps) {
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
+    if (disabled || !drawingRef.current) return;
     drawingRef.current = false;
     const canvas = canvasRef.current;
     if (canvas?.hasPointerCapture(event.pointerId)) {
@@ -90,27 +131,31 @@ export function SignaturePad({ onChange, className }: SignaturePadProps) {
   };
 
   const clear = () => {
-    resizeCanvas();
+    if (disabled) return;
+    valueRef.current = null;
+    void setupCanvas().then(() => onChange?.(null));
   };
 
   return (
     <div className={className}>
       <canvas
         ref={canvasRef}
-        className="h-44 w-full touch-none rounded-xl border border-[#e2e8f0] bg-white"
+        className={`h-44 w-full touch-none rounded-xl border border-[#e2e8f0] bg-white ${disabled ? "opacity-80" : ""}`}
         aria-label="Área de assinatura digital"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       />
-      <button
-        type="button"
-        onClick={clear}
-        className="mt-3 inline-flex items-center justify-center rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-sm font-semibold text-[#64748b] transition-colors hover:border-[#006FEE]/40 hover:text-[#006FEE]"
-      >
-        Limpar Assinatura
-      </button>
+      {!disabled ? (
+        <button
+          type="button"
+          onClick={clear}
+          className="mt-3 inline-flex items-center justify-center rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-sm font-semibold text-[#64748b] transition-colors hover:border-[#006FEE]/40 hover:text-[#006FEE]"
+        >
+          Limpar assinatura
+        </button>
+      ) : null}
     </div>
   );
 }

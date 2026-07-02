@@ -161,13 +161,23 @@ def deactivate_other_active_plans(
         p.deactivated_at = now
 
 
-def extras_default() -> dict[str, str]:
+def extras_default() -> dict[str, Any]:
     return {
         "photo_report": "",
         "parts_history": "",
         "efficiency_notes": "",
         "improvement_suggestions": "",
         "planning_scheduled_rows": "",
+        "company_data": {},
+        "building_data": {},
+        "environments_data": [],
+        "emergency_plan": {},
+        "annual_load_review_due": "",
+        "service_history_notes": "",
+        "consumables_traceability": "",
+        "field_operational_targets": {},
+        "managerial_indicators_notes": "",
+        "rt_extended": {},
     }
 
 
@@ -178,9 +188,19 @@ def parse_extras(raw: str | None) -> dict[str, Any]:
         data = json.loads(raw)
         if isinstance(data, dict):
             base = extras_default()
-            for k in base:
-                if k in data and isinstance(data[k], str):
-                    base[k] = data[k]
+            for k, default_value in base.items():
+                if k not in data:
+                    continue
+                incoming = data[k]
+                if isinstance(default_value, str):
+                    if isinstance(incoming, str):
+                        base[k] = incoming
+                elif isinstance(default_value, dict):
+                    if isinstance(incoming, dict):
+                        base[k] = incoming
+                elif isinstance(default_value, list):
+                    if isinstance(incoming, list):
+                        base[k] = incoming
             return base
     except json.JSONDecodeError:
         pass
@@ -194,11 +214,18 @@ def parse_planning_scheduled_rows(extras: dict[str, Any]) -> set[str]:
     return {key.strip() for key in raw.split(",") if key.strip()}
 
 
-def merge_planning_scheduled_rows(extras: dict[str, Any], row_keys: list[str]) -> dict[str, str]:
+def merge_planning_scheduled_rows(extras: dict[str, Any], row_keys: list[str]) -> dict[str, Any]:
     merged = extras_default()
-    for key in merged:
-        if key in extras and isinstance(extras[key], str):
-            merged[key] = extras[key]
+    for key, default_value in merged.items():
+        if key not in extras:
+            continue
+        incoming = extras[key]
+        if isinstance(default_value, str) and isinstance(incoming, str):
+            merged[key] = incoming
+        elif isinstance(default_value, dict) and isinstance(incoming, dict):
+            merged[key] = incoming
+        elif isinstance(default_value, list) and isinstance(incoming, list):
+            merged[key] = incoming
     scheduled = parse_planning_scheduled_rows(merged)
     scheduled.update(key.strip() for key in row_keys if key.strip())
     merged["planning_scheduled_rows"] = ",".join(sorted(scheduled))
@@ -212,7 +239,8 @@ def serialize_extras(data: dict[str, Any]) -> str:
 def build_pmoc_create_validation_issues(
     *,
     client_id: int,
-    client_site_id: int,
+    client_site_id: int | None,
+    requires_site: bool,
     equipment_ids: list[int],
     responsible_name: str | None,
 ) -> list[dict[str, str]]:
@@ -227,7 +255,7 @@ def build_pmoc_create_validation_issues(
                 "tab": "identification",
             }
         )
-    if client_site_id < 1:
+    if requires_site and (client_site_id is None or client_site_id < 1):
         issues.append(
             {
                 "code": "missing_site",

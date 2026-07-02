@@ -46,6 +46,11 @@ export function PlatformAdminLayout() {
   const isCatalogRoute = location.pathname.startsWith("/operacao/catalogo");
   const isCategoryRoute = location.pathname.startsWith("/operacao/categorias-equipamentos");
   const isBrandingRoute = location.pathname.startsWith("/operacao/identidade-visual");
+  const isInstitutionalSiteRoute = location.pathname.startsWith("/operacao/site-institucional");
+  const isDemoAgendaRoute = location.pathname.startsWith("/operacao/agenda-demonstracoes");
+  const isWhatsappRoute = location.pathname.startsWith("/operacao/whatsapp");
+  const isProjectsRoute = location.pathname.startsWith("/operacao/projetos");
+  const isNotificationsRoute = location.pathname.startsWith("/operacao/notificacoes");
   const { branding } = usePlatformBranding();
   const pageTitle = isApiKeysRoute
     ? "Chaves APIs"
@@ -67,7 +72,17 @@ export function PlatformAdminLayout() {
                     ? "Categorias de equipamentos"
                     : isBrandingRoute
                       ? "Identidade visual"
-                      : location.pathname === "/operacao"
+                      : isInstitutionalSiteRoute
+                        ? "Site institucional"
+                        : isDemoAgendaRoute
+                          ? "Agenda de demonstrações"
+                          : isWhatsappRoute
+                            ? "WhatsApp"
+                          : isProjectsRoute
+                            ? "Central de projetos"
+                            : isNotificationsRoute
+                            ? "Avisos aos clientes"
+                        : location.pathname === "/operacao"
                   ? "Painel de operação"
                   : `Operação ${branding.platform_name}`;
 
@@ -305,6 +320,83 @@ export function PlatformAdminLayout() {
                   </svg>
                 </span>
                 Identidade visual
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/site-institucional"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M3 12h18" />
+                    <path d="M12 3a15 15 0 0 1 0 18" />
+                    <path d="M12 3a15 15 0 0 0 0 18" />
+                  </svg>
+                </span>
+                Site institucional
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/agenda-demonstracoes"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <path d="M16 2v4M8 2v4M3 10h18" />
+                    <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
+                  </svg>
+                </span>
+                Agenda demonstrações
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/whatsapp"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                  </svg>
+                </span>
+                WhatsApp
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/projetos"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <path d="M3 7h18M3 12h18M3 17h12" />
+                    <rect x="15" y="15" width="6" height="6" rx="1" />
+                  </svg>
+                </span>
+                Central de projetos
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/operacao/notificacoes"
+                className={({ isActive }) => `${styles.opNavLink} ${isActive ? styles.opNavLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.opNavIcon} aria-hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                    <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                </span>
+                Avisos aos clientes
               </NavLink>
             </li>
             <li>

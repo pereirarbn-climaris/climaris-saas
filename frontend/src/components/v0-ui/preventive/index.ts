@@ -17,6 +17,7 @@ export {
   PreventiveWhatsAppPreview,
   default as PreventiveTemplateSettingsDefault,
   type TemplateData,
+  type PreventiveTemplateKind,
   type PreventiveTemplateSettingsProps,
 } from "./PreventiveTemplateSettings";
 

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import (
     APP_PUBLIC_URL,
     EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
+    GOOGLE_CLIENT_ID,
     JWT_EXPIRE_MINUTES,
     JWT_EXPIRE_MINUTES_ADMIN,
     LOGIN_ADMIN_TRUST_DEVICE_ENABLED,
@@ -39,6 +40,8 @@ from app.schemas import (
     ChangeTemporaryPasswordRequest,
     ChangeMyPasswordRequest,
     CompleteTenantFiscalRequest,
+    GoogleLoginRequest,
+    GoogleRegisterRequest,
     LoginRequest,
     LogoutRequest,
     TrustedDeviceOut,
@@ -74,7 +77,9 @@ from app.tenant_logo import (
     process_and_upload_tenant_logo,
 )
 from app.limiter import limiter
+from app.lgpd import LGPD_POLICY_VERSION
 from app.plan_rules import get_plan_definition, normalize_plan_key
+from app.platform_credentials import resolve_google_client_id
 from app.saas_plan_effective import effective_plan_label_and_max_users
 from models import (
     EmailVerificationToken,
@@ -219,6 +224,55 @@ def _generate_pending_tax_placeholder() -> str:
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _google_feature_guard(db: Session) -> str:
+    client_id = resolve_google_client_id(db) or GOOGLE_CLIENT_ID
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Login com Google não está configurado neste ambiente.",
+        )
+    return client_id
+
+
+def _verify_google_id_token(id_token: str, *, db: Session) -> dict[str, str]:
+    google_client_id = _google_feature_guard(db)
+    token = id_token.strip()
+    if len(token) < 40:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token do Google inválido.")
+    url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+    req = urllib_request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib_request.urlopen(req, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib_error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Não foi possível validar o token do Google.",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Resposta inválida do Google.")
+
+    issuer = str(payload.get("iss", "")).strip()
+    audience = str(payload.get("aud", "")).strip()
+    email = str(payload.get("email", "")).strip().lower()
+    email_verified = str(payload.get("email_verified", "")).strip().lower()
+    subject = str(payload.get("sub", "")).strip()
+    full_name = str(payload.get("name", "")).strip() or "Usuário Google"
+
+    if issuer not in ("accounts.google.com", "https://accounts.google.com"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Emissor do token do Google inválido.")
+    if audience != google_client_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token do Google para outro cliente.")
+    if email_verified != "true" or "@" not in email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="E-mail do Google não está verificado.",
+        )
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token do Google inválido.")
+    return {"email": email, "full_name": full_name, "sub": subject, "client_id": google_client_id}
 
 
 def _safe_verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -903,6 +957,8 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
             phone=payload.phone,
             whatsapp=payload.whatsapp,
             is_platform_operator=_platform_operator_flag_for_email(payload.email),
+            lgpd_accepted_at=datetime.now(timezone.utc),
+            lgpd_policy_version=LGPD_POLICY_VERSION,
         )
         db.add(user)
         db.flush()
@@ -978,6 +1034,8 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
         phone=payload.phone,
         whatsapp=payload.whatsapp,
         is_platform_operator=_platform_operator_flag_for_email(payload.email),
+        lgpd_accepted_at=datetime.now(timezone.utc),
+        lgpd_policy_version=LGPD_POLICY_VERSION,
     )
     db.add(user)
     db.flush()
@@ -998,6 +1056,86 @@ def register(request: Request, payload: PublicRegisterRequest, db: Annotated[Ses
     db.commit()
     db.refresh(tenant)
     return tenant
+
+
+@router.post("/register-google", response_model=TenantOut, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/hour")
+def register_google(request: Request, payload: GoogleRegisterRequest, db: Annotated[Session, Depends(get_db)]) -> Tenant:
+    """Cadastro público com Google: valida id_token e cria conta já ativa."""
+    if not PUBLIC_REGISTER_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cadastro público está desabilitado neste ambiente. Use o fluxo de bootstrap autorizado.",
+        )
+    profile = _verify_google_id_token(payload.id_token, db=db)
+    email_norm = profile["email"]
+    if _reserved_platform_email(email_norm):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este e-mail é reservado à operação Climaris. Use outro endereço para cadastrar uma empresa.",
+        )
+    existing_email = db.execute(select(User).where(User.email == email_norm)).scalar_one_or_none()
+    if existing_email is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este e-mail já possui cadastro. Entre com Google ou use recuperação de senha.",
+        )
+
+    pending_cnpj: str | None = None
+    for _ in range(12):
+        candidate = _generate_pending_tax_placeholder()
+        taken = db.execute(select(Tenant).where(Tenant.cnpj == candidate)).scalar_one_or_none()
+        if taken is None:
+            pending_cnpj = candidate
+            break
+    if pending_cnpj is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Não foi possível reservar identificador da conta. Tente novamente.",
+        )
+
+    tenant = Tenant(
+        name=payload.tenant_name.strip(),
+        cnpj=pending_cnpj,
+        tax_id_kind="pending",
+        active_plan=normalize_plan_key(payload.active_plan),
+        timezone=payload.timezone,
+        business_days=",".join(str(d) for d in payload.business_days),
+        workday_start="08:00",
+        workday_end="18:00",
+        block_national_holidays=True,
+        status=TenantStatus.ACTIVE,
+    )
+    sync_tenant_weekday_work_hours_from_expediente(tenant)
+    db.add(tenant)
+    db.flush()
+
+    random_secret = secrets.token_urlsafe(32)
+    user = User(
+        tenant_id=tenant.id,
+        full_name=profile["full_name"][:150],
+        email=email_norm,
+        password_hash=hash_password(random_secret),
+        role=UserRole.ADMIN,
+        is_active=True,
+        must_change_password=False,
+        is_platform_operator=_platform_operator_flag_for_email(email_norm),
+        lgpd_accepted_at=datetime.now(timezone.utc),
+        lgpd_policy_version=LGPD_POLICY_VERSION,
+    )
+    db.add(user)
+    _sync_tenant_national_holidays(db, tenant.id)
+    db.commit()
+    db.refresh(tenant)
+    return tenant
+
+
+@router.get("/google/config")
+@limiter.limit("120/minute")
+def google_auth_config(request: Request, db: Annotated[Session, Depends(get_db)]) -> dict[str, str | bool | None]:
+    """Config pública do Google Sign-In usada no frontend (client_id é público por definição OIDC)."""
+    client_id = resolve_google_client_id(db) or GOOGLE_CLIENT_ID or None
+    return {"enabled": bool(client_id), "client_id": client_id}
 
 
 @router.get("/me/tenant", response_model=TenantOut)
@@ -1114,6 +1252,15 @@ def admin_patch_my_tenant(
         )
     if expediente_touched and "weekday_work_hours" not in raw:
         sync_tenant_weekday_work_hours_from_expediente(tenant)
+
+    if raw.get("inventory_enabled") is True:
+        from app.saas_plan_effective import plan_allows_product_inventory
+
+        if not plan_allows_product_inventory(db, tenant):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Controle de estoque não está incluído no seu plano.",
+            )
 
     if tax_kind_in is not None or tax_doc_in is not None:
         if tax_doc_in is None:
@@ -1712,6 +1859,194 @@ def login(
         device_fingerprint=device_fingerprint,
         outcome="success",
         reason="ok",
+    )
+    db.commit()
+    return TokenResponse(
+        access_token=token,
+        must_change_password=user.must_change_password,
+        tenant_id=user.tenant_id,
+        is_platform_operator=user.is_platform_operator,
+        refresh_token=refresh_plain,
+    )
+
+
+@router.post("/google/login", response_model=TokenResponse)
+@limiter.limit("12/minute")
+def login_google(
+    request: Request,
+    response: Response,
+    payload: GoogleLoginRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> TokenResponse:
+    profile = _verify_google_id_token(payload.id_token, db=db)
+    email_norm = profile["email"]
+    now = datetime.now(timezone.utc)
+    user_agent = request.headers.get("user-agent", "").strip()[:512] or None
+    ip_address = _client_ip(request)
+    device_fingerprint = _device_fingerprint(ip_address, user_agent)
+    trust_binding_fingerprint = _trusted_device_binding_fingerprint(user_agent)
+
+    users_by_email = db.execute(select(User).where(User.email == email_norm)).scalars().all()
+    if not users_by_email:
+        _record_login_attempt(
+            db=db,
+            email=email_norm,
+            tenant_id=payload.tenant_id,
+            user_id=None,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            device_fingerprint=device_fingerprint,
+            outcome="failure",
+            reason="google_user_not_found",
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Não encontramos conta com este e-mail. Crie sua conta com Google primeiro.",
+        )
+
+    if payload.tenant_id is not None:
+        user = next((u for u in users_by_email if u.tenant_id == payload.tenant_id), None)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conta não encontrada nesta empresa para este e-mail.",
+            )
+    else:
+        if len(users_by_email) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Este e-mail está em mais de uma empresa. Inclua tenant_id para entrar com Google "
+                    "na empresa correta."
+                ),
+            )
+        user = users_by_email[0]
+
+    if not user.is_active:
+        user.is_active = True
+        db.add(user)
+        db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user.id))
+        db.flush()
+
+    if user.role == UserRole.ADMIN and _admin_two_factor_enabled(db):
+        valid_2fa = False
+        code_provided = bool((payload.two_factor_token or "").strip() and (payload.two_factor_code or "").strip())
+
+        if code_provided:
+            token_plain = (payload.two_factor_token or "").strip()
+            token_hash = _sha256(token_plain)
+            challenge = db.execute(
+                select(LoginTwoFactorChallenge).where(
+                    LoginTwoFactorChallenge.user_id == user.id,
+                    LoginTwoFactorChallenge.token_hash == token_hash,
+                )
+            ).scalar_one_or_none()
+            if challenge is None:
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        "Sessão de verificação inválida. Entre de novo com Google. "
+                        "Se você pediu um novo código, abriu outra aba ou enviou o formulário duas vezes, "
+                        "use só o último e-mail recebido."
+                    ),
+                )
+            if challenge.expires_at <= now:
+                db.delete(challenge)
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        f"Código expirado (até {_TWO_FACTOR_TTL_MINUTES} min). "
+                        "Entre novamente com Google para receber outro código."
+                    ),
+                )
+            challenge.attempts = int(challenge.attempts or 0) + 1
+            db.add(challenge)
+            if _sha256((payload.two_factor_code or "").strip()) == challenge.code_hash:
+                valid_2fa = True
+                db.delete(challenge)
+            elif challenge.attempts >= _TWO_FACTOR_MAX_ATTEMPTS:
+                db.delete(challenge)
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Muitas tentativas incorretas. Entre novamente para receber um novo código.",
+                )
+            else:
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Código de verificação incorreto.",
+                )
+            db.commit()
+            if payload.trust_this_device and LOGIN_ADMIN_TRUST_DEVICE_ENABLED:
+                _issue_trusted_device_cookie(
+                    db=db,
+                    response=response,
+                    user=user,
+                    user_agent=user_agent,
+                    now=now,
+                )
+                db.commit()
+        elif _trusted_device_cookie_accepts(
+            db=db,
+            request=request,
+            user_id=user.id,
+            trust_binding_fingerprint=trust_binding_fingerprint,
+            legacy_full_device_fingerprint=device_fingerprint,
+            user_agent=user_agent,
+            now=now,
+        ):
+            valid_2fa = True
+            db.commit()
+
+        if not valid_2fa:
+            two_factor_token = _create_two_factor_challenge(db, user, now)
+            _record_login_attempt(
+                db=db,
+                email=email_norm,
+                tenant_id=user.tenant_id,
+                user_id=user.id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                device_fingerprint=device_fingerprint,
+                outcome="challenge",
+                reason="two_factor_required_google",
+            )
+            db.commit()
+            return TokenResponse(
+                access_token="",
+                must_change_password=user.must_change_password,
+                tenant_id=user.tenant_id,
+                is_platform_operator=user.is_platform_operator,
+                two_factor_required=True,
+                two_factor_token=two_factor_token,
+            )
+
+    refresh_plain: str | None = None
+    if REFRESH_TOKEN_ENABLED:
+        refresh_plain = _issue_refresh_token(db, user, now)
+    token = create_access_token(
+        {
+            "sub": str(user.id),
+            "tenant_id": user.tenant_id,
+            "role": user.role.value,
+            "po": user.is_platform_operator,
+        },
+        expires_minutes=_access_token_ttl_minutes(user),
+    )
+    _record_login_attempt(
+        db=db,
+        email=email_norm,
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        device_fingerprint=device_fingerprint,
+        outcome="success",
+        reason="google_ok",
     )
     db.commit()
     return TokenResponse(

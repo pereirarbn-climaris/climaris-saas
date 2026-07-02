@@ -2,7 +2,7 @@ import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 
 export type CepLookupResult = {
-  source: "viacep";
+  source: "viacep" | "brasilapi";
   cep: string;
   address_street: string | null;
   address_complement: string | null;
@@ -12,6 +12,22 @@ export type CepLookupResult = {
   address_postal_code: string | null;
   address_ibge_code: string | null;
 };
+
+export function cepLookupHasUsefulData(data: CepLookupResult): boolean {
+  return Boolean(
+    (data.address_street ?? "").trim() ||
+      (data.address_district ?? "").trim() ||
+      (data.address_city ?? "").trim(),
+  );
+}
+
+export function cepLookupSuccessMessage(data: CepLookupResult): string {
+  const hasStreet = Boolean((data.address_street ?? "").trim());
+  if (!hasStreet) {
+    return "Cidade e UF preenchidos pela consulta de CEP. Informe o logradouro manualmente.";
+  }
+  return "Endereço preenchido pela consulta de CEP. Clique em Salvar para gravar.";
+}
 
 function parseError(body: unknown, status: number, fallback: string): string {
   if (body && typeof body === "object") {

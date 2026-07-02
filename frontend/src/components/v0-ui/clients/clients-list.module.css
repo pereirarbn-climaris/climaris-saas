@@ -36,6 +36,29 @@
   color: var(--color-text-muted);
 }
 
+.pageHeaderActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 768px) {
+  .pageHeaderActions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pageHeaderActions :global(.listToolbarBtnPrimary),
+  .pageHeaderActions :global(.listToolbarBtnGhost) {
+    width: 100%;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+}
+
 /* ========== STATS GRID ========== */
 .heroStats {
   display: grid;
@@ -707,6 +730,36 @@ tr:hover .avatar {
 .importSourceCard:hover {
   border-color: #bae6fd;
   box-shadow: var(--card-shadow-hover, 0 4px 14px rgba(14, 116, 144, 0.08));
+}
+
+.importSourceCardSelected {
+  border-color: var(--color-primary, #0ea5e9);
+  background: color-mix(in srgb, var(--color-primary, #0ea5e9) 6%, #fff);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary, #0ea5e9) 18%, transparent);
+}
+
+.importSourceSectionTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm, 0.9rem);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text);
+}
+
+.importSourceSectionHint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-xs, 0.85rem);
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.importOkBanner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm, 0.9rem);
+  color: #166534;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+  border: 1px solid #a7f3d0;
+  border-radius: var(--radius-lg, 10px);
 }
 
 .importSourceName {

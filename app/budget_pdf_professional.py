@@ -14,18 +14,25 @@ from app.budget_pdf_common import (
     date_fmt,
     draw_professional_detail_table,
     draw_professional_horizontal_rule,
+    draw_professional_totals_block,
+    draw_provider_signature_image,
     make_service_desc_style,
     mask_phone,
     mask_tax_document,
-    money,
     parse_brand_color,
+    parse_font_color,
     register_pdf_fonts,
     safe,
     scope_bullet_lines,
+    scope_bullets_from_budget_services,
+    tenant_display_name,
     tenant_full_address,
 )
 from app.budget_pdf_config import TemplateConfig
 from models import Budget, Tenant
+
+PROFESSIONAL_SECTION_GAP = 6 * mm
+PROFESSIONAL_BODY_INDENT = 2 * mm
 
 
 def _client_address_single_line(budget: Budget) -> str:
@@ -58,9 +65,10 @@ def _draw_party_column(
     label: str,
     name: str,
     extra_lines: list[str],
+    text_color: colors.Color,
 ) -> float:
     """Uma coluna (cliente à esquerda ou prestador à direita)."""
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     y = y_top
     c.setFont(font_bold, 8.2)
     c.drawString(x, y, label)
@@ -88,6 +96,7 @@ def _draw_parties_side_by_side(
     client_lines: list[str],
     provider_name: str,
     provider_lines: list[str],
+    text_color: colors.Color,
 ) -> float:
     """Cliente à esquerda, prestador à direita, mesma linha de títulos."""
     gap = 8 * mm
@@ -106,6 +115,7 @@ def _draw_parties_side_by_side(
         label="CLIENTE / CONTRATANTE",
         name=client_name,
         extra_lines=client_lines,
+        text_color=text_color,
     )
     y_provider = _draw_party_column(
         c,
@@ -117,6 +127,7 @@ def _draw_parties_side_by_side(
         label="PRESTADOR DOS SERVIÇOS",
         name=provider_name,
         extra_lines=provider_lines,
+        text_color=text_color,
     )
     return min(y_client, y_provider)
 
@@ -130,21 +141,28 @@ def _draw_scope_section(
     font: str,
     font_bold: str,
     bullets: list[str],
+    text_color: colors.Color,
 ) -> float:
-    c.setFont(font_bold, 9.2)
-    c.drawString(margin_x, y, "1. ESCOPO TÉCNICO DE MÃO DE OBRA E EXECUÇÃO")
-    y -= 4.5 * mm
+    y = _draw_professional_section_title(
+        c,
+        y=y,
+        margin_x=margin_x,
+        font_bold=font_bold,
+        title="1. ESCOPO TÉCNICO DE MÃO DE OBRA E EXECUÇÃO",
+        text_color=text_color,
+    )
+    body_x = margin_x + PROFESSIONAL_BODY_INDENT
     if not bullets:
         c.setFont(font, 7.4)
-        c.drawString(margin_x + 2 * mm, y, "—")
+        c.drawString(body_x, y, "—")
         return y - 5 * mm
     c.setFont(font, 7.3)
     for bullet in bullets:
         for line in _wrap_scope_line(bullet, max_chars=98):
-            c.drawString(margin_x + 2 * mm, y, f"• {line}")
+            c.drawString(body_x, y, f"• {line}")
             y -= 3.1 * mm
         y -= 0.8 * mm
-    return y - 2 * mm
+    return y
 
 
 def _wrap_scope_line(text: str, max_chars: int) -> list[str]:
@@ -164,6 +182,22 @@ def _wrap_scope_line(text: str, max_chars: int) -> list[str]:
     return lines or [text[:max_chars]]
 
 
+def _draw_professional_section_title(
+    c: canvas.Canvas,
+    *,
+    y: float,
+    margin_x: float,
+    font_bold: str,
+    title: str,
+    text_color: colors.Color,
+) -> float:
+    """Título numerado alinhado às seções 1–3 e às tabelas (mesmo margin_x)."""
+    c.setFillColor(text_color)
+    c.setFont(font_bold, 9.2)
+    c.drawString(margin_x, y, title)
+    return y - 4.5 * mm
+
+
 def _draw_conditions_section(
     c: canvas.Canvas,
     *,
@@ -174,29 +208,43 @@ def _draw_conditions_section(
     brand_blue: colors.Color,
     config: TemplateConfig,
     budget: Budget,
+    text_color: colors.Color,
 ) -> float:
-    c.setFont(font_bold, 9.2)
-    c.drawString(margin_x, y, "4. CONDIÇÕES E GARANTIAS COMERCIAIS")
-    y -= 4.5 * mm
+    y = _draw_professional_section_title(
+        c,
+        y=y,
+        margin_x=margin_x,
+        font_bold=font_bold,
+        title="4. CONDIÇÕES E GARANTIAS COMERCIAIS",
+        text_color=text_color,
+    )
+    body_x = margin_x + PROFESSIONAL_BODY_INDENT
+    c.setFillColor(text_color)
     c.setFont(font, 7.5)
     validity = int(budget.validity_days or 0)
     if validity > 0:
         c.drawString(
-            margin_x,
+            body_x,
             y,
             f"Validade da Proposta: {validity} dias a partir da data de emissão deste documento.",
         )
         y -= 3.4 * mm
     if config.warranty_text:
-        c.drawString(margin_x, y, f"Garantia Técnica: {config.warranty_text[:200]}")
+        c.drawString(body_x, y, f"Garantia Técnica: {config.warranty_text[:200]}")
         y -= 3.4 * mm
-    payment = config.payment_terms_text or ""
-    if budget.payment_method:
-        payment = f"{payment} ({budget.payment_method})" if payment else str(budget.payment_method)
-    if payment:
-        c.drawString(margin_x, y, f"Forma de Pagamento: {payment[:200]}")
+    payment_method = (config.payment_method_text or budget.payment_method or "").strip()
+    if payment_method:
+        c.drawString(body_x, y, f"Forma de Pagamento: {payment_method[:200]}")
         y -= 3.4 * mm
-    return y - 2 * mm
+    payment_terms = (config.payment_terms_text or "").strip()
+    if payment_terms:
+        c.drawString(body_x, y, f"Condições de Pagamento: {payment_terms[:200]}")
+        y -= 3.4 * mm
+    observations = (config.observations_text or "").strip()
+    if observations:
+        c.drawString(body_x, y, f"Observações: {observations[:200]}")
+        y -= 3.4 * mm
+    return y
 
 
 def _draw_professional_signatures_page(
@@ -211,20 +259,29 @@ def _draw_professional_signatures_page(
     font_bold: str,
     page_num: int,
     total_pages: int,
+    text_color: colors.Color,
+    signature_url: str | None = None,
 ) -> None:
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 10)
-    c.drawString(margin_x, height - 14 * mm, safe(tenant.name)[:50])
+    c.drawString(margin_x, height - 14 * mm, tenant_display_name(tenant)[:50])
     sign_y = 55 * mm
     c.setStrokeColor(colors.HexColor("#666666"))
     left_x1 = margin_x + 8 * mm
     left_x2 = margin_x + 82 * mm
     right_x1 = width - margin_x - 82 * mm
     right_x2 = width - margin_x - 8 * mm
+    draw_provider_signature_image(
+        c,
+        left_x1=left_x1,
+        left_x2=left_x2,
+        sign_y=sign_y,
+        signature_url=signature_url,
+    )
     c.line(left_x1, sign_y, left_x2, sign_y)
     c.line(right_x1, sign_y, right_x2, sign_y)
     c.setFont(font, 8)
-    c.drawCentredString((left_x1 + left_x2) / 2, sign_y - 5 * mm, f"{safe(tenant.name)[:42]} — Técnico Responsável")
+    c.drawCentredString((left_x1 + left_x2) / 2, sign_y - 5 * mm, f"{tenant_display_name(tenant)[:42]} — Técnico Responsável")
     c.drawCentredString((right_x1 + right_x2) / 2, sign_y - 5 * mm, f"{safe(budget.client.name)[:42]}")
     c.drawCentredString((right_x1 + right_x2) / 2, sign_y - 8.5 * mm, "De Acordo / Assinatura do Cliente")
     c.setFont(font, 7.2)
@@ -236,40 +293,42 @@ def build_professional_budget_pdf(
     tenant: Tenant,
     config: TemplateConfig,
     logo_url: str | None = None,  # noqa: ARG001 — modelo 2 sem logo no cabeçalho
+    signature_url: str | None = None,
 ) -> bytes:
     """Modelo 2 — cabeçalho sem logo; cliente/prestador em duas colunas."""
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     font, font_bold = register_pdf_fonts()
-    desc_style = make_service_desc_style(font)
-
     margin_x = 15 * mm
     content_width = width - (2 * margin_x)
     brand_blue = parse_brand_color(config.brand_color)
+    text_color = parse_font_color(config.font_color)
+    desc_style = make_service_desc_style(font, text_color=text_color)
 
     top_y = height - 14 * mm
+    company_name = tenant_display_name(tenant)
 
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 21)
-    c.drawString(margin_x, top_y - 8 * mm, safe(tenant.name)[:48])
+    c.drawString(margin_x, top_y - 8 * mm, company_name[:48])
     tagline = _tenant_tagline(tenant)
-    header_bottom = top_y - 14 * mm
     if tagline:
         c.setFont(font, 7.4)
         c.drawString(margin_x, top_y - 14.5 * mm, tagline[:60])
-        header_bottom = top_y - 18 * mm
+        divider_y = top_y - 17.8 * mm
+    else:
+        divider_y = top_y - 16.5 * mm
 
     c.setFont(font_bold, 11)
     c.drawRightString(width - margin_x, top_y - 8 * mm, f"ORÇAMENTO nº {budget_code(budget)}")
     c.setFont(font, 8)
     c.drawRightString(width - margin_x, top_y - 13.5 * mm, f"Data de Emissão: {date_fmt(budget.created_at)}")
 
-    divider_y = header_bottom - 3 * mm
     draw_professional_horizontal_rule(
         c, margin_x=margin_x, content_width=content_width, y=divider_y, brand_blue=brand_blue
     )
-    y = divider_y - 6 * mm
+    y = divider_y - PROFESSIONAL_SECTION_GAP
 
     client = budget.client
     client_lines: list[str] = []
@@ -299,14 +358,23 @@ def build_professional_budget_pdf(
         font_bold=font_bold,
         client_name=safe(client.name),
         client_lines=client_lines,
-        provider_name=safe(tenant.name),
+        provider_name=company_name,
         provider_lines=provider_lines,
+        text_color=text_color,
     )
 
-    scope_source = config.technical_notes_text or (budget.description or "")
-    bullets = scope_bullet_lines(scope_source)
+    y -= PROFESSIONAL_SECTION_GAP
+    manual_scope = scope_bullet_lines(config.scope_text)
+    bullets = manual_scope if manual_scope else scope_bullets_from_budget_services(budget)
     y = _draw_scope_section(
-        c, y=y, margin_x=margin_x, content_width=content_width, font=font, font_bold=font_bold, bullets=bullets
+        c,
+        y=y,
+        margin_x=margin_x,
+        content_width=content_width,
+        font=font,
+        font_bold=font_bold,
+        bullets=bullets,
+        text_color=text_color,
     )
 
     product_rows, service_rows, product_sub, service_sub, grand_total = collect_professional_budget_rows(
@@ -314,6 +382,7 @@ def build_professional_budget_pdf(
     )
 
     if product_rows:
+        y -= PROFESSIONAL_SECTION_GAP
         y = draw_professional_detail_table(
             c,
             section_title="2. DETALHAMENTO DE PRODUTOS E MATERIAIS APLICADOS",
@@ -326,9 +395,11 @@ def build_professional_budget_pdf(
             brand_blue=brand_blue,
             font=font,
             font_bold=font_bold,
+            text_color=text_color,
         )
 
     if service_rows:
+        y -= PROFESSIONAL_SECTION_GAP
         y = draw_professional_detail_table(
             c,
             section_title="3. DETALHAMENTO DOS SERVIÇOS TÉCNICOS (MÃO DE OBRA)",
@@ -341,20 +412,23 @@ def build_professional_budget_pdf(
             brand_blue=brand_blue,
             font=font,
             font_bold=font_bold,
+            text_color=text_color,
         )
 
-    c.setFont(font, 8)
-    if product_rows:
-        c.drawRightString(width - margin_x, y, f"Subtotal Geral de Produtos/Materiais: {money(product_sub)}")
-        y -= 4 * mm
-    if service_rows:
-        c.drawRightString(width - margin_x, y, f"Subtotal Geral de Serviços (Mão de Obra): {money(service_sub)}")
-        y -= 4.5 * mm
-
-    c.setFillColor(brand_blue)
-    c.setFont(font_bold, 9.5)
-    c.drawRightString(width - margin_x, y, f"VALOR TOTAL DO INVESTIMENTO: {money(grand_total)}")
-    y -= 7 * mm
+    y -= 3 * mm
+    y = draw_professional_totals_block(
+        c,
+        y_top=y,
+        margin_x=margin_x,
+        content_width=content_width,
+        font=font,
+        font_bold=font_bold,
+        text_color=text_color,
+        product_sub=product_sub if product_rows else None,
+        service_sub=service_sub if service_rows else None,
+        grand_total=grand_total,
+    )
+    y -= PROFESSIONAL_SECTION_GAP
 
     y = _draw_conditions_section(
         c,
@@ -365,10 +439,12 @@ def build_professional_budget_pdf(
         brand_blue=brand_blue,
         config=config,
         budget=budget,
+        text_color=text_color,
     )
 
     needs_signature_page = y < 42 * mm
     total_pages = 2 if needs_signature_page else 1
+    c.setFillColor(text_color)
     c.setFont(font, 7.2)
     c.drawRightString(width - margin_x, 8 * mm, f"Página 1 de {total_pages}")
 
@@ -385,6 +461,8 @@ def build_professional_budget_pdf(
             font_bold=font_bold,
             page_num=2,
             total_pages=total_pages,
+            text_color=text_color,
+            signature_url=signature_url,
         )
     else:
         sign_y = max(28 * mm, y - 12 * mm)
@@ -393,10 +471,18 @@ def build_professional_budget_pdf(
         left_x2 = margin_x + 82 * mm
         right_x1 = width - margin_x - 82 * mm
         right_x2 = width - margin_x - 8 * mm
+        draw_provider_signature_image(
+            c,
+            left_x1=left_x1,
+            left_x2=left_x2,
+            sign_y=sign_y,
+            signature_url=signature_url,
+        )
         c.line(left_x1, sign_y, left_x2, sign_y)
         c.line(right_x1, sign_y, right_x2, sign_y)
+        c.setFillColor(text_color)
         c.setFont(font, 8)
-        c.drawCentredString((left_x1 + left_x2) / 2, sign_y - 5 * mm, f"{safe(tenant.name)[:42]} — Técnico Responsável")
+        c.drawCentredString((left_x1 + left_x2) / 2, sign_y - 5 * mm, f"{company_name[:42]} — Técnico Responsável")
         c.drawCentredString((right_x1 + right_x2) / 2, sign_y - 5 * mm, f"{safe(budget.client.name)[:42]}")
         c.drawCentredString((right_x1 + right_x2) / 2, sign_y - 8.5 * mm, "De Acordo / Assinatura do Cliente")
 

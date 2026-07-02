@@ -1,60 +1,68 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { SubscriptionGuard } from "../components/billing/SubscriptionGuard";
 import { AppSidebar } from "../components/dashboard/AppSidebar";
+import { UserMenu } from "../components/dashboard/UserMenu";
 import { Sidebar } from "../components/v0-ui/Sidebar";
 import {
-  changeMyPassword,
   fetchCurrentTenant,
   fetchCurrentUser,
   logoutRevokeRefresh,
-  patchCurrentUser,
   type TenantOut,
   type UserOut,
-  type UserRole,
 } from "../api/auth";
 import { financeQueryKeys } from "../features/finance/hooks/financeQueryKeys";
 import { clearAccessToken, getAccessToken } from "../lib/authStorage";
 import { isHiddenAppModule, isHiddenAppModulePath } from "../lib/hiddenAppModules";
+import { isPurchasesEnabled } from "../lib/planProducts";
 import { getPlanDisplayLabel } from "../lib/planRules";
 import { getTenantDisplayName } from "../lib/tenantDisplay";
-import { digitsOnlyPhoneForApi, formatPhoneBrInput } from "../lib/brMask";
 import {
+  NavIconBox,
   NavIconBuilding,
+  NavIconCalendar,
+  NavIconChevronRight,
+  NavIconClipboard,
   NavIconFileQuote,
+  NavIconHome,
   NavIconKey,
   NavIconLock,
   NavIconLogOut,
+  NavIconPackage,
+  NavIconPmoc,
+  NavIconPuzzle,
   NavIconUserCircle,
   NavIconUsers,
   NavIconWallet,
+  NavIconWrench,
   NavIconX,
 } from "../components/dashboard/NavIcons";
 import type { DashboardOutletContext } from "./dashboardContext";
 import { isPlatformOperatorUser } from "../lib/platformAdmin";
+import { NotificationCenterPanel, type LocalNotificationItem } from "../components/notifications/NotificationCenterPanel";
+import { NotificationAlertHost } from "../components/NotificationAlertHost";
+import { useNotificationAlerts } from "../features/notifications/hooks/useNotificationAlerts";
+import { KnowledgeChatProvider } from "../context/KnowledgeChatContext";
+import { FloatingActionChat } from "../components/chat/FloatingActionChat";
+import { useNotificationUnreadCount } from "../features/notifications/hooks/useNotifications";
+import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import styles from "./DashboardPage.module.css";
 
 const SIDEBAR_COLLAPSED_KEY = "climaris.sidebarCollapsed";
 const PREF_AUTOCOLLAPSE_KEY = "climaris.pref.autoCollapseSidebar";
 const PREF_HIDE_HOME_WIDGETS_KEY = "climaris.pref.hideHomeWidgets";
+const DISMISSED_LOCAL_NOTIFICATIONS_KEY = "climaris.dismissedLocalNotifications";
 
-function roleLabel(role: UserRole): string {
-  switch (role) {
-    case "admin":
-      return "Administrador";
-    case "technician":
-      return "Técnico";
-    case "receptionist":
-      return "Recepção";
-    default:
-      return role;
+function loadDismissedLocalNotifications(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_LOCAL_NOTIFICATIONS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
   }
-}
-
-function userInitial(name: string): string {
-  const t = name.trim();
-  if (!t) return "?";
-  return t[0]!.toUpperCase();
 }
 
 function tenantInitial(name: string): string {
@@ -68,34 +76,30 @@ export function DashboardPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const navId = useId();
+  const mainScrollRef = useRef<HTMLElement | null>(null);
   const tenantPlanKeyRef = useRef<string | null>(null);
   const [checkingTenant, setCheckingTenant] = useState(true);
   const [tenant, setTenant] = useState<TenantOut | null>(null);
   const [user, setUser] = useState<UserOut | null>(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [workspaceDrawerOpen, setWorkspaceDrawerOpen] = useState(false);
-  const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
-  const [profileFullName, setProfileFullName] = useState("");
-  const [profileEmail, setProfileEmail] = useState("");
-  const [profilePhone, setProfilePhone] = useState("");
-  const [profileWhatsapp, setProfileWhatsapp] = useState("");
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [profileMsg, setProfileMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [changingPassword, setChangingPassword] = useState(false);
-  const [passwordMsg, setPasswordMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [mobileNavMenuOpen, setMobileNavMenuOpen] = useState(false);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [globalSearchText, setGlobalSearchText] = useState("");
   const [prefAutoCollapseSidebar, setPrefAutoCollapseSidebar] = useState(false);
   const [prefHideHomeWidgets, setPrefHideHomeWidgets] = useState(false);
+  const [dismissedLocalNotificationIds, setDismissedLocalNotificationIds] = useState<Set<string>>(
+    () => loadDismissedLocalNotifications(),
+  );
   const [isMobileLayout, setIsMobileLayout] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 900px)").matches : false,
   );
 
+  const isAccountRoute = location.pathname.startsWith("/app/conta");
+  const isNotificationsRoute = location.pathname.startsWith("/app/notifications");
+  const isPlanosRoute = location.pathname.startsWith("/app/planos");
   const isAdminRoute = location.pathname.startsWith("/app/admin");
   const isClientsRoute = location.pathname.startsWith("/app/clients");
   const isProductsRoute = location.pathname.startsWith("/app/products");
@@ -107,6 +111,7 @@ export function DashboardPage() {
   const isPreventiveRoute = location.pathname.startsWith("/app/preventive-maintenance");
   const isFiscalRoute = !isHiddenAppModule("nfse") && location.pathname.startsWith("/app/fiscal");
   const isPmocRoute = location.pathname.startsWith("/app/pmoc");
+  const isDashboardHomeRoute = location.pathname === "/app";
   const isMarketplaceRoute = !isHiddenAppModule("marketplace") && location.pathname.startsWith("/app/marketplace");
   const isWhatsappBotRoute =
     !isHiddenAppModule("whatsappBot") && location.pathname.startsWith("/app/integrations/whatsapp-bot");
@@ -118,7 +123,18 @@ export function DashboardPage() {
     !isHiddenAppModule("chatIa") && location.pathname.startsWith("/app/integrations/chat-ia");
   const isMercadoLivreRoute =
     !isHiddenAppModule("mercadoLivre") && location.pathname.startsWith("/app/integrations/mercado-livre");
-  const pageTitle = isAdminRoute
+  const purchasesEnabled = isPurchasesEnabled(tenant);
+  const showClientModule = user?.role !== "technician";
+  const useCompactMobileHeader = isMobileLayout;
+  const pageTitle = isDashboardHomeRoute && isMobileLayout
+    ? "Painel de Controle"
+    : isAccountRoute
+    ? "Minha conta"
+    : isNotificationsRoute
+      ? "Notificações"
+    : isPlanosRoute
+      ? "Plano e assinatura"
+    : isAdminRoute
     ? "Administração"
     : isClientsRoute
       ? "Clientes"
@@ -153,7 +169,41 @@ export function DashboardPage() {
             : isMercadoLivreRoute
               ? "Mercado Livre"
           : "Painel";
-  const unreadNotifications = (user?.must_change_password ? 1 : 0) + (prefAutoCollapseSidebar ? 0 : 1);
+  const { data: apiUnreadCount = 0 } = useNotificationUnreadCount(Boolean(user));
+  useNotificationAlerts(Boolean(user));
+  const dismissLocalNotification = useCallback((id: string) => {
+    setDismissedLocalNotificationIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      try {
+        localStorage.setItem(DISMISSED_LOCAL_NOTIFICATIONS_KEY, JSON.stringify([...next]));
+      } catch {
+        /* ignore quota errors */
+      }
+      return next;
+    });
+  }, []);
+
+  const localNotificationItems = useMemo((): LocalNotificationItem[] => {
+    const items: LocalNotificationItem[] = [];
+    if (user?.must_change_password && !dismissedLocalNotificationIds.has("local-password")) {
+      items.push({
+        id: "local-password",
+        variant: "warn",
+        body: "Altere sua senha temporária em Minha conta → Segurança.",
+        href: "/app/conta?secao=seguranca",
+      });
+    }
+    if (!prefAutoCollapseSidebar && !dismissedLocalNotificationIds.has("local-sidebar")) {
+      items.push({
+        id: "local-sidebar",
+        variant: "local",
+        body: "Dica: ative o recolhimento automático da sidebar nas preferências.",
+      });
+    }
+    return items;
+  }, [user?.must_change_password, prefAutoCollapseSidebar, dismissedLocalNotificationIds]);
+  const unreadNotifications = apiUnreadCount + localNotificationItems.length;
 
   const applyTenantUpdate = useCallback(
     (t: TenantOut) => {
@@ -283,18 +333,33 @@ export function DashboardPage() {
 
   useEffect(() => {
     setWorkspaceDrawerOpen(false);
-    setAccountDrawerOpen(false);
+    setMobileNavMenuOpen(false);
     setGlobalSearchOpen(false);
     setNotificationsOpen(false);
     setPreferencesOpen(false);
   }, [location.pathname, location.search]);
 
   useEffect(() => {
-    if (!accountDrawerOpen && !workspaceDrawerOpen && !globalSearchOpen && !notificationsOpen && !preferencesOpen) return;
+    // Sempre que mudar de rota dentro do app, começa no topo da página.
+    const frame = window.requestAnimationFrame(() => {
+      mainScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!user?.must_change_password || checkingTenant) return;
+    if (location.pathname.startsWith("/app/conta")) return;
+    navigate("/app/conta?secao=seguranca", { replace: true });
+  }, [user?.must_change_password, checkingTenant, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!workspaceDrawerOpen && !mobileNavMenuOpen && !globalSearchOpen && !notificationsOpen && !preferencesOpen) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        setAccountDrawerOpen(false);
         setWorkspaceDrawerOpen(false);
+        setMobileNavMenuOpen(false);
         setGlobalSearchOpen(false);
         setNotificationsOpen(false);
         setPreferencesOpen(false);
@@ -302,25 +367,21 @@ export function DashboardPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [accountDrawerOpen, workspaceDrawerOpen, globalSearchOpen, notificationsOpen, preferencesOpen]);
+  }, [workspaceDrawerOpen, mobileNavMenuOpen, globalSearchOpen, notificationsOpen, preferencesOpen]);
 
   useEffect(() => {
-    if (!accountDrawerOpen && !workspaceDrawerOpen && !globalSearchOpen && !notificationsOpen && !preferencesOpen) return;
+    if (!workspaceDrawerOpen && !mobileNavMenuOpen && !globalSearchOpen && !notificationsOpen && !preferencesOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [accountDrawerOpen, workspaceDrawerOpen, globalSearchOpen, notificationsOpen, preferencesOpen]);
+  }, [workspaceDrawerOpen, mobileNavMenuOpen, globalSearchOpen, notificationsOpen, preferencesOpen]);
 
   async function logout() {
     await logoutRevokeRefresh();
     clearAccessToken();
     navigate("/login", { replace: true });
-  }
-
-  function openAccountFromMobileMenu() {
-    openAccountDrawer();
   }
 
   function openWorkspaceFromMobileMenu() {
@@ -329,61 +390,46 @@ export function DashboardPage() {
 
   function openWorkspaceDrawer() {
     setWorkspaceDrawerOpen(true);
-    setAccountDrawerOpen(false);
   }
 
-  function openAccountDrawer() {
-    if (user) {
-      setProfileFullName(user.full_name);
-      setProfileEmail(user.email);
-      setProfilePhone(user.phone ? formatPhoneBrInput(String(user.phone)) : "");
-      setProfileWhatsapp(user.whatsapp ? formatPhoneBrInput(String(user.whatsapp)) : "");
-    }
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
-    setProfileMsg(null);
-    setPasswordMsg(null);
-    setAccountDrawerOpen(true);
-    setWorkspaceDrawerOpen(false);
-    setGlobalSearchOpen(false);
-    setNotificationsOpen(false);
-    setPreferencesOpen(false);
-  }
+  const updateUser = useCallback((next: UserOut) => {
+    setUser(next);
+  }, []);
 
   function openGlobalSearchPanel() {
     setGlobalSearchOpen(true);
     setNotificationsOpen(false);
     setPreferencesOpen(false);
-    setAccountDrawerOpen(false);
     setWorkspaceDrawerOpen(false);
+    setMobileNavMenuOpen(false);
   }
 
   function openNotificationsPanel() {
     setNotificationsOpen(true);
     setGlobalSearchOpen(false);
     setPreferencesOpen(false);
-    setAccountDrawerOpen(false);
     setWorkspaceDrawerOpen(false);
+    setMobileNavMenuOpen(false);
   }
 
   function openPreferencesPanel() {
     setPreferencesOpen(true);
     setGlobalSearchOpen(false);
     setNotificationsOpen(false);
-    setAccountDrawerOpen(false);
     setWorkspaceDrawerOpen(false);
+    setMobileNavMenuOpen(false);
   }
 
   function submitGlobalSearch() {
     const t = globalSearchText.trim().toLowerCase();
     if (!t) return;
+    const purchasesOn = tenant?.products_purchases_enabled === true;
+    const inventoryOn = tenant?.products_inventory_allowed === true && tenant?.inventory_enabled !== false;
     const rules: Array<[string, string]> = [
       ["cliente", "/app/clients"],
       ["produto", "/app/products"],
-      ["estoque", "/app/products"],
-      ["compra", "/app/purchases"],
-      ["compras", "/app/purchases"],
+      ...(inventoryOn ? ([["estoque", "/app/products"]] as Array<[string, string]>) : []),
+      ...(purchasesOn ? ([["compra", "/app/purchases"], ["compras", "/app/purchases"]] as Array<[string, string]>) : []),
       ["serviço", "/app/services"],
       ["servico", "/app/services"],
       ["ordem", "/app/service-orders"],
@@ -409,6 +455,11 @@ export function DashboardPage() {
       ["pagar me", "/app/admin?tab=pagamentos"],
       ["pagarme", "/app/admin?tab=pagamentos"],
       ["admin", "/app/admin"],
+      ["conta", "/app/conta"],
+      ["perfil", "/app/conta"],
+      ["minha conta", "/app/conta"],
+      ["senha", "/app/conta?secao=seguranca"],
+      ["segurança", "/app/conta?secao=seguranca"],
       ["inicio", "/app"],
       ["início", "/app"],
     ].filter((entry): entry is [string, string] => !isHiddenAppModulePath(entry[1]));
@@ -417,62 +468,6 @@ export function DashboardPage() {
     setGlobalSearchOpen(false);
     setGlobalSearchText("");
     if (prefAutoCollapseSidebar && !isMobileLayout) setNavCollapsed(true);
-  }
-
-  async function submitProfile() {
-    const name = profileFullName.trim();
-    const email = profileEmail.trim();
-    if (!name || !email) {
-      setProfileMsg({ kind: "err", text: "Nome e e-mail são obrigatórios." });
-      return;
-    }
-    setSavingProfile(true);
-    setProfileMsg(null);
-    try {
-      const phoneDigits = profilePhone.trim() ? digitsOnlyPhoneForApi(profilePhone) : "";
-      const waDigits = profileWhatsapp.trim() ? digitsOnlyPhoneForApi(profileWhatsapp) : "";
-      const updated = await patchCurrentUser({
-        full_name: name,
-        email: email,
-        phone: phoneDigits || null,
-        whatsapp: waDigits || null,
-      });
-      setUser(updated);
-      setProfileMsg({ kind: "ok", text: "Perfil salvo com sucesso." });
-    } catch (e) {
-      setProfileMsg({ kind: "err", text: e instanceof Error ? e.message : "Não foi possível salvar o perfil." });
-    } finally {
-      setSavingProfile(false);
-    }
-  }
-
-  async function submitPasswordChange() {
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      setPasswordMsg({ kind: "err", text: "Preencha todos os campos de senha." });
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPasswordMsg({ kind: "err", text: "A confirmação da nova senha não confere." });
-      return;
-    }
-    if (currentPassword === newPassword) {
-      setPasswordMsg({ kind: "err", text: "A nova senha deve ser diferente da senha atual." });
-      return;
-    }
-    setChangingPassword(true);
-    setPasswordMsg(null);
-    try {
-      await changeMyPassword({ current_password: currentPassword, new_password: newPassword });
-      setUser((prev: UserOut | null) => (prev ? { ...prev, must_change_password: false } : prev));
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setPasswordMsg({ kind: "ok", text: "Senha alterada com sucesso." });
-    } catch (e) {
-      setPasswordMsg({ kind: "err", text: e instanceof Error ? e.message : "Não foi possível alterar a senha." });
-    } finally {
-      setChangingPassword(false);
-    }
   }
 
   if (checkingTenant) {
@@ -489,287 +484,327 @@ export function DashboardPage() {
   }
 
   return (
+    <KnowledgeChatProvider>
     <Sidebar.Root
       expanded={!navCollapsed}
       onExpandedChange={(expanded) => setNavCollapsed(!expanded)}
     >
       <div className={`${styles.shell} ${navCollapsed ? styles.sidebarCollapsed : ""}`}>
-        <AppSidebar
-          navId={navId}
-          tenant={tenant}
-          user={user}
-          workspaceDrawerOpen={workspaceDrawerOpen}
-          onOpenWorkspaceDrawer={openWorkspaceDrawer}
-          onOpenAccountFromMobile={openAccountFromMobileMenu}
-          onOpenWorkspaceFromMobile={openWorkspaceFromMobileMenu}
-          onLogout={logout}
-        />
+        {!isMobileLayout ? (
+          <AppSidebar
+            navId={navId}
+            user={user}
+            tenant={tenant}
+            onOpenWorkspaceFromMobile={openWorkspaceFromMobileMenu}
+            onLogout={logout}
+          />
+        ) : null}
 
         <div className={styles.mainColumn}>
-        <header className={`${styles.header} ${isMobileLayout ? styles.headerMobile : ""}`}>
-          <Sidebar.Toggle className={styles.headerSidebarToggle} />
+        <header
+          className={`${styles.header} ${isMobileLayout ? styles.headerMobile : ""} ${isDashboardHomeRoute && isMobileLayout ? styles.headerMobileHome : ""}`}
+        >
+          {!isMobileLayout ? <Sidebar.Toggle className={styles.headerSidebarToggle} /> : null}
           <div className={styles.headerLeft}>
-            <Sidebar.Trigger className={styles.menuBtn} aria-controls={navId}>
-              <span className={styles.menuIcon} aria-hidden />
-              <span className={styles.srOnly}>Abrir menu</span>
-            </Sidebar.Trigger>
-            <div className={styles.headerTitles}>
-              <h1 className={styles.headerCompanyName}>{getTenantDisplayName(tenant)}</h1>
-              <p className={styles.headerPageContext}>{pageTitle}</p>
-            </div>
+            {useCompactMobileHeader ? (
+              <Link to="/app" className={styles.headerCompactBrandLink}>
+                <PlatformBrandMark variant="operacao" showName={false} className={styles.headerCompactBrand} />
+              </Link>
+            ) : (
+              <div className={styles.headerTitles}>
+                <h1 className={styles.headerCompanyName}>{getTenantDisplayName(tenant)}</h1>
+                <p className={styles.headerPageContext}>
+                  {isDashboardHomeRoute && isMobileLayout ? `Boas-vindas, ${user?.full_name ?? "[Usuário]"}` : pageTitle}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className={styles.headerRight}>
             {user?.must_change_password ? (
-              <p className={styles.pwHint} role="status">
-                Altere a senha temporária quando possível.
-              </p>
+              <Link className={styles.pwHint} to="/app/conta?secao=seguranca" role="status">
+                Defina uma nova senha em Minha conta → Segurança
+              </Link>
             ) : null}
-            <div className={styles.headerTools} aria-label="Atalhos rápidos">
-              <button
-                type="button"
-                className={`${styles.headerToolBtn} ${globalSearchOpen ? styles.headerToolBtnActive : ""}`}
-                title="Pesquisar"
-                onClick={openGlobalSearchPanel}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="m20 20-3.5-3.5" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className={`${styles.headerToolBtn} ${notificationsOpen ? styles.headerToolBtnActive : ""}`}
-                title="Notificações"
-                onClick={openNotificationsPanel}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <path d="M15 17h5l-1.4-1.4a2 2 0 0 1-.6-1.4V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
-                  <path d="M9.5 17a2.5 2.5 0 0 0 5 0" />
-                </svg>
-                {unreadNotifications > 0 ? <span className={styles.headerToolDot} aria-hidden /> : null}
-              </button>
-              <button
-                type="button"
-                className={`${styles.headerToolBtn} ${preferencesOpen ? styles.headerToolBtnActive : ""}`}
-                title="Preferências"
-                onClick={openPreferencesPanel}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <circle cx="12" cy="12" r="3.2" />
-                  <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.1a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.1a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.1a1 1 0 0 0 .6.9h.1a1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.1a1 1 0 0 0-.9.6z" />
-                </svg>
-              </button>
-            </div>
-            <button
-              type="button"
-              className={`${styles.userBlock} ${styles.userBlockBtn}`}
-              onClick={openAccountDrawer}
-              aria-haspopup="dialog"
-              aria-expanded={accountDrawerOpen}
-              title="Minha conta e configurações"
-            >
-              <div className={styles.avatar} aria-hidden>
-                {user ? userInitial(user.full_name) : "—"}
+            {useCompactMobileHeader ? (
+              <div className={styles.headerTools} aria-label="Atalhos rápidos">
+                <button
+                  type="button"
+                  className={`${styles.headerToolBtn} ${notificationsOpen ? styles.headerToolBtnActive : ""}`}
+                  title="Notificações"
+                  onClick={openNotificationsPanel}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <path d="M15 17h5l-1.4-1.4a2 2 0 0 1-.6-1.4V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
+                    <path d="M9.5 17a2.5 2.5 0 0 0 5 0" />
+                  </svg>
+                  {unreadNotifications > 0 ? <span className={styles.headerToolDot} aria-hidden /> : null}
+                </button>
+                <Link className={`${styles.headerToolBtn} ${styles.headerMobileProfileBtn}`} to="/app/conta" title="Minha conta">
+                  <NavIconUserCircle />
+                </Link>
               </div>
-              <div className={styles.userMeta}>
-                <span className={styles.userName}>{user?.full_name ?? "—"}</span>
-                <span className={styles.userEmail}>{user?.email ?? ""}</span>
-              </div>
-            </button>
+            ) : (
+              <>
+                <div className={styles.headerTools} aria-label="Atalhos rápidos">
+                  <button
+                    type="button"
+                    className={`${styles.headerToolBtn} ${globalSearchOpen ? styles.headerToolBtnActive : ""}`}
+                    title="Pesquisar"
+                    onClick={openGlobalSearchPanel}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden>
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.5-3.5" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.headerToolBtn} ${notificationsOpen ? styles.headerToolBtnActive : ""}`}
+                    title="Notificações"
+                    onClick={openNotificationsPanel}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden>
+                      <path d="M15 17h5l-1.4-1.4a2 2 0 0 1-.6-1.4V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
+                      <path d="M9.5 17a2.5 2.5 0 0 0 5 0" />
+                    </svg>
+                    {unreadNotifications > 0 ? <span className={styles.headerToolDot} aria-hidden /> : null}
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.headerToolBtn} ${preferencesOpen ? styles.headerToolBtnActive : ""}`}
+                    title="Preferências"
+                    onClick={openPreferencesPanel}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden>
+                      <circle cx="12" cy="12" r="3.2" />
+                      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.1a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.1a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.1a1 1 0 0 0 .6.9h.1a1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.1a1 1 0 0 0-.9.6z" />
+                    </svg>
+                  </button>
+                </div>
+                {user ? (
+                  <UserMenu
+                    user={user}
+                    isAdmin={user.role === "admin"}
+                    onLogout={() => void logout()}
+                    onOpenWorkspace={openWorkspaceDrawer}
+                  />
+                ) : null}
+              </>
+            )}
           </div>
         </header>
 
-        <main className={styles.main} id="conteudo-principal">
+        <main ref={mainScrollRef} className={`${styles.main} ${isMobileLayout ? styles.mainMobile : ""}`} id="conteudo-principal">
+          {isMobileLayout ? (
+            <div className={styles.mobileScreenIntro}>
+              <Link to="/app" className={styles.mobileScreenBrandLink}>
+                <PlatformBrandMark variant="operacao" showName={false} className={styles.mobileScreenBrand} />
+              </Link>
+              {!isDashboardHomeRoute && !isServiceOrdersRoute && !isProductsRoute ? (
+                <p className={styles.mobileScreenName}>{pageTitle}</p>
+              ) : null}
+            </div>
+          ) : null}
+          {tenant?.is_on_free_trial &&
+          !tenant.subscription_access_blocked &&
+          tenant.trial_days_remaining != null &&
+          tenant.trial_days_remaining <= 7 ? (
+            <p className={styles.trialBanner} role="status">
+              Teste gratuito: faltam {tenant.trial_days_remaining} dia(s).{" "}
+              <Link to="/app/planos">Assine um plano</Link> para não perder o acesso.
+            </p>
+          ) : null}
           {user && tenant ? (
-            <Outlet
-              context={
-                {
-                  user,
-                  tenant,
-                  refreshWorkspace,
-                } satisfies DashboardOutletContext
-              }
-            />
+            <SubscriptionGuard tenant={tenant}>
+              <Outlet
+                context={
+                  {
+                    user,
+                    tenant,
+                    refreshWorkspace,
+                    updateUser,
+                  } satisfies DashboardOutletContext
+                }
+              />
+            </SubscriptionGuard>
           ) : null}
         </main>
+        {isMobileLayout ? (
+          <nav className={styles.mobileBottomNav} aria-label="Navegação principal mobile">
+            <Link to="/app" className={`${styles.mobileBottomNavItem} ${isDashboardHomeRoute ? styles.mobileBottomNavItemActive : ""}`}>
+              <NavIconHome className={styles.mobileBottomNavIcon} />
+              <span>Início</span>
+            </Link>
+            <Link
+              to="/app/service-orders"
+              className={`${styles.mobileBottomNavItem} ${isServiceOrdersRoute ? styles.mobileBottomNavItemActive : ""}`}
+            >
+              <NavIconClipboard className={styles.mobileBottomNavIcon} />
+              <span>OS</span>
+            </Link>
+            <Link to="/app/agenda" className={`${styles.mobileBottomNavItem} ${isAgendaRoute ? styles.mobileBottomNavItemActive : ""}`}>
+              <NavIconCalendar className={styles.mobileBottomNavIcon} />
+              <span>Agenda</span>
+            </Link>
+            <Link
+              to="/app/finance/dashboard"
+              className={`${styles.mobileBottomNavItem} ${isFinanceRoute ? styles.mobileBottomNavItemActive : ""}`}
+            >
+              <NavIconWallet className={styles.mobileBottomNavIcon} />
+              <span>Financeiro</span>
+            </Link>
+            <button
+              type="button"
+              className={`${styles.mobileBottomNavItem} ${mobileNavMenuOpen ? styles.mobileBottomNavItemActive : ""}`}
+              onClick={() => setMobileNavMenuOpen(true)}
+            >
+              <NavIconPackage className={styles.mobileBottomNavIcon} />
+              <span>Menu</span>
+            </button>
+          </nav>
+        ) : null}
       </div>
-      {accountDrawerOpen ? (
-        <div className={styles.accountDrawerRoot} role="presentation">
+      {mobileNavMenuOpen && isMobileLayout ? (
+        <div className={styles.mobileMenuRoot} role="presentation">
           <button
             type="button"
-            className={styles.accountDrawerBackdrop}
-            aria-label="Fechar painel"
-            onClick={() => setAccountDrawerOpen(false)}
+            className={styles.mobileMenuBackdrop}
+            aria-label="Fechar menu"
+            onClick={() => setMobileNavMenuOpen(false)}
           />
           <aside
-            className={styles.accountDrawerPanel}
+            className={styles.mobileMenuPanel}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="account-drawer-title"
+            aria-labelledby="mobile-menu-title"
+            onClick={(event) => {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest("a")) setMobileNavMenuOpen(false);
+            }}
           >
-            <div className={styles.accountDrawerToolbar}>
-              <h2 id="account-drawer-title" className={styles.accountDrawerTitle}>
-                Conta
+            <div className={styles.mobileMenuTop}>
+              <h2 id="mobile-menu-title" className={styles.mobileMenuTitle}>
+                Menu completo
               </h2>
-              <button
-                type="button"
-                className={styles.accountDrawerClose}
-                onClick={() => setAccountDrawerOpen(false)}
-                aria-label="Fechar"
-              >
-                <NavIconX className={styles.accountDrawerCloseIcon} />
+              <button type="button" className={styles.mobileMenuClose} onClick={() => setMobileNavMenuOpen(false)} aria-label="Fechar">
+                <NavIconX />
               </button>
             </div>
 
-            <div className={styles.accountDrawerProfile}>
-              <div className={styles.accountDrawerAvatarLarge} aria-hidden>
-                {user ? userInitial(user.full_name) : "—"}
-              </div>
-              <div className={styles.accountDrawerProfileText}>
-                <span className={styles.accountDrawerProfileName}>{user?.full_name ?? "—"}</span>
-                <span className={styles.accountDrawerProfileEmail}>{user?.email ?? ""}</span>
-              </div>
+            <div className={styles.mobileMenuSection}>
+              <p className={styles.mobileMenuSectionLabel}>Operação</p>
+              {showClientModule ? (
+                <Link className={styles.mobileMenuLink} to="/app/clients">
+                  <span className={styles.mobileMenuLinkStart}><NavIconUsers /> Clientes</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+              <Link className={styles.mobileMenuLink} to="/app/products">
+                <span className={styles.mobileMenuLinkStart}><NavIconBox /> Produtos</span>
+                <NavIconChevronRight />
+              </Link>
+              {showClientModule && purchasesEnabled ? (
+                <Link className={styles.mobileMenuLink} to="/app/purchases">
+                  <span className={styles.mobileMenuLinkStart}><NavIconPackage /> Compras</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+              <Link className={styles.mobileMenuLink} to="/app/services">
+                <span className={styles.mobileMenuLinkStart}><NavIconWrench /> Serviços</span>
+                <NavIconChevronRight />
+              </Link>
+              <Link className={styles.mobileMenuLink} to="/app/service-orders">
+                <span className={styles.mobileMenuLinkStart}><NavIconClipboard /> Ordens de serviço</span>
+                <NavIconChevronRight />
+              </Link>
+              <Link className={styles.mobileMenuLink} to="/app/agenda">
+                <span className={styles.mobileMenuLinkStart}><NavIconCalendar /> Agenda</span>
+                <NavIconChevronRight />
+              </Link>
+              <Link className={styles.mobileMenuLink} to="/app/preventive-maintenance">
+                <span className={styles.mobileMenuLinkStart}><NavIconWrench /> Gestão preventiva</span>
+                <NavIconChevronRight />
+              </Link>
+              <Link className={styles.mobileMenuLink} to="/app/pmoc">
+                <span className={styles.mobileMenuLinkStart}><NavIconPmoc /> PMOC</span>
+                <NavIconChevronRight />
+              </Link>
+              <Link className={styles.mobileMenuLink} to="/app/qrcodes">
+                <span className={styles.mobileMenuLinkStart}><NavIconClipboard /> Etiquetas QR</span>
+                <NavIconChevronRight />
+              </Link>
             </div>
 
-            <div className={styles.accountDrawerScroll}>
-              <p className={styles.accountDrawerSectionLabel}>Conta</p>
-
-              <div className={styles.accountDrawerSubhead}>
-                <span className={styles.accountDrawerSubheadIcon} aria-hidden>
-                  <NavIconUserCircle />
-                </span>
-                Perfil
-              </div>
-              {user ? (
-                <p className={styles.accountDrawerRoleLine}>
-                  Função: <strong>{roleLabel(user.role)}</strong>
-                </p>
+            <div className={styles.mobileMenuSection}>
+              <p className={styles.mobileMenuSectionLabel}>Comercial</p>
+              <Link className={styles.mobileMenuLink} to="/app/budgets">
+                <span className={styles.mobileMenuLinkStart}><NavIconFileQuote /> Orçamentos</span>
+                <NavIconChevronRight />
+              </Link>
+              <Link className={styles.mobileMenuLink} to="/app/finance/dashboard">
+                <span className={styles.mobileMenuLinkStart}><NavIconWallet /> Financeiro</span>
+                <NavIconChevronRight />
+              </Link>
+              {!isHiddenAppModule("nfse") ? (
+                <Link className={styles.mobileMenuLink} to="/app/fiscal/nfse">
+                  <span className={styles.mobileMenuLinkStart}><NavIconFileQuote /> NFS-e</span>
+                  <NavIconChevronRight />
+                </Link>
               ) : null}
-              <label className={styles.accountDrawerLabel} htmlFor="profile-full-name">
-                Nome completo
-              </label>
-              <input
-                id="profile-full-name"
-                className={styles.accountDrawerInput}
-                type="text"
-                value={profileFullName}
-                onChange={(e) => setProfileFullName(e.target.value)}
-                autoComplete="name"
-              />
-              <label className={styles.accountDrawerLabel} htmlFor="profile-email">
-                E-mail
-              </label>
-              <input
-                id="profile-email"
-                className={styles.accountDrawerInput}
-                type="email"
-                value={profileEmail}
-                onChange={(e) => setProfileEmail(e.target.value)}
-                autoComplete="email"
-              />
-              <label className={styles.accountDrawerLabel} htmlFor="profile-phone">
-                Telefone
-              </label>
-              <input
-                id="profile-phone"
-                className={styles.accountDrawerInput}
-                type="tel"
-                value={profilePhone}
-                onChange={(e) => setProfilePhone(formatPhoneBrInput(e.target.value))}
-                autoComplete="tel"
-                placeholder="(00) 00000-0000"
-              />
-              <label className={styles.accountDrawerLabel} htmlFor="profile-whatsapp">
-                WhatsApp
-              </label>
-              <input
-                id="profile-whatsapp"
-                className={styles.accountDrawerInput}
-                type="tel"
-                value={profileWhatsapp}
-                onChange={(e) => setProfileWhatsapp(formatPhoneBrInput(e.target.value))}
-                autoComplete="tel"
-                placeholder="(00) 00000-0000"
-              />
-              {profileMsg ? (
-                <p className={profileMsg.kind === "ok" ? styles.accountDrawerOk : styles.accountDrawerErr}>{profileMsg.text}</p>
-              ) : null}
-              <div className={styles.accountDrawerActions}>
-                <button
-                  type="button"
-                  className={styles.accountDrawerBtnPrimary}
-                  disabled={savingProfile}
-                  onClick={() => void submitProfile()}
-                >
-                  {savingProfile ? "Salvando..." : "Salvar perfil"}
-                </button>
-              </div>
-
-              <div className={styles.accountDrawerSubhead}>
-                <span className={styles.accountDrawerSubheadIcon} aria-hidden>
-                  <NavIconLock />
-                </span>
-                Segurança
-              </div>
-              <label className={styles.accountDrawerLabel} htmlFor="current-password">
-                Senha atual
-              </label>
-              <input
-                id="current-password"
-                className={styles.accountDrawerInput}
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-              <label className={styles.accountDrawerLabel} htmlFor="new-password">
-                Nova senha
-              </label>
-              <input
-                id="new-password"
-                className={styles.accountDrawerInput}
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-              <label className={styles.accountDrawerLabel} htmlFor="confirm-password">
-                Confirmar nova senha
-              </label>
-              <input
-                id="confirm-password"
-                className={styles.accountDrawerInput}
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-              {passwordMsg ? (
-                <p className={passwordMsg.kind === "ok" ? styles.accountDrawerOk : styles.accountDrawerErr}>{passwordMsg.text}</p>
-              ) : null}
-              <div className={styles.accountDrawerActions}>
-                <button
-                  type="button"
-                  className={styles.accountDrawerBtnSecondary}
-                  disabled={changingPassword}
-                  onClick={() => void submitPasswordChange()}
-                >
-                  {changingPassword ? "Salvando..." : "Salvar senha"}
-                </button>
-              </div>
             </div>
 
-            <div className={styles.accountDrawerFooter}>
-              <button type="button" className={styles.accountDrawerLogout} onClick={logout}>
-                <NavIconLogOut className={styles.accountDrawerLogoutIcon} />
-                Sair
+            <div className={styles.mobileMenuSection}>
+              <p className={styles.mobileMenuSectionLabel}>Integrações</p>
+              {!isHiddenAppModule("marketplace") ? (
+                <Link className={styles.mobileMenuLink} to="/app/marketplace">
+                  <span className={styles.mobileMenuLinkStart}><NavIconPuzzle /> Loja de integrações</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+              <Link className={styles.mobileMenuLink} to="/app/integrations/whatsapp">
+                <span className={styles.mobileMenuLinkStart}><NavIconPackage /> WhatsApp</span>
+                <NavIconChevronRight />
+              </Link>
+              {!isHiddenAppModule("whatsappCampanhas") ? (
+                <Link className={styles.mobileMenuLink} to="/app/integrations/whatsapp-campanhas">
+                  <span className={styles.mobileMenuLinkStart}><NavIconPackage /> Campanhas WhatsApp</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+              {!isHiddenAppModule("whatsappBot") ? (
+                <Link className={styles.mobileMenuLink} to="/app/integrations/whatsapp-bot">
+                  <span className={styles.mobileMenuLinkStart}><NavIconPackage /> Bot WhatsApp</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+              {!isHiddenAppModule("chatIa") ? (
+                <Link className={styles.mobileMenuLink} to="/app/integrations/chat-ia">
+                  <span className={styles.mobileMenuLinkStart}><NavIconClipboard /> Chat IA</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+            </div>
+
+            <div className={styles.mobileMenuSection}>
+              <p className={styles.mobileMenuSectionLabel}>Conta</p>
+              <Link className={styles.mobileMenuLink} to="/app/conta">
+                <span className={styles.mobileMenuLinkStart}><NavIconUsers /> Minha conta</span>
+                <NavIconChevronRight />
+              </Link>
+              {user?.role === "admin" ? (
+                <Link className={styles.mobileMenuLink} to="/app/admin">
+                  <span className={styles.mobileMenuLinkStart}><NavIconBuilding /> Administração</span>
+                  <NavIconChevronRight />
+                </Link>
+              ) : null}
+              <button type="button" className={`${styles.mobileMenuLink} ${styles.mobileMenuLogout}`} onClick={() => void logout()}>
+                <span className={styles.mobileMenuLinkStart}><NavIconLogOut /> Sair</span>
               </button>
             </div>
           </aside>
         </div>
       ) : null}
-
       {workspaceDrawerOpen ? (
         <div className={styles.accountDrawerRoot} role="presentation">
           <button
@@ -911,6 +946,30 @@ export function DashboardPage() {
                     </span>
                     Modelos de orçamento
                   </Link>
+                  <Link
+                    className={styles.accountDrawerLinkRow}
+                    to="/app/pmoc/settings"
+                    onClick={() => {
+                      setWorkspaceDrawerOpen(false);
+                    }}
+                  >
+                    <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
+                      <NavIconPmoc />
+                    </span>
+                    Configurações do PMOC
+                  </Link>
+                  <Link
+                    className={styles.accountDrawerLinkRow}
+                    to="/app/admin?tab=garantia"
+                    onClick={() => {
+                      setWorkspaceDrawerOpen(false);
+                    }}
+                  >
+                    <span className={styles.accountDrawerLinkRowIcon} aria-hidden>
+                      <NavIconFileQuote />
+                    </span>
+                    Configurações da Garantia
+                  </Link>
                   {!isHiddenAppModule("nfse") ? (
                     <Link
                       className={styles.accountDrawerLinkRow}
@@ -997,30 +1056,14 @@ export function DashboardPage() {
         </div>
       ) : null}
 
-      {notificationsOpen ? (
-        <div className={styles.toolPanelRoot} role="presentation">
-          <button type="button" className={styles.toolPanelBackdrop} aria-label="Fechar painel" onClick={() => setNotificationsOpen(false)} />
-          <aside className={styles.toolPanel} role="dialog" aria-modal="true" aria-labelledby="notifications-title">
-            <div className={styles.toolPanelTop}>
-              <h2 id="notifications-title" className={styles.toolPanelTitle}>
-                Notificações
-              </h2>
-              <button type="button" className={styles.toolPanelClose} onClick={() => setNotificationsOpen(false)} aria-label="Fechar">
-                <NavIconX />
-              </button>
-            </div>
-            <ul className={styles.notificationList}>
-              {user?.must_change_password ? (
-                <li className={styles.notificationItemWarn}>Altere sua senha temporária para reforçar a segurança da conta.</li>
-              ) : null}
-              {!prefAutoCollapseSidebar ? (
-                <li className={styles.notificationItem}>Dica: ative o recolhimento automático da sidebar nas preferências.</li>
-              ) : null}
-              <li className={styles.notificationItem}>Seu workspace está pronto para novas integrações e módulos.</li>
-            </ul>
-          </aside>
-        </div>
-      ) : null}
+      <NotificationAlertHost />
+
+      <NotificationCenterPanel
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        localItems={localNotificationItems}
+        onDismissLocal={dismissLocalNotification}
+      />
 
       {preferencesOpen ? (
         <div className={styles.toolPanelRoot} role="presentation">
@@ -1055,6 +1098,8 @@ export function DashboardPage() {
         </div>
       ) : null}
     </div>
+    <FloatingActionChat />
     </Sidebar.Root>
+    </KnowledgeChatProvider>
   );
 }

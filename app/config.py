@@ -179,6 +179,17 @@ CLAUDE_MODEL: str = (os.getenv("CLAUDE_MODEL", "").strip() or HAUKU_ECONOMY_MODE
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
 
+# Knowledge Base (RAG) — manuais técnicos com pgvector + OpenAI embeddings
+KB_ENABLED: bool = _env_bool("KB_ENABLED", True)
+KB_EMBEDDING_MODEL: str = (
+    os.getenv("KB_EMBEDDING_MODEL", "").strip() or "text-embedding-3-small"
+)
+KB_EMBEDDING_DIMENSION: int = int(os.getenv("KB_EMBEDDING_DIMENSION", "1536"))
+KB_CHUNK_SIZE: int = max(200, int(os.getenv("KB_CHUNK_SIZE", "1000")))
+KB_CHUNK_OVERLAP: int = max(0, int(os.getenv("KB_CHUNK_OVERLAP", "200")))
+KB_TOP_MANUALS: int = max(1, min(10, int(os.getenv("KB_TOP_MANUALS", "3"))))
+KB_MAX_CONTEXT_CHARS: int = max(500, int(os.getenv("KB_MAX_CONTEXT_CHARS", "12000")))
+
 # 2FA por e-mail no login de administradores. Só é aplicado se houver SMTP configurado (.env ou credencial `smtp` no painel com SMTP_ALLOW_DB_OVERRIDE).
 LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED", True)
 # Lembrar dispositivo (cookie HTTP-only + tabela login_trusted_devices) após 2FA.
@@ -200,3 +211,5 @@ def _trust_cookie_secure_default() -> bool:
 
 
 TRUST_COOKIE_SECURE: bool = _trust_cookie_secure_default()
+
+GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "").strip()

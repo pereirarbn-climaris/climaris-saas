@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useFeature } from '../../lib/featureManager';
 import { isHiddenAppModule } from '../../lib/hiddenAppModules';
 import { Check, Repeat, Trash2, X } from 'lucide-react';
-import { ToastHost } from '../../components/ToastHost';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -279,6 +278,17 @@ export function FinanceDashboard() {
   const [actionBusy, setActionBusy] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Transacao | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 900px)');
+    const sync = () => setIsMobileLayout(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
 
   async function runSeriesAction(
     row: Transacao,
@@ -426,7 +436,6 @@ export function FinanceDashboard() {
 
   return (
     <div className={styles.page}>
-      <ToastHost />
 
       <header className={styles.header}>
         <div>
@@ -589,31 +598,107 @@ export function FinanceDashboard() {
                 <p className={styles.empty}>Nenhuma transação no período selecionado.</p>
               ) : null}
               {isSuccess && entries && entries.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Data da venda</TableHead>
-                      <TableHead>Data prevista</TableHead>
-                      <TableHead>Descrição</TableHead>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead>Conta</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Valor</TableHead>
-                      <TableHead className={styles.actionsCol}>Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {entries.map((row) => (
-                      <TransacaoRow
-                        key={row.id}
-                        row={row}
-                        contas={contas}
-                        onOpenEdit={beginEditRow}
-                        onAction={requestRowAction}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
+                isMobileLayout ? (
+                  <div className={styles.mobileEntries} aria-label="Transações em cartões">
+                    {entries.map((row) => {
+                      const amountClass = row.kind === 'RECEBIMENTO' ? styles.amountPositive : styles.amountNegative;
+                      const prefix = row.kind === 'RECEBIMENTO' ? '+' : '−';
+                      const dataVenda = row.dataCompetencia ?? row.dataPrevista;
+                      const dataLiquidacao = row.settlementDate ?? row.dataLiquidacaoPrevista ?? row.dataPrevista;
+                      const liquidity = getLiquidityBadge(dataLiquidacao, row.status, row.kind);
+                      const displayAmount =
+                        row.kind === 'RECEBIMENTO'
+                          ? effectiveReceivableAmount(row.valor, row.netValue, row.taxaDescontada)
+                          : row.valor;
+                      const isFinal = row.status === 'LIQUIDADO' || row.status === 'CANCELADO';
+
+                      return (
+                        <article key={row.id} className={styles.mobileEntryCard}>
+                          <button
+                            type="button"
+                            className={styles.mobileEntryTap}
+                            onClick={() => beginEditRow(row)}
+                            aria-label={`Editar ${row.descricao}`}
+                          >
+                            <div className={styles.mobileEntryTop}>
+                              <span className={`${styles.liquidityBadge} ${liquidityBadgeClass(liquidity.variant)}`}>
+                                {liquidity.label}
+                              </span>
+                              <Badge variant={statusBadgeVariant(row.status)}>{statusLabel(row.status)}</Badge>
+                            </div>
+                            <p className={styles.mobileEntryDesc}>{row.descricao}</p>
+                            <div className={styles.mobileEntryMeta}>
+                              <span>Venda: {formatDate(dataVenda)}</span>
+                              <span>Prev.: {formatDate(dataLiquidacao)}</span>
+                              <span>Conta: {contaNome(contas, row.contaId)}</span>
+                              <span>Categoria: {row.categoria}</span>
+                            </div>
+                            <p className={`${styles.mobileEntryAmount} ${amountClass}`}>
+                              {prefix} {money(displayAmount)}
+                            </p>
+                          </button>
+                          <div className={styles.mobileEntryActions}>
+                            {row.status !== 'LIQUIDADO' ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => requestRowAction(row, 'paid')}
+                              >
+                                Pagar
+                              </Button>
+                            ) : null}
+                            {!isFinal ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => requestRowAction(row, 'cancelled')}
+                              >
+                                Cancelar
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className={styles.mobileDeleteBtn}
+                              onClick={() => requestRowAction(row, 'delete')}
+                            >
+                              Excluir
+                            </Button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Data da venda</TableHead>
+                        <TableHead>Data prevista</TableHead>
+                        <TableHead>Descrição</TableHead>
+                        <TableHead>Categoria</TableHead>
+                        <TableHead>Conta</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Valor</TableHead>
+                        <TableHead className={styles.actionsCol}>Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {entries.map((row) => (
+                        <TransacaoRow
+                          key={row.id}
+                          row={row}
+                          contas={contas}
+                          onOpenEdit={beginEditRow}
+                          onAction={requestRowAction}
+                        />
+                      ))}
+                    </TableBody>
+                  </Table>
+                )
               ) : null}
             </CardContent>
           </Card>

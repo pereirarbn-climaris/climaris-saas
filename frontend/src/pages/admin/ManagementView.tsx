@@ -21,7 +21,6 @@ import { fetchCepLookup } from "../../api/cep";
 import { cnpjCommercialCooldownDaysRemaining, CNPJ_COMMERCIAL_COOLDOWN_DAYS } from "../../api/clients";
 import { fetchPreventiveSettings, patchPreventiveSettings } from "../../api/preventiveMaintenance";
 import { resolveTenantWeekdayWorkHours, type WeekdayHourSlice } from "../../lib/tenantWorkHours";
-import { ToastHost } from "../../components/ToastHost";
 import { Button } from "../../components/ui/button";
 import { DeleteConfirmModal } from "../../components/ui/delete-confirm-modal";
 import { Card, CardContent } from "../../components/ui/card";
@@ -516,7 +515,6 @@ export function ManagementView({ tenant, refreshWorkspace }: Props) {
 
   return (
     <section className={`${styles.wrap} ${styles.pageWithActionBar}`} aria-labelledby="management-view-title">
-      <ToastHost />
       <DeleteConfirmModal
         open={deleteLogoOpen}
         onOpenChange={(open) => {

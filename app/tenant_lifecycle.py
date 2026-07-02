@@ -64,7 +64,16 @@ def _reset_tenant_integration_fields(tenant: Tenant) -> None:
     tenant.whatsapp_automation_enabled = False
     tenant.preventive_promo_image_enabled = False
     tenant.preventive_auto_whatsapp_enabled = False
+    tenant.preventive_auto_schedule_enabled = False
+    tenant.preventive_action_buttons_enabled = False
+    tenant.preventive_button_schedule_enabled = True
+    tenant.preventive_button_custom_enabled = True
+    tenant.preventive_button_custom_result = "lead"
+    tenant.preventive_button_custom_reply_text = None
+    tenant.preventive_button_custom_url = None
     tenant.preventive_message_template = None
+    tenant.preventive_message_template_first = None
+    tenant.preventive_default_template_kind = "returning"
     tenant.preventive_technical_problem_hint = None
 
 

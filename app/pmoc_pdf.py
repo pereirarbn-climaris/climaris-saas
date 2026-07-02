@@ -238,6 +238,14 @@ def _parse_field_inspection(notes: str | None) -> dict[str, Any] | None:
     return data
 
 
+def _latest_field_inspection_payload(executions: list[PmocExecution]) -> dict[str, Any] | None:
+    for execution in executions:
+        payload = _parse_field_inspection(execution.notes)
+        if payload:
+            return payload
+    return None
+
+
 def _status_label(status: str | None) -> str:
     if not status:
         return "—"
@@ -554,6 +562,128 @@ def build_pmoc_report_pdf(
     )
     y = draw_wrapped_paragraph(legal_text, body_style, y)
 
+    latest_payload = _latest_field_inspection_payload(executions) or {}
+    operational = latest_payload.get("operationalData") if isinstance(latest_payload, dict) else None
+    indoor_air = latest_payload.get("indoorAirQuality") if isinstance(latest_payload, dict) else None
+    service_log = latest_payload.get("serviceLog") if isinstance(latest_payload, dict) else None
+
+    if isinstance(operational, dict) or isinstance(indoor_air, dict):
+        ensure_space(24 * mm)
+        c.setFont(font_bold, 9.5)
+        c.drawString(margin_x, y, "5. Dados Operacionais da Última Vistoria")
+        y -= 5 * mm
+        op_rows: list[list[str]] = []
+        if isinstance(operational, dict):
+            electrical = operational.get("electrical")
+            refrigeration = operational.get("refrigeration")
+            temperatures = operational.get("temperatures")
+            performance = operational.get("performance")
+            if isinstance(electrical, dict):
+                op_rows.extend(
+                    [
+                        ["Elétrica — Tensão F-F (V)", _safe(str(electrical.get("voltagePhasePhase") or ""))],
+                        ["Elétrica — Tensão F-N (V)", _safe(str(electrical.get("voltagePhaseNeutral") or ""))],
+                        ["Elétrica — Corrente (A)", _safe(str(electrical.get("currentA") or ""))],
+                        ["Elétrica — Potência (kW)", _safe(str(electrical.get("powerKw") or ""))],
+                        ["Elétrica — Fator de potência", _safe(str(electrical.get("powerFactor") or ""))],
+                    ]
+                )
+            if isinstance(refrigeration, dict):
+                op_rows.extend(
+                    [
+                        ["Frigorífico — Pressão sucção", _safe(str(refrigeration.get("suctionPressure") or ""))],
+                        ["Frigorífico — Pressão descarga", _safe(str(refrigeration.get("dischargePressure") or ""))],
+                        ["Frigorífico — Superaquecimento (°C)", _safe(str(refrigeration.get("superheatC") or ""))],
+                        ["Frigorífico — Sub-resfriamento (°C)", _safe(str(refrigeration.get("subcoolingC") or ""))],
+                    ]
+                )
+            if isinstance(temperatures, dict):
+                op_rows.extend(
+                    [
+                        ["Temperatura de retorno (°C)", _safe(str(temperatures.get("returnC") or ""))],
+                        ["Temperatura insuflamento (°C)", _safe(str(temperatures.get("supplyC") or ""))],
+                        ["Temperatura ambiente (°C)", _safe(str(temperatures.get("ambientC") or ""))],
+                        ["Temperatura externa (°C)", _safe(str(temperatures.get("externalC") or ""))],
+                    ]
+                )
+            if isinstance(performance, dict):
+                op_rows.extend(
+                    [
+                        ["Desempenho — Delta T (°C)", _safe(str(performance.get("deltaTC") or ""))],
+                        ["Desempenho observado", _safe(str(performance.get("observedPerformance") or ""))],
+                    ]
+                )
+        if isinstance(indoor_air, dict):
+            op_rows.extend(
+                [
+                    ["QAI — Temperatura ambiente (°C)", _safe(str(indoor_air.get("ambientTemperatureC") or ""))],
+                    ["QAI — Umidade relativa (%)", _safe(str(indoor_air.get("relativeHumidityPct") or ""))],
+                    ["QAI — CO2 (ppm)", _safe(str(indoor_air.get("co2Ppm") or ""))],
+                    ["QAI — Renovação de ar", _safe(str(indoor_air.get("airRenewalRate") or ""))],
+                    ["QAI — Material particulado", _safe(str(indoor_air.get("particulateMatter") or ""))],
+                    ["QAI — Fungos/Bactérias", _safe(str(indoor_air.get("fungiBacteria") or ""))],
+                ]
+            )
+        if op_rows:
+            op_table = Table(op_rows, colWidths=[66 * mm, content_width - 66 * mm])
+            op_table.setStyle(
+                TableStyle(
+                    [
+                        ("FONTNAME", (0, 0), (0, -1), font_bold),
+                        ("FONTNAME", (1, 0), (1, -1), font),
+                        ("FONTSIZE", (0, 0), (-1, -1), 7.6),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("GRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#CBD5E1")),
+                        ("WORDWRAP", (0, 0), (-1, -1), True),
+                    ]
+                )
+            )
+            draw_table_block(op_table, min_keep=30 * mm)
+
+    if isinstance(service_log, dict):
+        ensure_space(22 * mm)
+        c.setFont(font_bold, 9.5)
+        c.drawString(margin_x, y, "6. Registro de Serviço (Última Vistoria)")
+        y -= 5 * mm
+        service_rows: list[list[str]] = [
+            ["Técnico", _safe(str(service_log.get("technicianName") or ""))],
+            ["Serviço executado", _safe(str(service_log.get("executedService") or ""))],
+            ["Horas trabalhadas", _safe(str(service_log.get("workedHours") or ""))],
+            ["Observações", _safe(str(service_log.get("observations") or ""))],
+            ["Assinatura eletrônica", _safe(str(service_log.get("legalSignatureProvider") or ""))],
+        ]
+        materials = service_log.get("materials")
+        if isinstance(materials, list) and materials:
+            compact: list[str] = []
+            for row in materials[:8]:
+                if not isinstance(row, dict):
+                    continue
+                name = _safe(str(row.get("name") or "Consumível"))
+                lot = _safe(str(row.get("lotNumber") or ""))
+                validity = _safe(str(row.get("validityDate") or ""))
+                qty = _safe(str(row.get("quantity") or ""))
+                compact.append(f"{name} · lote {lot} · validade {validity} · qtd {qty}")
+            if compact:
+                service_rows.append(["Consumíveis (lote/validade)", "<br/>".join(compact)])
+        service_table = Table(service_rows, colWidths=[58 * mm, content_width - 58 * mm])
+        service_table.setStyle(
+            TableStyle(
+                [
+                    ("FONTNAME", (0, 0), (0, -1), font_bold),
+                    ("FONTNAME", (1, 0), (1, -1), font),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.6),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("GRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#CBD5E1")),
+                    ("WORDWRAP", (0, 0), (-1, -1), True),
+                ]
+            )
+        )
+        draw_table_block(service_table, min_keep=30 * mm)
+
     # ── Responsável técnico + assinaturas ─────────────────────────────────────
     signature_bytes = _collect_latest_signature(executions)
     rt_name = (plan.responsible_name or "").strip()
@@ -566,7 +696,7 @@ def build_pmoc_report_pdf(
         y = new_page()
 
     c.setFont(font_bold, 9.5)
-    c.drawString(margin_x, y, "5. Encerramento e Assinaturas")
+    c.drawString(margin_x, y, "7. Encerramento e Assinaturas")
     y -= 5 * mm
 
     rt_lines = format_rt_signature_lines(plan)

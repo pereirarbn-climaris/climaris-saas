@@ -1,7 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
-import { isDemoMode } from "../lib/demoMode";
-
 export type MercadoLivreStatusOut = {
   oauth_app_configured: boolean;
   entitlement_active: boolean;
@@ -61,17 +59,7 @@ function jsonHeaders(): HeadersInit {
 }
 
 export async function getMercadoLivreStatus(): Promise<MercadoLivreStatusOut> {
-  if (isDemoMode()) {
-    return Promise.resolve({
-      oauth_app_configured: true,
-      entitlement_active: false,
-      connected: false,
-      nickname: null,
-      ml_user_id: null,
-      site_id: "MLB",
-      access_expires_at: null,
-    });
-  }
+
   const response = await fetch(apiUrl(`${ML_BASE}/status`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar o status do Mercado Livre."));
@@ -80,9 +68,6 @@ export async function getMercadoLivreStatus(): Promise<MercadoLivreStatusOut> {
 
 /** URL para iniciar OAuth no Mercado Livre (redireciona o navegador). */
 export async function getMercadoLivreOAuthAuthorizeUrl(): Promise<string> {
-  if (isDemoMode()) {
-    return Promise.resolve("https://auth.mercadolivre.com.br/authorization?demo=1");
-  }
   const response = await fetch(apiUrl(`${ML_BASE}/oauth/authorize-url`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível obter URL de autorização."));
@@ -92,7 +77,6 @@ export async function getMercadoLivreOAuthAuthorizeUrl(): Promise<string> {
 }
 
 export async function completeMercadoLivreOAuth(code: string): Promise<void> {
-  if (isDemoMode()) return Promise.resolve();
   const response = await fetch(apiUrl(`${ML_BASE}/oauth/complete`), {
     method: "POST",
     headers: jsonHeaders(),
@@ -103,7 +87,6 @@ export async function completeMercadoLivreOAuth(code: string): Promise<void> {
 }
 
 export async function getMercadoLivreProductLink(productId: number): Promise<MercadoLivreProductLinkOut | null> {
-  if (isDemoMode()) return Promise.resolve(null);
   const response = await fetch(apiUrl(`${ML_BASE}/products/${productId}/link`), { headers: bearer() });
   if (response.status === 404) return null;
   const body = await parseBody(response);
@@ -115,9 +98,6 @@ export async function upsertMercadoLivreLink(
   productId: number,
   payload: { ml_category_id: string | null; listing_type_id: string | null },
 ): Promise<MercadoLivreProductLinkOut> {
-  if (isDemoMode()) {
-    throw new Error("Mercado Livre não está disponível no modo demonstração.");
-  }
   const response = await fetch(apiUrl(`${ML_BASE}/products/${productId}/link`), {
     method: "PUT",
     headers: jsonHeaders(),
@@ -132,9 +112,6 @@ export async function publishMercadoLivreProduct(
   productId: number,
   payload: { ml_category_id?: string; listing_type_id?: string },
 ): Promise<MercadoLivreProductLinkOut> {
-  if (isDemoMode()) {
-    throw new Error("Mercado Livre não está disponível no modo demonstração.");
-  }
   const response = await fetch(apiUrl(`${ML_BASE}/products/${productId}/publish`), {
     method: "POST",
     headers: jsonHeaders(),

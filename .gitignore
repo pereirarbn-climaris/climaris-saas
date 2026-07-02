@@ -21,6 +21,7 @@ node_modules/
 tmp_api_logs.txt
 authorized_keys
 known_hosts
+var/
 
 # Frontend generated/mobile artifacts
 frontend/android/

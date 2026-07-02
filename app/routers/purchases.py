@@ -14,11 +14,20 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
 from app.product_purchase_service import ProductPurchaseError, create_product_purchase, purchase_to_out
+from app.tenant_plan_products import tenant_purchases_enabled
 from app.routers.finance import _get_tenant_or_404, _require_finance_enabled
 from app.schemas import ProductPurchaseCreate, ProductPurchaseOut
 from models import ProductPurchase, ProductPurchaseLine, User, UserRole
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
+
+
+def _require_purchases_enabled(db: Session, tenant_id: int) -> None:
+    if not tenant_purchases_enabled(db, tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Compras de produtos não estão incluídas no seu plano.",
+        )
 
 
 @router.get(
@@ -34,6 +43,7 @@ def list_product_purchases(
 ) -> list[ProductPurchaseOut]:
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     _require_finance_enabled(db, tenant)
+    _require_purchases_enabled(db, current_user.tenant_id)
     rows = db.execute(
         select(ProductPurchase)
         .where(ProductPurchase.tenant_id == current_user.tenant_id)
@@ -64,6 +74,7 @@ def post_product_purchase(
     del request
     tenant = _get_tenant_or_404(db, current_user.tenant_id)
     _require_finance_enabled(db, tenant)
+    _require_purchases_enabled(db, current_user.tenant_id)
     try:
         purchase = create_product_purchase(
             db,

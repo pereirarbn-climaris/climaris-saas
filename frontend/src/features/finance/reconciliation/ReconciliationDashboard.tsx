@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2, RefreshCw } from 'lucide-react';
-import { ToastHost } from '../../../components/ToastHost';
 import { toast } from '../../../lib/toast';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -167,7 +166,6 @@ export function ReconciliationDashboard() {
 
   return (
     <div className={styles.page}>
-      <ToastHost />
 
       <header className={styles.header}>
         <div>

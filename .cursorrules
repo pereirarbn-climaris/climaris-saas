@@ -1,6 +1,6 @@
 # Evolution API v2.3.7 — mensagens interativas (Climaris)
 
-**Gestão preventiva:** envio **somente texto** + “responda MAIS / AGENDAR” (`_deliver_preventive_evolution_message`). Não reintroduzir botões interativos na preventiva sem decisão explícita.
+**Gestão preventiva:** envio texto ou imagem+legenda; botões opcionais (`preventive_action_buttons_enabled`) via `_evolution_send_buttons` com fallback texto. Botão **Agendar** usa `preventive_auto_schedule_enabled` + fluxo em `preventive_schedule_whatsapp.py`. Botão **personalizado**: resultado `lead` (interessados) ou `reply` (texto automático).
 
 Sempre que for manipular o envio de mensagens **com botões** em outros fluxos (`app/whatsapp.py`, lembretes de agenda se `WHATSAPP_INTERACTIVE_BUTTONS_ENABLED=true`), siga estas regras:
 

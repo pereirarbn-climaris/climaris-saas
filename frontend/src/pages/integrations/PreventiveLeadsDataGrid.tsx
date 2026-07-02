@@ -66,7 +66,7 @@ export function PreventiveLeadsDataGrid({ leads, loading }: Props) {
     <div className={styles.panelCard}>
       <h2 className={styles.panelTitle}>Lista de espera / interações</h2>
       <p className={styles.hint} style={{ marginTop: "-0.75rem" }}>
-        Respostas aos botões ou textos MAIS / AGENDAR nos lembretes preventivos.
+        Respostas de interesse (MAIS) ou agendamento (AGENDAR) nos lembretes preventivos.
       </p>
 
       <div className={styles.gridToolbar}>

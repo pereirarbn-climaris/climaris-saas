@@ -4,9 +4,19 @@
   grid-template-columns: repeat(3, 1fr) !important;
 }
 
+.mobileStatsGrid {
+  display: grid;
+}
+
 @media (max-width: 1024px) {
   .heroStatsThree {
     grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .mobileStatsGrid {
+    display: none !important;
   }
 }
 
@@ -137,6 +147,150 @@
   );
   background-size: 200% 100%;
   animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.mobileOrderList {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mobileOrderList {
+    display: grid;
+    gap: 0.78rem;
+  }
+
+  .mobileOrderCard {
+    border-radius: 0.92rem;
+    border: 1px solid rgba(191, 219, 254, 0.46);
+    background: #eef4fb;
+    box-shadow: 0 10px 24px -22px rgba(15, 23, 42, 0.9);
+    overflow: hidden;
+  }
+
+  .mobileOrderCardAlert {
+    border-color: rgba(248, 113, 113, 0.55);
+  }
+
+  .mobileOrderCardBody {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 6.15rem 1fr;
+    text-align: left;
+    padding: 0.72rem 0.68rem 0.5rem;
+    column-gap: 0.62rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .mobileOrderCardBody:focus-visible {
+    outline: 2px solid rgba(29, 78, 216, 0.35);
+    outline-offset: -2px;
+  }
+
+  .mobileOrderLeft {
+    border-right: 1px solid rgba(15, 23, 42, 0.12);
+    padding-right: 0.54rem;
+    min-width: 0;
+  }
+
+  .mobileStatusPill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.16rem 0.52rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    max-width: 100%;
+  }
+
+  .mobileOrderDate {
+    margin: 0.35rem 0 0;
+    font-size: 1.03rem;
+    font-weight: 500;
+    color: #0f172a;
+    line-height: 1.08;
+  }
+
+  .mobileOrderDateLabel {
+    margin: 0.06rem 0 0;
+    font-size: 0.74rem;
+    color: #334155;
+  }
+
+  .mobileOrderNumber {
+    margin: 0;
+    font-size: 1.92rem;
+    line-height: 1;
+    font-weight: 800;
+    color: #0b5f9c;
+    letter-spacing: -0.03em;
+  }
+
+  .mobileOrderType {
+    margin: 0.06rem 0 0;
+    font-size: 0.76rem;
+    color: #0f172a;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .mobileOrderRight {
+    min-width: 0;
+    display: grid;
+    gap: 0.26rem;
+    align-content: start;
+    padding-top: 0.12rem;
+  }
+
+  .mobileInfoRow {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.28;
+    color: #0f172a;
+  }
+
+  .mobileOrderFooter {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.48rem;
+    padding: 0 0.68rem 0.65rem;
+  }
+
+  .mobileOrderIdBlock {
+    min-width: 0;
+  }
+
+  .mobileOrderActions {
+    display: flex;
+    gap: 0.42rem;
+    justify-content: flex-end;
+    flex-shrink: 0;
+  }
+
+  .mobileOrderDetailsBtn,
+  .mobileOrderGhostBtn {
+    min-height: 1.85rem;
+    border-radius: 0.54rem;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #1e293b;
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 0.2rem 0.7rem;
+    font-family: inherit;
+  }
+
+  .mobileOrderDetailsBtn {
+    border-color: rgba(30, 64, 175, 0.4);
+    background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%);
+    color: #ffffff;
+  }
+
+  .osTableDense {
+    display: none;
+  }
 }
 
 @keyframes shimmer {

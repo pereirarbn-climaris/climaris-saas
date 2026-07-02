@@ -388,33 +388,41 @@ def _send_whatsapp_text(db: Session, *, tenant_id: int, dest: str, body: str) ->
     _evolution_send_text(instance, normalize_whatsapp_number(dest), body)
 
 
-def _build_equipment_prompt(items: list[dict[str, Any]]) -> str:
-    lines = [
-        "Qual equipamento deseja agendar a preventiva?",
-        "",
-    ]
-    for idx, item in enumerate(items, start=1):
-        due = item.get("data_proximo_vencimento")
-        due_str = ""
-        if isinstance(due, str) and due:
-            try:
-                due_str = datetime.fromisoformat(due[:10]).strftime("%d/%m/%Y")
-            except ValueError:
-                due_str = due[:10]
-        elif isinstance(due, date):
-            due_str = due.strftime("%d/%m/%Y")
-        label = _equipment_label(item)
-        suffix = f" (venc. {due_str})" if due_str else ""
-        lines.append(f"{idx}- {label}{suffix}")
-    todos_idx = len(items) + 1
-    lines.extend(
-        [
-            f"{todos_idx}- Todos os equipamentos",
-            "",
-            f"Responda com o número (1 a {todos_idx}).",
-        ]
+def _build_appliance_count_prompt(max_count: int) -> str:
+    if max_count <= 1:
+        return "Quantos aparelhos deseja agendar a preventiva?\n\nResponda com 1."
+    label = f"{max_count} aparelhos" if max_count != 1 else "1 aparelho"
+    return (
+        f"Quantos aparelhos deseja agendar a preventiva?\n\n"
+        f"Neste lembrete constam até {label}. "
+        f"Responda com um número de 1 a {max_count}."
     )
-    return "\n".join(lines)
+
+
+def _build_equipment_prompt(items: list[dict[str, Any]]) -> str:
+    return _build_appliance_count_prompt(len(items))
+
+
+def _tenant_auto_schedule_enabled(
+    db: Session,
+    tenant_id: int,
+    *,
+    jid_digits: str | None = None,
+) -> bool:
+    tenant = load_tenant_settings_row(db, tenant_id)
+    if jid_digits:
+        from app.preventive_maintenance import _resolve_preventive_model_id_for_interaction
+
+        model_id = _resolve_preventive_model_id_for_interaction(
+            db,
+            tenant=tenant,
+            tenant_id=tenant_id,
+            jid_digits=jid_digits,
+        )
+        from app.preventive_message_models import model_automation
+
+        return bool(model_automation(tenant, model_id).get("auto_schedule_enabled"))
+    return bool(getattr(tenant, "preventive_auto_schedule_enabled", False))
 
 
 def _build_slot_prompt(
@@ -495,6 +503,9 @@ def _start_schedule_flow(
     payload: dict[str, Any],
     key: dict[str, Any],
 ) -> bool:
+    if not _tenant_auto_schedule_enabled(db, tenant_id, jid_digits=jid_digits):
+        return False
+
     ctx = _latest_reminder_context(db, tenant_id=tenant_id, jid_digits=jid_digits)
     if ctx is None:
         append_event(
@@ -734,20 +745,26 @@ def _handle_equipment_pick(
     jid_digits: str,
 ) -> bool:
     items = _deserialize_items(flow.equipment_items_json)
-    todos_idx = len(items) + 1
-    if pick < 1 or pick > todos_idx:
+    max_count = len(items)
+    if max_count < 1:
+        return True
+    if pick < 1 or pick > max_count:
         try:
             _send_whatsapp_text(
                 db,
                 tenant_id=tenant_id,
                 dest=jid_digits,
-                body=f"Opção inválida. Responda com um número de 1 a {todos_idx}.",
+                body=f"Opção inválida. Responda com um número de 1 a {max_count}.",
             )
         except HTTPException:
             pass
         return True
 
-    selected = items if pick == todos_idx else [items[pick - 1]]
+    sorted_items = sorted(
+        items,
+        key=lambda r: (_preventive_message_equipment_label(r), str(r.get("data_proximo_vencimento"))),
+    )
+    selected = sorted_items[:pick]
     flow.selected_equipment_json = _serialize_items(selected)
     db.add(flow)
     db.flush()
@@ -1128,6 +1145,8 @@ def try_handle_preventive_schedule_reply(
         return True
 
     if is_preventive_schedule_intent(plain):
+        if not _tenant_auto_schedule_enabled(db, tenant_id, jid_digits=jid_digits):
+            return False
         handled = _start_schedule_flow(
             db,
             tenant_id=tenant_id,

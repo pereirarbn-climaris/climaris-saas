@@ -1,13 +1,11 @@
 import { Link } from "react-router-dom";
 import type { TenantOut, UserOut } from "../../api/auth";
+import { isPurchasesEnabled } from "../../lib/planProducts";
 import { isHiddenAppModule } from "../../lib/hiddenAppModules";
-import { getPlanDisplayLabel } from "../../lib/planRules";
-import { getTenantDisplayName } from "../../lib/tenantDisplay";
 import {
   NavIconAirCompliance,
   NavIconBox,
   NavIconCalendar,
-  NavIconChevronDown,
   NavIconChevronRight,
   NavIconClipboard,
   NavIconContact,
@@ -34,30 +32,98 @@ function userInitial(name: string): string {
 
 function SidebarBrandMark() {
   const { expanded, mobileOpen } = useSidebar();
-  return <PlatformBrandMark variant="sidebar" showName={expanded || mobileOpen} />;
+  return (
+    <PlatformBrandMark
+      variant="sidebar"
+      showName={false}
+      sidebarExpanded={expanded || mobileOpen}
+    />
+  );
 }
 
 export interface AppSidebarProps {
   navId: string;
-  tenant: TenantOut | null;
   user: UserOut | null;
-  workspaceDrawerOpen: boolean;
-  onOpenWorkspaceDrawer: () => void;
-  onOpenAccountFromMobile: () => void;
+  tenant?: TenantOut | null;
   onOpenWorkspaceFromMobile: () => void;
   onLogout: () => void;
 }
 
 export function AppSidebar({
   navId,
-  tenant,
   user,
-  workspaceDrawerOpen,
-  onOpenWorkspaceDrawer,
-  onOpenAccountFromMobile,
+  tenant,
   onOpenWorkspaceFromMobile,
   onLogout,
 }: AppSidebarProps) {
+  const purchasesEnabled = isPurchasesEnabled(tenant);
+  const accessBlocked = Boolean(tenant?.subscription_access_blocked);
+
+  if (accessBlocked) {
+    return (
+      <Sidebar.Container>
+        <Sidebar.Header
+          showToggle={false}
+          className={styles.appSidebarHeader}
+          brandClassName={styles.appSidebarHeaderBrand}
+        >
+          <SidebarBrandMark />
+        </Sidebar.Header>
+        <Sidebar.Content id={navId}>
+          <Sidebar.Group label="Assinatura">
+            {user?.role === "admin" ? (
+              <p style={{ margin: "0.5rem 0.75rem", fontSize: "0.82rem", lineHeight: 1.45, opacity: 0.85 }}>
+                Acesso suspenso. Renove o plano em Plano e assinatura no menu da conta.
+              </p>
+            ) : (
+              <p style={{ margin: "0.5rem 0.75rem", fontSize: "0.82rem", lineHeight: 1.45, opacity: 0.85 }}>
+                Acesso suspenso. Peça ao administrador para assinar um plano.
+              </p>
+            )}
+          </Sidebar.Group>
+
+          <div className={styles.sidebarMobileOnly} role="region" aria-label="Conta e sessão">
+            <Link to="/app/conta" className={styles.sidebarMobileRow}>
+              <span className={styles.sidebarMobileAvatar} aria-hidden>
+                {user ? userInitial(user.full_name) : "—"}
+              </span>
+              <span className={styles.sidebarMobileRowLabel}>Minha conta</span>
+              <span className={styles.sidebarMobileRowChevron} aria-hidden>
+                <NavIconChevronRight />
+              </span>
+            </Link>
+            {user?.role === "admin" ? (
+              <button type="button" className={styles.sidebarMobileRow} onClick={onOpenWorkspaceFromMobile}>
+                <span className={styles.sidebarMobileRowIcon} aria-hidden>
+                  <NavIconSettings />
+                </span>
+                <span className={styles.sidebarMobileRowLabel}>Administração</span>
+                <span className={styles.sidebarMobileRowChevron} aria-hidden>
+                  <NavIconChevronRight />
+                </span>
+              </button>
+            ) : null}
+            {user?.role === "admin" ? (
+              <Link to="/app/planos" className={styles.sidebarMobileRow}>
+                <span className={styles.sidebarMobileRowIcon} aria-hidden>
+                  <NavIconWallet />
+                </span>
+                <span className={styles.sidebarMobileRowLabel}>Plano e assinatura</span>
+                <span className={styles.sidebarMobileRowChevron} aria-hidden>
+                  <NavIconChevronRight />
+                </span>
+              </Link>
+            ) : null}
+            <button type="button" className={styles.sidebarMobileLogout} onClick={onLogout}>
+              <NavIconLogOut className={styles.sidebarMobileLogoutIcon} />
+              Sair
+            </button>
+          </div>
+        </Sidebar.Content>
+      </Sidebar.Container>
+    );
+  }
+
   return (
     <Sidebar.Container>
       <Sidebar.Header
@@ -68,7 +134,7 @@ export function AppSidebar({
         <SidebarBrandMark />
       </Sidebar.Header>
 
-      <Sidebar.Content>
+      <Sidebar.Content id={navId}>
         <Sidebar.Group label="Principal">
           <Sidebar.Item to="/app" end title="Início" icon={<NavIconHome />}>
             Início
@@ -84,7 +150,7 @@ export function AppSidebar({
           <Sidebar.Item to="/app/products" title="Produtos" icon={<NavIconBox />}>
             Produtos
           </Sidebar.Item>
-          {user?.role !== "technician" ? (
+          {user?.role !== "technician" && purchasesEnabled ? (
             <Sidebar.Item to="/app/purchases" title="Compras de produtos" icon={<NavIconShoppingBag />}>
               Compras
             </Sidebar.Item>
@@ -176,7 +242,7 @@ export function AppSidebar({
               Altere a senha temporária ao abrir Minha conta.
             </p>
           ) : null}
-          <button type="button" className={styles.sidebarMobileRow} onClick={onOpenAccountFromMobile}>
+          <Link to="/app/conta" className={styles.sidebarMobileRow}>
             <span className={styles.sidebarMobileAvatar} aria-hidden>
               {user ? userInitial(user.full_name) : "—"}
             </span>
@@ -184,7 +250,7 @@ export function AppSidebar({
             <span className={styles.sidebarMobileRowChevron} aria-hidden>
               <NavIconChevronRight />
             </span>
-          </button>
+          </Link>
           {user?.role === "admin" ? (
             <button type="button" className={styles.sidebarMobileRow} onClick={onOpenWorkspaceFromMobile}>
               <span className={styles.sidebarMobileRowIcon} aria-hidden>
@@ -196,54 +262,23 @@ export function AppSidebar({
               </span>
             </button>
           ) : null}
+          {user?.role === "admin" ? (
+            <Link to="/app/planos" className={styles.sidebarMobileRow}>
+              <span className={styles.sidebarMobileRowIcon} aria-hidden>
+                <NavIconWallet />
+              </span>
+              <span className={styles.sidebarMobileRowLabel}>Plano e assinatura</span>
+              <span className={styles.sidebarMobileRowChevron} aria-hidden>
+                <NavIconChevronRight />
+              </span>
+            </Link>
+          ) : null}
           <button type="button" className={styles.sidebarMobileLogout} onClick={onLogout}>
             <NavIconLogOut className={styles.sidebarMobileLogoutIcon} />
             Sair
           </button>
         </div>
       </Sidebar.Content>
-
-      <Sidebar.Footer>
-        <div className={styles.sidebarFooter} id={navId}>
-          <p className={styles.workspaceLabel}>Workspace</p>
-          {user?.role === "admin" ? (
-            <button
-              type="button"
-              className={styles.workspaceNameBtn}
-              onClick={onOpenWorkspaceDrawer}
-              aria-expanded={workspaceDrawerOpen}
-              aria-haspopup="dialog"
-              title={
-                isHiddenAppModule("nfse")
-                  ? "Administração: empresa, usuários, pagamentos e API"
-                  : "Administração: empresa, usuários, pagamentos, API e fiscal"
-              }
-            >
-              <span className={styles.workspaceName}>{getTenantDisplayName(tenant)}</span>
-              <span className={styles.workspaceChevron} aria-hidden>
-                <NavIconChevronDown />
-              </span>
-            </button>
-          ) : (
-            <p className={styles.workspaceName}>{getTenantDisplayName(tenant)}</p>
-          )}
-          <p className={styles.planLine}>
-            Plano{" "}
-            <span className={styles.planBadge}>
-              {tenant ? getPlanDisplayLabel(tenant.active_plan, tenant.active_plan_label) : "—"}
-            </span>
-          </p>
-          {user?.role === "admin" ? (
-            <Link
-              className={styles.footerIconLink}
-              to="/app/admin?tab=empresa"
-              title="Configurações do workspace"
-            >
-              <NavIconSettings className={styles.footerIconSvg} />
-            </Link>
-          ) : null}
-        </div>
-      </Sidebar.Footer>
     </Sidebar.Container>
   );
 }

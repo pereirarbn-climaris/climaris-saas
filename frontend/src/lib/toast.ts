@@ -1,4 +1,4 @@
-/** Toast leve (sem dependência externa) — use `<ToastHost />` no layout ou na página. */
+/** Notificações globais — monte `<ToastHost />` uma vez no App (popup modal). */
 
 export type ToastPayload = { kind: "ok" | "err"; text: string };
 

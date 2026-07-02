@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import { Link, useNavigate, useOutletContext } from "react-router-dom";
-import { createService, listServices, type ServiceOut } from "../../api/services";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import { createService, importServicesFile, listServices, type ServiceOut } from "../../api/services";
+import { CatalogListHeaderActions } from "../../components/ui/CatalogListHeaderActions";
+import { ImportSpreadsheetModal } from "../../components/ui/ImportSpreadsheetModal";
 import type { DashboardOutletContext } from "../dashboardContext";
 import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ServicesListPage.module.css";
+
+const SERVICE_IMPORT_CSV_TEMPLATE = "/modelos/importacao-servicos-modelo.csv";
+const SERVICE_IMPORT_XLSX_TEMPLATE = "/modelos/importacao-servicos-modelo.xlsx";
+const ACCEPTED_IMPORT_EXTENSIONS = [".csv", ".xlsx"];
 
 function compareServiceName(a: ServiceOut, b: ServiceOut): number {
   return (a.name || "").localeCompare(b.name || "", "pt-BR");
@@ -90,15 +96,6 @@ function SearchIcon() {
   );
 }
 
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 12h14" />
-      <path d="M12 5v14" />
-    </svg>
-  );
-}
-
 function DuplicateIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -125,7 +122,12 @@ export function ServicesListPage() {
   const [rows, setRows] = useState<ServiceOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
   const [dupBusy, setDupBusy] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importDragActive, setImportDragActive] = useState(false);
+  const [importFileLabel, setImportFileLabel] = useState<string | null>(null);
 
   const canEdit = useMemo(() => ctx?.user.role === "admin" || ctx?.user.role === "receptionist", [ctx?.user.role]);
 
@@ -240,6 +242,58 @@ export function ServicesListPage() {
     }
   }
 
+  function closeImportModal() {
+    setImportModalOpen(false);
+    setImportDragActive(false);
+    setImportFileLabel(null);
+  }
+
+  function isAcceptedImportFile(file: File): boolean {
+    const lowerName = file.name.toLowerCase();
+    return ACCEPTED_IMPORT_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+  }
+
+  async function importFile(file: File) {
+    if (!canEdit) return;
+    if (!isAcceptedImportFile(file)) {
+      setErr("Formato invalido. Selecione um arquivo .csv ou .xlsx.");
+      return;
+    }
+
+    setImporting(true);
+    setErr("");
+    setOk("");
+    setImportFileLabel(file.name);
+    try {
+      const result = await importServicesFile(file);
+      closeImportModal();
+      await load();
+      const base = `Importacao finalizada: ${result.created_count} criados`;
+      const skipped = result.skipped_count ? `, ${result.skipped_count} ignorados (nome ja existente).` : ".";
+      const details =
+        result.error_count > 0
+          ? ` ${result.error_count} linhas com erro: ${result.errors
+              .slice(0, 3)
+              .map((x) => `linha ${x.row_number} (${x.message})`)
+              .join("; ")}${result.errors.length > 3 ? "..." : ""}`
+          : "";
+      setOk(`${base}${skipped}${details}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Nao foi possivel importar a planilha.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!importModalOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && !importing) closeImportModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [importModalOpen, importing]);
+
   return (
     <div className={styles.wrap}>
       <header className={listStyles.pageHeader}>
@@ -248,12 +302,14 @@ export function ServicesListPage() {
           <p className={listStyles.pageSubtitle}>Gerencie todos os serviços da sua empresa</p>
         </div>
         {canEdit ? (
-          <Link className={tableStyles.listToolbarBtnPrimary} to="/app/services/new">
-            <span className={tableStyles.listToolbarBtnIcon} aria-hidden>
-              <PlusIcon />
-            </span>
-            Novo serviço
-          </Link>
+          <CatalogListHeaderActions
+            showImport
+            importing={importing}
+            onImport={() => setImportModalOpen(true)}
+            importTitle="Importar planilha de servicos"
+            newHref="/app/services/new"
+            newLabel="Novo serviço"
+          />
         ) : null}
       </header>
 
@@ -355,7 +411,23 @@ export function ServicesListPage() {
         </div>
       </div>
 
+      {ok ? <p className={styles.msgOk}>{ok}</p> : null}
       {err ? <p className={styles.msgErr}>{err}</p> : null}
+
+      <ImportSpreadsheetModal
+        open={importModalOpen}
+        title="Importar servicos"
+        titleId="services-import-title"
+        importing={importing}
+        dragActive={importDragActive}
+        fileLabel={importFileLabel}
+        csvTemplateUrl={SERVICE_IMPORT_CSV_TEMPLATE}
+        xlsxTemplateUrl={SERVICE_IMPORT_XLSX_TEMPLATE}
+        formatsMeta="Formatos aceitos: CSV, XLSX. Coluna obrigatoria: nome. Opcionais: descricao, preco_venda, duracao_minutos e ativo."
+        onClose={closeImportModal}
+        onDragActiveChange={setImportDragActive}
+        onFile={(file) => void importFile(file)}
+      />
 
       {loading ? <p className={styles.empty}>Carregando...</p> : null}
       {!loading && !err && rows.length === 0 ? <p className={styles.empty}>Nenhum servico encontrado.</p> : null}

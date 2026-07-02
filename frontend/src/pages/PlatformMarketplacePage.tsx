@@ -7,6 +7,7 @@ import {
   listPlatformMarketplaceEntitlements,
   patchPlatformMarketplaceApp,
   patchPlatformMarketplaceEntitlement,
+  syncPlatformMarketplaceAppToStripe,
   type PlatformMarketplaceApp,
   type PlatformMarketplaceEntitlement,
 } from "../api/platformMarketplace";
@@ -55,6 +56,7 @@ export function PlatformMarketplacePage() {
   const [createUserSeatsPerUnit, setCreateUserSeatsPerUnit] = useState("0");
   const [creating, setCreating] = useState(false);
   const [bootstrappingFinanceApps, setBootstrappingFinanceApps] = useState(false);
+  const [syncingStripeAppId, setSyncingStripeAppId] = useState<number | null>(null);
 
   const refreshApps = useCallback(async () => {
     const list = await listPlatformMarketplaceApps({ include_inactive: true });
@@ -90,6 +92,20 @@ export function PlatformMarketplacePage() {
       setLoading(false);
     }
   }, [refreshApps, refreshEntitlements, refreshPendingEntitlements]);
+
+  async function onSyncStripeApp(appId: number) {
+    setSyncingStripeAppId(appId);
+    setMsg(null);
+    try {
+      const updated = await syncPlatformMarketplaceAppToStripe(appId);
+      setMsg({ kind: "ok", text: `Stripe sincronizado para ${updated.slug} (${updated.stripe_price_id ?? "—"}).` });
+      await refreshApps();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Falha ao sincronizar com Stripe." });
+    } finally {
+      setSyncingStripeAppId(null);
+    }
+  }
 
   async function liberarModulo(entitlementId: number) {
     setReleasingId(entitlementId);
@@ -291,6 +307,7 @@ export function PlatformMarketplacePage() {
                 <th>Mensal (R$)</th>
                 <th>Qtd</th>
                 <th>Feature flag</th>
+                <th>Stripe</th>
                 <th>Ativo</th>
               </tr>
             </thead>
@@ -305,6 +322,21 @@ export function PlatformMarketplacePage() {
                   <td>{a.allow_quantity ? `${a.unit_label ?? "unidade"} (seats: ${a.user_seats_per_unit})` : "fixo"}</td>
                   <td>
                     <code className={styles.inlineCode}>{a.feature_flag_key}</code>
+                  </td>
+                  <td>
+                    {a.stripe_price_id ? (
+                      <code className={styles.inlineCode}>{a.stripe_price_id}</code>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.linkPrimary}
+                        style={{ border: "none", cursor: "pointer", padding: 0 }}
+                        disabled={syncingStripeAppId === a.id}
+                        onClick={() => void onSyncStripeApp(a.id)}
+                      >
+                        {syncingStripeAppId === a.id ? "Sincronizando…" : "Sincronizar"}
+                      </button>
+                    )}
                   </td>
                   <td>
                     <label>

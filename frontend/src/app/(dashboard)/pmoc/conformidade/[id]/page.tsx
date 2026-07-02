@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   fetchPmocReportPdf,
+  getPmocAnalyticsSummary,
   getPmocComplianceSummary,
   getPmocPlan,
   listPmocActivities,
@@ -20,6 +21,7 @@ import {
   listPmocExecutions,
   listPmocOccurrences,
   type PmocAirQualityAnalysisOut,
+  type PmocAnalyticsSummaryOut,
   type PmocComplianceSummaryOut,
   type PmocExecutionOut,
   type PmocOccurrenceOut,
@@ -28,7 +30,6 @@ import {
 import { PmocAirAnalysisSection } from "../../../../../components/pmoc/PmocAirAnalysisSection";
 import { PmocComplianceTrafficPanel } from "../../../../../components/pmoc/PmocComplianceTrafficPanel";
 import { PmocOccurrencesPanel } from "../../../../../components/pmoc/PmocOccurrencesPanel";
-import { ToastHost } from "../../../../../components/ToastHost";
 import { Badge } from "../../../../../components/ui/badge";
 import { Button } from "../../../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../../components/ui/card";
@@ -321,6 +322,7 @@ export default function PmocConformidadePage() {
 
   const [data, setData] = useState<PmocComplianceDashboardData>(mockPmocComplianceData);
   const [complianceSummary, setComplianceSummary] = useState<PmocComplianceSummaryOut | null>(null);
+  const [analyticsSummary, setAnalyticsSummary] = useState<PmocAnalyticsSummaryOut | null>(null);
   const [occurrences, setOccurrences] = useState<PmocOccurrenceOut[]>([]);
   const [loading, setLoading] = useState(true);
   const [usingMock, setUsingMock] = useState(false);
@@ -332,22 +334,25 @@ export default function PmocConformidadePage() {
     setLoading(true);
     setLoadError("");
     try {
-      const [plan, equipments, executions, activities, analyses, summary, openOccurrences] = await Promise.all([
+      const [plan, equipments, executions, activities, analyses, summary, analytics, openOccurrences] = await Promise.all([
         getPmocPlan(pmocId),
         listPmocEquipments(pmocId),
         listPmocExecutions(pmocId),
         listPmocActivities(pmocId),
         listPmocAirAnalyses(pmocId),
         getPmocComplianceSummary(pmocId),
+        getPmocAnalyticsSummary(pmocId),
         listPmocOccurrences(pmocId, { status: "open" }),
       ]);
       setData(buildDashboardFromApi(pmocId, plan, equipments, executions, activities.length, analyses));
       setComplianceSummary(summary);
+      setAnalyticsSummary(analytics);
       setOccurrences(openOccurrences);
       setUsingMock(false);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Não foi possível carregar o painel.");
       setData({ ...mockPmocComplianceData, pmocId });
+      setAnalyticsSummary(null);
       setUsingMock(true);
     } finally {
       setLoading(false);
@@ -412,7 +417,6 @@ export default function PmocConformidadePage() {
 
   return (
     <div className="min-h-full bg-[#f8fafc] pb-10 font-[Inter,system-ui,sans-serif]">
-      <ToastHost />
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-6 md:py-8">
         {/* Cabeçalho + ações */}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -508,6 +512,97 @@ export default function PmocConformidadePage() {
             overallStatus={complianceSummary.overall_status}
             openOccurrences={complianceSummary.open_occurrences}
           />
+        ) : null}
+
+        {analyticsSummary ? (
+          <Card className="rounded-xl shadow-sm">
+            <CardHeader>
+              <CardTitle style={{ fontFamily: "Poppins, Inter, sans-serif" }}>
+                Analytics avançado (fase 2)
+              </CardTitle>
+              <p className="text-sm text-[#64748b]">
+                Indicadores calculados a partir de medições e consumíveis normalizados para auditoria.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">Cobertura de medições</p>
+                  <p className="text-xl font-semibold text-[#0f172a]">{analyticsSummary.measurement_coverage_pct}%</p>
+                  <p className="text-xs text-[#64748b]">
+                    {analyticsSummary.executions_with_measurements}/{analyticsSummary.total_executions} execuções
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">Rastreabilidade de consumíveis</p>
+                  <p className="text-xl font-semibold text-[#0f172a]">{analyticsSummary.consumable_traceability_pct}%</p>
+                  <p className="text-xs text-[#64748b]">{analyticsSummary.total_consumables_used} itens lançados</p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">Ambientes mapeados</p>
+                  <p className="text-xl font-semibold text-[#0f172a]">{analyticsSummary.environments_count}</p>
+                  <p className="text-xs text-[#64748b]">
+                    {analyticsSummary.environments_linked_equipment_count} com equipamento vinculado
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">Ocorrências em aberto</p>
+                  <p className="text-xl font-semibold text-[#0f172a]">{analyticsSummary.unresolved_occurrences}</p>
+                  <p className="text-xs text-[#64748b]">{analyticsSummary.done_executions} execuções concluídas</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">Delta T médio</p>
+                  <p className="text-lg font-semibold text-[#0f172a]">
+                    {analyticsSummary.avg_delta_t_c != null ? `${analyticsSummary.avg_delta_t_c} °C` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">Corrente média</p>
+                  <p className="text-lg font-semibold text-[#0f172a]">
+                    {analyticsSummary.avg_current_a != null ? `${analyticsSummary.avg_current_a} A` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] p-3">
+                  <p className="text-xs text-[#64748b]">CO₂ médio</p>
+                  <p className="text-lg font-semibold text-[#0f172a]">
+                    {analyticsSummary.avg_co2_ppm != null ? `${analyticsSummary.avg_co2_ppm} ppm` : "—"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-lg border border-[#e2e8f0]">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Consumível</TableHead>
+                      <TableHead>Uso</TableHead>
+                      <TableHead>Rastreáveis</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {analyticsSummary.top_consumables.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} className="py-6 text-center text-sm text-[#64748b]">
+                          Sem consumíveis registrados nas execuções analisadas.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      analyticsSummary.top_consumables.map((row) => (
+                        <TableRow key={row.name}>
+                          <TableCell className="font-medium text-[#0f172a]">{row.name}</TableCell>
+                          <TableCell>{row.usage_count}</TableCell>
+                          <TableCell>{row.traceable_count}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
         ) : null}
 
         <Card className="rounded-xl shadow-sm">

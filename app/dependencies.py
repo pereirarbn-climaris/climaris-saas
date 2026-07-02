@@ -1,22 +1,40 @@
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.security import JWT_ALGORITHM, JWT_SECRET_KEY
-from models import User, UserRole
+from app.tenant_subscription import is_app_access_blocked
+from models import Tenant, TenantStatus, User, UserRole
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+_API_V1_PREFIX = "/api/v1"
+_SUBSCRIPTION_GATE_EXEMPT_PREFIXES = (
+    "/auth/",
+    "/billing/",
+    "/webhooks/",
+    "/platform/",
+    "/public/",
+)
+
+
+def _subscription_gate_exempt(path: str) -> bool:
+    if not path.startswith(_API_V1_PREFIX):
+        return True
+    rel = path[len(_API_V1_PREFIX) :]
+    return rel.startswith(_SUBSCRIPTION_GATE_EXEMPT_PREFIXES)
 
 
 def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[Session, Depends(get_db)],
+    request: Request,
 ) -> User:
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -34,6 +52,20 @@ def get_current_user(
     user = db.execute(select(User).where(User.id == int(user_id))).scalar_one_or_none()
     if user is None or not user.is_active:
         raise credentials_error
+
+    if not _subscription_gate_exempt(request.url.path):
+        tenant = db.get(Tenant, user.tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace não encontrado.")
+        if tenant.status == TenantStatus.CANCELLED:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Workspace cancelado.")
+        if tenant.status == TenantStatus.SUSPENDED:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Workspace suspenso.")
+        if is_app_access_blocked(tenant):
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="Acesso suspenso. Assine ou renove seu plano em Plano e assinatura para continuar.",
+            )
     return user
 
 

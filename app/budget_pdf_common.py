@@ -42,16 +42,32 @@ def safe(value: str | None, fallback: str = "-") -> str:
     return text or fallback
 
 
+def tenant_display_name(tenant: Tenant) -> str:
+    """Nome fantasia quando cadastrado; senão razão social."""
+    trade = safe(getattr(tenant, "trade_name", None), "")
+    if trade and trade != "-":
+        return trade
+    return safe(tenant.name)
+
+
 def budget_code(budget: Budget) -> str:
     year = (budget.created_at or datetime.utcnow()).year
     return f"{budget.id:03d}-{year}"
 
 
 def parse_brand_color(raw: str | None, fallback: str = "#0B7FAF") -> colors.Color:
+    return colors.HexColor(_normalize_pdf_hex(raw, fallback))
+
+
+def parse_font_color(raw: str | None, fallback: str = "#000000") -> colors.Color:
+    return colors.HexColor(_normalize_pdf_hex(raw, fallback))
+
+
+def _normalize_pdf_hex(raw: str | None, fallback: str) -> str:
     color = str(raw or fallback).strip().upper()
     if not re.fullmatch(r"#[0-9A-F]{6}", color):
         color = fallback
-    return colors.HexColor(color)
+    return color
 
 
 def tint_with_white(color: colors.Color, factor: float = 0.5) -> colors.Color:
@@ -158,16 +174,24 @@ def draw_icon_label(
     value: str,
     font: str,
     font_bold: str,
+    *,
+    text_color: colors.Color,
 ) -> None:
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 9.2)
     c.drawString(x, y, icon)
     c.setFont(font, 7.8)
     c.drawString(x + 4.2 * mm, y, f"{label}: {value}")
 
 
-def make_service_desc_style(font: str) -> ParagraphStyle:
-    return ParagraphStyle(name="service_desc", fontName=font, fontSize=7.3, leading=9)
+def make_service_desc_style(font: str, *, text_color: colors.Color | None = None) -> ParagraphStyle:
+    return ParagraphStyle(
+        name="service_desc",
+        fontName=font,
+        fontSize=7.3,
+        leading=9,
+        textColor=text_color or colors.black,
+    )
 
 
 def escape_html(text: str) -> str:
@@ -196,11 +220,12 @@ def draw_items_section(
     font: str,
     font_bold: str,
     table_col_widths: list[float],
+    text_color: colors.Color,
 ) -> float:
     chip_y = y_top - 2.7 * mm
     c.setFillColor(light_blue)
     c.rect(margin_x, chip_y, content_width, 5.2 * mm, fill=1, stroke=0)
-    c.setFillColor(brand_blue)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 9.2)
     c.drawString(margin_x + 1.8 * mm, chip_y + 1.35 * mm, title)
 
@@ -210,7 +235,8 @@ def draw_items_section(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("TEXTCOLOR", (0, 0), (-1, 0), text_color),
+                ("TEXTCOLOR", (0, 1), (-1, -1), text_color),
                 ("FONTNAME", (0, 0), (-1, 0), font_bold),
                 ("FONTNAME", (0, 1), (-1, -1), font),
                 ("FONTSIZE", (0, 0), (-1, 0), 7.7),
@@ -241,6 +267,7 @@ def draw_legal_footer(
     font: str,
     font_bold: str,
     brand_blue: colors.Color,
+    text_color: colors.Color,
     warranty: str | None,
     payment: str | None,
     technical: str | None,
@@ -262,11 +289,11 @@ def draw_legal_footer(
         return y_start
 
     y = y_start
-    c.setFillColor(brand_blue)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 8.5)
     c.drawString(margin_x, y, "Condições comerciais")
     y -= 4 * mm
-    c.setFillColor(colors.HexColor("#2F4656"))
+    c.setFillColor(text_color)
     c.setFont(font, 7.4)
     for label, body in blocks:
         c.setFont(font_bold, 7.4)
@@ -301,6 +328,50 @@ def _wrap_text_lines(text: str, max_chars: int = 90) -> list[str]:
     return lines or ["-"]
 
 
+def draw_provider_signature_image(
+    c: canvas.Canvas,
+    *,
+    left_x1: float,
+    left_x2: float,
+    sign_y: float,
+    signature_url: str | None,
+    max_height: float = 18 * mm,
+) -> None:
+    """Imagem da assinatura do prestador, centralizada sobre o nome do prestador."""
+    reader = try_read_logo(signature_url)
+    if reader is None:
+        return
+    line_w = left_x2 - left_x1
+    center_x = (left_x1 + left_x2) / 2
+    max_width = line_w * 0.92
+    try:
+        img_w_px, img_h_px = reader.getSize()
+    except Exception:
+        img_w_px, img_h_px = 420, 160
+    if img_w_px <= 0 or img_h_px <= 0:
+        return
+    aspect = img_w_px / img_h_px
+    draw_h = max_height
+    draw_w = draw_h * aspect
+    if draw_w > max_width:
+        draw_w = max_width
+        draw_h = draw_w / aspect
+    img_x = center_x - draw_w / 2
+    img_y = sign_y + 0.4 * mm
+    try:
+        c.drawImage(
+            reader,
+            img_x,
+            img_y,
+            width=draw_w,
+            height=draw_h,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+    except Exception:
+        return
+
+
 def draw_signatures(
     c: canvas.Canvas,
     *,
@@ -310,16 +381,25 @@ def draw_signatures(
     tenant: Tenant,
     budget: Budget,
     font: str,
+    text_color: colors.Color,
     professional: bool = False,
+    signature_url: str | None = None,
 ) -> None:
     c.setStrokeColor(colors.HexColor("#AABFCC"))
     left_x1 = margin_x + (8 * mm if professional else 10 * mm)
     left_x2 = margin_x + (72 * mm if professional else 75 * mm)
     right_x1 = width - margin_x - (72 * mm if professional else 75 * mm)
     right_x2 = width - margin_x - (8 * mm if professional else 10 * mm)
+    draw_provider_signature_image(
+        c,
+        left_x1=left_x1,
+        left_x2=left_x2,
+        sign_y=sign_y,
+        signature_url=signature_url,
+    )
     c.line(left_x1, sign_y, left_x2, sign_y)
     c.line(right_x1, sign_y, right_x2, sign_y)
-    c.setFillColor(colors.HexColor("#2F4656"))
+    c.setFillColor(text_color)
     c.setFont(font, 7.3)
     left_center = (left_x1 + left_x2) / 2
     right_center = (right_x1 + right_x2) / 2
@@ -329,8 +409,26 @@ def draw_signatures(
     c.drawCentredString(right_center, sign_y - 7.7 * mm, f"Cliente — CNPJ/CPF: {mask_tax_document(budget.client.document)}")
 
 
+def scope_bullets_from_budget_services(budget) -> list[str]:
+    """Escopo técnico gerado a partir dos serviços do orçamento."""
+    bullets: list[str] = []
+    for item in getattr(budget, "service_items", []) or []:
+        service = getattr(item, "service", None)
+        if service is None:
+            continue
+        name = str(getattr(service, "name", "") or "").strip()
+        if not name:
+            continue
+        desc = str(getattr(service, "description", "") or "").strip()
+        if desc and desc.lower() not in name.lower():
+            bullets.append(f"{name}: {desc}"[:320])
+        else:
+            bullets.append(name[:320])
+    return bullets
+
+
 def scope_bullet_lines(text: str | None, *, max_items: int = 14) -> list[str]:
-    """Linhas do escopo técnico (seção 1 do modelo profissional)."""
+    """Linhas de escopo a partir de texto livre (legado)."""
     if not text or not str(text).strip():
         return []
     out: list[str] = []
@@ -407,12 +505,13 @@ def draw_professional_detail_table(
     brand_blue: colors.Color,
     font: str,
     font_bold: str,
+    text_color: colors.Color,
 ) -> float:
-    """Tabela 5 colunas — largura total, título próximo ao cabeçalho, grades claras."""
-    grid_color = tint_with_white(brand_blue, 0.92)
-    header_rule = tint_with_white(brand_blue, 0.88)
+    """Tabela 5 colunas — largura total, cabeçalho branco, grades suaves."""
+    grid_color = colors.HexColor("#e8eef5")
+    header_rule = tint_with_white(brand_blue, 0.9)
 
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 9.2)
     c.drawString(margin_x, y_top, section_title)
     gap_after_title = 1.6 * mm
@@ -426,15 +525,16 @@ def draw_professional_detail_table(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), brand_blue),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("TEXTCOLOR", (0, 1), (-1, -1), text_color),
                 ("FONTNAME", (0, 0), (-1, 0), font_bold),
                 ("FONTNAME", (0, 1), (-1, -1), font),
                 ("FONTSIZE", (0, 0), (-1, 0), 7.4),
                 ("FONTSIZE", (0, 1), (-1, -1), 7.0),
                 ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
                 ("ALIGN", (0, 0), (0, -1), "LEFT"),
-                ("GRID", (0, 0), (-1, -1), 0.3, grid_color),
-                ("INNERGRID", (0, 0), (-1, 0), 0.3, grid_color),
-                ("LINEBELOW", (0, 0), (-1, 0), 0.4, header_rule),
+                ("GRID", (0, 0), (-1, -1), 0.25, grid_color),
+                ("INNERGRID", (0, 0), (-1, 0), 0.25, grid_color),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.35, header_rule),
                 ("BACKGROUND", (0, 1), (-1, -1), colors.white),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 2.5),
@@ -449,7 +549,78 @@ def draw_professional_detail_table(
     if table_y < 40 * mm:
         table_y = max(40 * mm, y_table_top - table_height)
     table.drawOn(c, margin_x, table_y)
-    return table_y - 4 * mm
+    return table_y
+
+
+PROFESSIONAL_TOTALS_LIGHT = colors.Color(0.922, 0.973, 1.0)
+PROFESSIONAL_TOTALS_LINE = colors.Color(0.796, 0.835, 0.882)
+
+
+def _draw_professional_totals_rule(
+    c: canvas.Canvas,
+    *,
+    margin_x: float,
+    content_width: float,
+    y: float,
+) -> None:
+    """Linha divisória suave abaixo de cada subtotal (referência Orcamento_Profissional.pdf)."""
+    split_x = margin_x + content_width * 0.825
+    c.setStrokeColor(PROFESSIONAL_TOTALS_LINE)
+    c.setLineWidth(0.6)
+    c.line(margin_x, y, split_x, y)
+    c.line(split_x, y, margin_x + content_width, y)
+
+
+def draw_professional_totals_block(
+    c: canvas.Canvas,
+    *,
+    y_top: float,
+    margin_x: float,
+    content_width: float,
+    font: str,
+    font_bold: str,
+    text_color: colors.Color,
+    product_sub: float | None,
+    service_sub: float | None,
+    grand_total: float,
+) -> float:
+    """Totais no padrão Orcamento_Profissional.pdf — rótulo à esquerda, valor à direita, faixa no total."""
+    value_pad_x = 3 * mm
+    value_x = margin_x + content_width - value_pad_x
+    subtotal_row_h = 7.4 * mm
+    grand_row_h = 10.2 * mm
+    y = y_top
+
+    if product_sub is not None:
+        y -= subtotal_row_h
+        c.setFillColor(text_color)
+        c.setFont(font, 10)
+        c.drawString(margin_x, y + 2.4 * mm, "Subtotal Geral de Produtos/Materiais:")
+        c.drawRightString(value_x, y + 2.4 * mm, money(product_sub))
+        _draw_professional_totals_rule(c, margin_x=margin_x, content_width=content_width, y=y)
+
+    if service_sub is not None:
+        y -= subtotal_row_h
+        c.setFillColor(text_color)
+        c.setFont(font, 10)
+        c.drawString(margin_x, y + 2.4 * mm, "Subtotal Geral de Serviços (Mão de Obra):")
+        c.drawRightString(value_x, y + 2.4 * mm, money(service_sub))
+        _draw_professional_totals_rule(c, margin_x=margin_x, content_width=content_width, y=y)
+
+    y -= grand_row_h
+    c.setFillColor(PROFESSIONAL_TOTALS_LIGHT)
+    c.rect(margin_x, y, content_width, grand_row_h, stroke=0, fill=1)
+    c.setStrokeColor(PROFESSIONAL_TOTALS_LINE)
+    c.setLineWidth(0.6)
+    c.line(margin_x, y + grand_row_h, margin_x + content_width, y + grand_row_h)
+
+    c.setFillColor(text_color)
+    c.setFont(font_bold, 12)
+    text_y = y + 3.5 * mm
+    c.drawString(margin_x, text_y, "VALOR TOTAL DO INVESTIMENTO:")
+    c.drawRightString(value_x, text_y, money(grand_total))
+
+    return y
 
 
 def draw_professional_horizontal_rule(
@@ -460,9 +631,9 @@ def draw_professional_horizontal_rule(
     y: float,
     brand_blue: colors.Color,
 ) -> None:
-    """Divisória clara (referência Orcamento_Profissional.pdf)."""
-    c.setStrokeColor(tint_with_white(brand_blue, 0.78))
-    c.setLineWidth(0.6)
+    """Divisória abaixo do site/tagline (referência Orcamento_Profissional.pdf)."""
+    c.setStrokeColor(tint_with_white(brand_blue, 0.72))
+    c.setLineWidth(1.1)
     c.line(margin_x, y, margin_x + content_width, y)
 
 

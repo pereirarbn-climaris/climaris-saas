@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 from app.services.catalog_duplicate import find_catalog_duplicate
 from app.services.category_field_definitions import (
     active_field_definitions,
+    default_definitions_from_legacy,
     parse_field_definitions,
+    serialize_field_definitions,
     sync_legacy_catalog_columns,
     validate_technical_data,
 )
@@ -114,16 +116,50 @@ def _parse_btu(capacity: str | None) -> int | None:
     return value if value > 0 else None
 
 
-def pick_category_for_kind(db: Session, tenant_id: int, equipment_kind: str) -> EquipmentCategory:
+def ensure_catalog_categories(db: Session, tenant_id: int) -> list[EquipmentCategory]:
+    """Garante categorias padrão no catálogo global quando ainda não existem."""
     rows = db.execute(
         select(EquipmentCategory)
         .where(EquipmentCategory.tenant_id == tenant_id)
         .order_by(EquipmentCategory.sort_order.asc(), EquipmentCategory.name.asc())
     ).scalars().all()
+    if rows:
+        return list(rows)
+
+    created: list[EquipmentCategory] = []
+    for name, icon_key, sort_order, has_cap, has_fluid, has_volt in (
+        ("Ar-condicionado", "ar_condicionado", 10, True, True, True),
+        ("Climatizador", "climatizador", 20, True, True, True),
+    ):
+        definitions = parse_field_definitions(
+            default_definitions_from_legacy(
+                has_capacity=has_cap,
+                has_fluid_type=has_fluid,
+                has_voltage=has_volt,
+            )
+        )
+        row = EquipmentCategory(
+            tenant_id=tenant_id,
+            name=name,
+            icon_key=icon_key,
+            sort_order=sort_order,
+            has_capacity=has_cap,
+            has_fluid_type=has_fluid,
+            has_voltage=has_volt,
+            field_definitions=serialize_field_definitions(definitions),
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
+
+
+def pick_category_for_kind(db: Session, tenant_id: int, equipment_kind: str) -> EquipmentCategory:
+    rows = ensure_catalog_categories(db, tenant_id)
     if not rows:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Nenhuma categoria de equipamento configurada no catálogo.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Não foi possível preparar as categorias do catálogo de equipamentos.",
         )
     target_icon = "climatizador" if equipment_kind == "climatizador" else "ar_condicionado"
     for row in rows:

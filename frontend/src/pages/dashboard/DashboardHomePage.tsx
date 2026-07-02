@@ -1,123 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import {
-  fetchDashboardHomeKpis,
-  fetchDashboardRevenueChart,
-  fetchRecentOrders,
-  mapRecentOrdersToTableRows,
-  mapRevenueChartToDataPoints,
-  type DashboardHomeKpisOut,
-  type DashboardRevenueChartOut,
-} from "../../api/dashboard";
-import { listPmocOccurrenceAlerts, type PmocOccurrenceAlertOut } from "../../api/pmoc";
-import { PmocOccurrencesPanel } from "../../components/pmoc/PmocOccurrencesPanel";
+import { DashboardTierBadge } from "../../components/dashboard/management/DashboardTierBadge";
+import { hasDashboardTier } from "../../lib/dashboardEntitlements";
 import type { DashboardOutletContext } from "../dashboardContext";
-import {
-  MetricCard,
-  MetricCardSkeleton,
-  MetricGrid,
-  MetricIconClients,
-  MetricIconOrders,
-  MetricIconRevenue,
-  MetricIconTime,
-  RevenueChartCard,
-  RecentOrdersCard,
-  type RevenueDataPoint,
-  type ServiceOrder,
-} from "../../components/v0-ui/dashboard";
+import { greetingByHour } from "./dashboardFormatters";
+import { useDashboardHomeData } from "./useDashboardHomeData";
+import { DashboardAdvancedView } from "./views/DashboardAdvancedView";
+import { DashboardBasicView } from "./views/DashboardBasicView";
+import { DashboardCompleteView } from "./views/DashboardCompleteView";
 import styles from "./DashboardHomePage.module.css";
-
-function greetingByHour(now: Date): string {
-  const h = now.getHours();
-  if (h < 12) return "Bom dia";
-  if (h < 18) return "Boa tarde";
-  return "Boa noite";
-}
-
-const MONTH_NAMES = [
-  "janeiro",
-  "fevereiro",
-  "março",
-  "abril",
-  "maio",
-  "junho",
-  "julho",
-  "agosto",
-  "setembro",
-  "outubro",
-  "novembro",
-  "dezembro",
-] as const;
-
-function formatPeriodLabel(year: number, month: number): string {
-  const name = MONTH_NAMES[month - 1] ?? String(month);
-  return `${name} de ${year}`;
-}
-
-function formatBrl(value: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function formatAverageServiceMinutes(minutes: number | null): string {
-  if (minutes == null) return "—";
-  const total = Math.round(minutes);
-  const hours = Math.floor(total / 60);
-  const mins = total % 60;
-  if (hours === 0) return `${mins} min`;
-  if (mins === 0) return `${hours}h`;
-  return `${hours}h ${mins}min`;
-}
-
-function computeGrowthPercent(data: RevenueDataPoint[]): number | undefined {
-  if (data.length < 2) return undefined;
-  const last = data[data.length - 1]!.revenue;
-  const prev = data[data.length - 2]!.revenue;
-  if (prev <= 0) return undefined;
-  return ((last - prev) / prev) * 100;
-}
 
 export function DashboardHomePage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
   const navigate = useNavigate();
   const [greeting, setGreeting] = useState(() => greetingByHour(new Date()));
-  const [kpis, setKpis] = useState<DashboardHomeKpisOut | null>(null);
-  const [revenueChart, setRevenueChart] = useState<DashboardRevenueChartOut | null>(null);
-  const [recentOrders, setRecentOrders] = useState<ServiceOrder[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [chartLoading, setChartLoading] = useState(true);
-  const [ordersLoading, setOrdersLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [chartError, setChartError] = useState<string | null>(null);
-  const [ordersError, setOrdersError] = useState<string | null>(null);
-  const [incidentAlerts, setIncidentAlerts] = useState<PmocOccurrenceAlertOut[]>([]);
+  const [isMobileLayout, setIsMobileLayout] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 900px)").matches : false,
+  );
 
   const canSeePmocIncidents =
     ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
+  const canUpgrade = ctx?.user.role === "admin";
 
-  const revenueData = useMemo(
-    () => (revenueChart ? mapRevenueChartToDataPoints(revenueChart) : []),
-    [revenueChart],
-  );
+  const data = useDashboardHomeData(canSeePmocIncidents);
+  const mobileWelcomeName = useMemo(() => {
+    const name = ctx?.user.full_name?.trim();
+    if (!name) return "Usuário";
+    const first = name.split(" ")[0]?.trim();
+    return first && first.length > 0 ? first : "Usuário";
+  }, [ctx?.user.full_name]);
 
-  const totalRevenue = useMemo(
-    () => revenueData.reduce((sum, point) => sum + point.revenue, 0),
-    [revenueData],
-  );
-
-  const growthPercent = useMemo(() => computeGrowthPercent(revenueData), [revenueData]);
-
-  const periodSubtitle = kpis
-    ? formatPeriodLabel(kpis.period_year, kpis.period_month)
-    : "mês atual";
-
-  const chartSubtitle = revenueChart
-    ? `Últimos ${revenueChart.months} meses · até ${formatPeriodLabel(revenueChart.end_year, revenueChart.end_month)}`
-    : "Receita consolidada por mês";
+  const userFirstName = ctx?.user.full_name?.split(" ")[0] ?? "usuário";
 
   useEffect(() => {
     const t = window.setInterval(() => setGreeting(greetingByHour(new Date())), 60_000);
@@ -125,195 +38,155 @@ export function DashboardHomePage() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setChartLoading(true);
-    setOrdersLoading(true);
-    setError(null);
-    setChartError(null);
-    setOrdersError(null);
+    const mq = window.matchMedia("(max-width: 900px)");
+    function sync() {
+      setIsMobileLayout(mq.matches);
+    }
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
-    void (async () => {
-      const [kpisResult, chartResult, ordersResult, alertsResult] = await Promise.allSettled([
-        fetchDashboardHomeKpis(),
-        fetchDashboardRevenueChart(6),
-        fetchRecentOrders(5),
-        canSeePmocIncidents ? listPmocOccurrenceAlerts(8) : Promise.resolve([] as PmocOccurrenceAlertOut[]),
-      ]);
+  const scrollToUpgradePreview = useCallback(() => {
+    const el = document.getElementById("dashboard-upgrade-preview");
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.focus({ preventScroll: true });
+  }, []);
 
-      if (cancelled) return;
+  const renderView = () => {
+    if (hasDashboardTier(data.tier, "complete")) {
+      return (
+        <DashboardCompleteView
+          data={data}
+          userFirstName={userFirstName}
+          onOpenReports={() => navigate("/app/finance/dashboard")}
+        />
+      );
+    }
+    if (hasDashboardTier(data.tier, "advanced")) {
+      return (
+        <DashboardAdvancedView
+          data={data}
+          userFirstName={userFirstName}
+          onOpenReports={() => navigate("/app/finance/dashboard")}
+          canUpgrade={canUpgrade}
+        />
+      );
+    }
+    return (
+      <DashboardBasicView
+        data={data}
+        userFirstName={userFirstName}
+        onOpenReports={() => navigate("/app/finance/dashboard")}
+        canUpgrade={canUpgrade}
+      />
+    );
+  };
 
-      if (kpisResult.status === "fulfilled") {
-        setKpis(kpisResult.value);
-      } else {
-        setKpis(null);
-        setError(
-          kpisResult.reason instanceof Error
-            ? kpisResult.reason.message
-            : "Não foi possível carregar os indicadores.",
-        );
-      }
-      setIsLoading(false);
+  if (isMobileLayout) {
+    return (
+      <div className={`${styles.panel} ${styles.mobilePanel}`}>
+        <section className={styles.mobileHero} aria-label="Painel mobile">
+          <h2 className={styles.mobileTitle}>Painel de Controle</h2>
+          <p className={styles.mobileLead}>Boas-vindas, {mobileWelcomeName}</p>
+        </section>
 
-      if (chartResult.status === "fulfilled") {
-        setRevenueChart(chartResult.value);
-        setChartError(null);
-      } else {
-        setRevenueChart(null);
-        setChartError(
-          chartResult.reason instanceof Error
-            ? chartResult.reason.message
-            : "Não foi possível carregar o gráfico.",
-        );
-      }
-      setChartLoading(false);
+        <div className={styles.mobileCardsGrid} role="navigation" aria-label="Módulos do sistema">
+          <button type="button" className={`${styles.mobileCard} ${styles.mobileCardWide}`} onClick={() => navigate("/app/products")}>
+            <span className={styles.mobileCardIcon} aria-hidden>
+              📦
+            </span>
+            <span className={styles.mobileCardTextWrap}>
+              <span className={styles.mobileCardTitle}>Produtos</span>
+              <span className={styles.mobileCardSubtitle}>Visualizar inventário</span>
+            </span>
+          </button>
 
-      if (ordersResult.status === "fulfilled") {
-        setRecentOrders(mapRecentOrdersToTableRows(ordersResult.value));
-        setOrdersError(null);
-      } else {
-        setRecentOrders([]);
-        setOrdersError(
-          ordersResult.reason instanceof Error
-            ? ordersResult.reason.message
-            : "Não foi possível carregar as ordens recentes.",
-        );
-      }
-      setOrdersLoading(false);
+          <button type="button" className={`${styles.mobileCard} ${styles.mobileCardWide}`} onClick={() => navigate("/app/service-orders")}>
+            <span className={styles.mobileCardIcon} aria-hidden>
+              📋
+            </span>
+            <span className={styles.mobileCardTextWrap}>
+              <span className={styles.mobileCardTitle}>Ordens de Serviço</span>
+              <span className={styles.mobileCardSubtitle}>Gerenciar ordens ativas</span>
+            </span>
+          </button>
 
-      if (canSeePmocIncidents && alertsResult.status === "fulfilled") {
-        setIncidentAlerts(alertsResult.value);
-      } else {
-        setIncidentAlerts([]);
-      }
-    })();
+          <button type="button" className={styles.mobileCard} onClick={() => navigate("/app/agenda")}>
+            <span className={styles.mobileCardIcon} aria-hidden>
+              📅
+            </span>
+            <span className={styles.mobileCardTextWrap}>
+              <span className={styles.mobileCardTitle}>Agenda</span>
+              <span className={styles.mobileCardSubtitle}>Próximos compromissos</span>
+            </span>
+          </button>
 
-    return () => {
-      cancelled = true;
-    };
-  }, [canSeePmocIncidents]);
+          <button type="button" className={styles.mobileCard} onClick={() => navigate("/app/finance/dashboard")}>
+            <span className={styles.mobileCardIcon} aria-hidden>
+              💳
+            </span>
+            <span className={styles.mobileCardTextWrap}>
+              <span className={styles.mobileCardTitle}>Financeiro</span>
+              <span className={styles.mobileCardSubtitle}>Ver demonstrativos</span>
+            </span>
+          </button>
+
+          <button type="button" className={`${styles.mobileCard} ${styles.mobileCardChip}`} onClick={() => navigate("/app/pmoc")}>
+            <span className={styles.mobileCardIcon} aria-hidden>
+              ✅
+            </span>
+            <span className={styles.mobileCardTitle}>PMOC</span>
+          </button>
+
+          <button type="button" className={`${styles.mobileCard} ${styles.mobileCardChip}`} onClick={() => navigate("/app/qrcodes")}>
+            <span className={styles.mobileCardIcon} aria-hidden>
+              🔳
+            </span>
+            <span className={styles.mobileCardTitle}>Etiquetas QR</span>
+          </button>
+        </div>
+
+        <div className={styles.mobileBottomGrid} role="navigation" aria-label="Atalhos rápidos">
+          <button type="button" className={styles.mobileBottomCard} onClick={() => navigate("/app/services")}>
+            <span className={styles.mobileBottomIcon} aria-hidden>
+              🔧
+            </span>
+            <span className={styles.mobileBottomLabel}>Serviços</span>
+          </button>
+          <button type="button" className={styles.mobileBottomCard} onClick={() => navigate("/app/preventive-maintenance")}>
+            <span className={styles.mobileBottomIcon} aria-hidden>
+              ☀️
+            </span>
+            <span className={styles.mobileBottomLabel}>Gestão Preventiva</span>
+          </button>
+          <button type="button" className={styles.mobileBottomCard} onClick={() => navigate("/app/budgets")}>
+            <span className={styles.mobileBottomIcon} aria-hidden>
+              📄
+            </span>
+            <span className={styles.mobileBottomLabel}>Orçamentos</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.panel}>
-      <section className={styles.hero} aria-labelledby="dashboard-home-title">
-        <div>
-          <h2 id="dashboard-home-title" className={styles.heroTitle}>
-            {greeting}, {ctx?.user.full_name?.split(" ")[0] ?? "usuário"}!
-          </h2>
-          <p className={styles.heroLead}>Aqui está o resumo das suas operações.</p>
-        </div>
-        <button type="button" className={styles.heroBtn} onClick={() => navigate("/app/finance/dashboard")}>
-          <span className={styles.heroBtnIcon} aria-hidden>
-            <svg viewBox="0 0 24 24">
-              <polyline points="16 6 21 6 21 11" />
-              <path d="m21 6-8 8-4-4-6 6" />
-            </svg>
-          </span>
-          Ver relatórios
-        </button>
-      </section>
-
-      {canSeePmocIncidents && incidentAlerts.length > 0 ? (
-        <section className={styles.incidentsStrip} aria-label="Incidentes PMOC abertos">
-          <h3 className={styles.incidentsTitle}>Incidentes PMOC — ação necessária</h3>
-          <PmocOccurrencesPanel alerts={incidentAlerts} />
-        </section>
-      ) : null}
-
-      {error ? (
-        <p className={styles.kpiError} role="alert">
-          {error}
+      <header className={styles.dashboardHeader}>
+        <p className={styles.eyebrow} aria-hidden>
+          {greeting}
         </p>
-      ) : null}
+        <DashboardTierBadge
+          tier={data.tier}
+          onUpgradePreviewClick={
+            hasDashboardTier(data.tier, "complete") ? undefined : scrollToUpgradePreview
+          }
+        />
+      </header>
 
-      <section aria-label="Indicadores principais">
-        <MetricGrid columns={4}>
-          {isLoading ? (
-            <>
-              <MetricCardSkeleton />
-              <MetricCardSkeleton />
-              <MetricCardSkeleton />
-              <MetricCardSkeleton />
-            </>
-          ) : (
-            <>
-              <MetricCard
-                title="Ordens ativas"
-                value={kpis?.active_service_orders ?? "—"}
-                icon={<MetricIconOrders />}
-                variant="primary"
-                subtitle="exceto concluídas e canceladas"
-                onClick={() => navigate("/app/service-orders")}
-              />
-              <MetricCard
-                title="Clientes ativos"
-                value={kpis?.active_clients ?? "—"}
-                icon={<MetricIconClients />}
-                variant="success"
-                subtitle="cadastros ativos no workspace"
-                onClick={() => navigate("/app/clients")}
-              />
-              <MetricCard
-                title="Faturamento do mês"
-                value={kpis != null ? formatBrl(kpis.monthly_revenue) : "—"}
-                icon={<MetricIconRevenue />}
-                variant="default"
-                subtitle={periodSubtitle}
-                onClick={() => navigate("/app/finance/dashboard")}
-              />
-              <MetricCard
-                title="Tempo médio de atendimento"
-                value={formatAverageServiceMinutes(kpis?.average_service_minutes ?? null)}
-                icon={<MetricIconTime />}
-                variant="default"
-                subtitle={
-                  kpis && kpis.average_service_sample_size > 0
-                    ? `${kpis.average_service_sample_size} OS no período · ${periodSubtitle}`
-                    : `sem amostra em ${periodSubtitle}`
-                }
-              />
-            </>
-          )}
-        </MetricGrid>
-      </section>
-
-      <section className={styles.contentGrid} aria-label="Faturamento e ordens recentes">
-        <div className={styles.contentGridChart}>
-          {chartError && !chartLoading ? (
-            <p className={styles.kpiError} role="alert">
-              {chartError}
-            </p>
-          ) : null}
-          <RevenueChartCard
-            title="Faturamento mensal"
-            subtitle={chartSubtitle}
-            data={revenueData}
-            loading={chartLoading}
-            totalRevenue={chartLoading ? undefined : totalRevenue}
-            growthPercent={chartLoading ? undefined : growthPercent}
-            comparisonPeriod="vs. mês anterior"
-            showTarget
-            showTrendLine
-            height={240}
-          />
-        </div>
-        <div className={styles.contentGridTable}>
-          {ordersError && !ordersLoading ? (
-            <p className={styles.kpiError} role="alert">
-              {ordersError}
-            </p>
-          ) : null}
-          <RecentOrdersCard
-            title="Ordens recentes"
-            subtitle="Últimas movimentações da operação"
-            orders={recentOrders}
-            loading={ordersLoading}
-            maxItems={5}
-            onViewAll={() => navigate("/app/service-orders")}
-            onOrderClick={() => navigate("/app/service-orders")}
-          />
-        </div>
-      </section>
+      {renderView()}
     </div>
   );
 }

@@ -12,8 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import PREVENTIVE_CRON_SECRET
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.marketplace_util import tenant_has_marketplace_app
-from app.plan_rules import get_plan_definition
+from app.whatsapp_entitlements import require_whatsapp_module
 from app.equipment_service_preventive import (
     delete_manual_preventive_reminder,
     get_manual_preventive_reminder,
@@ -108,17 +107,7 @@ def _admin_user_from_token(db: Session, token: str) -> User:
 
 
 def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    if get_plan_definition(tenant.active_plan).is_beta_internal:
-        return
-    if tenant_has_marketplace_app(db, tenant_id, "whatsapp"):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Módulo WhatsApp não contratado. Solicite na Loja de integrações.",
-    )
+    require_whatsapp_module(db, tenant_id)
 
 
 @router.get("/settings", response_model=PreventiveSettingsOut)
@@ -151,6 +140,7 @@ async def upload_preventive_banner_image(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     file: UploadFile = File(...),
+    model_id: str | None = Query(default=None, max_length=32),
 ) -> dict:
     _require_whatsapp_module(db, current_user.tenant_id)
     raw = await file.read()
@@ -160,6 +150,7 @@ async def upload_preventive_banner_image(
             tenant_id=current_user.tenant_id,
             file_bytes=raw,
             source_filename=file.filename,
+            model_id=model_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -181,10 +172,11 @@ async def upload_preventive_banner_image(
 def delete_preventive_banner_image(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    model_id: str | None = Query(default=None, max_length=32),
 ) -> dict:
     _require_whatsapp_module(db, current_user.tenant_id)
     try:
-        clear_preventive_promo_image(db, tenant_id=current_user.tenant_id)
+        clear_preventive_promo_image(db, tenant_id=current_user.tenant_id, model_id=model_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return get_preventive_settings(db, current_user.tenant_id)
@@ -194,15 +186,17 @@ def delete_preventive_banner_image(
 def get_preventive_banner_image_file(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    model_id: str | None = Query(default=None, max_length=32),
 ) -> Response:
     """Proxy same-origin do banner preventivo (prévia no painel)."""
+    from app.preventive_promo_image import preventive_model_banner_s3_key
     from app.tenant_logo import fetch_s3_image_bytes
 
     _require_whatsapp_module(db, current_user.tenant_id)
     tenant = db.get(Tenant, current_user.tenant_id)
     if tenant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    s3_key = (tenant.preventive_promo_image_s3_key or "").strip()
+    s3_key = preventive_model_banner_s3_key(tenant, model_id) or ""
     if not s3_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Banner não cadastrado.")
     try:
@@ -527,6 +521,7 @@ def send_reminder(
         payload.client_id,
         payload.year,
         payload.month,
+        payload.message_template_kind,
     )
     return PreventiveSendReminderOut(processing_in_background=True, whatsapp_job=None)
 
@@ -564,6 +559,7 @@ def post_register_entry(
         promo_image_base64=payload.promo_image_base64,
         promo_image_mimetype=payload.promo_image_mimetype,
         technical_problem_hint=payload.technical_problem_hint,
+        message_template_kind=payload.message_template_kind,
     )
     return PreventiveRegisterEntryOut(
         historico=HistoricoServicoOut.model_validate(hist),
@@ -604,6 +600,7 @@ def patch_manual_reminder(
         data_realizacao=payload.data_realizacao,
         equipment_label=payload.equipment_label,
         notes=payload.notes,
+        message_template_kind=payload.message_template_kind,
     )
     data = get_manual_preventive_reminder(db, tenant_id=current_user.tenant_id, schedule_id=schedule_id)
     return PreventiveManualReminderOut.model_validate(data)

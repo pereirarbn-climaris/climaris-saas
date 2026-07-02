@@ -38,6 +38,16 @@ export function defaultCampaignMessage() {
   return "Olá {nome_cliente}! Aqui é da {empresa}. Podemos ajudar com uma revisão preventiva?";
 }
 
+export type PreviewClientRow = {
+  id: number;
+  source?: "client" | "external";
+  external_lead_id?: number | null;
+};
+
+export function previewRecipientKey(client: PreviewClientRow): string {
+  return `${client.source ?? "client"}-${client.id}`;
+}
+
 export function formatEta(seconds: number): string {
   if (seconds < 60) return `~${Math.ceil(seconds)} s`;
   const min = Math.ceil(seconds / 60);

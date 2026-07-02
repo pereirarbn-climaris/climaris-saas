@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -38,6 +39,7 @@ from models import (
     OrderStatus,
     PreventiveInterestKind,
     PreventiveInterestLead,
+    PreventiveReminderContext,
     Service,
     ServiceOrder,
     ServiceOrderEquipmentService,
@@ -63,6 +65,7 @@ class PreventiveReminderSendBundle:
     b64: str | None
     mimetype: str
     instance_name: str
+    template_model_id: str
 
 
 def build_preventive_reminder_send_bundle(
@@ -74,6 +77,8 @@ def build_preventive_reminder_send_bundle(
     promo_image_base64: str | None = None,
     promo_image_mimetype: str | None = None,
     technical_problem_hint: str | None = None,
+    template_variant_override: PreventiveTemplateVariant | None = None,
+    items_for_template: list[dict[str, Any]] | None = None,
 ) -> PreventiveReminderSendBundle:
     """Valida histórico/cliente/serviço/WhatsApp e monta texto e mídia; levanta HTTPException se não for possível enviar."""
     hist = db.execute(
@@ -103,6 +108,11 @@ def build_preventive_reminder_send_bundle(
     today = tenant_local_date(datetime.now(timezone.utc), tenant.timezone)
     equipment_label = _equipment_label_from_historico_notes(hist.notes)
     intervalo = elapsed_preventive_interval_label(last=hist.data_realizacao, today=today)
+    template_variant = resolve_preventive_template_variant_for_send(
+        tenant,
+        items_for_template,
+        override=template_variant_override,
+    )
     body = render_preventive_message(
         tenant=tenant,
         client_name=cli.name,
@@ -120,6 +130,7 @@ def build_preventive_reminder_send_bundle(
         else None,
         brand_model=None,
         intervalo_label=intervalo,
+        template_variant=template_variant,
     )
     body = _finalize_preventive_whatsapp_body(
         db,
@@ -127,6 +138,8 @@ def build_preventive_reminder_send_bundle(
         tenant=tenant,
         rendered_body=body,
         client_name=cli.name,
+        template_pattern=tenant_preventive_template_text(tenant, variant=template_variant),
+        template_model_id=template_variant,
     )
 
     url, b64, mimetype = _resolve_preventive_promo_media(
@@ -134,6 +147,7 @@ def build_preventive_reminder_send_bundle(
         promo_image_url=promo_image_url,
         promo_image_base64=promo_image_base64,
         promo_image_mimetype=promo_image_mimetype,
+        template_model_id=template_variant,
     )
 
     instance_name = _resolve_tenant_instance(db, tenant_id)
@@ -147,11 +161,13 @@ def build_preventive_reminder_send_bundle(
         b64=b64,
         mimetype=mimetype,
         instance_name=instance_name,
+        template_model_id=template_variant,
     )
 
 
 PREVENTIVE_MORE_PREFIX = "climaris:preventive:more:"
 PREVENTIVE_SCHEDULE_PREFIX = "climaris:preventive:schedule:"
+PREVENTIVE_CUSTOM_PREFIX = "climaris:preventive:custom:"
 REMINDER_KIND_MANUAL = "preventive_whatsapp_manual"
 REMINDER_KIND_AUTO_DUE = "preventive_auto_due_day"
 REMINDER_KIND_AUTO_ADVANCE = "preventive_auto_advance"
@@ -164,6 +180,35 @@ DEFAULT_MESSAGE_TEMPLATE = (
     "Olá, {cliente}! Notamos que faz {intervalo} desde a última manutenção do seu "
     "{equipamento} ({marca_modelo}). Vamos agendar a próxima preventiva?"
 )
+
+DEFAULT_MESSAGE_TEMPLATE_FIRST = (
+    "Olá, {cliente}! Tudo bem? Está na hora da primeira higienização completa do seu "
+    "{equipamento}. A limpeza regular garante eficiência energética e qualidade do ar. "
+    "Vamos agendar?"
+)
+
+PreventiveTemplateVariant = str  # id do modelo (returning, first, m3, …)
+
+MESES_PT = (
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+)
+
+
+def tenant_current_month_name_pt(tz_name: str, *, reference: datetime | None = None) -> str:
+    """Nome do mês civil no fuso do tenant (ex.: Junho)."""
+    local = tenant_local_date(reference or datetime.now(timezone.utc), tz_name)
+    return MESES_PT[local.month - 1]
 
 
 def format_preventive_interval_label(
@@ -185,6 +230,66 @@ def format_preventive_interval_label(
     return ""
 
 
+def tenant_preventive_template_text(tenant: Tenant, *, variant: PreventiveTemplateVariant = "returning") -> str:
+    """Texto cru do template (sem substituição de tags) para o modelo indicado."""
+    from app.preventive_message_models import (
+        normalize_preventive_model_id,
+        tenant_default_template_model_id,
+        tenant_preventive_template_body,
+    )
+
+    model_id = normalize_preventive_model_id(tenant, variant) or tenant_default_template_model_id(tenant)
+    return tenant_preventive_template_body(tenant, model_id=model_id)
+
+
+def tenant_default_preventive_template_variant(tenant: Tenant) -> PreventiveTemplateVariant:
+    """Modelo padrão do tenant (pré-selecionado em novos lembretes)."""
+    from app.preventive_message_models import tenant_default_template_model_id
+
+    return tenant_default_template_model_id(tenant)
+
+
+def normalize_preventive_template_kind(
+    value: str | None,
+    *,
+    tenant: Tenant | None = None,
+) -> PreventiveTemplateVariant | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if tenant is not None:
+        from app.preventive_message_models import normalize_preventive_model_id
+
+        mid = normalize_preventive_model_id(tenant, raw)
+        if mid:
+            return mid
+    lowered = raw.lower()
+    if lowered in ("first", "returning"):
+        return lowered
+    if re.match(r"^[a-z0-9_-]{1,32}$", lowered):
+        return lowered
+    return None
+
+
+def resolve_preventive_template_variant_for_send(
+    tenant: Tenant,
+    items: list[dict[str, Any]] | None = None,
+    *,
+    override: PreventiveTemplateVariant | None = None,
+) -> PreventiveTemplateVariant:
+    """Prioridade: override do envio → agenda do item → padrão do tenant."""
+    if override:
+        kind = normalize_preventive_template_kind(override, tenant=tenant)
+        if kind is not None:
+            return kind
+    if items:
+        for item in items:
+            kind = normalize_preventive_template_kind(item.get("message_template_kind"), tenant=tenant)
+            if kind is not None:
+                return kind
+    return tenant_default_preventive_template_variant(tenant)
+
+
 def render_preventive_message(
     *,
     tenant: Tenant,
@@ -197,10 +302,11 @@ def render_preventive_message(
     interval_value: int | None = None,
     interval_type: str | None = None,
     intervalo_label: str | None = None,
+    template_variant: PreventiveTemplateVariant = "returning",
 ) -> str:
-    """Substitui tags do template ({cliente}, {equipamento}, …) pelos dados reais."""
+    """Substitui tags do template ({cliente}, {equipamento}, {mes_atual}, …) pelos dados reais."""
     problema = (problem_hint or tenant.preventive_technical_problem_hint or DEFAULT_TECHNICAL_PROBLEM).strip()
-    tpl = (tenant.preventive_message_template or DEFAULT_MESSAGE_TEMPLATE).strip()
+    tpl = tenant_preventive_template_text(tenant, variant=template_variant)
     cliente = client_name.strip() or "Cliente"
     servico = service_name.strip() or "serviço"
     equipamento = (equipment_name or servico).strip() or "equipamento"
@@ -222,6 +328,7 @@ def render_preventive_message(
         "{equipamento}": equipamento,
         "{marca_modelo}": marca_modelo,
         "{intervalo}": intervalo,
+        "{mes_atual}": tenant_current_month_name_pt(tenant.timezone),
         "{meses}": str(months_display) if months_display else "",
         "{servico}": servico,
         "{problema}": problema,
@@ -364,14 +471,26 @@ def _finalize_preventive_whatsapp_body(
     tenant: Tenant,
     rendered_body: str,
     client_name: str,
+    template_pattern: str | None = None,
+    template_model_id: str | None = None,
 ) -> str:
+    from app.preventive_message_models import model_automation
+
+    pattern = (
+        template_pattern
+        if template_pattern is not None
+        else tenant.preventive_message_template
+    )
+    auto = model_automation(tenant, template_model_id) if template_model_id else None
     return polish_preventive_whatsapp_message(
         db,
         tenant=tenant,
         tenant_id=tenant_id,
         rendered_body=rendered_body,
         client_name=client_name,
-        template_pattern=tenant.preventive_message_template,
+        template_pattern=pattern,
+        ai_message_enabled=auto["ai_message_enabled"] if auto else None,
+        ai_message_fidelity=auto["ai_message_fidelity"] if auto else None,
     )
 
 
@@ -381,13 +500,22 @@ def _resolve_preventive_promo_media(
     promo_image_url: str | None = None,
     promo_image_base64: str | None = None,
     promo_image_mimetype: str | None = None,
+    template_model_id: str | None = None,
 ) -> tuple[str | None, str | None, str]:
+    from app.preventive_message_models import model_attachment
+
     url = (promo_image_url or "").strip() or None
     b64 = (promo_image_base64 or "").strip() or None
+    attach = model_attachment(tenant, template_model_id) if template_model_id else None
     if not url and not b64:
-        if not bool(getattr(tenant, "preventive_promo_image_enabled", False)):
+        if attach and not attach.get("promo_image_enabled"):
             return None, None, "image/jpeg"
-        url = (tenant.preventive_promo_image_url or "").strip() or None
+        if attach and attach.get("promo_image_enabled"):
+            url = (attach.get("promo_image_url") or "").strip() or None
+        elif not bool(getattr(tenant, "preventive_promo_image_enabled", False)):
+            return None, None, "image/jpeg"
+        else:
+            url = (tenant.preventive_promo_image_url or "").strip() or None
     if b64 and len(b64) > 350_000:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -395,6 +523,7 @@ def _resolve_preventive_promo_media(
         )
     mimetype = (
         (promo_image_mimetype or "").strip()
+        or (attach.get("promo_image_mimetype") if attach else None)
         or (tenant.preventive_promo_image_mimetype or "").strip()
         or "image/jpeg"
     )
@@ -409,6 +538,11 @@ def load_tenant_settings_row(db: Session, tenant_id: int) -> Tenant:
 
 
 def get_preventive_settings(db: Session, tenant_id: int) -> dict[str, Any]:
+    from app.preventive_message_models import (
+        load_preventive_message_models,
+        tenant_default_template_model_id,
+    )
+
     t = load_tenant_settings_row(db, tenant_id)
     image_url = t.preventive_promo_image_url
     has_banner = bool((getattr(t, "preventive_promo_image_s3_key", None) or "").strip())
@@ -422,9 +556,28 @@ def get_preventive_settings(db: Session, tenant_id: int) -> dict[str, Any]:
         "preventive_button_more_text": t.preventive_button_more_text,
         "preventive_button_schedule_text": t.preventive_button_schedule_text,
         "preventive_message_template": t.preventive_message_template,
+        "preventive_message_template_first": t.preventive_message_template_first,
+        "preventive_message_models": load_preventive_message_models(t),
+        "preventive_default_template_model_id": tenant_default_template_model_id(t),
+        "preventive_default_template_kind": tenant_default_preventive_template_variant(t),
+        "preventive_ai_message_enabled": bool(getattr(t, "preventive_ai_message_enabled", True)),
+        "preventive_ai_message_fidelity": (
+            getattr(t, "preventive_ai_message_fidelity", None) or "faithful"
+        ),
         "preventive_auto_remind_days_before": int(t.preventive_auto_remind_days_before or 0),
         "preventive_auto_whatsapp_enabled": bool(getattr(t, "preventive_auto_whatsapp_enabled", False)),
+        "preventive_auto_schedule_enabled": bool(getattr(t, "preventive_auto_schedule_enabled", False)),
+        "preventive_action_buttons_enabled": bool(getattr(t, "preventive_action_buttons_enabled", False)),
+        "preventive_button_schedule_enabled": bool(getattr(t, "preventive_button_schedule_enabled", True)),
+        "preventive_button_custom_enabled": bool(getattr(t, "preventive_button_custom_enabled", True)),
+        "preventive_button_custom_result": (
+            getattr(t, "preventive_button_custom_result", None) or "lead"
+        ),
+        "preventive_button_custom_reply_text": getattr(t, "preventive_button_custom_reply_text", None),
+        "preventive_button_custom_url": getattr(t, "preventive_button_custom_url", None),
         "default_message_template": DEFAULT_MESSAGE_TEMPLATE,
+        "default_message_template_first": DEFAULT_MESSAGE_TEMPLATE_FIRST,
+        "default_message_template_returning": DEFAULT_MESSAGE_TEMPLATE,
     }
 
 
@@ -433,6 +586,14 @@ def patch_preventive_settings(db: Session, tenant_id: int, payload: PreventiveSe
     data = payload.model_dump(exclude_unset=True)
     if "preventive_image_url" in data:
         data["preventive_promo_image_url"] = data.pop("preventive_image_url")
+    if "preventive_message_models" in data:
+        from app.preventive_message_models import sync_preventive_models_to_tenant
+
+        raw_models = data.pop("preventive_message_models") or []
+        models_payload = [
+            m.model_dump() if hasattr(m, "model_dump") else m for m in raw_models
+        ]
+        sync_preventive_models_to_tenant(t, models_payload)
     for key, val in data.items():
         setattr(t, key, val)
     db.add(t)
@@ -470,11 +631,13 @@ def build_grouped_preview(
         )
     tenant = load_tenant_settings_row(db, tenant_id)
     items = group["items"]
+    template_variant = resolve_preventive_template_variant_for_send(tenant, items)
     text = render_preventive_grouped_message(
         tenant=tenant,
         client_name=str(group["client_name"]),
         items=items,
         problem_hint=override_problem,
+        template_variant=template_variant,
     )
     text = _finalize_preventive_whatsapp_body(
         db,
@@ -482,14 +645,20 @@ def build_grouped_preview(
         tenant=tenant,
         rendered_body=text,
         client_name=str(group["client_name"]),
+        template_pattern=tenant_preventive_template_text(tenant, variant=template_variant),
+        template_model_id=template_variant,
     )
+    from app.preventive_message_models import model_attachment, model_automation
+
+    attach = model_attachment(tenant, template_variant)
+    auto = model_automation(tenant, template_variant)
     count = len(items)
     return PreventivePreviewOut(
         message_text=text,
-        image_url=tenant.preventive_promo_image_url,
-        image_mimetype=tenant.preventive_promo_image_mimetype or "image/jpeg",
-        button_more_label=tenant.preventive_button_more_text,
-        button_schedule_label=tenant.preventive_button_schedule_text,
+        image_url=attach.get("promo_image_url") if attach.get("promo_image_enabled") else None,
+        image_mimetype=attach.get("promo_image_mimetype") or "image/jpeg",
+        button_more_label=auto.get("button_more_text") or tenant.preventive_button_more_text,
+        button_schedule_label=auto.get("button_schedule_text") or tenant.preventive_button_schedule_text,
         equipment_count=count,
         is_grouped=count > 1,
     )
@@ -658,6 +827,18 @@ def _pending_preventive_order_ids_by_equipment_service(
     return out
 
 
+def _preventive_whatsapp_error_display(raw: str | None) -> str | None:
+    from app.whatsapp_error_messages import humanize_whatsapp_send_error
+
+    err = (raw or "").strip()
+    if not err:
+        return None
+    humanized = humanize_whatsapp_send_error(err)
+    if len(humanized) > 400:
+        return humanized[:400] + "…"
+    return humanized
+
+
 def _whatsapp_job_is_sent(job: WhatsappMessageJob | None) -> bool:
     if job is None:
         return False
@@ -775,14 +956,16 @@ def enrich_preventive_items_campaign_status(
     tenant = db.get(Tenant, tenant_id)
     holidays = load_tenant_holiday_dates(db, tenant_id) if tenant else set()
 
-    wa_by_client = _resolve_preventive_whatsapp_jobs_by_client(
-        db, tenant_id=tenant_id, client_ids=client_ids
-    )
-    sent_by_client = _preventive_sent_reminders_by_client(
+    sent_due_months, jobs_by_due_month = _preventive_sent_context_by_due_month(
         db,
         tenant_id=tenant_id,
         client_ids=client_ids,
-        tenant_tz=tenant_tz,
+    )
+    historico_ids = sorted({int(i["historico_servico_id"]) for i in items if int(i.get("historico_servico_id") or 0) > 0})
+    wa_by_hist = _latest_preventive_whatsapp_jobs_by_historico(
+        db,
+        tenant_id=tenant_id,
+        historico_ids=historico_ids,
     )
     pending_os = _pending_preventive_order_ids_by_equipment_service(
         db,
@@ -795,35 +978,17 @@ def enrich_preventive_items_campaign_status(
         eid = int(item.get("equipment_id") or 0)
         sid = int(item.get("service_id") or 0)
         dias = int(item.get("dias_ate_vencimento") or 0)
-        due = _preventive_item_due_date(item)
+        due_key = _preventive_item_due_month_key(item)
 
         order_id = pending_os.get((eid, sid)) if eid > 0 and sid > 0 else None
-        job = wa_by_client.get(cid) if cid > 0 else None
-        if job is None and int(item.get("historico_servico_id") or 0) > 0:
-            hist_job = _latest_preventive_whatsapp_jobs_by_historico(
-                db,
-                tenant_id=tenant_id,
-                historico_ids=[int(item["historico_servico_id"])],
-            ).get(int(item["historico_servico_id"]))
-            job = hist_job
+        job = jobs_by_due_month.get(due_key)
+        hid = int(item.get("historico_servico_id") or 0)
+        if job is None and hid > 0:
+            job = wa_by_hist.get(hid)
 
-        if tenant:
-            reminder_target = effective_preventive_reminder_day(tenant, due, advance_days, holidays)
-        else:
-            reminder_target = due - timedelta(days=advance_days) if advance_days > 0 else due
-        auto_reminder_sent = False
-        for sent_day, kind in sent_by_client.get(cid, []):
-            if sent_day == reminder_target:
-                auto_reminder_sent = True
-                break
-            if advance_days > 0 and kind == REMINDER_KIND_AUTO_ADVANCE:
-                auto_reminder_sent = True
-                break
-            if advance_days == 0 and kind == REMINDER_KIND_AUTO_DUE:
-                auto_reminder_sent = True
-                break
-
-        mensagem_enviada = auto_reminder_sent or _whatsapp_job_is_sent(job)
+        mensagem_enviada = due_key in sent_due_months
+        if not mensagem_enviada and hid > 0:
+            mensagem_enviada = _whatsapp_job_is_sent(wa_by_hist.get(hid))
         if not mensagem_enviada and item.get("ultimo_whatsapp_status"):
             try:
                 mensagem_enviada = WhatsappMessageStatus(str(item["ultimo_whatsapp_status"])) in _WHATSAPP_SENT_STATUSES
@@ -854,7 +1019,7 @@ def enrich_preventive_items_campaign_status(
             item["ultimo_whatsapp_status"] = st
             err = (job.error_message or "").strip()
             if job.status == WhatsappMessageStatus.FAILED and err:
-                item["ultimo_whatsapp_erro"] = err[:400] + ("…" if len(err) > 400 else "")
+                item["ultimo_whatsapp_erro"] = _preventive_whatsapp_error_display(err)
             else:
                 item["ultimo_whatsapp_erro"] = None
             item["ultimo_whatsapp_em"] = job.failed_at or job.sent_at or job.created_at
@@ -984,9 +1149,7 @@ def _list_preventive_items_from_historico(db: Session, *, tenant_id: int, window
         row["ultimo_whatsapp_status"] = st
         err = (job.error_message or "").strip()
         if job.status == WhatsappMessageStatus.FAILED and err:
-            if len(err) > 400:
-                err = err[:400] + "…"
-            row["ultimo_whatsapp_erro"] = err
+            row["ultimo_whatsapp_erro"] = _preventive_whatsapp_error_display(err)
         else:
             row["ultimo_whatsapp_erro"] = None
         row["ultimo_whatsapp_em"] = job.failed_at or job.sent_at or job.created_at
@@ -1000,6 +1163,74 @@ def _preventive_item_due_month_key(item: dict[str, Any]) -> tuple[int, int, int]
     if isinstance(due, datetime):
         due = due.date()
     return (int(item["client_id"]), int(due.year), int(due.month))
+
+
+def _parse_due_month_key_from_item_payload(item: dict[str, Any]) -> tuple[int, int, int] | None:
+    try:
+        cid = int(item.get("client_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    if cid <= 0:
+        return None
+    due = item.get("data_proximo_vencimento")
+    if due is None:
+        return None
+    if isinstance(due, str):
+        try:
+            due = date.fromisoformat(due[:10])
+        except ValueError:
+            return None
+    elif isinstance(due, datetime):
+        due = due.date()
+    if not isinstance(due, date):
+        return None
+    return (cid, int(due.year), int(due.month))
+
+
+def _preventive_sent_context_by_due_month(
+    db: Session,
+    *,
+    tenant_id: int,
+    client_ids: list[int],
+    lookback_days: int = 400,
+) -> tuple[set[tuple[int, int, int]], dict[tuple[int, int, int], WhatsappMessageJob]]:
+    """Mensagens preventivas enviadas por (cliente, mês de vencimento), via snapshot do grupo."""
+    if not client_ids:
+        return set(), {}
+    from app.preventive_schedule_whatsapp import _deserialize_items
+
+    since = datetime.now(timezone.utc) - timedelta(days=max(1, lookback_days))
+    rows = db.execute(
+        select(PreventiveReminderContext, WhatsappMessageJob)
+        .outerjoin(WhatsappMessageJob, WhatsappMessageJob.id == PreventiveReminderContext.whatsapp_job_id)
+        .where(
+            PreventiveReminderContext.tenant_id == tenant_id,
+            PreventiveReminderContext.client_id.in_(client_ids),
+            PreventiveReminderContext.created_at >= since,
+        )
+        .order_by(PreventiveReminderContext.id.desc())
+    ).all()
+
+    keys: set[tuple[int, int, int]] = set()
+    jobs_by_key: dict[tuple[int, int, int], WhatsappMessageJob] = {}
+    for ctx, job in rows:
+        if job is None or not _whatsapp_job_is_sent(job):
+            continue
+        try:
+            payload_items = _deserialize_items(ctx.group_items_json)
+        except (json.JSONDecodeError, TypeError):
+            payload_items = []
+        item_keys: set[tuple[int, int, int]] = set()
+        for it in payload_items:
+            key = _parse_due_month_key_from_item_payload(it)
+            if key:
+                item_keys.add(key)
+        for key in item_keys:
+            keys.add(key)
+            existing = jobs_by_key.get(key)
+            if existing is None or _prefer_preventive_whatsapp_job(job, existing):
+                jobs_by_key[key] = job
+    return keys, jobs_by_key
 
 
 def _normalize_equipment_label_text(label: str) -> str:
@@ -1120,6 +1351,7 @@ def render_preventive_grouped_message(
     client_name: str,
     items: list[dict[str, Any]],
     problem_hint: str | None = None,
+    template_variant: PreventiveTemplateVariant = "returning",
 ) -> str:
     """Mensagem consolidada quando vários equipamentos do mesmo cliente vencem no mesmo mês."""
     if len(items) == 1:
@@ -1132,6 +1364,7 @@ def render_preventive_grouped_message(
             last = last.date()
         today = tenant_local_date(datetime.now(timezone.utc), tenant.timezone)
         intervalo = elapsed_preventive_interval_label(last=last or due, today=today)
+        brand = _preventive_equipment_product_label(item) or None
         return render_preventive_message(
             tenant=tenant,
             client_name=client_name,
@@ -1139,12 +1372,11 @@ def render_preventive_grouped_message(
             months_display=months_between_approx(last or due, today),
             problem_hint=problem_hint,
             equipment_name=_preventive_message_equipment_label(item),
-            brand_model=None,
+            brand_model=brand,
             intervalo_label=intervalo,
+            template_variant=template_variant,
         )
 
-    problema = (problem_hint or tenant.preventive_technical_problem_hint or DEFAULT_TECHNICAL_PROBLEM).strip()
-    cliente = client_name.strip() or "Cliente"
     equip_lines: list[str] = []
     for item in sorted(items, key=lambda r: (_preventive_message_equipment_label(r), str(r.get("data_proximo_vencimento")))):
         name = _preventive_message_equipment_label(item)
@@ -1154,36 +1386,31 @@ def render_preventive_grouped_message(
         equip_lines.append(f"• {name} — vencimento {due.strftime('%d/%m/%Y')}")
     equipamentos_lista = "\n".join(equip_lines)
 
-    tpl = (tenant.preventive_message_template or "").strip()
+    first = items[0]
+    due = first["data_proximo_vencimento"]
+    if isinstance(due, datetime):
+        due = due.date()
+    last = first.get("data_ultima_realizacao")
+    if isinstance(last, datetime):
+        last = last.date()
+    today = tenant_local_date(datetime.now(timezone.utc), tenant.timezone)
+    intervalo = elapsed_preventive_interval_label(last=last or due, today=today)
+    brand = _preventive_equipment_product_label(first) or None
+    base = render_preventive_message(
+        tenant=tenant,
+        client_name=client_name,
+        service_name=str(first.get("service_name") or ""),
+        months_display=months_between_approx(last or due, today),
+        problem_hint=problem_hint,
+        equipment_name=_preventive_message_equipment_label(first),
+        brand_model=brand,
+        intervalo_label=intervalo,
+        template_variant=template_variant,
+    )
+    tpl = tenant_preventive_template_text(tenant, variant=template_variant)
     if tpl and "{equipamentos_lista}" in tpl:
-        first = items[0]
-        due = first["data_proximo_vencimento"]
-        if isinstance(due, datetime):
-            due = due.date()
-        last = first.get("data_ultima_realizacao")
-        if isinstance(last, datetime):
-            last = last.date()
-        today = tenant_local_date(datetime.now(timezone.utc), tenant.timezone)
-        intervalo = elapsed_preventive_interval_label(last=last or due, today=today)
-        base = render_preventive_message(
-            tenant=tenant,
-            client_name=client_name,
-            service_name=str(first.get("service_name") or ""),
-            months_display=months_between_approx(last or due, today),
-            problem_hint=problem_hint,
-            equipment_name=_preventive_message_equipment_label(first),
-            brand_model=None,
-            intervalo_label=intervalo,
-        )
         return base.replace("{equipamentos_lista}", equipamentos_lista)
-
-    count = len(items)
-    equip_label = f"{count} equipamento{'s' if count != 1 else ''}"
-    return (
-        f"Olá, {cliente}! Notamos que a manutenção preventiva de {equip_label} "
-        f"está vencendo:\n\n{equipamentos_lista}\n\n"
-        f"Isso pode gerar {problema}. Vamos agendar?"
-    ).strip()
+    return base
 
 
 def _resolve_group_anchor_historico_id(items: list[dict[str, Any]]) -> int | None:
@@ -1449,6 +1676,82 @@ def _already_sent_reminder_on_tenant_local_day(
     return False
 
 
+def _preventive_button_display_text(label: str, *, max_len: int = 20) -> str:
+    text = (label or "").strip()
+    if len(text) > max_len:
+        return text[:max_len]
+    return text or "Opção"
+
+
+def build_preventive_action_buttons(
+    tenant: Tenant,
+    *,
+    historico_servico_id: int | None,
+    client_id: int | None,
+    template_model_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Monta botões Evolution (reply) conforme configuração do modelo."""
+    from app.preventive_message_models import model_config_namespace
+
+    cfg = (
+        model_config_namespace(tenant, template_model_id)
+        if template_model_id
+        else tenant
+    )
+    if not bool(getattr(cfg, "preventive_action_buttons_enabled", False)):
+        return []
+    buttons: list[dict[str, Any]] = []
+    hid = int(historico_servico_id or 0)
+    cid = int(client_id or 0)
+    anchor = hid if hid > 0 else cid
+
+    if bool(getattr(cfg, "preventive_button_schedule_enabled", True)):
+        if bool(getattr(cfg, "preventive_auto_schedule_enabled", False)) and anchor > 0:
+            buttons.append(
+                {
+                    "buttonId": f"{PREVENTIVE_SCHEDULE_PREFIX}{anchor}",
+                    "buttonText": {
+                        "displayText": _preventive_button_display_text(
+                            getattr(cfg, "preventive_button_schedule_text", None) or "Agendar agora"
+                        ),
+                    },
+                }
+            )
+
+    if bool(getattr(cfg, "preventive_button_custom_enabled", True)) and anchor > 0:
+        bid = f"{PREVENTIVE_CUSTOM_PREFIX}{anchor}"
+        buttons.append(
+            {
+                "buttonId": bid,
+                "buttonText": {
+                    "displayText": _preventive_button_display_text(
+                        getattr(cfg, "preventive_button_more_text", None) or "Sim, quero saber mais"
+                    ),
+                },
+            }
+        )
+    return buttons[:3]
+
+
+def _preventive_buttons_text_fallback(tenant: Tenant, buttons: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for btn in buttons:
+        bid = str(btn.get("buttonId") or "")
+        display = ""
+        bt = btn.get("buttonText")
+        if isinstance(bt, dict):
+            display = str(bt.get("displayText") or "").strip()
+        if bid.startswith(PREVENTIVE_SCHEDULE_PREFIX):
+            lines.append(f"👉 {display}: responda AGENDAR")
+        elif bid.startswith(PREVENTIVE_MORE_PREFIX):
+            lines.append(f"👉 {display}: responda MAIS")
+        elif bid.startswith(PREVENTIVE_CUSTOM_PREFIX):
+            lines.append(f"👉 {display}")
+        elif display:
+            lines.append(f"👉 {display}")
+    return "\n".join(lines)
+
+
 def _deliver_preventive_evolution_message(
     db: Session,
     *,
@@ -1464,6 +1767,7 @@ def _deliver_preventive_evolution_message(
     mimetype: str,
     reminder_kind: str,
     job: WhatsappMessageJob,
+    template_model_id: str | None = None,
 ) -> None:
     from app.whatsapp import finalize_pending_client_whatsapp_flows
 
@@ -1475,34 +1779,41 @@ def _deliver_preventive_evolution_message(
     )
     try:
         media_sent = False
-        caption_for_media = body
         if url or b64:
             evolution_send_media_message(
                 instance_name,
                 dest,
-                caption=caption_for_media,
+                caption=body,
                 media_url=url if url else None,
                 media_base64=b64 if not url else None,
                 mimetype=mimetype,
             )
             media_sent = True
-        short_follow = "Como podemos ajudar?"
-        # Sempre texto simples (sem botões interativos): melhor compatibilidade Web/celular e Evolution.
-        if media_sent:
-            lines = [
-                short_follow,
-                "",
-                f"👉 {tenant.preventive_button_more_text}: responda MAIS",
-                f"👉 {tenant.preventive_button_schedule_text}: responda AGENDAR",
-            ]
-        else:
-            lines = [
-                body,
-                "",
-                f"👉 {tenant.preventive_button_more_text}: responda MAIS",
-                f"👉 {tenant.preventive_button_schedule_text}: responda AGENDAR",
-            ]
-        _evolution_send_text(instance_name, dest, "\n".join(lines))
+
+        action_buttons = build_preventive_action_buttons(
+            tenant,
+            historico_servico_id=historico_servico_id,
+            client_id=client_id,
+            template_model_id=template_model_id,
+        )
+        if action_buttons:
+            from app.whatsapp import _evolution_send_buttons
+
+            button_body = "Como podemos ajudar?" if media_sent else body
+            try:
+                _evolution_send_buttons(
+                    instance_name,
+                    dest,
+                    title="Manutenção preventiva",
+                    body=button_body,
+                    footer="",
+                    buttons=action_buttons,
+                )
+            except HTTPException:
+                fallback_lines = [button_body, "", _preventive_buttons_text_fallback(tenant, action_buttons)]
+                _evolution_send_text(instance_name, dest, "\n".join(fallback_lines).strip())
+        elif not media_sent:
+            _evolution_send_text(instance_name, dest, body)
 
         job.status = WhatsappMessageStatus.SENT
         job.sent_at = datetime.now(timezone.utc)
@@ -1530,15 +1841,18 @@ def _deliver_preventive_evolution_message(
             job_id=job.id,
         )
     except HTTPException as exc:
+        from app.whatsapp import _whatsapp_job_send_failure_detail
+
         job.status = WhatsappMessageStatus.FAILED
         job.failed_at = datetime.now(timezone.utc)
-        job.error_message = str(exc.detail)
+        detail = _whatsapp_job_send_failure_detail(exc)
+        job.error_message = detail
         append_event(
             db,
             tenant_id=tenant_id,
             event_type="preventive_reminder_failed",
             payload={
-                "error": str(exc.detail),
+                "error": detail,
                 "historico_servico_id": historico_servico_id,
                 "client_id": client_id,
             },
@@ -1546,6 +1860,14 @@ def _deliver_preventive_evolution_message(
         )
         db.commit()
         db.refresh(job)
+        from app.notifications import (
+            dispatch_whatsapp_send_failed_notification,
+            safe_commit_notification_dispatch,
+        )
+
+        safe_commit_notification_dispatch(
+            db, dispatch_whatsapp_send_failed_notification, job=job
+        )
         raise
 
     db.commit()
@@ -1566,6 +1888,7 @@ def dispatch_preventive_reminder(
     skip_evolution_send: bool = False,
     scheduled_send_at_utc: datetime | None = None,
     window_days: int = 400,
+    template_variant_override: PreventiveTemplateVariant | None = None,
 ) -> WhatsappMessageJob:
     group = find_preventive_group_for_item(
         db,
@@ -1586,6 +1909,7 @@ def dispatch_preventive_reminder(
             reminder_kind=reminder_kind,
             skip_evolution_send=skip_evolution_send,
             scheduled_send_at_utc=scheduled_send_at_utc,
+            template_variant_override=template_variant_override,
         )
 
     bundle = build_preventive_reminder_send_bundle(
@@ -1596,6 +1920,8 @@ def dispatch_preventive_reminder(
         promo_image_base64=promo_image_base64,
         promo_image_mimetype=promo_image_mimetype,
         technical_problem_hint=technical_problem_hint,
+        template_variant_override=template_variant_override,
+        items_for_template=group["items"] if group else None,
     )
     hist = bundle.hist
     tenant = bundle.tenant
@@ -1605,6 +1931,7 @@ def dispatch_preventive_reminder(
     b64 = bundle.b64
     mimetype = bundle.mimetype
     instance_name = bundle.instance_name
+    template_model_id = bundle.template_model_id
 
     now_utc = datetime.now(timezone.utc)
     if now_utc.tzinfo is None:
@@ -1657,6 +1984,7 @@ def dispatch_preventive_reminder(
         mimetype=mimetype,
         reminder_kind=reminder_kind,
         job=job,
+        template_model_id=template_model_id,
     )
     item = _historico_item_dict(
         hist,
@@ -1690,7 +2018,8 @@ def build_preventive_grouped_send_bundle(
     promo_image_base64: str | None = None,
     promo_image_mimetype: str | None = None,
     technical_problem_hint: str | None = None,
-) -> tuple[Tenant, Client, str, str, str | None, str | None, str, str, int | None]:
+    template_variant_override: PreventiveTemplateVariant | None = None,
+) -> tuple[Tenant, Client, str, str, str | None, str | None, str, str, int | None, str]:
     if not items:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nenhum item para enviar.")
     client_id = int(items[0]["client_id"])
@@ -1715,11 +2044,17 @@ def build_preventive_grouped_send_bundle(
             detail="Cliente sem WhatsApp válido cadastrado.",
         )
     tenant = load_tenant_settings_row(db, tenant_id)
+    template_variant = resolve_preventive_template_variant_for_send(
+        tenant,
+        items,
+        override=template_variant_override,
+    )
     body = render_preventive_grouped_message(
         tenant=tenant,
         client_name=cli.name,
         items=items,
         problem_hint=technical_problem_hint,
+        template_variant=template_variant,
     )
     body = _finalize_preventive_whatsapp_body(
         db,
@@ -1727,16 +2062,19 @@ def build_preventive_grouped_send_bundle(
         tenant=tenant,
         rendered_body=body,
         client_name=cli.name,
+        template_pattern=tenant_preventive_template_text(tenant, variant=template_variant),
+        template_model_id=template_variant,
     )
     url, b64, mimetype = _resolve_preventive_promo_media(
         tenant,
         promo_image_url=promo_image_url,
         promo_image_base64=promo_image_base64,
         promo_image_mimetype=promo_image_mimetype,
+        template_model_id=template_variant,
     )
     instance_name = _resolve_tenant_instance(db, tenant_id)
     anchor_historico_id = _resolve_group_anchor_historico_id(items)
-    return tenant, cli, dest, body, url, b64, mimetype, instance_name, anchor_historico_id
+    return tenant, cli, dest, body, url, b64, mimetype, instance_name, anchor_historico_id, template_variant
 
 
 def dispatch_preventive_grouped_reminder(
@@ -1752,8 +2090,9 @@ def dispatch_preventive_grouped_reminder(
     reminder_kind: str = REMINDER_KIND_MANUAL,
     skip_evolution_send: bool = False,
     scheduled_send_at_utc: datetime | None = None,
+    template_variant_override: PreventiveTemplateVariant | None = None,
 ) -> WhatsappMessageJob:
-    tenant, cli, dest, body, url, b64, mimetype, instance_name, anchor_historico_id = (
+    tenant, cli, dest, body, url, b64, mimetype, instance_name, anchor_historico_id, template_model_id = (
         build_preventive_grouped_send_bundle(
             db,
             tenant_id=tenant_id,
@@ -1762,6 +2101,7 @@ def dispatch_preventive_grouped_reminder(
             promo_image_base64=promo_image_base64,
             promo_image_mimetype=promo_image_mimetype,
             technical_problem_hint=technical_problem_hint,
+            template_variant_override=template_variant_override,
         )
     )
 
@@ -1822,6 +2162,7 @@ def dispatch_preventive_grouped_reminder(
         mimetype=mimetype,
         reminder_kind=reminder_kind,
         job=job,
+        template_model_id=template_model_id,
     )
     from app.preventive_schedule_whatsapp import save_preventive_reminder_context
 
@@ -1886,18 +2227,37 @@ def flush_single_scheduled_preventive_job(db: Session, job: WhatsappMessageJob) 
     tenant = load_tenant_settings_row(db, tenant_id)
     today = tenant_local_date(datetime.now(timezone.utc), tenant.timezone)
     meses = months_between_approx(hist.data_realizacao, today)
+    group = find_preventive_group_for_item(
+        db,
+        tenant_id=tenant_id,
+        window_days=400,
+        historico_servico_id=hist.id,
+    )
+    items = group["items"] if group else None
+    template_variant = resolve_preventive_template_variant_for_send(tenant, items)
     body = render_preventive_message(
         tenant=tenant,
         client_name=cli.name,
         service_name=svc.name,
         months_display=meses,
         problem_hint=None,
+        template_variant=template_variant,
+    )
+    body = _finalize_preventive_whatsapp_body(
+        db,
+        tenant_id=tenant_id,
+        tenant=tenant,
+        rendered_body=body,
+        client_name=cli.name,
+        template_pattern=tenant_preventive_template_text(tenant, variant=template_variant),
+        template_model_id=template_variant,
     )
     job.rendered_message = body
 
-    url = (tenant.preventive_promo_image_url or "").strip() or None
-    b64 = None
-    mimetype = (tenant.preventive_promo_image_mimetype or "").strip() or "image/jpeg"
+    url, b64, mimetype = _resolve_preventive_promo_media(
+        tenant,
+        template_model_id=template_variant,
+    )
 
     instance_name = _resolve_tenant_instance(db, tenant_id)
     _deliver_preventive_evolution_message(
@@ -1914,6 +2274,7 @@ def flush_single_scheduled_preventive_job(db: Session, job: WhatsappMessageJob) 
         mimetype=mimetype,
         reminder_kind=REMINDER_KIND_MANUAL,
         job=job,
+        template_model_id=template_variant,
     )
 
 
@@ -1983,6 +2344,7 @@ def register_manual_preventive_entry(
     promo_image_base64: str | None = None,
     promo_image_mimetype: str | None = None,
     technical_problem_hint: str | None = None,
+    message_template_kind: Literal["first", "returning"] | None = None,
 ) -> tuple[HistoricoServico, WhatsappMessageJob | None]:
     if (client_id is None) == (new_client is None):
         raise HTTPException(
@@ -2082,6 +2444,9 @@ def register_manual_preventive_entry(
         notes=notes,
     )
 
+    tenant_row = load_tenant_settings_row(db, tenant_id)
+    effective_template_kind = message_template_kind or tenant_default_preventive_template_variant(tenant_row)
+
     from app.equipment_service_preventive import record_manual_preventive_schedule
 
     record_manual_preventive_schedule(
@@ -2090,6 +2455,7 @@ def register_manual_preventive_entry(
         equipment_id=int(resolved_equipment_id),
         service_id=service_id,
         performed_date=data_realizacao,
+        message_template_kind=effective_template_kind,
     )
 
     equipment_rule_id: int | None = None
@@ -2130,6 +2496,7 @@ def register_manual_preventive_entry(
                 technical_problem_hint=technical_problem_hint,
                 reminder_kind=REMINDER_KIND_MANUAL,
                 scheduled_send_at_utc=scheduled_utc if reminder_send == "scheduled" else None,
+                template_variant_override=effective_template_kind,
             )
             return hist, job
 
@@ -2144,6 +2511,7 @@ def register_manual_preventive_entry(
             technical_problem_hint=technical_problem_hint,
             reminder_kind=REMINDER_KIND_MANUAL,
             scheduled_send_at_utc=scheduled_utc if reminder_send == "scheduled" else None,
+            template_variant_override=effective_template_kind,
         )
 
     return hist, job
@@ -2382,6 +2750,7 @@ def run_preventive_reminder_send_background(
     client_id: int | None = None,
     year: int | None = None,
     month: int | None = None,
+    message_template_kind: str | None = None,
 ) -> None:
     """Envio unitário (agrupado por cliente+mês) fora do ciclo ASGI."""
     from app.database import SessionLocal
@@ -2441,6 +2810,7 @@ def run_preventive_reminder_send_background(
                 promo_image_base64=promo_image_base64,
                 promo_image_mimetype=promo_image_mimetype,
                 technical_problem_hint=technical_problem_hint,
+                template_variant_override=normalize_preventive_template_kind(message_template_kind),
             )
         if group is not None:
             logger.info(
@@ -2517,6 +2887,7 @@ def spawn_preventive_reminder_send_thread(
     client_id: int | None = None,
     year: int | None = None,
     month: int | None = None,
+    message_template_kind: str | None = None,
 ) -> None:
     """Dispara envio unitário agrupado em thread."""
     ref = historico_servico_id or rule_id or client_id or 0
@@ -2535,6 +2906,7 @@ def spawn_preventive_reminder_send_thread(
             client_id,
             year,
             month,
+            message_template_kind,
         ),
         daemon=True,
         name=f"preventive-send-{ref}",
@@ -2681,6 +3053,243 @@ def _record_preventive_interest_lead(
     )
 
 
+def _resolve_preventive_model_id_for_interaction(
+    db: Session,
+    *,
+    tenant: Tenant,
+    tenant_id: int,
+    jid_digits: str,
+    historico_id: int | None = None,
+) -> str:
+    from app.preventive_message_models import tenant_default_template_model_id
+    from app.preventive_schedule_whatsapp import _deserialize_items, _latest_reminder_context
+
+    ctx = _latest_reminder_context(db, tenant_id=tenant_id, jid_digits=jid_digits)
+    if ctx is not None:
+        items = _deserialize_items(ctx.group_items_json)
+        if items:
+            return resolve_preventive_template_variant_for_send(tenant, items)
+    if historico_id is not None and historico_id > 0:
+        group = find_preventive_group_for_item(
+            db,
+            tenant_id=tenant_id,
+            window_days=400,
+            historico_servico_id=historico_id,
+        )
+        if group and group.get("items"):
+            return resolve_preventive_template_variant_for_send(tenant, group["items"])
+    return tenant_default_template_model_id(tenant)
+
+
+def _normalize_preventive_custom_result(tenant: Tenant, *, model_id: str | None = None) -> str:
+    from app.preventive_message_models import model_automation
+
+    if model_id:
+        raw = (model_automation(tenant, model_id).get("button_custom_result") or "lead").strip().lower()
+    else:
+        raw = (getattr(tenant, "preventive_button_custom_result", None) or "lead").strip().lower()
+    if raw in ("lead", "reply", "handoff", "url"):
+        return raw
+    return "lead"
+
+
+def _parse_preventive_button_anchor(raw_anchor: str) -> tuple[int | None, int | None]:
+    """Retorna (historico_id, client_id) a partir do sufixo do botão."""
+    anchor = (raw_anchor or "").strip()
+    if anchor.startswith("c") and anchor[1:].isdigit():
+        return None, int(anchor[1:])
+    if anchor.isdigit():
+        return int(anchor), None
+    return None, None
+
+
+def _record_preventive_lead_from_anchor(
+    db: Session,
+    *,
+    tenant_id: int,
+    jid_digits: str,
+    historico_id: int | None,
+    client_id_for_lead: int | None,
+    message_text: str,
+    payload: dict[str, Any],
+    key: dict[str, Any],
+) -> bool:
+    if historico_id is None and client_id_for_lead is not None:
+        lp = _latest_preventive_lembrete_for_digits(db, tenant_id=tenant_id, jid_digits=jid_digits)
+        if lp is not None:
+            historico_id = int(lp.historico_servico_id)
+
+    hist_btn: HistoricoServico | None = None
+    if historico_id is not None and historico_id > 0:
+        hist_btn = db.execute(
+            select(HistoricoServico).where(
+                HistoricoServico.id == historico_id,
+                HistoricoServico.tenant_id == tenant_id,
+            )
+        ).scalar_one_or_none()
+
+    if hist_btn is not None:
+        _record_preventive_interest_lead(
+            db,
+            tenant_id=tenant_id,
+            hist=hist_btn,
+            kind=PreventiveInterestKind.MORE,
+            message_text=message_text,
+            payload=payload,
+            key=key,
+        )
+        return True
+
+    cid = client_id_for_lead
+    if cid is None and historico_id is None:
+        return False
+    if cid is None and historico_id is not None:
+        hist_btn = db.get(HistoricoServico, historico_id)
+        if hist_btn is not None:
+            cid = hist_btn.client_id
+    if cid is None or cid <= 0:
+        return False
+    cli = db.get(Client, cid)
+    if cli is None or cli.tenant_id != tenant_id:
+        return False
+    lead = PreventiveInterestLead(
+        tenant_id=tenant_id,
+        client_id=cli.id,
+        historico_servico_id=historico_id if historico_id and historico_id > 0 else None,
+        whatsapp_digits=jid_digits or "0",
+        interest_kind=PreventiveInterestKind.MORE,
+        message_text=message_text[:500],
+        raw_payload_json=json.dumps(payload, ensure_ascii=True)[:12000],
+        provider_message_id=str(key.get("id") or "") if key else None,
+    )
+    db.add(lead)
+    append_event(
+        db,
+        tenant_id=tenant_id,
+        event_type="preventive_interest_recorded",
+        payload={"client_id": cli.id, "kind": PreventiveInterestKind.MORE.value},
+        job_id=None,
+    )
+    return True
+
+
+def _handle_preventive_custom_button(
+    db: Session,
+    *,
+    tenant_id: int,
+    tenant: Tenant,
+    jid_digits: str,
+    btn_id: str,
+    payload: dict[str, Any],
+    key: dict[str, Any],
+) -> bool:
+    raw_anchor = btn_id[len(PREVENTIVE_CUSTOM_PREFIX) :]
+    historico_id, client_id_for_lead = _parse_preventive_button_anchor(raw_anchor)
+    model_id = _resolve_preventive_model_id_for_interaction(
+        db,
+        tenant=tenant,
+        tenant_id=tenant_id,
+        jid_digits=jid_digits,
+        historico_id=historico_id,
+    )
+    from app.preventive_message_models import model_config_namespace
+
+    cfg = model_config_namespace(tenant, model_id)
+    result = _normalize_preventive_custom_result(tenant, model_id=model_id)
+
+    if result == "lead":
+        recorded = _record_preventive_lead_from_anchor(
+            db,
+            tenant_id=tenant_id,
+            jid_digits=jid_digits,
+            historico_id=historico_id,
+            client_id_for_lead=client_id_for_lead,
+            message_text=btn_id,
+            payload=payload,
+            key=key,
+        )
+        if not recorded:
+            append_event(
+                db,
+                tenant_id=tenant_id,
+                event_type="preventive_reply_unknown_historico",
+                payload={"button_id": btn_id},
+                job_id=None,
+            )
+        db.commit()
+        return True
+
+    if len(jid_digits) < 8:
+        db.commit()
+        return True
+
+    from app.preventive_schedule_whatsapp import _send_whatsapp_text
+
+    if result == "handoff":
+        from app.whatsapp import _set_human_handoff_state
+
+        _set_human_handoff_state(
+            db,
+            tenant_id=tenant_id,
+            whatsapp_digits=jid_digits,
+            enabled=True,
+            source="preventive_custom_button",
+        )
+        body = (
+            getattr(cfg, "preventive_button_custom_reply_text", None) or ""
+        ).strip() or "Perfeito! Um atendente vai falar com você em breve."
+        try:
+            _send_whatsapp_text(db, tenant_id=tenant_id, dest=jid_digits, body=body)
+        except HTTPException:
+            pass
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="preventive_custom_button_handoff",
+            payload={"button_id": btn_id},
+            job_id=None,
+        )
+        db.commit()
+        return True
+
+    if result == "url":
+        url = (getattr(cfg, "preventive_button_custom_url", None) or "").strip()
+        intro = (getattr(cfg, "preventive_button_custom_reply_text", None) or "").strip()
+        parts = [p for p in (intro, url) if p]
+        body = "\n\n".join(parts)
+        if body:
+            try:
+                _send_whatsapp_text(db, tenant_id=tenant_id, dest=jid_digits, body=body)
+            except HTTPException:
+                pass
+        append_event(
+            db,
+            tenant_id=tenant_id,
+            event_type="preventive_custom_button_url",
+            payload={"button_id": btn_id, "url": url[:200]},
+            job_id=None,
+        )
+        db.commit()
+        return True
+
+    # reply
+    reply = (getattr(cfg, "preventive_button_custom_reply_text", None) or "").strip()
+    if reply:
+        try:
+            _send_whatsapp_text(db, tenant_id=tenant_id, dest=jid_digits, body=reply)
+        except HTTPException:
+            pass
+    append_event(
+        db,
+        tenant_id=tenant_id,
+        event_type="preventive_custom_button_reply",
+        payload={"button_id": btn_id},
+        job_id=None,
+    )
+    db.commit()
+    return True
+
+
 def try_consume_preventive_reply(db: Session, *, tenant_id: int, payload: dict[str, Any]) -> bool:
     """Botões ou texto MAIS/AGENDAR (fallback quando a Evolution envia só texto)."""
     event_name = str(payload.get("event") or payload.get("type") or "").lower()
@@ -2701,14 +3310,24 @@ def try_consume_preventive_reply(db: Session, *, tenant_id: int, payload: dict[s
 
     btn_id = _extract_button_id_from_payload(payload)
     if btn_id:
-        kind_btn: PreventiveInterestKind | None = None
-        raw_hid: str | None = None
-        if btn_id.startswith(PREVENTIVE_MORE_PREFIX):
-            kind_btn = PreventiveInterestKind.MORE
-            raw_hid = btn_id[len(PREVENTIVE_MORE_PREFIX) :]
-        elif btn_id.startswith(PREVENTIVE_SCHEDULE_PREFIX):
-            remote_jid = str(key.get("remoteJid") or "") if isinstance(key, dict) else ""
-            jid_digits = "".join(ch for ch in remote_jid if ch.isdigit())
+        remote_jid = str(key.get("remoteJid") or "") if isinstance(key, dict) else ""
+        jid_digits = "".join(ch for ch in remote_jid if ch.isdigit())
+
+        if btn_id.startswith(PREVENTIVE_CUSTOM_PREFIX):
+            tenant_row = load_tenant_settings_row(db, tenant_id)
+            return _handle_preventive_custom_button(
+                db,
+                tenant_id=tenant_id,
+                tenant=tenant_row,
+                jid_digits=jid_digits,
+                btn_id=btn_id,
+                payload=payload,
+                key=key if isinstance(key, dict) else {},
+            )
+
+        if btn_id.startswith(PREVENTIVE_SCHEDULE_PREFIX):
+            if not bool(getattr(load_tenant_settings_row(db, tenant_id), "preventive_auto_schedule_enabled", False)):
+                return False
             if len(jid_digits) >= 8:
                 from app.preventive_schedule_whatsapp import _start_schedule_flow
 
@@ -2721,39 +3340,32 @@ def try_consume_preventive_reply(db: Session, *, tenant_id: int, payload: dict[s
                     key=key if isinstance(key, dict) else {},
                 )
             return True
-        else:
-            return False
 
-        if not raw_hid or not raw_hid.isdigit():
-            return False
-        historico_id = int(raw_hid)
-
-        hist_btn = db.execute(
-            select(HistoricoServico).where(
-                HistoricoServico.id == historico_id,
-                HistoricoServico.tenant_id == tenant_id,
-            )
-        ).scalar_one_or_none()
-        if hist_btn is None:
-            append_event(
+        if btn_id.startswith(PREVENTIVE_MORE_PREFIX):
+            raw_anchor = btn_id[len(PREVENTIVE_MORE_PREFIX) :]
+            historico_id, client_id_for_lead = _parse_preventive_button_anchor(raw_anchor)
+            recorded = _record_preventive_lead_from_anchor(
                 db,
                 tenant_id=tenant_id,
-                event_type="preventive_reply_unknown_historico",
-                payload={"button_id": btn_id},
-                job_id=None,
+                jid_digits=jid_digits,
+                historico_id=historico_id,
+                client_id_for_lead=client_id_for_lead,
+                message_text=btn_id,
+                payload=payload,
+                key=key if isinstance(key, dict) else {},
             )
+            if not recorded:
+                append_event(
+                    db,
+                    tenant_id=tenant_id,
+                    event_type="preventive_reply_unknown_historico",
+                    payload={"button_id": btn_id},
+                    job_id=None,
+                )
+            db.commit()
             return True
 
-        _record_preventive_interest_lead(
-            db,
-            tenant_id=tenant_id,
-            hist=hist_btn,
-            kind=kind_btn,
-            message_text=btn_id,
-            payload=payload,
-            key=key if isinstance(key, dict) else {},
-        )
-        return True
+        return False
 
     plain = _plain_text_from_evolution_upsert(payload)
     intent = _preventive_text_intent(plain)

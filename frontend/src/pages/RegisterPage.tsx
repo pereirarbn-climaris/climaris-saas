@@ -1,8 +1,12 @@
-import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { registerRequest, resendVerificationEmailRequest } from "../api/auth";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { getPlanDisplayLabel, normalizePlanKey } from "../lib/planRules";
+import { isPaidContractPlan, rememberPendingCheckoutPlan } from "../lib/paidPlanCheckout";
+import { getGoogleAuthConfig, registerGoogleRequest, registerRequest, resendVerificationEmailRequest } from "../api/auth";
 import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import { usePlatformBranding } from "../context/PlatformBrandingContext";
+import { toast } from "../lib/toast";
+import { renderGoogleButton, setGoogleClientIdRuntime } from "../lib/googleIdentity";
 import styles from "./LoginPage.module.css";
 
 const BuildingIcon = () => (
@@ -60,20 +64,65 @@ const EyeOffIcon = () => (
 
 export function RegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const activePlan = normalizePlanKey(searchParams.get("plan") || "free_30d");
+  const isFreeTrial = activePlan === "free_30d";
+  const isPaidPlan = isPaidContractPlan(activePlan);
+  const planLabel = getPlanDisplayLabel(activePlan);
   const { branding } = usePlatformBranding();
   const [tenantName, setTenantName] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
+  const [lgpdConsent, setLgpdConsent] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState<{ text: string; kind: "idle" | "success" | "error" }>({
     text: "",
     kind: "idle",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [resending, setResending] = useState(false);
   const [canResendVerification, setCanResendVerification] = useState(false);
+  const [googleIdToken, setGoogleIdToken] = useState<string | null>(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!message.text || message.kind === "idle") return;
+    if (message.kind === "error") toast.error(message.text);
+    else if (message.kind === "success") toast.success(message.text);
+  }, [message]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const cfg = await getGoogleAuthConfig();
+        setGoogleClientIdRuntime(cfg.client_id);
+        setGoogleEnabled(Boolean(cfg.enabled && cfg.client_id));
+      } catch {
+        setGoogleEnabled(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!googleEnabled) return;
+    const target = googleButtonRef.current;
+    if (!target) return;
+    void renderGoogleButton(target, {
+      text: "signup_with",
+      onCredential: (idToken) => {
+        setGoogleIdToken(idToken);
+        setMessage({ text: "Conta Google conectada. Você já pode finalizar o cadastro.", kind: "success" });
+      },
+    }).catch((err) => {
+      const text = err instanceof Error ? err.message : "Não foi possível carregar botão do Google.";
+      setMessage({ text, kind: "error" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleEnabled]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -104,6 +153,13 @@ export function RegisterPage() {
       setMessage({ text: "As senhas nao coincidem.", kind: "error" });
       return;
     }
+    if (!lgpdConsent) {
+      setMessage({
+        text: "É necessário aceitar a Política de Privacidade e o tratamento de dados conforme a LGPD.",
+        kind: "error",
+      });
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -114,10 +170,23 @@ export function RegisterPage() {
         password,
         phone: undefined,
         whatsapp: undefined,
+        active_plan: activePlan,
+        lgpd_consent: true,
       });
-      navigate("/login", {
+      if (isPaidPlan) {
+        rememberPendingCheckoutPlan(activePlan);
+      }
+      const loginPath = isPaidPlan
+        ? `/login?plan=${encodeURIComponent(activePlan)}&checkout=1`
+        : "/login";
+      navigate(loginPath, {
         replace: true,
-        state: { fromRegister: true, registeredEmail: mail, emailVerificationPending: true },
+        state: {
+          fromRegister: true,
+          registeredEmail: mail,
+          emailVerificationPending: true,
+          pendingCheckoutPlan: isPaidPlan ? activePlan : undefined,
+        },
       });
     } catch (err) {
       const text = err instanceof Error ? err.message : "Nao foi possivel criar a conta.";
@@ -125,6 +194,54 @@ export function RegisterPage() {
       setCanResendVerification(text.toLowerCase().includes("ja possui cadastro"));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onSubmitGoogleRegister() {
+    const name = tenantName.trim();
+    if (!googleIdToken) {
+      setMessage({ text: "Clique primeiro em 'Cadastrar com Google'.", kind: "error" });
+      return;
+    }
+    if (!name) {
+      setMessage({ text: "Informe o nome da empresa para concluir com Google.", kind: "error" });
+      return;
+    }
+    if (!lgpdConsent) {
+      setMessage({
+        text: "É necessário aceitar a Política de Privacidade e o tratamento de dados conforme a LGPD.",
+        kind: "error",
+      });
+      return;
+    }
+    setGoogleSubmitting(true);
+    try {
+      await registerGoogleRequest({
+        id_token: googleIdToken,
+        tenant_name: name,
+        active_plan: activePlan,
+        lgpd_consent: true,
+      });
+      if (isPaidPlan) {
+        rememberPendingCheckoutPlan(activePlan);
+      }
+      const loginPath = isPaidPlan
+        ? `/login?plan=${encodeURIComponent(activePlan)}&checkout=1`
+        : "/login";
+      navigate(loginPath, {
+        replace: true,
+        state: {
+          fromRegister: true,
+          emailVerificationPending: false,
+          pendingCheckoutPlan: isPaidPlan ? activePlan : undefined,
+        },
+      });
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Não foi possível criar conta com Google.";
+      setMessage({ text, kind: "error" });
+      setCanResendVerification(false);
+    } finally {
+      setGoogleSubmitting(false);
     }
   }
 
@@ -154,10 +271,14 @@ export function RegisterPage() {
         <div className={styles.heroInner}>
           <PlatformBrandMark variant="auth-dark" className={styles.brandRow} />
           <h1 id="register-hero-title" className={styles.heroTitle}>
-            Comece agora!
+            {isFreeTrial ? "30 dias grátis no Climaris" : isPaidPlan ? `Plano ${planLabel}` : "Comece agora!"}
           </h1>
           <p className={styles.heroText}>
-            Crie sua conta e comece a gerenciar sua empresa de climatizacao de forma eficiente.
+            {isFreeTrial
+              ? "Crie sua conta em minutos e teste gestão de OS, financeiro básico e PMOC — sem cartão de crédito."
+              : isPaidPlan
+                ? "Crie sua conta, confirme o e-mail e conclua o pagamento seguro no Stripe para ativar o plano escolhido."
+                : "Crie sua conta e comece a gerenciar sua empresa de climatizacao de forma eficiente."}
           </p>
           
           <div className={styles.heroFeatures}>
@@ -200,10 +321,14 @@ export function RegisterPage() {
           
           <div className={styles.cardHeader}>
             <h2 id="register-form-title" className={styles.cardTitle}>
-              Criar nova conta
+              {isFreeTrial ? "Criar conta grátis" : isPaidPlan ? `Assinar plano ${planLabel}` : "Criar nova conta"}
             </h2>
             <p className={styles.cardSubtitle}>
-              Preencha os dados abaixo para comecar
+              {isFreeTrial
+                ? "Teste gratuito de 30 dias — confirme o e-mail para acessar o sistema"
+                : isPaidPlan
+                  ? "Após confirmar o e-mail e entrar, você será direcionado ao pagamento no Stripe"
+                  : "Preencha os dados abaixo para comecar"}
             </p>
           </div>
 
@@ -322,7 +447,24 @@ export function RegisterPage() {
               </div>
             </div>
 
-            <button className={styles.primaryBtn} type="submit" disabled={submitting}>
+            <label className={styles.rememberEmailRow} htmlFor="lgpd_consent">
+              <input
+                id="lgpd_consent"
+                type="checkbox"
+                checked={lgpdConsent}
+                onChange={(e) => setLgpdConsent(e.target.checked)}
+                required
+              />
+              <span>
+                Li e estou ciente da{" "}
+                <Link to="/privacidade" target="_blank" rel="noopener noreferrer">
+                  Política de Privacidade e LGPD
+                </Link>{" "}
+                e autorizo o tratamento dos meus dados para criação e uso da conta no Climaris.
+              </span>
+            </label>
+
+            <button className={styles.primaryBtn} type="submit" disabled={submitting || !lgpdConsent}>
               {submitting ? (
                 <span className={styles.btnLoading}>
                   <span className={styles.spinner} />
@@ -338,36 +480,24 @@ export function RegisterPage() {
                 </>
               )}
             </button>
-          </form>
 
-          {message.text && (
-            <div
-              className={
-                message.kind === "error"
-                  ? styles.messageError
-                  : message.kind === "success"
-                    ? styles.messageSuccess
-                    : styles.message
-              }
-              role={message.kind === "error" ? "alert" : "status"}
-              aria-live={message.kind === "error" ? "assertive" : "polite"}
-            >
-              {message.kind === "error" && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" x2="12" y1="8" y2="12" />
-                  <line x1="12" x2="12.01" y1="16" y2="16" />
-                </svg>
-              )}
-              {message.kind === "success" && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-              )}
-              {message.text}
-            </div>
-          )}
+            {googleEnabled ? (
+              <>
+                <div className={styles.googleArea}>
+                  <p className={styles.googleLabel}>Cadastro rápido com Google</p>
+                  <div ref={googleButtonRef} className={styles.googleButtonMount} />
+                </div>
+                <button
+                  className={styles.secondaryBtn}
+                  type="button"
+                  onClick={() => void onSubmitGoogleRegister()}
+                  disabled={googleSubmitting || !lgpdConsent}
+                >
+                  {googleSubmitting ? "Criando com Google..." : "Concluir cadastro com Google"}
+                </button>
+              </>
+            ) : null}
+          </form>
 
           {canResendVerification && (
             <button type="button" className={styles.resendLink} onClick={() => void onResendVerification()} disabled={resending}>

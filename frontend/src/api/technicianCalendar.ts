@@ -1,15 +1,6 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
-import {
-  demoCreateUnavailability,
-  demoDeleteUnavailability,
-  demoListTenantHolidays,
-  demoListUnavailability,
-  demoPatchUnavailability,
-  isDemoMode,
-} from "../lib/demoMode";
-
 export type WorkWindow = {
   id: number;
   tenant_id: number;
@@ -169,12 +160,6 @@ export async function listUnavailability(
   technician_id?: number,
   params?: { from_at?: string; to_at?: string; from_day?: string; to_day?: string; limit?: number },
 ): Promise<Unavailability[]> {
-  if (isDemoMode()) {
-    const rows = demoListUnavailability();
-    return Promise.resolve(
-      technician_id == null ? rows : rows.filter((item: Unavailability) => item.technician_id === technician_id),
-    );
-  }
   const sp = new URLSearchParams({
     limit: String(clampApiLimit(params?.limit, 100)),
   });
@@ -195,7 +180,6 @@ export async function createUnavailability(payload: {
   ends_at: string;
   reason?: string;
 }): Promise<Unavailability> {
-  if (isDemoMode()) return Promise.resolve(demoCreateUnavailability({ ...payload, reason: payload.reason ?? null }));
   const response = await fetch(apiUrl("/api/v1/technicians/unavailability"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -210,7 +194,6 @@ export async function updateUnavailability(
   id: number,
   payload: { starts_at: string; ends_at: string; reason?: string },
 ): Promise<Unavailability> {
-  if (isDemoMode()) return Promise.resolve(demoPatchUnavailability(id, payload));
   const response = await fetch(apiUrl(`/api/v1/technicians/unavailability/${id}`), {
     method: "PUT",
     headers: jsonHeaders(),
@@ -222,10 +205,6 @@ export async function updateUnavailability(
 }
 
 export async function deleteUnavailability(id: number): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteUnavailability(id);
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl(`/api/v1/technicians/unavailability/${id}`), { method: "DELETE", headers: bearer() });
   if (response.status === 204) return;
   const body = await parseBody(response);
@@ -233,7 +212,6 @@ export async function deleteUnavailability(id: number): Promise<void> {
 }
 
 export async function listTenantHolidays(params?: { skip?: number; limit?: number }): Promise<TenantHoliday[]> {
-  if (isDemoMode()) return Promise.resolve(demoListTenantHolidays());
   const sp = new URLSearchParams({
     skip: String(params?.skip ?? 0),
     limit: String(clampApiLimit(params?.limit, 100)),

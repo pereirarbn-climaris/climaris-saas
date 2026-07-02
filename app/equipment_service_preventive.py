@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.equipment_preventive_reminder import equipment_is_preventive_reminder_only
 from app.equipment_preventive_rules import compute_next_due_datetime, get_tenant_equipment
 from app.preventive_maintenance import client_whatsapp_destination, tenant_local_date
 from app.services.service_preventive_config import preventive_config_from_service
@@ -196,6 +197,7 @@ def create_temporary_equipment_for_preventive(
         client_id=client_id,
         identificacao=ident,
         ativo=True,
+        preventive_reminder_only=True,
         public_token=str(uuid4()),
     )
     db.add(equipment)
@@ -211,6 +213,7 @@ def record_manual_preventive_schedule(
     service_id: int,
     performed_date: date,
     service_order_id: int | None = None,
+    message_template_kind: str | None = None,
 ) -> EquipmentServicePreventiveSchedule:
     """Registra última realização manual na gestão preventiva da ficha (aparece na listagem mensal)."""
     get_tenant_equipment(db, tenant_id=tenant_id, equipment_id=equipment_id)
@@ -250,6 +253,9 @@ def record_manual_preventive_schedule(
         schedule.interval_type,
     )
     schedule.is_active = True
+    if message_template_kind is not None:
+        kind = str(message_template_kind).strip().lower()[:16]
+        schedule.message_template_kind = kind or None
     db.add(schedule)
     db.flush()
     return schedule
@@ -692,6 +698,11 @@ def _schedule_to_preventive_item(
         "ultimo_whatsapp_status": None,
         "ultimo_whatsapp_erro": None,
         "ultimo_whatsapp_em": None,
+        "message_template_kind": (
+            str(schedule.message_template_kind).strip().lower()
+            if schedule.message_template_kind
+            else None
+        ),
     }
 
 
@@ -781,15 +792,7 @@ def _cancel_queued_preventive_jobs_for_historico(
 
 
 def _equipment_is_temporary_preventive(equipment: Equipment) -> bool:
-    ident = (equipment.identificacao or "").strip().lower()
-    if "cadastro temporário" in ident or "cadastro temporario" in ident:
-        return True
-    return (
-        not (equipment.fabricante or "").strip()
-        and not (equipment.modelo or "").strip()
-        and not (equipment.serial or "").strip()
-        and not (equipment.capacidade_btu or 0)
-    )
+    return equipment_is_preventive_reminder_only(equipment)
 
 
 def get_manual_preventive_reminder(
@@ -838,6 +841,11 @@ def get_manual_preventive_reminder(
         "reminder_local_date": None,
         "reminder_local_time": None,
         "is_temporary_equipment": _equipment_is_temporary_preventive(equipment),
+        "message_template_kind": (
+            str(schedule.message_template_kind).strip().lower()
+            if schedule.message_template_kind
+            else None
+        ),
     }
 
 
@@ -850,6 +858,7 @@ def update_manual_preventive_reminder(
     data_realizacao: date,
     equipment_label: str | None = None,
     notes: str | None = None,
+    message_template_kind: str | None = None,
 ) -> EquipmentServicePreventiveSchedule:
     schedule, equipment, client, service = _load_manual_schedule(
         db, tenant_id=tenant_id, schedule_id=schedule_id
@@ -903,6 +912,9 @@ def update_manual_preventive_reminder(
         schedule.interval_type,
     )
     schedule.is_active = True
+    if message_template_kind is not None:
+        kind = str(message_template_kind).strip().lower()[:16]
+        schedule.message_template_kind = kind or None
     db.add(schedule)
 
     if hist is not None:

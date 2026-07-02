@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import {
   getMercadoLivreProductLink,
@@ -19,8 +19,8 @@ import {
 } from "../../api/products";
 import { formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
 import { isHiddenAppModule } from "../../lib/hiddenAppModules";
+import { isInventoryActive, productsMaxImages } from "../../lib/planProducts";
 import { toast } from "../../lib/toast";
-import { ToastHost } from "../../components/ToastHost";
 import type { DashboardOutletContext } from "../dashboardContext";
 import formLayout from "../formLayout.module.css";
 import loginStyles from "../LoginPage.module.css";
@@ -99,6 +99,16 @@ function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
 
+const ACCEPTED_PRODUCT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function filterAcceptedProductImages(files: FileList | File[] | null | undefined): File[] {
+  if (!files?.length) return [];
+  const list = Array.isArray(files) ? files : Array.from(files);
+  return list.filter(
+    (f) => ACCEPTED_PRODUCT_IMAGE_TYPES.has(f.type) || /\.(jpe?g|png|webp)$/i.test(f.name),
+  );
+}
+
 function PackageIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
@@ -132,7 +142,8 @@ export function ProductFormPage() {
   const canEdit = ctx?.user.role === "admin" || ctx?.user.role === "receptionist";
   const canDelete = ctx?.user.role === "admin";
   const readOnly = !canEdit;
-  const inventoryEnabled = ctx?.tenant.inventory_enabled !== false;
+  const inventoryEnabled = isInventoryActive(ctx?.tenant);
+  const maxProductImages = productsMaxImages(ctx?.tenant);
 
   const [activeTab, setActiveTab] = useState<ProductFormTab>("geral");
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -144,7 +155,12 @@ export function ProductFormPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [imageToRemove, setImageToRemove] = useState<ProductImageOut | null>(null);
   const [productImages, setProductImages] = useState<ProductImageOut[]>([]);
+  const imagesAtLimit = maxProductImages != null && productImages.length >= maxProductImages;
+  const imagesBlocked = maxProductImages != null && maxProductImages <= 0;
   const [imgBusy, setImgBusy] = useState(false);
+  const [imageDragOver, setImageDragOver] = useState(false);
+  const imageDragDepthRef = useRef(0);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [mlAddon, setMlAddon] = useState(false);
   const [mlCategoryId, setMlCategoryId] = useState("");
   const [mlListingType, setMlListingType] = useState("gold_special");
@@ -339,12 +355,13 @@ export function ProductFormPage() {
     }
   }
 
-  async function onPickImages(files: FileList | null) {
-    if (!files?.length || readOnly || !productSaved || !canEdit) return;
+  async function onPickImages(files: FileList | File[] | null | undefined) {
+    const accepted = filterAcceptedProductImages(files);
+    if (!accepted.length || readOnly || !productSaved || !canEdit) return;
     setImgBusy(true);
     try {
-      for (let i = 0; i < files.length; i++) {
-        await uploadProductImage(idNum, files[i]!);
+      for (const file of accepted) {
+        await uploadProductImage(idNum, file);
       }
       await refreshImages();
       toast.success("Imagens enviadas.");
@@ -449,7 +466,6 @@ export function ProductFormPage() {
 
   return (
     <div className={styles.wrap}>
-      <ToastHost />
       <header className={styles.pageHeader}>
         <nav className={styles.breadcrumb} aria-label="Navegação">
           <Link className={styles.breadcrumbLink} to="/app/products">
@@ -659,9 +675,20 @@ export function ProductFormPage() {
               <div>
                 <h2 className={styles.sectionTitle}>Galeria de imagens</h2>
                 <p className={styles.fieldHint}>
-                  Fotos públicas para vitrine, orçamentos e marketplaces. Formatos: JPEG, PNG ou WebP — até 12 por
-                  anúncio no Mercado Livre.
+                  Fotos públicas para vitrine, orçamentos e marketplaces. Formatos: JPEG, PNG ou WebP.
+                  {maxProductImages != null ? (
+                    <>
+                      {" "}
+                      Seu plano permite até <strong>{maxProductImages}</strong> imagem(ns) por produto
+                      {productSaved ? ` (${productImages.length}/${maxProductImages})` : ""}.
+                    </>
+                  ) : (
+                    " Sem limite de imagens no plano."
+                  )}
                 </p>
+                {imagesBlocked ? (
+                  <p className={styles.tabNotice}>Seu plano não permite imagens em produtos.</p>
+                ) : null}
 
                 {!productSaved ? (
                   <p className={styles.tabNotice}>
@@ -670,17 +697,81 @@ export function ProductFormPage() {
                   </p>
                 ) : null}
 
-                {canEdit && productSaved ? (
-                  <label className={styles.filePick}>
+                {canEdit && productSaved && !imagesBlocked && !imagesAtLimit ? (
+                  <div
+                    className={`${styles.imageDropzone} ${imageDragOver ? styles.imageDropzoneActive : ""} ${imgBusy ? styles.imageDropzoneBusy : ""}`}
+                    role="button"
+                    tabIndex={imgBusy ? -1 : 0}
+                    onClick={() => {
+                      if (!imgBusy) imageInputRef.current?.click();
+                    }}
+                    onKeyDown={(e) => {
+                      if ((e.key === "Enter" || e.key === " ") && !imgBusy) {
+                        e.preventDefault();
+                        imageInputRef.current?.click();
+                      }
+                    }}
+                    onDragEnter={(e: DragEvent<HTMLDivElement>) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (imgBusy) return;
+                      imageDragDepthRef.current += 1;
+                      setImageDragOver(true);
+                    }}
+                    onDragLeave={(e: DragEvent<HTMLDivElement>) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (imgBusy) return;
+                      imageDragDepthRef.current = Math.max(0, imageDragDepthRef.current - 1);
+                      if (imageDragDepthRef.current === 0) setImageDragOver(false);
+                    }}
+                    onDragOver={(e: DragEvent<HTMLDivElement>) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!imgBusy) setImageDragOver(true);
+                    }}
+                    onDrop={(e: DragEvent<HTMLDivElement>) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      imageDragDepthRef.current = 0;
+                      setImageDragOver(false);
+                      if (imgBusy) return;
+                      void onPickImages(e.dataTransfer.files);
+                    }}
+                  >
+                    <span className={styles.imageDropzoneIcon} aria-hidden>
+                      <svg viewBox="0 0 24 24" width="28" height="28" fill="none">
+                        <path
+                          d="M12 16V8m0 0l-3 3m3-3l3 3M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+                          stroke="currentColor"
+                          strokeWidth="1.75"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <span className={styles.imageDropzoneTitle}>
+                      {imgBusy ? "Processando…" : imageDragOver ? "Solte as imagens aqui" : "Enviar imagens"}
+                    </span>
+                    <span className={styles.imageDropzoneHint}>
+                      Arraste e solte JPEG, PNG ou WebP aqui, ou clique para selecionar.
+                    </span>
                     <input
+                      ref={imageInputRef}
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
                       multiple
                       disabled={imgBusy}
-                      onChange={(e) => void onPickImages(e.target.files)}
+                      className={styles.imageDropzoneInput}
+                      onChange={(e) => {
+                        void onPickImages(e.target.files);
+                        e.target.value = "";
+                      }}
                     />
-                    <span>{imgBusy ? "Processando…" : "Enviar imagens"}</span>
-                  </label>
+                  </div>
+                ) : null}
+                {canEdit && productSaved && imagesAtLimit && !imagesBlocked ? (
+                  <p className={styles.tabNotice}>Limite de imagens do plano atingido. Remova uma foto para enviar outra.</p>
                 ) : null}
 
                 {productSaved && productImages.length > 0 ? (

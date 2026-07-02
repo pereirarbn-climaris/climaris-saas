@@ -1,20 +1,6 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
-import {
-  demoClientServiceItemLinksAll,
-  demoClients,
-  demoCreateClient,
-  demoDeleteClient,
-  demoEquipmentDocuments,
-  demoEquipmentHistoryRows,
-  demoEquipments,
-  demoListClients,
-  demoUpdateClient,
-  type DemoEquipmentHistoryRow,
-  isDemoMode,
-} from "../lib/demoMode";
-
 export type ClientTaxIdKind = "cpf" | "cnpj";
 
 export type ClientIeIndicator = "1" | "2" | "9";
@@ -378,6 +364,11 @@ export type ClientCountResult = {
   ativos: number;
 };
 
+export type ClientDuplicateCheckResult = {
+  document_exists: boolean;
+  whatsapp_exists: boolean;
+};
+
 export async function listClients(params?: {
   q?: string;
   skip?: number;
@@ -386,35 +377,6 @@ export async function listClients(params?: {
   sortKey?: ClientListSortKey;
   sortDir?: ClientListSortDir;
 }): Promise<ClientOut[]> {
-  if (isDemoMode()) {
-    const q = params?.q?.trim().toLowerCase();
-    const st = params?.status ?? "active";
-    const sortKey = params?.sortKey ?? "name";
-    const sortDir = params?.sortDir ?? "asc";
-    let filtered = demoListClients();
-    if (st === "active") filtered = filtered.filter((c) => c.is_active !== false);
-    else if (st === "inactive") filtered = filtered.filter((c) => c.is_active === false);
-    if (q) {
-      filtered = filtered.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          (c.email?.toLowerCase().includes(q) ?? false) ||
-          (c.contact_person_name?.toLowerCase().includes(q) ?? false),
-      );
-    }
-    filtered.sort((a, b) => {
-      const pick = (row: ClientOut) => {
-        if (sortKey === "email") return (row.email ?? "").trim();
-        if (sortKey === "whatsapp") return (row.whatsapp ?? "").replace(/\D/g, "");
-        return row.name.trim();
-      };
-      const cmp = pick(a).localeCompare(pick(b), "pt-BR", { sensitivity: "base", numeric: true });
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    const skip = params?.skip ?? 0;
-    const limit = params?.limit ?? 20;
-    return Promise.resolve(filtered.slice(skip, skip + limit));
-  }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
   const limit = clampApiLimit(params?.limit, 50);
@@ -438,9 +400,7 @@ export async function listClientsAll(params?: {
   q?: string;
   status?: ClientStatusFilter;
 }): Promise<ClientOut[]> {
-  if (isDemoMode()) {
-    return listClients({ ...params, limit: 200 });
-  }
+
   const PAGE = 200;
   const MAX_PAGES = 500;
   const all: ClientOut[] = [];
@@ -453,11 +413,7 @@ export async function listClientsAll(params?: {
 }
 
 export async function getClient(clientId: number): Promise<ClientOut> {
-  if (isDemoMode()) {
-    const c = demoClients.find((x) => x.id === clientId);
-    if (!c) throw new Error("Cliente não encontrado.");
-    return Promise.resolve({ ...c });
-  }
+
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {
@@ -486,15 +442,7 @@ export async function countClients(params?: {
   q?: string;
   status?: ClientStatusFilter;
 }): Promise<ClientCountResult> {
-  if (isDemoMode()) {
-    const rows = await listClients({ q: params?.q, status: params?.status ?? "active", limit: 10000 });
-    return Promise.resolve({
-      total: rows.length,
-      empresas: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cnpj").length,
-      pessoas: rows.filter((c) => (c.tax_id_kind || "").toLowerCase() === "cpf").length,
-      ativos: rows.filter((c) => c.is_active).length,
-    });
-  }
+
   const sp = new URLSearchParams();
   if (params?.q?.trim()) sp.set("q", params.q.trim());
   if (params?.status) sp.set("status", params.status);
@@ -508,6 +456,26 @@ export async function countClients(params?: {
     pessoas: data.pessoas ?? 0,
     ativos: data.ativos ?? 0,
   };
+}
+
+export async function checkClientDuplicate(params: {
+  document?: string;
+  whatsapp?: string;
+  excludeClientId?: number;
+}): Promise<ClientDuplicateCheckResult> {
+  const sp = new URLSearchParams();
+  if (params.document?.trim()) sp.set("document", params.document.trim());
+  if (params.whatsapp?.trim()) sp.set("whatsapp", params.whatsapp.trim());
+  if (params.excludeClientId != null) sp.set("exclude_client_id", String(params.excludeClientId));
+  const qs = sp.toString();
+  const response = await fetch(apiUrl(`/api/v1/clients/check-duplicate${qs ? `?${qs}` : ""}`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível validar duplicidade de cliente.", response.status));
+  }
+  return body as ClientDuplicateCheckResult;
 }
 
 export async function exportClientsCsv(params?: { status?: ClientStatusFilter }): Promise<Blob> {
@@ -539,9 +507,6 @@ export async function importClientsCsv(file: File): Promise<ClientImportSummaryO
 
 export async function listClientAudit(clientId: number, limit?: number): Promise<ClientAuditEntryOut[]> {
   const safeLimit = clampApiLimit(limit, 200);
-  if (isDemoMode()) {
-    return Promise.resolve([]);
-  }
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/audit?limit=${safeLimit}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível carregar histórico.", response.status));
@@ -549,9 +514,7 @@ export async function listClientAudit(clientId: number, limit?: number): Promise
 }
 
 export async function createClient(payload: ClientCreatePayload): Promise<ClientOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoCreateClient(payload as Partial<ClientOut> & { name: string }));
-  }
+
   const response = await fetch(apiUrl("/api/v1/clients"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -565,9 +528,6 @@ export async function createClient(payload: ClientCreatePayload): Promise<Client
 }
 
 export async function updateClient(clientId: number, payload: ClientUpdatePayload): Promise<ClientOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoUpdateClient(clientId, payload as Partial<ClientOut>));
-  }
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}`), {
     method: "PUT",
     headers: jsonHeaders(),
@@ -581,10 +541,6 @@ export async function updateClient(clientId: number, payload: ClientUpdatePayloa
 }
 
 export async function deleteClient(clientId: number): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteClient(clientId);
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}`), {
     method: "DELETE",
     headers: bearer(),
@@ -649,14 +605,6 @@ export async function listClientHvacEquipments(
   clientId: number,
   params?: { only_active?: boolean; client_site_id?: number },
 ): Promise<EquipmentOut[]> {
-  if (isDemoMode()) {
-    let rows = demoEquipments.filter((e) => e.client_id === clientId);
-    if (params?.only_active) rows = rows.filter((e) => e.ativo);
-    if (params?.client_site_id != null) {
-      rows = rows.filter((e) => e.client_site_id === params.client_site_id);
-    }
-    return Promise.resolve(rows.map((e) => ({ ...e })));
-  }
   const sp = new URLSearchParams();
   if (params?.only_active) sp.set("only_active", "true");
   if (params?.client_site_id != null) sp.set("client_site_id", String(params.client_site_id));
@@ -730,15 +678,7 @@ export async function listHvacEquipmentHistory(
   clientId: number,
   equipmentId: number,
 ): Promise<EquipmentHistoryRowOut[]> {
-  if (isDemoMode()) {
-    const rows = demoEquipmentHistoryRows.filter((r) => r.client_id === clientId && r.equipment_id === equipmentId);
-    return Promise.resolve(
-      rows.map((row: DemoEquipmentHistoryRow): EquipmentHistoryRowOut => {
-        const { client_id: _c, equipment_id: _e, ...rest } = row;
-        return rest;
-      }),
-    );
-  }
+
   const response = await fetch(apiUrl(clientHvacEquipmentsApiPath(clientId, equipmentId, "/history")), {
     headers: bearer(),
   });
@@ -754,17 +694,7 @@ export async function listHvacEquipmentPreventiveHistory(
   clientId: number,
   equipmentId: number,
 ): Promise<EquipmentHistoryRowOut[]> {
-  if (isDemoMode()) {
-    const rows = demoEquipmentHistoryRows.filter(
-      (r) => r.client_id === clientId && r.equipment_id === equipmentId && r.is_preventive === true,
-    );
-    return Promise.resolve(
-      rows.map((row: DemoEquipmentHistoryRow): EquipmentHistoryRowOut => {
-        const { client_id: _c, equipment_id: _e, ...rest } = row;
-        return rest;
-      }),
-    );
-  }
+
   const response = await fetch(
     apiUrl(clientHvacEquipmentsApiPath(clientId, equipmentId, "/history/preventives")),
     { headers: bearer() },
@@ -780,16 +710,7 @@ export async function listClientServiceItemsLinks(
   clientId: number,
   params?: { only_without_equipment?: boolean },
 ): Promise<ClientServiceItemLinkRowOut[]> {
-  if (isDemoMode()) {
-    let rows = demoClientServiceItemLinksAll.filter((l) => l.client_id === clientId);
-    if (params?.only_without_equipment) rows = rows.filter((l) => l.equipment_id == null);
-    return Promise.resolve(
-      rows.map((row: ClientServiceItemLinkRowOut & { client_id: number }): ClientServiceItemLinkRowOut => {
-        const { client_id: _id, ...rest } = row;
-        return rest;
-      }),
-    );
-  }
+
   const sp = new URLSearchParams();
   if (params?.only_without_equipment) sp.set("only_without_equipment", "true");
   const suffix = sp.toString() ? `?${sp.toString()}` : "";
@@ -845,40 +766,7 @@ export async function listClientEquipmentDocuments(
     limit?: number;
   },
 ): Promise<EquipmentDocumentWithEquipmentOut[]> {
-  if (isDemoMode()) {
-    const eqIds = new Set(demoEquipments.filter((e) => e.client_id === clientId).map((e) => e.id));
-    let rows = demoEquipmentDocuments.filter((d) => eqIds.has(d.equipment_id));
-    if (params?.document_type) rows = rows.filter((d) => d.document_type === params.document_type);
-    if (params?.status) rows = rows.filter((d) => d.status === params.status);
-    const q = params?.q?.trim().toLowerCase();
-    if (q) rows = rows.filter((d) => d.title.toLowerCase().includes(q));
-    if (params?.only_overdue) {
-      const now = Date.now();
-      rows = rows.filter((d) => {
-        if (!d.next_due_at) return false;
-        return Date.parse(d.next_due_at) < now && d.status !== "expired" && d.status !== "cancelled";
-      });
-    }
-    if (params?.issued_from) {
-      const from = Date.parse(params.issued_from);
-      rows = rows.filter((d) => d.issued_at != null && Date.parse(d.issued_at) >= from);
-    }
-    if (params?.issued_to) {
-      const to = Date.parse(params.issued_to);
-      rows = rows.filter((d) => d.issued_at != null && Date.parse(d.issued_at) <= to);
-    }
-    if (params?.next_due_from) {
-      const from = Date.parse(params.next_due_from);
-      rows = rows.filter((d) => d.next_due_at != null && Date.parse(d.next_due_at) >= from);
-    }
-    if (params?.next_due_to) {
-      const to = Date.parse(params.next_due_to);
-      rows = rows.filter((d) => d.next_due_at != null && Date.parse(d.next_due_at) <= to);
-    }
-    const lim = params?.limit ?? 200;
-    rows = rows.slice(0, lim);
-    return Promise.resolve(rows.map((d) => ({ ...d })));
-  }
+
   const sp = new URLSearchParams();
   if (params?.document_type) sp.set("document_type", params.document_type);
   if (params?.status) sp.set("status", params.status);

@@ -21,6 +21,7 @@ import {
   defaultScheduleDate,
   formatEta,
   formatScheduleSummary,
+  previewRecipientKey,
   type ScheduleMode,
   type SendSpeed,
   type SpeedIconKind,
@@ -78,6 +79,15 @@ export type CampaignWizardModalProps = {
   previewMode: SelectionMode | null;
   previewIsStale: boolean;
   previewRecipients: () => void;
+  selectedPreviewRecipients: Map<string, ClientRow>;
+  togglePreviewRecipient: (c: ClientRow, checked: boolean) => void;
+  selectAllPreviewRecipients: (checked: boolean) => void;
+  previewAllSelected: boolean;
+  previewSomeSelected: boolean;
+  selectedPreviewEtaSeconds: number | null;
+  selectAllManualClients: (checked: boolean) => void;
+  manualAllSelected: boolean;
+  manualSomeSelected: boolean;
   hasAnyRecipients: boolean;
   currentRecipientCount: number | null;
   dispatchProgress: { pct: number; label: string } | null;
@@ -130,6 +140,15 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
     previewMode,
     previewIsStale,
     previewRecipients,
+    selectedPreviewRecipients,
+    togglePreviewRecipient,
+    selectAllPreviewRecipients,
+    previewAllSelected,
+    previewSomeSelected,
+    selectedPreviewEtaSeconds,
+    selectAllManualClients,
+    manualAllSelected,
+    manualSomeSelected,
     hasAnyRecipients,
     currentRecipientCount,
     dispatchProgress,
@@ -336,10 +355,27 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
                   />
                   <div className={styles.tableWrap}>
                     <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: "2.25rem" }}>
+                            <input
+                              type="checkbox"
+                              aria-label="Selecionar todos os clientes"
+                              checked={manualAllSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = manualSomeSelected;
+                              }}
+                              onChange={(e) => selectAllManualClients(e.target.checked)}
+                            />
+                          </th>
+                          <th>Nome</th>
+                          <th>WhatsApp</th>
+                        </tr>
+                      </thead>
                       <tbody>
                         {clients.map((c) => (
                           <tr key={c.id}>
-                            <td style={{ width: "2rem" }}>
+                            <td>
                               <input
                                 type="checkbox"
                                 checked={selectedClients.has(c.id)}
@@ -375,10 +411,9 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
                 </button>
                 {preview && previewMode === selectionMode ? (
                   <span className={styles.hint} style={{ margin: 0 }}>
-                    <strong>{preview.total}</strong> destinatário(s)
-                    {preview.estimated_duration_seconds != null
-                      ? ` · ${formatEta(preview.estimated_duration_seconds)}`
-                      : ""}
+                    <strong>{selectedPreviewRecipients.size}</strong> de <strong>{preview.total}</strong>{" "}
+                    selecionado(s)
+                    {selectedPreviewEtaSeconds != null ? ` · ${formatEta(selectedPreviewEtaSeconds)}` : ""}
                   </span>
                 ) : null}
               </div>
@@ -387,19 +422,40 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
                   <table className={styles.table}>
                     <thead>
                       <tr>
+                        <th style={{ width: "2.25rem" }}>
+                          <input
+                            type="checkbox"
+                            aria-label="Selecionar todos os destinatários"
+                            checked={previewAllSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = previewSomeSelected;
+                            }}
+                            onChange={(e) => selectAllPreviewRecipients(e.target.checked)}
+                          />
+                        </th>
                         <th>Nome</th>
                         <th>WhatsApp</th>
                         <th>Origem</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.clients.slice(0, 30).map((c) => (
-                        <tr key={`${c.source ?? "c"}-${c.id}`}>
-                          <td>{c.name}</td>
-                          <td>{c.whatsapp_preview ?? "—"}</td>
-                          <td>{c.source === "external" ? "Importado" : "Oficial"}</td>
-                        </tr>
-                      ))}
+                      {preview.clients.map((c) => {
+                        const key = previewRecipientKey(c);
+                        return (
+                          <tr key={key}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={selectedPreviewRecipients.has(key)}
+                                onChange={(e) => togglePreviewRecipient(c, e.target.checked)}
+                              />
+                            </td>
+                            <td>{c.name}</td>
+                            <td>{c.whatsapp_preview ?? "—"}</td>
+                            <td>{c.source === "external" ? "Importado" : "Oficial"}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -420,9 +476,7 @@ export function CampaignWizardModal(props: CampaignWizardModalProps) {
                 </p>
                 <p className={styles.hint}>
                   Velocidade: <strong>{SPEED_OPTIONS.find((s) => s.value === sendSpeed)?.title}</strong>
-                  {preview?.estimated_duration_seconds != null
-                    ? ` · ${formatEta(preview.estimated_duration_seconds)}`
-                    : ""}
+                  {selectedPreviewEtaSeconds != null ? ` · ${formatEta(selectedPreviewEtaSeconds)}` : ""}
                 </p>
               </div>
               <div className={styles.reviewBox}>

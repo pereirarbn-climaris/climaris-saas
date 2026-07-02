@@ -1,7 +1,6 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
-import { demoCreateProduct, demoDeleteProduct, demoListProducts, demoUpdateProduct, isDemoMode } from "../lib/demoMode";
 import { normalizeProductStock } from "../lib/productStock";
 
 export type ProductOut = {
@@ -21,6 +20,7 @@ export type ProductOut = {
   btu_max: number | null;
   application_scope: string | null;
   is_active: boolean;
+  primary_image_url: string | null;
 };
 
 export type ProductImageOut = {
@@ -140,38 +140,6 @@ function jsonHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
-function compareProductsForSort(a: ProductOut, b: ProductOut, sort: ProductListSort): number {
-  const cmp = (x: string, y: string) => x.localeCompare(y, "pt-BR", { sensitivity: "base" });
-  const num = (x: number, y: number) => x - y;
-  const margin = (p: ProductOut) => Number((p.sale_price || p.unit_price || 0) - (p.purchase_price || 0));
-  switch (sort) {
-    case "name_desc":
-      return cmp(b.name, a.name);
-    case "sku_asc":
-      return cmp(a.sku, b.sku);
-    case "sku_desc":
-      return cmp(b.sku, a.sku);
-    case "purchase_asc":
-      return num(Number(a.purchase_price || 0), Number(b.purchase_price || 0));
-    case "purchase_desc":
-      return num(Number(b.purchase_price || 0), Number(a.purchase_price || 0));
-    case "sale_asc":
-      return num(Number(a.sale_price || a.unit_price || 0), Number(b.sale_price || b.unit_price || 0));
-    case "sale_desc":
-      return num(Number(b.sale_price || b.unit_price || 0), Number(a.sale_price || a.unit_price || 0));
-    case "margin_asc":
-      return num(margin(a), margin(b));
-    case "margin_desc":
-      return num(margin(b), margin(a));
-    case "status_active_first":
-      return Number(b.is_active) - Number(a.is_active) || cmp(a.name, b.name);
-    case "status_inactive_first":
-      return Number(a.is_active) - Number(b.is_active) || cmp(a.name, b.name);
-    default:
-      return cmp(a.name, b.name);
-  }
-}
-
 export async function listProducts(params?: {
   q?: string;
   skip?: number;
@@ -179,21 +147,6 @@ export async function listProducts(params?: {
   sort?: ProductListSort;
 }): Promise<ProductOut[]> {
   const sort = params?.sort ?? "name_asc";
-  if (isDemoMode()) {
-    const q = params?.q?.trim().toLowerCase();
-    let filtered = demoListProducts();
-    if (q) {
-      filtered = filtered.filter((p: ProductOut) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
-    }
-    const skip = params?.skip ?? 0;
-    const limit = params?.limit ?? 20;
-    return Promise.resolve(
-      [...filtered]
-        .sort((a, b) => compareProductsForSort(a, b, sort))
-        .slice(skip, skip + limit)
-        .map(normalizeProductStock),
-    );
-  }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
   const limit = clampApiLimit(params?.limit, 50);
@@ -211,24 +164,6 @@ export async function listProducts(params?: {
 }
 
 export async function countProducts(params?: { q?: string }): Promise<ProductCountOut> {
-  if (isDemoMode()) {
-    const q = params?.q?.trim().toLowerCase();
-    let filtered = demoListProducts();
-    if (q) {
-      filtered = filtered.filter((p: ProductOut) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
-    }
-    const total = filtered.length;
-    const active = filtered.filter((p) => p.is_active).length;
-    const inactive = total - active;
-    const avgMargin =
-      total > 0
-        ? filtered.reduce(
-            (acc, p) => acc + Number((p.sale_price || p.unit_price || 0) - (p.purchase_price || 0)),
-            0,
-          ) / total
-        : 0;
-    return Promise.resolve({ total, active, inactive, avg_margin: avgMargin });
-  }
   const q = params?.q?.trim();
   const sp = new URLSearchParams();
   if (q) sp.set("q", q);
@@ -242,11 +177,7 @@ export async function countProducts(params?: { q?: string }): Promise<ProductCou
 }
 
 export async function getProduct(productId: number): Promise<ProductDetailOut> {
-  if (isDemoMode()) {
-    const row = demoListProducts().find((item) => item.id === productId);
-    if (!row) throw new Error("Produto não encontrado.");
-    return Promise.resolve({ ...row, images: [] });
-  }
+
   const response = await fetch(apiUrl(`/api/v1/products/${productId}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {
@@ -257,19 +188,7 @@ export async function getProduct(productId: number): Promise<ProductDetailOut> {
 }
 
 export async function createProduct(payload: ProductCreatePayload): Promise<ProductOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(
-      demoCreateProduct({
-        ...payload,
-        stock_quantity: payload.stock_quantity ?? 0,
-        compatible_equipment_tags: payload.compatible_equipment_tags ?? null,
-        btu_min: payload.btu_min ?? null,
-        btu_max: payload.btu_max ?? null,
-        application_scope: payload.application_scope ?? null,
-        is_active: payload.is_active ?? true,
-      }),
-    );
-  }
+
   const response = await fetch(apiUrl("/api/v1/products"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -283,7 +202,6 @@ export async function createProduct(payload: ProductCreatePayload): Promise<Prod
 }
 
 export async function updateProduct(productId: number, payload: ProductUpdatePayload): Promise<ProductOut> {
-  if (isDemoMode()) return Promise.resolve(demoUpdateProduct(productId, payload));
   const response = await fetch(apiUrl(`/api/v1/products/${productId}`), {
     method: "PUT",
     headers: jsonHeaders(),
@@ -297,10 +215,6 @@ export async function updateProduct(productId: number, payload: ProductUpdatePay
 }
 
 export async function deleteProduct(productId: number): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteProduct(productId);
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl(`/api/v1/products/${productId}`), {
     method: "DELETE",
     headers: bearer(),

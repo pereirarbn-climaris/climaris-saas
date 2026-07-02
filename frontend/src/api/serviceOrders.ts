@@ -304,6 +304,111 @@ export async function patchServiceOrderDetails(
   return normalizeServiceOrderOut(body as ServiceOrderOut);
 }
 
+export type GarantiaVacuoEvidenceOut = {
+  storageKey: string;
+  publicUrl: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  vacuoFinalMicrons: string | null;
+  deviceName: string | null;
+  deviceSerial: string | null;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number | null;
+  capturedAt: string;
+  capturedOffline: boolean;
+};
+
+export async function uploadGarantiaVacuoEvidence(
+  orderId: number,
+  params: {
+    file: File;
+    evidenceKind?: "foto" | "relatorio";
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number | null;
+    capturedAt: string;
+    capturedOffline?: boolean;
+    extractVacuum?: boolean;
+  },
+): Promise<GarantiaVacuoEvidenceOut> {
+  const fd = new FormData();
+  fd.append("file", params.file, params.file.name);
+  fd.append("evidence_kind", params.evidenceKind ?? "foto");
+  fd.append("latitude", String(params.latitude));
+  fd.append("longitude", String(params.longitude));
+  fd.append("captured_at", params.capturedAt);
+  if (params.accuracyMeters != null && Number.isFinite(params.accuracyMeters)) {
+    fd.append("accuracy_meters", String(params.accuracyMeters));
+  }
+  fd.append("captured_offline", params.capturedOffline ? "true" : "false");
+  fd.append("extract_vacuum", params.extractVacuum === false ? "false" : "true");
+
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/garantia/vacuo-evidence`), {
+    method: "POST",
+    headers: bearer(),
+    body: fd,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível arquivar a evidência de vácuo.", response.status));
+  }
+  return body as GarantiaVacuoEvidenceOut;
+}
+
+export type GarantiaStartupEvidenceOut = {
+  metricKey: string;
+  storageKey: string;
+  publicUrl: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  extractedValue: string | null;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number | null;
+  capturedAt: string;
+  capturedOffline: boolean;
+};
+
+export async function uploadGarantiaStartupEvidence(
+  orderId: number,
+  params: {
+    file: File;
+    metricKey: string;
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number | null;
+    capturedAt: string;
+    capturedOffline?: boolean;
+    extractValue?: boolean;
+  },
+): Promise<GarantiaStartupEvidenceOut> {
+  const fd = new FormData();
+  fd.append("file", params.file, params.file.name);
+  fd.append("metric_key", params.metricKey);
+  fd.append("latitude", String(params.latitude));
+  fd.append("longitude", String(params.longitude));
+  fd.append("captured_at", params.capturedAt);
+  if (params.accuracyMeters != null && Number.isFinite(params.accuracyMeters)) {
+    fd.append("accuracy_meters", String(params.accuracyMeters));
+  }
+  fd.append("captured_offline", params.capturedOffline ? "true" : "false");
+  fd.append("extract_value", params.extractValue === false ? "false" : "true");
+
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/garantia/startup-evidence`), {
+    method: "POST",
+    headers: bearer(),
+    body: fd,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível arquivar a evidência de startup.", response.status));
+  }
+  return body as GarantiaStartupEvidenceOut;
+}
+
 export type ServiceOrderLaudoPatch = ReturnType<typeof import("../lib/serviceOrderFormViewAdapter").buildLaudoPatchPayload>;
 
 export async function patchServiceOrderLaudo(
@@ -327,6 +432,15 @@ export async function fetchServiceOrderLaudoPdf(orderId: number): Promise<Blob> 
   if (!response.ok) {
     const body = await parseBody(response);
     throw new Error(errorMessage(body, "Não foi possível gerar o laudo em PDF.", response.status));
+  }
+  return response.blob();
+}
+
+export async function fetchServiceOrderGarantiaPdf(orderId: number): Promise<Blob> {
+  const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/garantia/pdf`), { headers: bearer() });
+  if (!response.ok) {
+    const body = await parseBody(response);
+    throw new Error(errorMessage(body, "Não foi possível gerar o termo de garantia em PDF.", response.status));
   }
   return response.blob();
 }

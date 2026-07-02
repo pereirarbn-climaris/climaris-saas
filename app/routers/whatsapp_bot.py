@@ -10,9 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.marketplace_util import tenant_has_marketplace_app
-from app.marketplace_util import tenant_entitlement_status_for_slug
-from app.plan_rules import get_plan_definition
+from app.whatsapp_entitlements import require_whatsapp_module, whatsapp_module_status_payload
 from app.schemas_whatsapp_bot import (
     WhatsappBotFlowCreate,
     WhatsappBotFlowOut,
@@ -51,17 +49,7 @@ router = APIRouter(prefix="/whatsapp/bot", tags=["whatsapp-bot"])
 
 
 def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    if get_plan_definition(tenant.active_plan).is_beta_internal:
-        return
-    if tenant_has_marketplace_app(db, tenant_id, "whatsapp"):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Módulo WhatsApp não contratado. Solicite na Loja de integrações.",
-    )
+    require_whatsapp_module(db, tenant_id)
 
 
 @router.get(
@@ -73,19 +61,7 @@ def get_bot_module_status(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    tenant = db.get(Tenant, current_user.tenant_id)
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    plan_def = get_plan_definition(tenant.active_plan)
-    if plan_def.is_beta_internal:
-        return {"entitlement_active": True, "entitlement_status": plan_def.key, "blocked_reason": None}
-    ent_status = tenant_entitlement_status_for_slug(db, current_user.tenant_id, "whatsapp")
-    active = tenant_has_marketplace_app(db, current_user.tenant_id, "whatsapp")
-    return {
-        "entitlement_active": active,
-        "entitlement_status": ent_status.value if ent_status is not None else None,
-        "blocked_reason": None if active else "Módulo WhatsApp não contratado ou ainda não aprovado.",
-    }
+    return whatsapp_module_status_payload(db, current_user.tenant_id)
 
 
 @router.get(

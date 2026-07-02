@@ -1,4 +1,5 @@
 import type { ClientComboboxItem } from "../components/ui/client-combobox";
+import { formatClientComboboxContato } from "./clientComboboxAdapter";
 
 export type MockSite = {
   id: string;
@@ -12,6 +13,9 @@ export type MockClient = {
   name: string;
   tradeName?: string;
   document: string;
+  address?: string;
+  phone?: string;
+  whatsapp?: string;
   sites: MockSite[];
 };
 
@@ -165,6 +169,8 @@ export function mockClientsToComboboxItems(clients: MockClient[]): ClientCombobo
   return clients.map((c) => ({
     id: c.id,
     nome: c.name,
+    endereco: c.address,
+    contato: formatClientComboboxContato(c),
     nomeFantasia: c.tradeName,
     documento: c.document,
   }));

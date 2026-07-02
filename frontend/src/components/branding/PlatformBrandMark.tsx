@@ -33,6 +33,8 @@ export type PlatformBrandVariant = "sidebar" | "auth" | "auth-dark" | "operacao"
 type Props = {
   variant?: PlatformBrandVariant;
   showName?: boolean;
+  /** Tamanho do logo no menu lateral (independente de exibir o nome). */
+  sidebarExpanded?: boolean;
   className?: string;
 };
 
@@ -50,15 +52,21 @@ function nameClass(variant: PlatformBrandVariant): string {
   return styles.nameSidebar;
 }
 
-export function PlatformBrandMark({ variant = "sidebar", showName = true, className }: Props) {
+export function PlatformBrandMark({
+  variant = "sidebar",
+  showName = true,
+  sidebarExpanded,
+  className,
+}: Props) {
   const { branding, logoSrc } = usePlatformBranding();
   const hasLogo = branding.has_logo && Boolean(logoSrc);
   const initial = (branding.platform_name.trim()[0] ?? "C").toUpperCase();
 
   if (variant === "sidebar") {
+    const isExpanded = sidebarExpanded ?? showName;
     const rowClass = [
       dash.brandRow,
-      showName ? styles.sidebarBrandExpanded : styles.sidebarBrandCollapsed,
+      isExpanded ? styles.sidebarBrandExpanded : styles.sidebarBrandCollapsed,
       className,
     ]
       .filter(Boolean)
@@ -72,17 +80,20 @@ export function PlatformBrandMark({ variant = "sidebar", showName = true, classN
       <div className={rowClass}>
         {hasLogo ? (
           <span
-            className={`${styles.markWithLogo} ${showName ? "" : styles.markWithLogoCollapsed}`.trim()}
+            className={`${styles.markWithLogo} ${isExpanded ? styles.markWithLogoExpanded : styles.markWithLogoCollapsed}`.trim()}
             aria-hidden
           >
             <img
               src={logoSrcWithCache}
-              alt=""
-              className={showName ? styles.logoImageSidebarExpanded : styles.logoImageSidebarCollapsed}
+              alt={branding.platform_name}
+              className={isExpanded ? styles.logoImageSidebarExpanded : styles.logoImageSidebarCollapsed}
             />
           </span>
         ) : (
-          <span className={dash.logoMark} aria-hidden />
+          <span
+            className={`${dash.logoMark} ${isExpanded ? styles.fallbackMarkExpanded : styles.fallbackMarkCollapsed}`.trim()}
+            aria-hidden
+          />
         )}
         {showName ? <span className={dash.brandName}>{branding.platform_name}</span> : null}
       </div>

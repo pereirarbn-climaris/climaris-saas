@@ -11,6 +11,7 @@ export type PmocCreateDraft = {
   clientId: string;
   siteId: string;
   resolvedSiteId: string;
+  requiresSite: boolean;
   equipmentIds: number[];
   planTitle: string;
   responsibleName: string;
@@ -42,7 +43,7 @@ export function validatePmocCreateDraft(draft: PmocCreateDraft): PmocCreateValid
     });
   }
 
-  if (draft.clientId.trim() && !draft.resolvedSiteId.trim()) {
+  if (draft.clientId.trim() && draft.requiresSite && !draft.resolvedSiteId.trim()) {
     issues.push({
       code: "missing_site",
       field: "siteId",
@@ -51,7 +52,7 @@ export function validatePmocCreateDraft(draft: PmocCreateDraft): PmocCreateValid
     });
   }
 
-  if (draft.resolvedSiteId.trim() && draft.equipmentIds.length < 1) {
+  if ((draft.requiresSite ? draft.resolvedSiteId.trim() : draft.clientId.trim()) && draft.equipmentIds.length < 1) {
     issues.push({
       code: "missing_equipment",
       field: "equipmentIds",

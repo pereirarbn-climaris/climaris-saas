@@ -41,6 +41,19 @@ tr:hover .productIcon {
   stroke-width: var(--icon-stroke);
 }
 
+.productIconWithImage {
+  background: #f1f5f9;
+  overflow: hidden;
+  padding: 0;
+}
+
+.productThumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .productInfo {
   display: flex;
   flex-direction: column;
@@ -170,6 +183,12 @@ tr:hover .productIcon {
   stroke: currentColor;
   fill: none;
   stroke-width: var(--icon-stroke);
+}
+
+.productIconMobileWithImage {
+  background: #f1f5f9;
+  overflow: hidden;
+  padding: 0;
 }
 
 .mobileName {

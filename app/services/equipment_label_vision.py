@@ -38,14 +38,21 @@ Retorne SOMENTE um JSON válido (sem markdown, sem texto extra) com exatamente e
   "fluido_refrigerante": "String (ex: R-32)",
   "tensao": "String (ex: 220V)",
   "tipo_equipamento": "String (ex: Hi-Wall, Piso Teto, Cassete, Chiller)",
-  "tecnologia": "Inverter ou On-Off"
+  "tecnologia": "Inverter ou On-Off",
+  "serie_evaporadora": "String ou null (N/S, SERIE, S/N da unidade interna)",
+  "serie_condensadora": "String ou null (N/S da unidade externa, se houver placa separada)",
+  "numero_serie": "String ou null (número de série único quando a placa não distinguir evaporadora/condensadora)"
 }
 
 Regras:
 - Use null quando o campo não estiver legível na imagem.
-- capacidade_btus deve incluir "BTUs" quando aplicável.
+- capacidade_btus deve incluir "BTUs" quando aplicível.
 - tecnologia deve ser exatamente "Inverter" ou "On-Off" (ou null se incerto).
-- Se houver duas imagens, a primeira tende a ser evaporadora e a segunda condensadora.
+- Pode haver uma ou duas imagens: evaporadora, condensadora ou ambas.
+- Com duas imagens, a primeira é evaporadora e a segunda condensadora — combine dados de todas as placas.
+- Com uma única imagem, extraia tudo que estiver visível (pode ser só evaporadora ou só condensadora).
+- Leia com atenção campos SERIE, S/N, N/S, SERIAL, Nº SÉRIE em cada placa.
+- Não confunda número de série com modelo (MODEL/MODELO).
 - Não invente dados que não apareçam na placa."""
 
 CLIMATIZADOR_EXTRACTION_PROMPT = """Você é um especialista em climatização evaporativa lendo placas de identificação (nameplate) de CLIMATIZADOR.
@@ -60,7 +67,8 @@ Retorne SOMENTE um JSON válido (sem markdown, sem texto extra) com exatamente e
   "tensao": "String (ex: 220V, 380V)",
   "tipo_instalacao": "String (ex: Parede, Teto, Chão, Industrial)",
   "pressao_estatica": "String (ex: 30 Pa, 50 mmH2O) ou null",
-  "fluido_refrigerante": "String ou null (se houver circuito híbrido/refrigeração auxiliar)"
+  "fluido_refrigerante": "String ou null (se houver circuito híbrido/refrigeração auxiliar)",
+  "numero_serie": "String ou null (SERIE, S/N, N/S)"
 }
 
 Regras:
@@ -144,6 +152,9 @@ def _normalize_extraction(raw: dict[str, Any]) -> dict[str, str | None]:
         "tensao": s("tensao"),
         "tipo_equipamento": s("tipo_equipamento"),
         "tecnologia": tecnologia,
+        "serie_evaporadora": s("serie_evaporadora") or s("numero_serie"),
+        "serie_condensadora": s("serie_condensadora"),
+        "numero_serie": s("numero_serie") or s("serie_evaporadora"),
     }
 
 
@@ -164,6 +175,7 @@ def _normalize_climatizador_extraction(raw: dict[str, Any]) -> dict[str, str | N
         "tipo_instalacao": s("tipo_instalacao"),
         "pressao_estatica": s("pressao_estatica"),
         "fluido_refrigerante": s("fluido_refrigerante"),
+        "numero_serie": s("numero_serie"),
     }
 
 

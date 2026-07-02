@@ -13,6 +13,26 @@
   padding: var(--space-6);
 }
 
+.osToolbar {
+  border-color: color-mix(in srgb, var(--mobile-card-border) 70%, #ffffff);
+}
+
+.mobileNewOsFab {
+  display: none;
+}
+
+.newOsDesktopBtn {
+  display: inline-flex;
+}
+
+.toolbarSearchMobile {}
+
+.toolbarActionsMobile {}
+
+.toolbarFilterMobile {}
+
+.toolbarSelectMobile {}
+
 /* ========== PAGE HEADER ========== */
 .pageHeader {
   display: flex;
@@ -399,10 +419,94 @@ tr:hover .clientIcon {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .wrap {
-    padding: var(--space-4);
-    gap: var(--space-4);
+    padding: 0.72rem 0.56rem 5.8rem;
+    gap: 0.7rem;
+    border-radius: 1rem;
+    border: 1px solid var(--mobile-card-border);
+    background:
+      radial-gradient(circle at 14% -8%, rgba(125, 211, 252, 0.18), transparent 38%),
+      var(--mobile-surface-gradient);
+  }
+
+  .newOsDesktopBtn {
+    display: none;
+  }
+
+  .osToolbar {
+    border-radius: 0.95rem;
+    border-color: rgba(191, 219, 254, 0.45);
+    background: linear-gradient(180deg, #0b1f3f 0%, #082046 100%);
+    box-shadow: 0 12px 28px -20px rgba(2, 6, 23, 0.95);
+    padding: 0.85rem 0.75rem;
+    gap: 0.58rem;
+  }
+
+  .osToolbar :global(.listToolbarLabel) {
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    margin-bottom: 0.12rem;
+  }
+
+  .osToolbar :global(.listToolbarSearchInput),
+  .osToolbar :global(.listToolbarSelect) {
+    border-color: rgba(191, 219, 254, 0.45);
+    background: #ffffff;
+  }
+
+  .toolbarSearchMobile {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 100%;
+    gap: 0.28rem;
+  }
+
+  .toolbarActionsMobile {
+    width: 100%;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    align-items: start;
+    flex-wrap: nowrap;
+  }
+
+  .toolbarFilterMobile {
+    min-width: 0;
+    gap: 0.22rem;
+  }
+
+  .toolbarSelectMobile {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 2.15rem !important;
+    min-height: 2.15rem !important;
+    font-size: 0.78rem;
+    padding-left: 0.6rem;
+    padding-right: 1.9rem;
+    border-radius: 0.62rem;
+  }
+
+  .osToolbar :global(.listToolbarSearchInput) {
+    height: 2.45rem;
+    min-height: 2.45rem;
+    font-size: 0.8rem;
+    border-radius: 0.72rem;
+    padding-left: 2.05rem;
+  }
+
+  .osToolbar :global(.listToolbarSearchIcon) {
+    left: 0.62rem;
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+
+  .osToolbar :global(.listToolbarSearchIcon svg) {
+    stroke-width: 1.85;
+  }
+
+  .mobileNewOsFab {
+    display: none;
   }
 
   .statsGrid {

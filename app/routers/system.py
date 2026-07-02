@@ -25,7 +25,7 @@ class ReindexRequest(BaseModel):
     regenerate_invalid_qr: bool = Field(default=True, description="Regerar etiquetas QR inválidas no S3")
     reupload_missing_budget_pdfs: bool = Field(
         default=False,
-        description="Tentar gerar e enviar PDF de orçamentos ausentes no bucket",
+        description="Ignorado: PDFs de orçamento são gerados sob demanda (mantido por compatibilidade).",
     )
 
 
@@ -52,7 +52,7 @@ def system_reindex(
     reupload_missing_budget_pdfs: Annotated[bool | None, Query()] = None,
 ) -> dict:
     """
-    Limpa caches locais de verificação S3 e revalida etiquetas QR e PDFs de orçamentos do tenant.
+    Limpa caches locais de verificação S3 e revalida etiquetas QR do tenant.
     """
     req = body or ReindexRequest()
     regen = regenerate_invalid_qr if regenerate_invalid_qr is not None else req.regenerate_invalid_qr

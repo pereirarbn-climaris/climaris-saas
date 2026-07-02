@@ -69,6 +69,7 @@ export function EquipmentLabelPhotoButtons({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<SlotKey | null>(null);
 
   useEffect(() => {
     return () => {
@@ -80,6 +81,12 @@ export function EquipmentLabelPhotoButtons({
   const handlePick = async (key: SlotKey, fileList: FileList | null) => {
     const file = fileList?.[0];
     if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      const msg = "Envie uma imagem (JPG, PNG ou WebP).";
+      setError(msg);
+      onError?.(msg);
+      return;
+    }
     setError(null);
     try {
       const prepared = await prepareImageForVision(file);
@@ -139,23 +146,36 @@ export function EquipmentLabelPhotoButtons({
 
   const renderSlot = (key: SlotKey, label: string, inputRef: React.RefObject<HTMLInputElement>) => {
     const slot = slots[key];
+    const isDragOver = dragOverKey === key;
     return (
       <div className={styles.slot}>
         <span className={styles.slotLabel}>{label}</span>
-        <div className={styles.previewWrap}>
+        <div
+          className={`${styles.previewWrap} ${isDragOver ? styles.previewWrapDragOver : ""}`}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            if (!disabled && !loading) setDragOverKey(key);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!disabled && !loading) setDragOverKey(key);
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+            setDragOverKey((prev) => (prev === key ? null : prev));
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOverKey(null);
+            if (disabled || loading) return;
+            void handlePick(key, e.dataTransfer.files);
+          }}
+        >
           {slot.previewUrl ? (
             <img src={slot.previewUrl} alt={label} className={styles.preview} />
           ) : (
-            <div
-              className={styles.preview}
-              style={{
-                display: "grid",
-                placeItems: "center",
-                color: "var(--color-text-muted)",
-                fontSize: "var(--font-size-sm)",
-              }}
-            >
-              Nenhuma foto
+            <div className={styles.previewPlaceholder}>
+              {isDragOver ? "Solte a imagem aqui" : "Nenhuma foto — arraste ou use o botão abaixo"}
             </div>
           )}
         </div>
@@ -201,10 +221,12 @@ export function EquipmentLabelPhotoButtons({
 
   const title = isResolve ? "Identificar modelo pela etiqueta" : "Cadastrar via Foto da Etiqueta";
   const subtitle = isField
-    ? "Fotografe a placa do aparelho. A IA identifica o tipo (ar-condicionado, climatizador, etc.) e busca ou cadastra o modelo no catálogo. Usa a chave Claude de Operação → Chaves APIs."
+    ? "Fotografe a placa do aparelho. A IA identifica o tipo (ar-condicionado, climatizador, etc.) e busca ou cadastra o modelo no catálogo."
     : isClimatizador
       ? "Fotografe a placa do climatizador e a IA preenche marca, modelo, vazão e demais dados."
-      : "Ideal para o técnico em campo: fotografe a placa de especificações e a IA preenche o formulário.";
+      : isResolve
+        ? "Envie a foto da evaporadora, da condensadora ou de ambas. A IA lê todas as etiquetas e preenche modelo, capacidade e séries."
+        : "Fotografe a placa de especificações de cada unidade (evaporadora e/ou condensadora).";
   const actionLabel = isResolve ? "Identificar com IA" : "Extrair dados com IA";
 
   return (
@@ -241,7 +263,11 @@ export function EquipmentLabelPhotoButtons({
       )}
 
       <p className={styles.hint}>
-        {isResolve ? "Revise os dados abaixo antes de salvar o equipamento." : "Revise os campos após a extração antes de salvar."}
+        {isResolve
+          ? isField || isClimatizador
+            ? "Revise os dados abaixo antes de salvar."
+            : "Pelo menos uma foto (evaporadora ou condensadora). Com as duas, a IA combina os dados de ambas as placas."
+          : "Revise os campos após a extração antes de salvar."}
       </p>
       {error ? <p className={styles.error}>{error}</p> : null}
     </section>

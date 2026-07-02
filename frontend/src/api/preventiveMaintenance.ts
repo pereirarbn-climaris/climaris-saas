@@ -17,6 +17,37 @@ export type {
   ServicePreventiveIntervalType,
 } from "../types/preventive";
 
+export type PreventiveModelAutomation = {
+  ai_message_enabled: boolean;
+  ai_message_fidelity: "faithful" | "balanced";
+  auto_schedule_enabled: boolean;
+  action_buttons_enabled: boolean;
+  button_schedule_enabled: boolean;
+  button_schedule_text: string;
+  button_custom_enabled: boolean;
+  button_more_text: string;
+  button_custom_result: "lead" | "reply" | "handoff" | "url";
+  button_custom_reply_text: string;
+  button_custom_url: string;
+  technical_problem_hint: string;
+};
+
+export type PreventiveModelAttachment = {
+  promo_image_enabled: boolean;
+  promo_image_url: string | null;
+  promo_image_s3_key?: string | null;
+  promo_image_mimetype: string;
+  has_banner: boolean;
+};
+
+export type PreventiveMessageModel = {
+  id: string;
+  name: string;
+  body: string;
+  automation: PreventiveModelAutomation;
+  attachment: PreventiveModelAttachment;
+};
+
 export type PreventiveSettings = {
   preventive_promo_image_url: string | null;
   preventive_image_url: string | null;
@@ -27,14 +58,29 @@ export type PreventiveSettings = {
   preventive_button_more_text: string;
   preventive_button_schedule_text: string;
   preventive_message_template: string | null;
+  preventive_message_template_first: string | null;
+  preventive_message_models?: PreventiveMessageModel[];
+  preventive_default_template_model_id?: string;
+  preventive_default_template_kind?: "first" | "returning";
+  preventive_ai_message_enabled?: boolean;
+  preventive_ai_message_fidelity?: "faithful" | "balanced";
   preventive_auto_remind_days_before: number;
   preventive_auto_whatsapp_enabled?: boolean;
+  preventive_auto_schedule_enabled?: boolean;
+  preventive_action_buttons_enabled?: boolean;
+  preventive_button_schedule_enabled?: boolean;
+  preventive_button_custom_enabled?: boolean;
+  preventive_button_custom_result?: "lead" | "reply" | "handoff" | "url";
+  preventive_button_custom_reply_text?: string | null;
+  preventive_button_custom_url?: string | null;
   default_message_template?: string | null;
+  default_message_template_first?: string | null;
+  default_message_template_returning?: string | null;
 };
 
 export type PreventiveTemplatePayload = {
-  preventive_message_template: string | null;
-  preventive_promo_image_enabled?: boolean;
+  preventive_message_models: PreventiveMessageModel[];
+  preventive_default_template_model_id?: string;
 };
 
 /** URL para prévia do banner no painel. */
@@ -45,6 +91,8 @@ export function preventiveBannerPreviewUrl(settings: PreventiveSettings | null |
   if (direct) return direct;
   return apiUrl("/api/v1/preventive-maintenance/banner-image/file");
 }
+
+export type PreventiveTemplateKind = string;
 
 export type PreventiveItem = {
   historico_servico_id: number;
@@ -76,6 +124,7 @@ export type PreventiveItem = {
   status_lembrete_vencimento?: boolean;
   status_vencida?: boolean;
   campaign_status?: "agenda" | "mensagem_enviada" | "lembrete_antecipado" | "lembrete_vencimento" | "vencida" | null;
+  message_template_kind?: PreventiveTemplateKind | null;
 };
 
 export type PreventiveClientGroup = {
@@ -162,6 +211,7 @@ export type PreventiveRegisterEntryPayload =
       reminder_local_time?: string | null;
       promo_image_url?: string | null;
       technical_problem_hint?: string | null;
+      message_template_kind?: PreventiveTemplateKind;
     }
   | {
       entry_mode?: "temporary" | "existing";
@@ -177,6 +227,7 @@ export type PreventiveRegisterEntryPayload =
       reminder_local_time?: string | null;
       promo_image_url?: string | null;
       technical_problem_hint?: string | null;
+      message_template_kind?: PreventiveTemplateKind;
     };
 
 function bearer(): HeadersInit {
@@ -252,31 +303,44 @@ export async function patchPreventiveTemplateSettings(
   payload: PreventiveTemplatePayload,
 ): Promise<PreventiveSettings> {
   return patchPreventiveSettings({
-    preventive_message_template: payload.preventive_message_template?.trim() || null,
-    preventive_promo_image_enabled: payload.preventive_promo_image_enabled,
+    preventive_message_models: payload.preventive_message_models,
+    preventive_default_template_model_id: payload.preventive_default_template_model_id,
   });
 }
 
-export async function uploadPreventiveBannerImage(file: File): Promise<PreventiveSettings> {
+export async function uploadPreventiveBannerImage(
+  file: File,
+  modelId: string,
+): Promise<PreventiveSettings> {
   const token = getAccessToken();
   if (!token) throw new Error("Sessão expirada.");
   const fd = new FormData();
   fd.set("file", file);
-  const response = await fetch(apiUrl("/api/v1/preventive-maintenance/banner-image"), {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
-  });
+  const response = await fetch(
+    apiUrl(
+      `/api/v1/preventive-maintenance/banner-image?model_id=${encodeURIComponent(modelId)}`,
+    ),
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    },
+  );
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível enviar o banner."));
   return body as PreventiveSettings;
 }
 
-export async function deletePreventiveBannerImage(): Promise<PreventiveSettings> {
-  const response = await fetch(apiUrl("/api/v1/preventive-maintenance/banner-image"), {
-    method: "DELETE",
-    headers: bearer(),
-  });
+export async function deletePreventiveBannerImage(modelId: string): Promise<PreventiveSettings> {
+  const response = await fetch(
+    apiUrl(
+      `/api/v1/preventive-maintenance/banner-image?model_id=${encodeURIComponent(modelId)}`,
+    ),
+    {
+      method: "DELETE",
+      headers: bearer(),
+    },
+  );
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errorMessage(body, "Não foi possível remover o banner."));
   return body as PreventiveSettings;
@@ -395,6 +459,7 @@ export type PreventiveManualReminderDetail = {
   reminder_local_date: string | null;
   reminder_local_time: string | null;
   is_temporary_equipment: boolean;
+  message_template_kind?: PreventiveTemplateKind | null;
 };
 
 export async function fetchManualPreventiveReminder(scheduleId: number): Promise<PreventiveManualReminderDetail> {
@@ -415,6 +480,7 @@ export async function updateManualPreventiveReminder(
     data_realizacao: string;
     equipment_label?: string | null;
     notes?: string | null;
+    message_template_kind?: PreventiveTemplateKind | null;
   },
 ): Promise<PreventiveManualReminderDetail> {
   const response = await fetch(apiUrl(`/api/v1/preventive-maintenance/manual-reminders/${scheduleId}`), {
@@ -469,6 +535,7 @@ export async function sendPreventiveReminder(payload: {
   promo_image_base64?: string | null;
   promo_image_mimetype?: string | null;
   technical_problem_hint?: string | null;
+  message_template_kind?: PreventiveTemplateKind;
 }): Promise<PreventiveSendReminderResult> {
   const response = await fetch(apiUrl("/api/v1/preventive-maintenance/send-reminder"), {
     method: "POST",

@@ -13,11 +13,17 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.schemas import (
     MarketplaceCatalogItemOut,
+    MarketplaceCheckoutIn,
+    MarketplaceCheckoutOut,
     MarketplaceMyEntitlementOut,
     MarketplaceRequestIn,
     MarketplaceRequestOut,
 )
-from models import MarketplaceApp, MarketplaceEntitlementStatus, TenantMarketplaceEntitlement, User, UserRole
+from app.stripe_billing import require_stripe_credentials
+from app.stripe_credentials import stripe_configured
+from app.stripe_marketplace import add_marketplace_addon_to_subscription
+from app.tenant_subscription import has_active_stripe_subscription
+from models import MarketplaceApp, MarketplaceEntitlementStatus, Tenant, TenantMarketplaceEntitlement, User, UserRole
 
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
@@ -48,6 +54,8 @@ def marketplace_catalog(
     apps = db.execute(
         select(MarketplaceApp).where(MarketplaceApp.is_active.is_(True)).order_by(MarketplaceApp.sort_order.asc(), MarketplaceApp.id.asc())
     ).scalars().all()
+    tenant = db.get(Tenant, current_user.tenant_id)
+    stripe_addon_ready = bool(tenant and stripe_configured(db) and has_active_stripe_subscription(tenant))
     ent_rows = db.execute(
         select(TenantMarketplaceEntitlement).where(TenantMarketplaceEntitlement.tenant_id == current_user.tenant_id)
     ).scalars().all()
@@ -71,9 +79,40 @@ def marketplace_catalog(
                 entitlement_status=ent.status.value if ent else None,
                 entitlement_id=ent.id if ent else None,
                 entitlement_quantity=int(ent.quantity) if ent else None,
+                stripe_checkout_available=stripe_addon_ready and bool(a.stripe_price_id),
             )
         )
     return out
+
+
+@router.post("/checkout", response_model=MarketplaceCheckoutOut, status_code=status.HTTP_201_CREATED)
+def marketplace_stripe_checkout(
+    payload: MarketplaceCheckoutIn,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN))],
+) -> MarketplaceCheckoutOut:
+    slug = _normalize_app_slug(payload.slug)
+    app = db.execute(
+        select(MarketplaceApp).where(MarketplaceApp.slug == slug, MarketplaceApp.is_active.is_(True))
+    ).scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail="App não encontrado ou indisponível.")
+    if payload.quantity > 1 and not app.allow_quantity:
+        raise HTTPException(status_code=400, detail="Este item não permite contratação por quantidade.")
+
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Workspace não encontrado.")
+    creds = require_stripe_credentials(db)
+    ent = add_marketplace_addon_to_subscription(db, creds, tenant, current_user, app, payload.quantity)
+    db.commit()
+    db.refresh(ent)
+    return MarketplaceCheckoutOut(
+        slug=app.slug,
+        status=ent.status.value,
+        quantity=int(ent.quantity or 1),
+        activated_via_stripe=True,
+    )
 
 
 @router.get("/my", response_model=list[MarketplaceMyEntitlementOut])

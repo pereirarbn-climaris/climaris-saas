@@ -39,6 +39,7 @@ import {
 } from "../../lib/serviceOrderFormViewAdapter";
 import type { ServiceOrderMissingRequirement } from "../../types/serviceOrders";
 import { generateTechnicalReportPDF } from "../../lib/laudo/laudoGenerator";
+import { generateGarantiaTermPdf } from "../../lib/garantia/garantiaPdfGenerator";
 import { buildServiceLinesFromPreventiveLines } from "../../lib/preventiveServiceOrder";
 import {
   computeDiscountAmountFromView,
@@ -47,13 +48,14 @@ import {
 import { COMPANY_TECHNICIAN_ID, technicianIdsForApi } from "../../lib/serviceOrderCompanyTechnician";
 import { buildSchedulingTechnicians } from "../../lib/serviceOrderSchedulingTechnicians";
 import { syncGarantiaEquipmentToClient } from "../../lib/serviceOrderGarantiaEquipmentSync";
+import { isVacuoPendingUpload, syncAllGarantiaVacuumPending } from "../../lib/garantiaVacuumSync";
+import { isStartupPendingUpload, syncAllGarantiaStartupPending } from "../../lib/garantiaStartupSync";
 import { ServiceOrderProfitabilityBadge } from "../../features/finance/components/ServiceOrderProfitabilityBadge";
 import { useServiceOrderFinanceEntries } from "../../features/finance/hooks";
 import {
   ServiceOrderFinanceIntegration,
   useServiceOrderFinanceBadge,
 } from "./ServiceOrderFinanceIntegration";
-import { ToastHost } from "../../components/ToastHost";
 import {
   syncServiceOrderItems,
   syncServiceOrderProducts,
@@ -106,6 +108,7 @@ export function ServiceOrderFormPage() {
   const [isCancellingOrder, setIsCancellingOrder] = useState(false);
   const [isSavingLaudo, setIsSavingLaudo] = useState(false);
   const [isGeneratingLaudoPdf, setIsGeneratingLaudoPdf] = useState(false);
+  const [isGeneratingGarantiaPdf, setIsGeneratingGarantiaPdf] = useState(false);
   const [schedulingPanelKey, setSchedulingPanelKey] = useState("default");
   const [error, setError] = useState<string | null>(null);
   const [complianceBlock, setComplianceBlock] = useState<ServiceOrderMissingRequirement[] | null>(null);
@@ -474,6 +477,18 @@ export function ServiceOrderFormPage() {
       setIsSavingLaudo(true);
       try {
         let garantia = data.garantia;
+        if (data.tipoServico === "instalacao" && isVacuoPendingUpload(garantia)) {
+          const vacuoPatch = await syncAllGarantiaVacuumPending(idNum, garantia);
+          if (Object.keys(vacuoPatch).length) {
+            garantia = { ...garantia, ...vacuoPatch };
+          }
+        }
+        if (data.tipoServico === "instalacao" && isStartupPendingUpload(garantia)) {
+          const startupPatch = await syncAllGarantiaStartupPending(idNum, garantia);
+          if (Object.keys(startupPatch).length) {
+            garantia = { ...garantia, ...startupPatch };
+          }
+        }
         if (data.tipoServico === "instalacao" && data.clienteId) {
           const clientId = Number(data.clienteId);
           if (Number.isFinite(clientId) && clientId > 0) {
@@ -521,6 +536,18 @@ export function ServiceOrderFormPage() {
       toast.error(e instanceof Error ? e.message : "Não foi possível gerar o laudo em PDF.");
     } finally {
       setIsGeneratingLaudoPdf(false);
+    }
+  }, [orderRow, idNum]);
+
+  const handleGenerateGarantiaPdf = useCallback(async () => {
+    if (!orderRow || !Number.isFinite(idNum)) return;
+    setIsGeneratingGarantiaPdf(true);
+    try {
+      await generateGarantiaTermPdf(idNum);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Não foi possível gerar o termo de garantia em PDF.");
+    } finally {
+      setIsGeneratingGarantiaPdf(false);
     }
   }, [orderRow, idNum]);
 
@@ -743,7 +770,6 @@ export function ServiceOrderFormPage() {
 
   return (
     <div className={styles.wrap}>
-      <ToastHost />
       {error && isNew ? <p className={styles.msgErr}>{error}</p> : null}
 
       {canStartAttendance ? (
@@ -766,6 +792,7 @@ export function ServiceOrderFormPage() {
         mode={isNew ? "create" : "edit"}
         serviceOrder={serviceOrder}
         clientes={clientes}
+        tenant={ctx?.tenant ?? null}
         tecnicos={schedulingTecnicos}
         equipamentosCliente={equipamentosCliente}
         servicesCatalog={servicesCatalog}
@@ -840,8 +867,10 @@ export function ServiceOrderFormPage() {
             : undefined
         }
         onGenerateLaudoPdf={!isNew && orderRow && newLaudoEnabled ? handleGenerateLaudoPdf : undefined}
+        onGenerateGarantiaPdf={!isNew && orderRow && isInstalacaoOrder ? handleGenerateGarantiaPdf : undefined}
         isSavingLaudo={isSavingLaudo}
         isGeneratingLaudoPdf={isGeneratingLaudoPdf}
+        isGeneratingGarantiaPdf={isGeneratingGarantiaPdf}
       />
     </div>
   );

@@ -16,6 +16,7 @@ export type MarketplaceCatalogItem = {
   entitlement_status: string | null;
   entitlement_id: number | null;
   entitlement_quantity: number | null;
+  stripe_checkout_available: boolean;
 };
 
 export type MarketplaceMyEntitlement = {
@@ -83,6 +84,23 @@ export async function requestMarketplaceApp(payload: {
   const body: unknown = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(extractError(body, "Não foi possível enviar a solicitação."));
   return body as MarketplaceRequestOut;
+}
+
+export async function checkoutMarketplaceApp(payload: {
+  slug: string;
+  quantity?: number;
+}): Promise<{ slug: string; status: string; quantity: number; activated_via_stripe: boolean }> {
+  const response = await fetch(apiUrl("/api/v1/marketplace/checkout"), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slug: payload.slug,
+      quantity: Math.max(1, Math.floor(payload.quantity ?? 1)),
+    }),
+  });
+  const body: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível contratar o add-on."));
+  return body as { slug: string; status: string; quantity: number; activated_via_stripe: boolean };
 }
 
 export async function cancelMarketplaceRequest(entitlementId: number): Promise<MarketplaceRequestOut> {

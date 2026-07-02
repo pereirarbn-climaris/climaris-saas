@@ -7,7 +7,7 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -223,6 +223,10 @@ def list_client_catalog_equipments(
     query = _client_equipment_query().where(
         ClientEquipment.client_id == client_id,
         ClientEquipment.tenant_id == current_user.tenant_id,
+        or_(
+            ClientEquipment.legacy_equipment_id.is_(None),
+            ClientEquipment.legacy_equipment.has(Equipment.preventive_reminder_only.is_(False)),
+        ),
     )
     if only_active:
         query = query.where(ClientEquipment.is_active.is_(True))

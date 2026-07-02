@@ -6,16 +6,26 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
+import {
+  MAX_PREVENTIVE_MESSAGE_MODELS,
+  createEmptyPreventiveModel,
+  patchModelAttachment,
+  preventiveModelBannerPreviewUrl,
+  updateModelInList,
+  type PreventiveTemplateDraft,
+} from '../../../lib/preventiveMessageTemplate';
+import type { PreventiveMessageModel } from '../../../api/preventiveMaintenance';
+import previewStyles from './PreventiveWhatsAppPreview.module.css';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface TemplateData {
-  messageBody: string;
-  imageUrl: string;
-  sendImage: boolean;
-}
+export type PreventiveTemplateKind = string;
+
+export type { PreventiveMessageModel };
+
+export type TemplateData = PreventiveTemplateDraft;
 
 export interface DynamicTag {
   tag: string;
@@ -36,6 +46,8 @@ export interface PreventiveTemplateSettingsProps {
   /** Prévia inline no componente (false = painel pai renderiza PreventiveWhatsAppPreview) */
   showInlinePreview?: boolean;
   showFooter?: boolean;
+  /** Exibir seletor de modelos (false quando o pai já renderiza) */
+  showModelSelector?: boolean;
   /** Callback ao salvar */
   onSave?: (data: TemplateData) => Promise<void>;
   /** Callback ao restaurar padrão */
@@ -46,13 +58,17 @@ export interface PreventiveTemplateSettingsProps {
   onRemoveBanner?: () => Promise<void>;
   /** Estado de loading externo */
   isLoading?: boolean;
+  /** Exibir prévia WhatsApp abaixo do corpo da mensagem */
+  showBelowMessagePreview?: boolean;
+  /** Nome exibido no cabeçalho da prévia */
+  previewContactName?: string;
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const DEFAULT_MESSAGE = `Olá, {cliente}! 👋
+const DEFAULT_MESSAGE_RETURNING = `Olá, {cliente}! 👋
 
 Notamos que faz *{intervalo}* desde a última manutenção do seu *{equipamento}* ({marca_modelo}).
 
@@ -63,11 +79,31 @@ A limpeza regular é essencial para:
 
 📞 Entre em contato conosco para agendar sua manutenção preventiva!`;
 
+const DEFAULT_MESSAGE_FIRST = `Olá, {cliente}! 👋
+
+Está na hora da *primeira higienização completa* do seu *{equipamento}*.
+
+A limpeza regular é essencial para:
+✅ Garantir a eficiência energética
+✅ Melhorar a qualidade do ar
+✅ Prolongar a vida útil do aparelho
+
+📞 Entre em contato conosco para agendar sua primeira manutenção preventiva!`;
+
+const DEFAULT_MODELS: PreventiveMessageModel[] = [];
+
 const DYNAMIC_TAGS: DynamicTag[] = [
   { tag: '{cliente}', label: 'Cliente', description: 'Nome do cliente' },
   { tag: '{equipamento}', label: 'Equipamento', description: 'Nome/tag do equipamento' },
   { tag: '{marca_modelo}', label: 'Marca/Modelo', description: 'Marca e modelo do aparelho' },
   { tag: '{intervalo}', label: 'Intervalo', description: 'Tempo desde última manutenção' },
+  { tag: '{mes_atual}', label: 'Mês atual', description: 'Mês corrente no fuso da empresa (ex.: Junho)' },
+  { tag: '{equipamentos_lista}', label: 'Lista de equipamentos', description: 'Vários aparelhos no mesmo mês (um por linha)' },
+];
+
+const MESES_PT = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ];
 
 // ============================================================================
@@ -167,16 +203,54 @@ const TagBadge: React.FC<TagBadgeProps> = ({ tag, onCopy }) => {
 
 interface WhatsAppPreviewProps {
   message: string;
-  imageUrl: string;
+  imageUrl?: string;
+  buttons?: string[];
+  buttonEntries?: { label: string; reply: string }[];
+  contactName?: string;
 }
 
-export const PreventiveWhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ message, imageUrl }) => {
+export const PreventiveWhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({
+  message,
+  imageUrl = "",
+  buttons = [],
+  buttonEntries,
+  contactName = "Sua empresa",
+}) => {
   // Substitui as tags por valores de exemplo para o preview
   const previewMessage = message
     .replace(/{cliente}/g, 'João Silva')
     .replace(/{equipamento}/g, 'Split Sala de Estar')
     .replace(/{marca_modelo}/g, 'Carrier 12000 BTUs')
-    .replace(/{intervalo}/g, '6 meses');
+    .replace(/{intervalo}/g, '6 meses')
+    .replace(/{mes_atual}/g, MESES_PT[new Date().getMonth()])
+    .replace(/{equipamentos_lista}/g, '• Split Sala (Carrier 12000)\n• Split Quarto (LG 9000)');
+
+  const nowLabel = new Date().toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const initials = contactName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('') || 'AC';
+
+  const hasImage = Boolean(imageUrl?.trim());
+  const resolvedButtonEntries =
+    buttonEntries ??
+    buttons
+      .filter((label) => label.trim())
+      .map((label) => ({
+        label,
+        reply: label.toLowerCase().includes("agendar") ? "AGENDAR" : "MAIS",
+      }));
+  const showButtonsBubble = resolvedButtonEntries.length > 0;
+  const showTextBubble = Boolean(previewMessage.trim()) && !hasImage && !showButtonsBubble;
+  const buttonsPrompt = hasImage
+    ? 'Como podemos ajudar?'
+    : previewMessage.trim() || 'Como podemos ajudar?';
 
   // Converte markdown básico para formatação visual
   const formatMessage = (text: string) => {
@@ -197,76 +271,93 @@ export const PreventiveWhatsAppPreview: React.FC<WhatsAppPreviewProps> = ({ mess
   };
 
   return (
-    <div className="flex flex-col items-center scale-[0.92] origin-top">
-      {/* Smartphone Frame — mini */}
-      <div className="relative w-[148px] h-[268px] bg-slate-900 rounded-[20px] p-1 shadow-md">
-        {/* Notch */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-14 h-3 bg-slate-900 rounded-b-lg z-10" />
-        
-        {/* Screen */}
-        <div className="w-full h-full bg-[#e5ddd5] rounded-[16px] overflow-hidden flex flex-col">
-          {/* WhatsApp Header */}
-          <div className="bg-[#075e54] px-1.5 py-1 flex items-center gap-1.5 pt-4">
-            <div className="w-5 h-5 rounded-full bg-slate-300 flex items-center justify-center shrink-0">
-              <span className="text-[7px] font-semibold text-slate-600">AC</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-[9px] font-medium truncate leading-tight">Empresa</p>
-              <p className="text-green-200 text-[7px] leading-tight">online</p>
+    <div className={previewStyles.wrap}>
+      <div className={previewStyles.phone}>
+        <div className={previewStyles.notch} />
+        <div className={previewStyles.screen}>
+          <div className={previewStyles.statusBar}>
+            <span>{nowLabel}</span>
+            <span>WhatsApp</span>
+          </div>
+
+          <div className={previewStyles.header}>
+            <div className={previewStyles.avatar}>{initials}</div>
+            <div className={previewStyles.headerText}>
+              <p className={previewStyles.contactName}>{contactName}</p>
+              <p className={previewStyles.contactStatus}>online</p>
             </div>
           </div>
 
-          {/* Chat Background Pattern */}
-          <div 
-            className="flex-1 p-1.5 overflow-y-auto min-h-0"
-            style={{
-              backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c5baaf' fill-opacity='0.15'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-            }}
-          >
-            {/* Message Bubble */}
-            <div className="max-w-[90%] ml-auto">
-              {/* Image Preview */}
-              {imageUrl && (
-                <div className="mb-1 flex justify-end">
-                  <div className="w-[30%] max-w-full rounded-md overflow-hidden bg-white shadow-sm">
+          <div className={previewStyles.chat}>
+            <div className={previewStyles.messages}>
+              {hasImage ? (
+                <div className={previewStyles.mediaBubble}>
+                  <div className={previewStyles.bubbleTail} />
+                  <div className={previewStyles.mediaImageWrap}>
                     <img
                       src={imageUrl}
                       alt="Banner promocional"
-                      className="w-full h-auto object-contain"
+                      className={previewStyles.mediaImage}
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                       }}
                     />
                   </div>
+                  {previewMessage.trim() ? (
+                    <div className={previewStyles.mediaCaption}>{formatMessage(previewMessage)}</div>
+                  ) : null}
+                  <div className={previewStyles.meta}>
+                    <span className={previewStyles.time}>{nowLabel}</span>
+                    <svg className={previewStyles.checks} viewBox="0 0 16 11" fill="currentColor" aria-hidden>
+                      <path d="M11.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-2.405-2.272a.463.463 0 0 0-.336-.136.47.47 0 0 0-.323.136l-.883.882a.479.479 0 0 0-.141.34.474.474 0 0 0 .141.34l3.56 3.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
+                      <path d="M15.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-1.405-1.272-.883.882 2.56 2.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
+                    </svg>
+                  </div>
                 </div>
-              )}
-              
-              {/* Text Bubble */}
-              <div className="bg-[#dcf8c6] rounded-md rounded-tr-none p-1.5 shadow-sm relative">
-                <p className="text-[9px] text-slate-800 leading-tight whitespace-pre-wrap break-words">
-                  {formatMessage(previewMessage)}
-                </p>
-                <div className="flex items-center justify-end gap-1 mt-1">
-                  <span className="text-[8px] text-slate-500">14:32</span>
-                  {/* Double check mark */}
-                  <svg className="w-3 h-2.5 text-[#53bdeb]" viewBox="0 0 16 11" fill="currentColor">
-                    <path d="M11.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-2.405-2.272a.463.463 0 0 0-.336-.136.47.47 0 0 0-.323.136l-.883.882a.479.479 0 0 0-.141.34.474.474 0 0 0 .141.34l3.56 3.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
-                    <path d="M15.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-1.405-1.272-.883.882 2.56 2.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
-                  </svg>
+              ) : showTextBubble ? (
+                <div className={previewStyles.bubble}>
+                  <div className={previewStyles.bubbleTail} />
+                  <div className={previewStyles.bubbleBody}>{formatMessage(previewMessage)}</div>
+                  <div className={previewStyles.meta}>
+                    <span className={previewStyles.time}>{nowLabel}</span>
+                    <svg className={previewStyles.checks} viewBox="0 0 16 11" fill="currentColor" aria-hidden>
+                      <path d="M11.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-2.405-2.272a.463.463 0 0 0-.336-.136.47.47 0 0 0-.323.136l-.883.882a.479.479 0 0 0-.141.34.474.474 0 0 0 .141.34l3.56 3.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
+                      <path d="M15.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-1.405-1.272-.883.882 2.56 2.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
+                    </svg>
+                  </div>
                 </div>
-                {/* Bubble tail */}
-                <div className="absolute top-0 -right-1.5 w-3 h-3 overflow-hidden">
-                  <div className="absolute top-0 left-0 w-3 h-3 bg-[#dcf8c6] transform rotate-45 translate-x-[-50%]" />
+              ) : null}
+
+              {showButtonsBubble ? (
+                <div className={previewStyles.buttonsBubble}>
+                  <div className={previewStyles.bubbleTail} />
+                  <div className={previewStyles.buttonsPrompt}>{formatMessage(buttonsPrompt)}</div>
+                  {resolvedButtonEntries.map((entry) => (
+                    <div key={`${entry.label}-${entry.reply}`} className={previewStyles.buttonRow}>
+                      <span className={previewStyles.buttonHint}>
+                        👉 {entry.label}: responda {entry.reply}
+                      </span>
+                    </div>
+                  ))}
+                  <div className={previewStyles.meta}>
+                    <span className={previewStyles.time}>{nowLabel}</span>
+                    <svg className={previewStyles.checks} viewBox="0 0 16 11" fill="currentColor" aria-hidden>
+                      <path d="M11.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-2.405-2.272a.463.463 0 0 0-.336-.136.47.47 0 0 0-.323.136l-.883.882a.479.479 0 0 0-.141.34.474.474 0 0 0 .141.34l3.56 3.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
+                      <path d="M15.071.653a.457.457 0 0 0-.304-.102.493.493 0 0 0-.381.178l-6.19 7.636-1.405-1.272-.883.882 2.56 2.364a.54.54 0 0 0 .373.152.535.535 0 0 0 .406-.188l7.194-8.866a.478.478 0 0 0 .098-.32.467.467 0 0 0-.16-.307l-.649-.637z" />
+                    </svg>
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
+          </div>
+
+          <div className={previewStyles.inputBar}>
+            <div className={previewStyles.inputFake} />
+            <div className={previewStyles.mic} />
           </div>
         </div>
       </div>
-
-      <p className="mt-1 text-[9px] text-[hsl(var(--muted-foreground))] text-center">
-        Prévia
-      </p>
+      <p className={previewStyles.caption}>Prévia em tempo real</p>
     </div>
   );
 };
@@ -283,15 +374,21 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
   activeSection = "all",
   showInlinePreview = true,
   showFooter = true,
+  showModelSelector = true,
   onSave,
   onRestoreDefault,
   onUploadBanner,
   onRemoveBanner,
   isLoading = false,
+  showBelowMessagePreview = false,
+  previewContactName = "Sua empresa",
 }) => {
-  const [messageBody, setMessageBody] = useState(initialData?.messageBody || DEFAULT_MESSAGE);
-  const [imageUrl, setImageUrl] = useState(initialData?.imageUrl || "");
-  const [sendImage, setSendImage] = useState(initialData?.sendImage ?? false);
+  const [models, setModels] = useState<PreventiveMessageModel[]>(
+    initialData?.models?.length ? initialData.models : DEFAULT_MODELS,
+  );
+  const [activeModelId, setActiveModelId] = useState(
+    initialData?.activeModelId || initialData?.models?.[0]?.id || "returning",
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
@@ -299,7 +396,32 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
   const isControlled = controlledData != null && onDataChange != null;
   const draft = isControlled
     ? controlledData
-    : { messageBody, imageUrl, sendImage };
+    : { models, activeModelId };
+
+  const activeModel =
+    draft.models.find((m) => m.id === draft.activeModelId) ?? draft.models[0];
+  const activeMessageBody = activeModel?.body ?? "";
+  const bannerPreviewUrl = activeModel ? preventiveModelBannerPreviewUrl(activeModel) : "";
+  const sendImage = activeModel?.attachment.promo_image_enabled ?? false;
+
+  const previewButtonEntries = React.useMemo(() => {
+    const auto = activeModel?.automation;
+    if (!auto?.action_buttons_enabled) return [];
+    const entries: { label: string; reply: string }[] = [];
+    if (auto.button_schedule_enabled && auto.auto_schedule_enabled) {
+      entries.push({
+        label: auto.button_schedule_text || "Agendar agora",
+        reply: "AGENDAR",
+      });
+    }
+    if (auto.button_custom_enabled) {
+      entries.push({
+        label: auto.button_more_text || "Sim, quero saber mais",
+        reply: "MAIS",
+      });
+    }
+    return entries;
+  }, [activeModel]);
 
   const patchDraft = useCallback(
     (patch: Partial<TemplateData>) => {
@@ -307,20 +429,44 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
       if (isControlled) {
         onDataChange!(next);
       } else {
-        if (patch.messageBody !== undefined) setMessageBody(patch.messageBody);
-        if (patch.imageUrl !== undefined) setImageUrl(patch.imageUrl);
-        if (patch.sendImage !== undefined) setSendImage(patch.sendImage);
+        if (patch.models !== undefined) setModels(patch.models);
+        if (patch.activeModelId !== undefined) setActiveModelId(patch.activeModelId);
       }
     },
     [draft, isControlled, onDataChange],
   );
 
+  const patchActiveModel = useCallback(
+    (patch: Partial<PreventiveMessageModel>) => {
+      if (!activeModel) return;
+      patchDraft({
+        models: updateModelInList(draft.models, activeModel.id, patch),
+      });
+    },
+    [activeModel, draft.models, patchDraft],
+  );
+
+  const handleAddModel = useCallback(() => {
+    if (draft.models.length >= MAX_PREVENTIVE_MESSAGE_MODELS) return;
+    const nextModel = createEmptyPreventiveModel(draft.models, null);
+    patchDraft({ models: [...draft.models, nextModel], activeModelId: nextModel.id });
+  }, [draft.models, patchDraft]);
+
+  const handleRemoveModel = useCallback(() => {
+    if (draft.models.length <= 1 || !activeModel) return;
+    const nextModels = draft.models.filter((m) => m.id !== activeModel.id);
+    patchDraft({ models: nextModels, activeModelId: nextModels[0]?.id ?? "returning" });
+  }, [activeModel, draft.models, patchDraft]);
+
   useEffect(() => {
     if (isControlled || !initialData) return;
-    setMessageBody(initialData.messageBody || DEFAULT_MESSAGE);
-    setImageUrl(initialData.imageUrl || "");
-    setSendImage(initialData.sendImage ?? false);
-  }, [initialData?.messageBody, initialData?.imageUrl, initialData?.sendImage, isControlled]);
+    setModels(initialData.models?.length ? initialData.models : DEFAULT_MODELS);
+    setActiveModelId(initialData.activeModelId || initialData.models?.[0]?.id || "returning");
+  }, [
+    initialData?.models,
+    initialData?.activeModelId,
+    isControlled,
+  ]);
 
   const handleTagCopy = useCallback((tag: string) => {
     setCopiedTag(tag);
@@ -338,9 +484,21 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
   }, [onSave, draft]);
 
   const handleRestoreDefault = useCallback(() => {
-    patchDraft({ messageBody: DEFAULT_MESSAGE, imageUrl: "", sendImage: false });
+    if (!activeModel) return;
+    const defaultBody =
+      activeModel.id === "first" ? DEFAULT_MESSAGE_FIRST : DEFAULT_MESSAGE_RETURNING;
+    patchActiveModel({ body: defaultBody });
+    if (activeModel.id === "returning") {
+      patchDraft({
+        models: patchModelAttachment(draft.models, activeModel.id, {
+          promo_image_enabled: false,
+          has_banner: false,
+          promo_image_url: null,
+        }),
+      });
+    }
     onRestoreDefault?.();
-  }, [onRestoreDefault, patchDraft]);
+  }, [activeModel, onRestoreDefault, patchActiveModel, patchDraft]);
 
   const handleBannerUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -350,7 +508,13 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
       setIsUploading(true);
       try {
         const url = await onUploadBanner(file);
-        patchDraft({ imageUrl: url, sendImage: true });
+        patchDraft({
+          models: patchModelAttachment(draft.models, draft.activeModelId, {
+            promo_image_enabled: true,
+            has_banner: true,
+            promo_image_url: url || null,
+          }),
+        });
       } finally {
         setIsUploading(false);
       }
@@ -360,13 +524,25 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
 
   const handleRemoveBanner = useCallback(async () => {
     if (!onRemoveBanner) {
-      patchDraft({ imageUrl: "", sendImage: false });
+      patchDraft({
+        models: patchModelAttachment(draft.models, draft.activeModelId, {
+          promo_image_enabled: false,
+          has_banner: false,
+          promo_image_url: null,
+        }),
+      });
       return;
     }
     setIsUploading(true);
     try {
       await onRemoveBanner();
-      patchDraft({ imageUrl: "", sendImage: false });
+      patchDraft({
+        models: patchModelAttachment(draft.models, draft.activeModelId, {
+          promo_image_enabled: false,
+          has_banner: false,
+          promo_image_url: null,
+        }),
+      });
     } finally {
       setIsUploading(false);
     }
@@ -409,6 +585,62 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
                 ) : null}
               </div>
 
+              {showModelSelector ? (
+                <div>
+                  <label className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-2">
+                    Modelos de mensagem ({draft.models.length}/{MAX_PREVENTIVE_MESSAGE_MODELS})
+                  </label>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {draft.models.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        disabled={loading}
+                        onClick={() => patchDraft({ activeModelId: model.id })}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                          draft.activeModelId === model.id
+                            ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
+                            : "border-[hsl(var(--border))] bg-[hsl(var(--background))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
+                        }`}
+                      >
+                        {model.name}
+                      </button>
+                    ))}
+                    {draft.models.length < MAX_PREVENTIVE_MESSAGE_MODELS ? (
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={handleAddModel}
+                        className="px-3 py-2 rounded-lg text-sm font-medium border border-dashed border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))]"
+                      >
+                        + Novo modelo
+                      </button>
+                    ) : null}
+                  </div>
+                  <label className="block text-sm font-medium text-[hsl(var(--card-foreground))] mb-2">
+                    Nome do modelo ativo
+                  </label>
+                  <input
+                    type="text"
+                    value={activeModel?.name ?? ""}
+                    maxLength={80}
+                    disabled={loading}
+                    onChange={(e) => patchActiveModel({ name: e.target.value })}
+                    className="w-full mb-3 px-3 py-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] text-sm"
+                  />
+                  {draft.models.length > 1 ? (
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={handleRemoveModel}
+                      className="mb-3 text-sm text-red-600 hover:underline"
+                    >
+                      Remover modelo &quot;{activeModel?.name}&quot;
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div>
                 <label
                   htmlFor="messageBody"
@@ -418,8 +650,8 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
                 </label>
                 <textarea
                   id="messageBody"
-                  value={draft.messageBody}
-                  onChange={(e) => patchDraft({ messageBody: e.target.value })}
+                  value={activeMessageBody}
+                  onChange={(e) => patchActiveModel({ body: e.target.value })}
                   placeholder="Ola, {cliente}! Notamos que faz {intervalo} desde a ultima higienizacao..."
                   rows={embedded ? 10 : 12}
                   className="w-full px-4 py-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]
@@ -432,6 +664,16 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
                 <p className="mt-1.5 text-xs text-[hsl(var(--muted-foreground))]">
                   Use *texto* para negrito. Emojis sao suportados.
                 </p>
+                {showBelowMessagePreview ? (
+                  <div className="mt-5 pt-5 border-t border-[hsl(var(--border))]">
+                    <PreventiveWhatsAppPreview
+                      message={activeMessageBody}
+                      imageUrl={sendImage ? bannerPreviewUrl : ""}
+                      buttonEntries={previewButtonEntries}
+                      contactName={previewContactName}
+                    />
+                  </div>
+                ) : null}
               </div>
             </>
           ) : null}
@@ -454,14 +696,14 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
                       onChange={(e) => void handleBannerUpload(e)}
                     />
                   </label>
-                  {draft.imageUrl ? (
+                  {bannerPreviewUrl ? (
                     <span className="text-xs text-green-700 font-medium">Banner salvo</span>
                   ) : null}
                 </div>
-                {draft.imageUrl ? (
+                {bannerPreviewUrl ? (
                   <div className="flex items-center gap-3">
                     <img
-                      src={draft.imageUrl}
+                      src={bannerPreviewUrl}
                       alt="Banner preventiva"
                       className="h-16 w-auto rounded border border-[hsl(var(--border))] object-cover"
                     />
@@ -478,15 +720,21 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
                 <label className="inline-flex items-center gap-2 text-sm text-[hsl(var(--card-foreground))]">
                   <input
                     type="checkbox"
-                    checked={draft.sendImage}
-                    disabled={loading || !draft.imageUrl}
-                    onChange={(e) => patchDraft({ sendImage: e.target.checked })}
+                    checked={sendImage}
+                    disabled={loading || !bannerPreviewUrl}
+                    onChange={(e) =>
+                      patchDraft({
+                        models: patchModelAttachment(draft.models, draft.activeModelId, {
+                          promo_image_enabled: e.target.checked,
+                        }),
+                      })
+                    }
                   />
                   Enviar banner junto com a mensagem
                 </label>
               </div>
               <p className="mt-1.5 text-xs text-[hsl(var(--muted-foreground))]">
-                A imagem fica salva no armazenamento da empresa (S3). Marque a opcao acima para anexar nos lembretes.
+                Banner exclusivo deste modelo. Marque a opção acima para anexar nos lembretes que usarem este modelo.
               </p>
             </div>
           ) : null}
@@ -495,7 +743,12 @@ export const PreventiveTemplateSettings: React.FC<PreventiveTemplateSettingsProp
         {showInlinePreview && !embedded ? (
           <div className="flex flex-col items-center justify-start lg:sticky lg:top-4">
             <div className="bg-[hsl(var(--muted)/0.25)] rounded-lg p-2 flex justify-center">
-              <PreventiveWhatsAppPreview message={draft.messageBody} imageUrl={draft.imageUrl} />
+              <PreventiveWhatsAppPreview
+                message={activeMessageBody}
+                imageUrl={sendImage ? bannerPreviewUrl : ""}
+                buttonEntries={previewButtonEntries}
+                contactName={previewContactName}
+              />
             </div>
           </div>
         ) : null}

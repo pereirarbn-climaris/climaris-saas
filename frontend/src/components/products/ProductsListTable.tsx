@@ -1,4 +1,5 @@
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ProductOut } from "../../api/products";
 import { stockQuantitiesFromProduct } from "../../lib/productStock";
@@ -17,6 +18,41 @@ function marginOf(p: ProductOut): number {
 
 function salePriceOf(p: ProductOut): number {
   return Number(p.sale_price || p.unit_price || 0);
+}
+
+function ProductListAvatar({
+  product,
+  fallback,
+  variant,
+}: {
+  product: ProductOut;
+  fallback: ReactNode;
+  variant: "desktop" | "mobile";
+}) {
+  const [failed, setFailed] = useState(false);
+  const url = product.primary_image_url?.trim();
+  const iconClass = variant === "mobile" ? styles.productIconMobile : styles.productIcon;
+  const imageClass = variant === "mobile" ? styles.productIconMobileWithImage : styles.productIconWithImage;
+
+  if (!url || failed) {
+    return (
+      <div className={iconClass} aria-hidden>
+        {fallback}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${iconClass} ${imageClass}`} aria-hidden>
+      <img
+        src={url}
+        alt=""
+        className={styles.productThumb}
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
 }
 
 type Props = {
@@ -87,9 +123,7 @@ export function ProductsListTable({
                 <tr key={p.id} {...rowInteractionProps(p)}>
                   <td>
                     <div className={styles.productCellMobile}>
-                      <div className={styles.productIconMobile} aria-hidden>
-                        {productIcon}
-                      </div>
+                      <ProductListAvatar product={p} fallback={productIcon} variant="mobile" />
                       <span className={styles.mobileName}>{p.name}</span>
                     </div>
                   </td>
@@ -144,7 +178,7 @@ export function ProductsListTable({
                   <tr key={p.id} {...rowInteractionProps(p)}>
                     <td>
                       <div className={styles.productCell}>
-                        <div className={styles.productIcon}>{productIcon}</div>
+                        <ProductListAvatar product={p} fallback={productIcon} variant="desktop" />
                         <div className={styles.productInfo}>
                           <span className={styles.productName}>{p.name}</span>
                           <span className={styles.productSku}>{p.sku}</span>

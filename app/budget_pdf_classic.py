@@ -22,6 +22,7 @@ from app.budget_pdf_common import (
     mask_phone,
     mask_tax_document,
     parse_brand_color,
+    parse_font_color,
     register_pdf_fonts,
     safe,
     tenant_full_address,
@@ -37,16 +38,18 @@ def build_classic_budget_pdf(
     tenant: Tenant,
     config: TemplateConfig,
     logo_url: str | None = None,
+    signature_url: str | None = None,
 ) -> bytes:
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     font, font_bold = register_pdf_fonts()
-    desc_style = make_service_desc_style(font)
+    brand_blue = parse_brand_color(config.brand_color)
+    text_color = parse_font_color(config.font_color)
+    desc_style = make_service_desc_style(font, text_color=text_color)
 
     margin_x = 15 * mm
     content_width = width - (2 * margin_x)
-    brand_blue = parse_brand_color(config.brand_color)
     light_blue = tint_with_white(brand_blue, 0.2)
     table_col_widths = [98 * mm, 16 * mm, 27 * mm, 13 * mm, 26 * mm]
 
@@ -70,7 +73,7 @@ def build_classic_budget_pdf(
 
     col2_x = margin_x + 31.5 * mm
     tenant_name = safe(tenant.name)
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 10.2)
     c.drawString(col2_x, top_y - 8.2 * mm, tenant_name[:52])
     c.setFont(font, 7.2)
@@ -81,11 +84,20 @@ def build_classic_budget_pdf(
         c.drawString(col2_x, top_y - 24.6 * mm, addr_lines[1][:56])
 
     col3_x = margin_x + 110 * mm
-    draw_icon_label(c, col3_x, top_y - 10.5 * mm, "☎", "Telefone", mask_phone(getattr(tenant, "phone", None)), font, font_bold)
-    draw_icon_label(c, col3_x, top_y - 14.9 * mm, "✉", "E-mail", safe(getattr(tenant, "email", None)), font, font_bold)
-    draw_icon_label(c, col3_x, top_y - 19.3 * mm, "⌂", "Site", safe(getattr(tenant, "website", None)), font, font_bold)
+    draw_icon_label(
+        c, col3_x, top_y - 10.5 * mm, "☎", "Telefone", mask_phone(getattr(tenant, "phone", None)), font, font_bold,
+        text_color=text_color,
+    )
+    draw_icon_label(
+        c, col3_x, top_y - 14.9 * mm, "✉", "E-mail", safe(getattr(tenant, "email", None)), font, font_bold,
+        text_color=text_color,
+    )
+    draw_icon_label(
+        c, col3_x, top_y - 19.3 * mm, "⌂", "Site", safe(getattr(tenant, "website", None)), font, font_bold,
+        text_color=text_color,
+    )
 
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 7.4)
     c.drawRightString(width - margin_x - 2 * mm, top_y - 8.2 * mm, "Data do orçamento")
     c.setFont(font, 8)
@@ -94,12 +106,12 @@ def build_classic_budget_pdf(
     title_y = top_y - card_h - 8 * mm
     c.setFillColor(brand_blue)
     c.rect(margin_x, title_y, content_width, 6 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 11.6)
     c.drawString(margin_x + 3 * mm, title_y + 1.15 * mm, f"Orçamento {budget_code(budget)}")
 
     y = title_y - 7 * mm
-    c.setFillColor(colors.black)
+    c.setFillColor(text_color)
     c.setFont(font_bold, 9.2)
     c.drawString(margin_x, y, "Cliente")
     c.setFont(font, 8)
@@ -116,11 +128,15 @@ def build_classic_budget_pdf(
         mask_phone(budget.client.whatsapp or budget.client.phone),
         font,
         font_bold,
+        text_color=text_color,
     )
     y -= 3.9 * mm
     client_address_lines = address_lines(client_full_address(budget), max_chars=54)
     c.drawString(margin_x, y, client_address_lines[0][:58])
-    draw_icon_label(c, margin_x + 98 * mm, y - 0.4 * mm, "✉", "E-mail", safe(budget.client.email), font, font_bold)
+    draw_icon_label(
+        c, margin_x + 98 * mm, y - 0.4 * mm, "✉", "E-mail", safe(budget.client.email), font, font_bold,
+        text_color=text_color,
+    )
     y -= 3.9 * mm
     if len(client_address_lines) > 1:
         c.drawString(margin_x, y, client_address_lines[1][:58])
@@ -142,6 +158,7 @@ def build_classic_budget_pdf(
             font=font,
             font_bold=font_bold,
             table_col_widths=table_col_widths,
+            text_color=text_color,
         )
     if product_rows:
         section_y = draw_items_section(
@@ -157,6 +174,7 @@ def build_classic_budget_pdf(
             font=font,
             font_bold=font_bold,
             table_col_widths=table_col_widths,
+            text_color=text_color,
         )
 
     if service_rows or product_rows:
@@ -165,7 +183,7 @@ def build_classic_budget_pdf(
         total_w = 62 * mm
         total_x = margin_x + content_width - total_w
         c.rect(total_x, total_y, total_w, 5.8 * mm, fill=1, stroke=0)
-        c.setFillColor(colors.white)
+        c.setFillColor(text_color)
         c.setFont(font_bold, 8.6)
         c.drawString(total_x + 2.4 * mm, total_y + 1.7 * mm, "Total")
         c.drawRightString(total_x + total_w - 2.2 * mm, total_y + 1.7 * mm, money(total))
@@ -179,14 +197,25 @@ def build_classic_budget_pdf(
         font=font,
         font_bold=font_bold,
         brand_blue=brand_blue,
+        text_color=text_color,
         warranty=config.warranty_text,
         payment=config.payment_terms_text,
-        technical=config.technical_notes_text,
+        technical=config.observations_text,
         validity_days=int(budget.validity_days or 0),
         payment_method=budget.payment_method,
     )
     sign_y = max(22 * mm, legal_y - 6 * mm)
-    draw_signatures(c, width=width, margin_x=margin_x, sign_y=sign_y, tenant=tenant, budget=budget, font=font)
+    draw_signatures(
+        c,
+        width=width,
+        margin_x=margin_x,
+        sign_y=sign_y,
+        tenant=tenant,
+        budget=budget,
+        font=font,
+        text_color=text_color,
+        signature_url=signature_url,
+    )
     c.drawRightString(width - margin_x, 8 * mm, "Página 1/1")
 
     c.showPage()

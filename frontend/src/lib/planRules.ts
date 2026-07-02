@@ -35,6 +35,7 @@ export function isDeveloperPlan(rawPlan: string | null | undefined): boolean {
 const PLAN_DISPLAY_LABELS: Record<string, string> = {
   free_30d: "Free 30 dias",
   basic: "Basic",
+  basico: "Basic",
   professional: "Professional",
   enterprise: "Enterprise",
   beta_internal: "Developer (uso interno)",

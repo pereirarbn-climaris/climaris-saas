@@ -1,8 +1,6 @@
 import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { getAccessToken } from "../lib/authStorage";
-import { demoCreateService, demoDeleteService, demoListServices, demoUpdateService, isDemoMode } from "../lib/demoMode";
-
 export type ServiceOut = {
   id: number;
   tenant_id: number;
@@ -116,14 +114,6 @@ function jsonHeaders(): HeadersInit {
 }
 
 export async function listServices(params?: { q?: string; skip?: number; limit?: number }): Promise<ServiceOut[]> {
-  if (isDemoMode()) {
-    const q = params?.q?.trim().toLowerCase();
-    let filtered = demoListServices();
-    if (q) {
-      filtered = filtered.filter((s: ServiceOut) => s.name.toLowerCase().includes(q));
-    }
-    return Promise.resolve(filtered);
-  }
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
   const limit = clampApiLimit(params?.limit, 50);
@@ -140,11 +130,6 @@ export async function listServices(params?: { q?: string; skip?: number; limit?:
 }
 
 export async function getService(serviceId: number): Promise<ServiceOut> {
-  if (isDemoMode()) {
-    const row = demoListServices().find((item) => item.id === serviceId);
-    if (!row) throw new Error("Serviço não encontrado.");
-    return Promise.resolve(row);
-  }
   const response = await fetch(apiUrl(`/api/v1/services/${serviceId}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {
@@ -154,28 +139,7 @@ export async function getService(serviceId: number): Promise<ServiceOut> {
 }
 
 export async function createService(payload: ServiceCreatePayload): Promise<ServiceOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(
-      demoCreateService({
-        ...payload,
-        description: payload.description ?? null,
-        equipment_type_tags: payload.equipment_type_tags ?? null,
-        btu_min: payload.btu_min ?? null,
-        btu_max: payload.btu_max ?? null,
-        service_category: payload.service_category ?? null,
-        applies_residential: payload.applies_residential ?? true,
-        applies_commercial: payload.applies_commercial ?? true,
-        is_active: payload.is_active ?? true,
-        nfse_codigo_tributacao_nacional: payload.nfse_codigo_tributacao_nacional ?? null,
-        nfse_codigo_nbs: payload.nfse_codigo_nbs ?? null,
-        periodicidade_meses: payload.periodicidade_meses ?? null,
-        preventive_enabled: payload.preventive_enabled ?? false,
-        preventive_interval_type: payload.preventive_interval_type ?? null,
-        preventive_interval_value: payload.preventive_interval_value ?? null,
-        product_inputs: [],
-      }),
-    );
-  }
+
   const response = await fetch(apiUrl("/api/v1/services"), {
     method: "POST",
     headers: jsonHeaders(),
@@ -189,7 +153,6 @@ export async function createService(payload: ServiceCreatePayload): Promise<Serv
 }
 
 export async function updateService(serviceId: number, payload: ServiceUpdatePayload): Promise<ServiceOut> {
-  if (isDemoMode()) return Promise.resolve(demoUpdateService(serviceId, payload as Partial<ServiceOut>));
   const response = await fetch(apiUrl(`/api/v1/services/${serviceId}`), {
     method: "PUT",
     headers: jsonHeaders(),
@@ -203,10 +166,6 @@ export async function updateService(serviceId: number, payload: ServiceUpdatePay
 }
 
 export async function deleteService(serviceId: number): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteService(serviceId);
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl(`/api/v1/services/${serviceId}`), {
     method: "DELETE",
     headers: bearer(),
@@ -214,4 +173,32 @@ export async function deleteService(serviceId: number): Promise<void> {
   if (response.status === 204) return;
   const body = await parseBody(response);
   throw new Error(errorMessage(body, "Não foi possível excluir o serviço.", response.status));
+}
+
+export type ServiceImportError = {
+  row_number: number;
+  name: string | null;
+  message: string;
+};
+
+export type ServiceImportResult = {
+  created_count: number;
+  skipped_count: number;
+  error_count: number;
+  errors: ServiceImportError[];
+};
+
+export async function importServicesFile(file: File): Promise<ServiceImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(apiUrl("/api/v1/services/import/file"), {
+    method: "POST",
+    headers: bearer(),
+    body: form,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível importar os serviços.", response.status));
+  }
+  return body as ServiceImportResult;
 }

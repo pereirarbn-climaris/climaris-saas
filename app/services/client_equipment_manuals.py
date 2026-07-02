@@ -91,6 +91,8 @@ def list_client_equipment_manuals(
                 "url": download_url,
                 "kind": kind,
                 "component_label": component_label,
+                "ingestion_status": manual.ingestion_status,
+                "ingestion_error": manual.ingestion_error,
             }
         )
 

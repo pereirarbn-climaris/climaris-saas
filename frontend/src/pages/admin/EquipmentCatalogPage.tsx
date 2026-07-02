@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import {
   createEquipmentCatalog,
   createEquipmentCatalogWithExistingManual,
@@ -8,6 +9,7 @@ import {
   listEquipmentManuals,
   updateEquipmentCatalog,
 } from "../../api/equipmentCatalog";
+import { ingestAllKnowledgeManuals } from "../../api/knowledgeBase";
 import type { EquipmentCategoryCreatePayload } from "../../api/equipmentCatalog";
 import {
   AdminEquipmentCatalogView,
@@ -26,6 +28,7 @@ import {
   shouldUseExistingManualEndpoint,
 } from "../../lib/equipmentCatalogAdminAdapter";
 import styles from "./EquipmentCatalogPage.module.css";
+import { toast } from "../../lib/toast";
 
 type CatalogFilters = {
   category: string;
@@ -50,6 +53,7 @@ export function EquipmentCatalogPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [ingestingAll, setIngestingAll] = useState(false);
   const filtersRef = useRef<CatalogFilters>({ category: "", brand: "", search: "" });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -164,6 +168,22 @@ export function EquipmentCatalogPage() {
     setError("Exclusão de modelos ainda não está disponível na API.");
   }, []);
 
+  const handleIngestAllManuals = useCallback(async () => {
+    setIngestingAll(true);
+    setError("");
+    try {
+      const result = await ingestAllKnowledgeManuals();
+      setSuccess(result.message);
+      toast.success(result.message);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Falha ao indexar manuais.";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIngestingAll(false);
+    }
+  }, []);
+
   const handleCreateCategory = useCallback(
     async (payload: EquipmentCategoryCreatePayload): Promise<CategoryOption> => {
       const created = await createEquipmentCategory(payload);
@@ -190,6 +210,20 @@ export function EquipmentCatalogPage() {
           {success}
         </p>
       ) : null}
+      <div className={styles.kbToolbar}>
+        <p className={styles.kbToolbarText}>
+          Indexe todos os PDFs do catálogo para a Iris responder com base nos manuais.
+        </p>
+        <button
+          type="button"
+          className={styles.kbToolbarBtn}
+          disabled={ingestingAll || loading || saving}
+          onClick={() => void handleIngestAllManuals()}
+        >
+          <RefreshCw size={16} aria-hidden />
+          {ingestingAll ? "Indexando em lote…" : "Indexar todos os manuais"}
+        </button>
+      </div>
       <AdminEquipmentCatalogView
         equipments={equipments}
         metrics={metrics}

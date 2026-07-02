@@ -13,3 +13,11 @@ pytest>=8.0.0
 httpx>=0.27.0
 qrcode[pil]>=7.4.2
 Pillow>=10.0.0
+
+# Knowledge Base (RAG)
+langchain-text-splitters>=0.3.0
+pymupdf>=1.24.0
+pgvector>=0.3.0
+
+# Billing / marketplace (Stripe)
+stripe>=15.0.0

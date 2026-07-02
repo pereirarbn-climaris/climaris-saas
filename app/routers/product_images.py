@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.product_media import delete_product_image_if_exists, process_and_upload_product_image
+from app.tenant_plan_products import tenant_products_max_images
 from app.schemas import ProductImageOut, ProductImagesReorderRequest
 from models import Product, ProductImage, User, UserRole
 
@@ -34,6 +35,22 @@ async def upload_product_image(
     ).scalar_one_or_none()
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado.")
+
+    max_images = tenant_products_max_images(db, current_user.tenant_id)
+    if max_images is not None:
+        if max_images <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Seu plano não permite imagens em produtos.",
+            )
+        current_count = int(
+            db.scalar(select(func.count()).select_from(ProductImage).where(ProductImage.product_id == product_id)) or 0
+        )
+        if current_count >= max_images:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Limite de {max_images} imagem(ns) por produto no seu plano.",
+            )
 
     raw = await file.read()
     try:

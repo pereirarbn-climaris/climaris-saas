@@ -1,0 +1,25 @@
+.wrap {
+  margin: 0.85rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--color-border, #e2e8f0);
+}
+
+.label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.label input {
+  margin-top: 0.15rem;
+}
+
+.warning {
+  margin: 0.45rem 0 0 1.35rem;
+  font-size: 0.8rem;
+  color: #b45309;
+  font-weight: 600;
+}

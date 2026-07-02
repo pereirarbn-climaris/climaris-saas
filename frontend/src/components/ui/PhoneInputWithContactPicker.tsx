@@ -16,6 +16,7 @@ function AgendaIcon() {
 export type PhoneInputWithContactPickerProps = {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   disabled?: boolean;
   placeholder?: string;
   inputStyle?: CSSProperties;
@@ -27,6 +28,7 @@ export type PhoneInputWithContactPickerProps = {
 export function PhoneInputWithContactPicker({
   value,
   onChange,
+  onBlur,
   disabled = false,
   placeholder,
   inputStyle,
@@ -67,6 +69,7 @@ export function PhoneInputWithContactPicker({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         disabled={disabled}
       />
       {showAgenda ? (

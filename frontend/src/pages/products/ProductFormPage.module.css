@@ -427,38 +427,71 @@
   font-size: 0.875rem;
 }
 
-.filePick {
-  display: inline-flex;
+.imageDropzone {
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 7.5rem;
   margin-bottom: 0.85rem;
+  padding: 1.1rem 1rem;
+  border-radius: var(--radius-md);
+  border: 2px dashed color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+  color: var(--color-primary);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
-.filePick input[type="file"] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
+.imageDropzone:hover:not(.imageDropzoneBusy) {
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 9%, transparent);
 }
 
-.filePick span {
+.imageDropzone:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.imageDropzoneActive {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.imageDropzoneBusy {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.imageDropzoneIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: var(--touch-target-min);
-  padding: 0.5rem 1.15rem;
-  border-radius: var(--radius-md);
-  border: 1px dashed color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
-  color: var(--color-primary);
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
-.filePick:has(input:disabled) span {
-  opacity: 0.5;
-  cursor: not-allowed;
+.imageDropzoneTitle {
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+.imageDropzoneHint {
+  max-width: 22rem;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.imageDropzoneInput {
+  display: none;
 }
 
 .imageGrid {

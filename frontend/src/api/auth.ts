@@ -2,8 +2,6 @@ import { apiUrl } from "../lib/apiUrl";
 import { clampApiLimit } from "../lib/apiPagination";
 import { clearAccessToken, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "../lib/authStorage";
 import { accessTokenNeedsRefresh } from "../lib/jwtAccess";
-import { isDemoMode, demoUser, demoTenant, DEMO_ACCESS_TOKEN } from "../lib/demoMode";
-
 export type UserRole = "admin" | "technician" | "receptionist";
 
 export type TenantStatus = "active" | "suspended" | "cancelled";
@@ -24,6 +22,8 @@ export type UserOut = {
   is_platform_operator: boolean;
   phone: string | null;
   whatsapp: string | null;
+  lgpd_accepted_at: string | null;
+  lgpd_policy_version: string | null;
 };
 
 export type UserProvisionOut = UserOut & { temporary_password: string };
@@ -40,6 +40,9 @@ export type TenantOut = {
   active_plan_label?: string | null;
   finance_enabled: boolean;
   inventory_enabled: boolean;
+  products_inventory_allowed?: boolean;
+  products_purchases_enabled?: boolean;
+  products_max_images?: number | null;
   features_enabled?: Record<string, boolean>;
   finance_mode: "basic" | "intermediate" | "management";
   timezone: string;
@@ -81,6 +84,14 @@ export type TenantOut = {
   is_verified_cnpj?: boolean;
   last_cnpj_commercial_update?: string | null;
   registration_complete?: boolean;
+  trial_ends_at?: string | null;
+  trial_days_remaining?: number | null;
+  is_on_free_trial?: boolean;
+  is_trial_expired?: boolean;
+  has_paid_access?: boolean;
+  subscription_access_blocked?: boolean;
+  has_active_stripe_subscription?: boolean;
+  subscription_status?: string | null;
 };
 
 export type TokenResponse = {
@@ -97,22 +108,10 @@ export type TokenResponse = {
   refresh_token?: string | null;
 };
 
-function isLoginDemoEnabled(): boolean {
-  const v = String(import.meta.env.VITE_LOGIN_DEMO_ENABLED ?? "")
-    .trim()
-    .toLowerCase();
-  return v === "true" || v === "1" || v === "yes";
-}
-
-function createDemoTokenResponse(): TokenResponse {
-  return {
-    access_token: DEMO_ACCESS_TOKEN,
-    token_type: "bearer",
-    must_change_password: false,
-    tenant_id: 1,
-    is_platform_operator: false,
-  };
-}
+export type GoogleAuthConfig = {
+  enabled: boolean;
+  client_id: string | null;
+};
 
 export type TenantAdminPatch = {
   name?: string;
@@ -249,7 +248,6 @@ function mapLoginErrorToPt(raw: string): string {
 
 /** Renova access JWT usando refresh token (rotação no servidor). */
 export async function tryRefreshAccessToken(): Promise<boolean> {
-  if (isDemoMode()) return true;
   const rt = getRefreshToken();
   if (!rt) return !!getAccessToken();
   const access = getAccessToken();
@@ -281,7 +279,6 @@ export async function tryRefreshAccessToken(): Promise<boolean> {
 
 /** Após carregar o SPA: recupera sessão se o JWT expirou mas o refresh ainda é válido. */
 export async function bootstrapSession(): Promise<void> {
-  if (isDemoMode()) return;
   await tryRefreshAccessToken();
 }
 
@@ -328,10 +325,6 @@ export async function loginRequest(payload: {
   two_factor_code?: string;
   trust_this_device?: boolean;
 }): Promise<TokenResponse> {
-  /* Previews (v0/Vercel) sem backend: não chama a API; mesmo token que `isDemoMode()` / botão Demo. */
-  if (isLoginDemoEnabled()) {
-    return createDemoTokenResponse();
-  }
   const response = await fetch(apiUrl("/api/v1/auth/login"), {
     method: "POST",
     credentials: "include",
@@ -355,6 +348,32 @@ export async function loginRequest(payload: {
   return data;
 }
 
+export async function googleLoginRequest(payload: {
+  id_token: string;
+  tenant_id?: number;
+  two_factor_token?: string;
+  two_factor_code?: string;
+  trust_this_device?: boolean;
+}): Promise<TokenResponse> {
+  const response = await fetch(apiUrl("/api/v1/auth/google/login"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(mapLoginErrorToPt(errorMessage(body, "Não foi possível entrar com Google.", response)));
+  }
+  const data = body as TokenResponse;
+  if (!data.access_token && !data.two_factor_required) {
+    throw new Error(
+      "Resposta inválida do servidor ao entrar com Google. Atualize a página (Ctrl+F5) e tente de novo."
+    );
+  }
+  return data;
+}
+
 export async function registerRequest(payload: {
   tenant_name: string;
   full_name: string;
@@ -367,6 +386,7 @@ export async function registerRequest(payload: {
   active_plan?: string;
   timezone?: string;
   business_days?: number[];
+  lgpd_consent: boolean;
 }): Promise<TenantOut> {
   const response = await fetch(apiUrl("/api/v1/auth/register"), {
     method: "POST",
@@ -376,6 +396,26 @@ export async function registerRequest(payload: {
   const body = await parseBody(response);
   if (!response.ok) {
     throw new Error(errorMessage(body, "Não foi possível criar a conta."));
+  }
+  return body as TenantOut;
+}
+
+export async function registerGoogleRequest(payload: {
+  id_token: string;
+  tenant_name: string;
+  active_plan?: string;
+  timezone?: string;
+  business_days?: number[];
+  lgpd_consent: boolean;
+}): Promise<TenantOut> {
+  const response = await fetch(apiUrl("/api/v1/auth/register-google"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível criar a conta com Google."));
   }
   return body as TenantOut;
 }
@@ -391,6 +431,19 @@ export async function verifyEmailRequest(token: string): Promise<{ message: stri
     throw new Error(errorMessage(body, "Não foi possível confirmar o e-mail."));
   }
   return body as { message: string };
+}
+
+export async function getGoogleAuthConfig(): Promise<GoogleAuthConfig> {
+  const response = await fetch(apiUrl("/api/v1/auth/google/config"));
+  const body = await parseBody(response);
+  if (!response.ok) {
+    return { enabled: false, client_id: null };
+  }
+  const cfg = body as Partial<GoogleAuthConfig>;
+  return {
+    enabled: Boolean(cfg.enabled),
+    client_id: typeof cfg.client_id === "string" && cfg.client_id.trim() ? cfg.client_id.trim() : null,
+  };
 }
 
 export async function resendVerificationEmailRequest(email: string | { email: string }): Promise<{ message: string }> {
@@ -434,9 +487,6 @@ export async function resetPasswordRequest(token: string, newPassword: string): 
 }
 
 export async function fetchCurrentUser(): Promise<UserOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoUser);
-  }
   const response = await fetch(apiUrl("/api/v1/auth/me"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {
@@ -459,9 +509,6 @@ export async function patchCurrentUser(payload: UserSelfPatch): Promise<UserOut>
 }
 
 export async function fetchCurrentTenant(): Promise<TenantOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoTenant);
-  }
   const response = await fetch(apiUrl("/api/v1/auth/me/tenant"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {

@@ -5,6 +5,11 @@
   flex: 1;
 }
 
+.cardField {
+  width: 100%;
+  min-width: 0;
+}
+
 .trigger {
   display: flex;
   align-items: center;

@@ -216,6 +216,9 @@ const styles = {
     border: '1px solid var(--color-border)',
     boxShadow: 'var(--card-shadow)',
     overflow: 'hidden',
+    minHeight: '100%',
+    display: 'flex',
+    flexDirection: 'column' as const,
   },
   cardHeader: {
     display: 'flex',
@@ -401,6 +404,8 @@ const styles = {
     flexDirection: 'column' as const,
     alignItems: 'center',
     justifyContent: 'center',
+    flex: 1,
+    minHeight: '12rem',
     padding: 'var(--space-12) var(--space-6)',
     gap: 'var(--space-3)',
     color: 'var(--color-text-muted)',

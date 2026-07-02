@@ -4,4 +4,5 @@ export type DashboardOutletContext = {
   user: UserOut;
   tenant: TenantOut;
   refreshWorkspace: () => Promise<void>;
+  updateUser: (user: UserOut) => void;
 };

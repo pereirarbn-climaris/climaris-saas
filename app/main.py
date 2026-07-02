@@ -58,6 +58,7 @@ from app.routers.marketplace import router as marketplace_router
 from app.routers.platform_marketplace import router as platform_marketplace_router
 from app.routers.whatsapp import router as whatsapp_router
 from app.routers.ai_settings import router as ai_settings_router
+from app.routers.ai_knowledge import router as ai_knowledge_router
 from app.routers.nfse import router as nfse_router
 from app.routers.preventive_maintenance import router as preventive_maintenance_router
 from app.routers.system import router as system_router
@@ -433,6 +434,7 @@ app.include_router(marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(platform_marketplace_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_router, prefix=API_V1_PREFIX)
 app.include_router(ai_settings_router, prefix=API_V1_PREFIX)
+app.include_router(ai_knowledge_router, prefix=API_V1_PREFIX)
 app.include_router(nfse_router, prefix=API_V1_PREFIX)
 app.include_router(preventive_maintenance_router, prefix=API_V1_PREFIX)
 app.include_router(whatsapp_bot_router, prefix=API_V1_PREFIX)

@@ -20,6 +20,7 @@ import {
 import type { ProductOut } from '../../../api/products'
 import type { ServiceOut } from '../../../api/services'
 import type { SuggestedSlotOut } from '../../../api/serviceOrders'
+import type { TenantOut } from '../../../api/auth'
 import type { ServiceOrderMissingRequirement } from '../../../types/serviceOrders'
 import { ComplianceBlockedAlert } from '../../service-orders/ComplianceBlockedAlert'
 import { ServiceOrderForceCloseAdmin } from '../../service-orders/ServiceOrderForceCloseAdmin'
@@ -41,6 +42,8 @@ import {
   toggleServiceOnEquipment,
 } from '../../../lib/serviceOrderLinesSync'
 import { ClientCombobox } from '../../ui/client-combobox'
+import comboboxStyles from '../../ui/catalog-combobox.module.css'
+import formLayout from '../../../pages/formLayout.module.css'
 import { ServiceOrderLineSections } from './ServiceOrderLineSections'
 import { ServiceOrderSchedulingPanel } from './ServiceOrderSchedulingPanel'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card'
@@ -84,10 +87,11 @@ export type ChecklistItemStatus = 'sim' | 'nao' | 'na'
 export interface Cliente {
   id: string
   nome: string
-  /** Razão social / nome fantasia (CNPJ) — usado na busca do combobox */
+  /** Razão social / nome fantasia — usado na busca do combobox */
   nomeFantasia?: string
   documento: string
   telefone?: string
+  contato?: string
   endereco?: string
 }
 
@@ -194,6 +198,8 @@ export interface ServiceOrderFormViewProps {
   serviceOrder?: Partial<ServiceOrderData>
   /** Lista de clientes disponíveis */
   clientes: Cliente[]
+  /** Dados da empresa (termo de garantia) */
+  tenant?: TenantOut | null
   /** Lista de técnicos disponíveis */
   tecnicos: Tecnico[]
   /** Lista de equipamentos do cliente selecionado */
@@ -264,8 +270,11 @@ export interface ServiceOrderFormViewProps {
   onSaveLaudo?: (data: ServiceOrderData) => void | Promise<void>
   /** Gerar PDF do laudo técnico */
   onGenerateLaudoPdf?: () => void | Promise<void>
+  /** Gerar PDF do termo de garantia (instalação) */
+  onGenerateGarantiaPdf?: () => void | Promise<void>
   isSavingLaudo?: boolean
   isGeneratingLaudoPdf?: boolean
+  isGeneratingGarantiaPdf?: boolean
 }
 
 // ============================================================================
@@ -1148,6 +1157,7 @@ const FormCard: React.FC<FormCardProps> = ({ icon, title, subtitle, children }) 
 export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   serviceOrder,
   clientes,
+  tenant = null,
   tecnicos,
   equipamentosCliente,
   servicesCatalog = [],
@@ -1185,8 +1195,10 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   financeSection = null,
   onSaveLaudo,
   onGenerateLaudoPdf,
+  onGenerateGarantiaPdf,
   isSavingLaudo = false,
   isGeneratingLaudoPdf = false,
+  isGeneratingGarantiaPdf = false,
 }) => {
   const clientLocked = mode === 'edit' && Boolean(serviceOrder?.id ?? orderId)
   // Form state
@@ -1786,14 +1798,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             title="Status e tipo"
             subtitle="Situação da OS e classificação do serviço"
           >
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                gap: 'var(--form-grid-column-gap)',
-                maxWidth: '640px',
-              }}
-            >
+            <div className={formLayout.twoColumnGrid}>
               <FormField label="Status">
                 <Select
                   options={statusOptions}
@@ -1818,10 +1823,11 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
             title="Cliente"
             subtitle="Cliente vinculado à ordem de serviço"
           >
-            <div style={{ maxWidth: '480px' }}>
-              <FormField label="Cliente" required error={errors.clienteId}>
+            <div className={formLayout.stack}>
+              <FormField label="Cliente" required error={errors.clienteId} fullWidth>
                 <ClientCombobox
                   id="os-cliente"
+                  className={comboboxStyles.cardField}
                   clientes={clientes}
                   value={formData.clienteId}
                   onChange={handleClienteChange}
@@ -1832,7 +1838,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                 />
               </FormField>
               {clientLocked ? (
-                <p style={{ margin: '0.5rem 0 0', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+                <p style={{ margin: 0, fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
                   O cliente não pode ser alterado após a OS ser salva.
                 </p>
               ) : null}
@@ -2084,12 +2090,15 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                   formData={formData}
                   canEdit={canEditGarantia}
                   errors={errors}
-                  selectedClienteNome={selectedCliente?.nome}
+                  tenant={tenant}
+                  selectedCliente={selectedCliente}
+                  orderId={orderId}
                   onFieldChange={updateField}
                   onGarantiaChange={handleGarantiaChange}
                   onSaveGarantia={onSaveLaudo ? () => onSaveLaudo(formData) : undefined}
+                  onGenerateGarantiaPdf={onGenerateGarantiaPdf}
                   isSavingGarantia={isSavingLaudo}
-                  showSignature={formData.status === 'em_andamento' || formData.status === 'concluida'}
+                  isGeneratingGarantiaPdf={isGeneratingGarantiaPdf}
                 />
               ) : (
                 <LaudoAndChecklistTab

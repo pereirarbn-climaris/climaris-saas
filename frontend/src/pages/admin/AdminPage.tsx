@@ -12,13 +12,13 @@ import { getFinanceGateways, getFinanceSettings, type FinanceGatewaysOut } from 
 import type { DashboardOutletContext } from "../dashboardContext";
 import loginStyles from "../LoginPage.module.css";
 import formLayout from "../formLayout.module.css";
-import { ToastHost } from "../../components/ToastHost";
 import { isHiddenAppModule } from "../../lib/hiddenAppModules";
 import { Button } from "../../components/ui/button";
 import { toast } from "../../lib/toast";
 import { AdminApiKeysTab } from "./AdminApiKeysTab";
 import { ManagementView } from "./ManagementView";
 import { SettingsBudgets } from "./SettingsBudgets";
+import { SettingsGarantia } from "./SettingsGarantia";
 import { UsersView } from "./UsersView";
 import styles from "./AdminPage.module.css";
 import layout from "./ManagementView.module.css";
@@ -79,13 +79,14 @@ function FiscalSettingsHeaderIcon() {
 
 function tabFromSearch(
   tabParam: string | null,
-): "company" | "users" | "pagamentos" | "fiscal" | "apikeys" | "budgets" {
+): "company" | "users" | "pagamentos" | "fiscal" | "apikeys" | "budgets" | "garantia" {
   if (tabParam === "empresa" || tabParam === "company") return "company";
   if (tabParam === "usuarios" || tabParam === "users") return "users";
   if (tabParam === "pagamentos" || tabParam === "pagarme" || tabParam === "pagar-me") return "pagamentos";
   if (tabParam === "fiscal") return "fiscal";
   if (tabParam === "api-keys" || tabParam === "chaves") return "apikeys";
   if (tabParam === "orcamentos" || tabParam === "budget-templates" || tabParam === "budgets") return "budgets";
+  if (tabParam === "garantia" || tabParam === "garantia-settings") return "garantia";
   return "company";
 }
 
@@ -306,6 +307,8 @@ export function AdminPage() {
         <ManagementView tenant={workspaceTenant} refreshWorkspace={refreshWorkspace} />
       ) : tab === "budgets" ? (
         <SettingsBudgets />
+      ) : tab === "garantia" ? (
+        <SettingsGarantia />
       ) : tab === "users" ? (
         <UsersView adminUser={adminUser} refreshWorkspace={refreshWorkspace} />
       ) : tab === "pagamentos" ? (
@@ -387,7 +390,6 @@ export function AdminPage() {
         <AdminApiKeysTab />
       ) : (
         <div className={layout.pageWithActionBar}>
-          <ToastHost />
           <header className={layout.pageHeader}>
             <nav className={layout.breadcrumb} aria-label="Navegação">
               <span className={layout.breadcrumbCurrent}>Administração</span>

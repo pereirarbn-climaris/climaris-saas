@@ -15,8 +15,20 @@ export type PlatformMarketplaceApp = {
   user_seats_per_unit: number;
   sort_order: number;
   is_active: boolean;
+  stripe_product_id: string | null;
+  stripe_price_id: string | null;
   created_at: string;
 };
+
+export async function syncPlatformMarketplaceAppToStripe(appId: number): Promise<PlatformMarketplaceApp> {
+  const response = await fetch(apiUrl(`/api/v1/platform/stripe/sync-marketplace-app/${appId}`), {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const body: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível sincronizar com o Stripe."));
+  return body as PlatformMarketplaceApp;
+}
 
 export type PlatformMarketplaceEntitlement = {
   id: number;

@@ -25,7 +25,7 @@ import {
   type WhatsappTenantConnection,
   type WhatsappWebhookInfo,
 } from "../../api/whatsapp";
-import { ToastHost } from "../../components/ToastHost";
+import { tenantDefaultTemplateKind } from "../../lib/preventiveMessageTemplate";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
 import { WhatsappAgendaTab } from "./WhatsappAgendaTab";
@@ -116,10 +116,8 @@ export function WhatsappIntegrationPage() {
   const [preventiveSettings, setPreventiveSettings] = useState<PreventiveSettings | null>(null);
   const [preventiveLeads, setPreventiveLeads] = useState<PreventiveLead[]>([]);
   const [preventiveSettingsDraft, setPreventiveSettingsDraft] = useState({
-    preventive_technical_problem_hint: "",
-    preventive_button_more_text: "",
-    preventive_button_schedule_text: "",
     preventive_auto_remind_days_before: 0,
+    preventive_default_template_model_id: "returning",
   });
   const [showHistory, setShowHistory] = useState(false);
   const [syncingWebhook, setSyncingWebhook] = useState(false);
@@ -155,10 +153,8 @@ export function WhatsappIntegrationPage() {
         setPreventiveSettings(prevSt);
         setPreventiveLeads(prevLeads);
         setPreventiveSettingsDraft({
-          preventive_technical_problem_hint: prevSt.preventive_technical_problem_hint ?? "",
-          preventive_button_more_text: prevSt.preventive_button_more_text,
-          preventive_button_schedule_text: prevSt.preventive_button_schedule_text,
           preventive_auto_remind_days_before: prevSt.preventive_auto_remind_days_before ?? 0,
+          preventive_default_template_model_id: tenantDefaultTemplateKind(prevSt),
         });
         setJobs(jb);
       } else {
@@ -341,7 +337,7 @@ export function WhatsappIntegrationPage() {
         <header className={styles.hero}>
           <div className={styles.heroInner}>
             <p className={styles.eyebrow}>Integrações</p>
-            <h1 className={styles.heroTitle}>WhatsApp (Evolution)</h1>
+            <h1 className={styles.heroTitle}>WhatsApp</h1>
             <p className={styles.heroLead}>
               A conexão e as mensagens automáticas ficam disponíveis após liberação do módulo WhatsApp na Loja.
             </p>
@@ -422,21 +418,17 @@ export function WhatsappIntegrationPage() {
 
   return (
     <div className={styles.page}>
-      <ToastHost />
       <header className={styles.hero}>
         <div className={styles.heroInner}>
           <p className={styles.eyebrow}>Integrações</p>
-          <h1 className={styles.heroTitle}>WhatsApp (Evolution)</h1>
+          <h1 className={styles.heroTitle}>WhatsApp</h1>
           <p className={styles.heroLead}>
             Conecte o número da empresa para lembretes e mensagens automáticas. Administradores gerenciam a conexão e as
             regras; recepção pode acompanhar o status e o histórico de envios.
           </p>
           <p className={styles.heroLead} style={{ marginTop: "0.75rem" }}>
-            <Link to="/app" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
-              Voltar ao painel
-            </Link>
             {!isHiddenAppModule("whatsappCampanhas") ? (
-              <Link to="/app/integrations/whatsapp-campanhas" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)", marginLeft: "0.5rem" }}>
+              <Link to="/app/integrations/whatsapp-campanhas" className={styles.btnGhost} style={{ color: "#ecfdf5", borderColor: "rgba(255,255,255,0.35)" }}>
                 Campanhas WhatsApp
               </Link>
             ) : null}
@@ -719,10 +711,8 @@ export function WhatsappIntegrationPage() {
               onSettingsSaved={(next) => {
                 setPreventiveSettings(next);
                 setPreventiveSettingsDraft({
-                  preventive_technical_problem_hint: next.preventive_technical_problem_hint ?? "",
-                  preventive_button_more_text: next.preventive_button_more_text,
-                  preventive_button_schedule_text: next.preventive_button_schedule_text,
                   preventive_auto_remind_days_before: next.preventive_auto_remind_days_before ?? 0,
+                  preventive_default_template_model_id: tenantDefaultTemplateKind(next),
                 });
               }}
             />

@@ -13,6 +13,9 @@ export type EquipmentLabelExtractionOut = {
   tensao: string | null;
   tipo_equipamento: string | null;
   tecnologia: string | null;
+  serie_evaporadora?: string | null;
+  serie_condensadora?: string | null;
+  numero_serie?: string | null;
   modelo?: string | null;
   vazao_m3h?: string | null;
   potencia_kw?: string | null;
@@ -50,8 +53,10 @@ async function parseBody(response: Response): Promise<unknown> {
 
 function errorMessage(body: unknown, fallback: string, status: number): string {
   if (body && typeof body === "object") {
-    const detail = (body as { detail?: unknown }).detail;
-    if (typeof detail === "string" && detail.trim()) return detail;
+    const record = body as { detail?: unknown; error?: { message?: unknown; details?: unknown } };
+    if (typeof record.detail === "string" && record.detail.trim()) return record.detail;
+    const nested = record.error?.message;
+    if (typeof nested === "string" && nested.trim()) return nested;
   }
   return `${fallback} (${status})`;
 }

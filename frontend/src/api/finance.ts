@@ -1,35 +1,5 @@
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
-import {
-  demoCreateFinanceCategory,
-  demoCreateFinanceAccount,
-  demoDeleteFinanceCategory,
-  demoPatchFinanceCategory,
-  demoCreateFinanceEntry,
-  demoCreateFinanceFee,
-  demoDeleteFinanceEntry,
-  demoDeleteFinanceFee,
-  demoDeleteFinanceGatewayMercadoPago,
-  demoGetFinanceSettings,
-  demoGetFinanceSummary,
-  demoGetFinanceBalanceSnapshot,
-  demoGetFinanceGateways,
-  demoListFinanceAccounts,
-  demoListFinanceCategories,
-  demoListFinanceEntries,
-  demoListFinanceFees,
-  demoMercadoPagoPixCharge,
-  demoMercadoPagoBoletoCharge,
-  demoMercadoPagoPreference,
-  demoPatchFinanceEntry,
-  demoPatchFinanceGatewayMercadoPagoProducts,
-  demoPatchFinanceGatewayMercadoPagoWebhookSignature,
-  demoTestFinanceGatewayMercadoPago,
-  demoUpdateFinanceSettings,
-  demoUpsertFinanceGatewayMercadoPago,
-  isDemoMode,
-} from "../lib/demoMode";
-import { resolveFinanceEntitlements } from "../lib/financeEntitlements";
 import type { FinanceEntitlements } from "../schemas/financeCore";
 
 export type { FinanceEntitlements, FinanceFeatureKey } from "../schemas/financeCore";
@@ -209,15 +179,6 @@ export async function listFinanceEntries(params: {
   service_order_id?: number;
   limit?: number;
 }): Promise<FinanceEntryOut[]> {
-  if (isDemoMode()) {
-    let rows: FinanceEntryOut[] = demoListFinanceEntries();
-    if (params.status) rows = rows.filter((item: FinanceEntryOut) => item.status === params.status);
-    if (params.entry_type) rows = rows.filter((item: FinanceEntryOut) => item.entry_type === params.entry_type);
-    if (params.service_order_id != null) {
-      rows = rows.filter((item: FinanceEntryOut) => item.service_order_id === params.service_order_id);
-    }
-    return Promise.resolve(rows);
-  }
   const sp = new URLSearchParams();
   sp.set("start_date", params.start_date);
   sp.set("end_date", params.end_date);
@@ -261,7 +222,6 @@ export async function createFinanceEntry(payload: {
     end_date?: string | null;
   };
 }): Promise<FinanceEntryOut> {
-  if (isDemoMode()) return Promise.resolve(demoCreateFinanceEntry(payload));
   const response = await fetch(apiUrl("/api/v1/finance/entries"), {
     method: "POST",
     headers: bearer(true),
@@ -297,7 +257,6 @@ export async function patchFinanceEntry(
     settlement_plan?: "same_as_due" | "next_business_day";
   },
 ): Promise<FinanceEntryOut> {
-  if (isDemoMode()) return Promise.resolve(demoPatchFinanceEntry(entryId, payload));
   const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}`), {
     method: "PATCH",
     headers: bearer(true),
@@ -367,9 +326,6 @@ export type FinanceBalanceSnapshotOut = {
 };
 
 export async function listFinanceAccounts(): Promise<FinanceBankAccountOut[]> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoListFinanceAccounts());
-  }
   const response = await fetch(apiUrl("/api/v1/finance/accounts"), { headers: bearer() });
   const body = await parseResponseOrApiError(response, "Não foi possível listar contas bancárias.");
   return body as FinanceBankAccountOut[];
@@ -389,10 +345,7 @@ export type FinanceAccountBalanceSyncOut = {
 };
 
 export async function syncFinanceAccountBalances(): Promise<FinanceAccountBalanceSyncOut> {
-  if (isDemoMode()) {
-    const accounts = demoListFinanceAccounts();
-    return Promise.resolve({ results: [], accounts });
-  }
+
   const response = await fetch(apiUrl("/api/v1/finance/accounts/sync-balances"), {
     method: "POST",
     headers: bearer(),
@@ -406,9 +359,6 @@ export async function getFinanceBalanceSnapshot(params: {
   end_date: string;
   date_basis: FinanceEntryDateBasis;
 }): Promise<FinanceBalanceSnapshotOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(demoGetFinanceBalanceSnapshot(params));
-  }
   const sp = new URLSearchParams({ end_date: params.end_date, date_basis: params.date_basis });
   const response = await fetch(apiUrl(`/api/v1/finance/balance-snapshot?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
@@ -423,7 +373,6 @@ export async function createFinanceAccount(payload: {
   initial_balance?: number;
   is_active?: boolean;
 }): Promise<FinanceBankAccountOut> {
-  if (isDemoMode()) return Promise.resolve(demoCreateFinanceAccount(payload));
   const response = await fetch(apiUrl("/api/v1/finance/accounts"), {
     method: "POST",
     headers: bearer(true),
@@ -613,7 +562,6 @@ export async function createFinanceEntryMercadoPagoPixCharge(
   external_reference: string;
   sandbox: boolean;
 }> {
-  if (isDemoMode()) return Promise.resolve(demoMercadoPagoPixCharge(entryId, payload));
   const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}/mercadopago-charge`), {
     method: "POST",
     headers: bearer(true),
@@ -788,7 +736,6 @@ export async function createFinanceEntryMercadoPagoBoletoCharge(
   external_reference: string;
   sandbox: boolean;
 }> {
-  if (isDemoMode()) return Promise.resolve(demoMercadoPagoBoletoCharge(entryId, payload));
   const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}/mercadopago-boleto-charge`), {
     method: "POST",
     headers: bearer(true),
@@ -829,7 +776,6 @@ export async function createFinanceEntryMercadoPagoPreference(
   sandbox: boolean;
   entry?: FinanceEntryOut;
 }> {
-  if (isDemoMode()) return Promise.resolve(demoMercadoPagoPreference(entryId, payload));
   const response = await fetch(apiUrl(`/api/v1/finance/entries/${entryId}/mercadopago-preference`), {
     method: "POST",
     headers: bearer(true),
@@ -854,10 +800,6 @@ export async function deleteFinanceEntry(
   entryId: number,
   params?: { edit_scope?: "single" | "future" | "all" },
 ): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteFinanceEntry(entryId, params?.edit_scope ?? "single");
-    return Promise.resolve();
-  }
   const sp = new URLSearchParams();
   if (params?.edit_scope && params.edit_scope !== "single") {
     sp.set("edit_scope", params.edit_scope);
@@ -874,7 +816,6 @@ export async function deleteFinanceEntry(
 }
 
 export async function listFinanceCategories(): Promise<FinanceCategoryOut[]> {
-  if (isDemoMode()) return Promise.resolve(demoListFinanceCategories());
   const response = await fetch(apiUrl("/api/v1/finance/categories"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível listar categorias."));
@@ -882,7 +823,6 @@ export async function listFinanceCategories(): Promise<FinanceCategoryOut[]> {
 }
 
 export async function createFinanceCategory(payload: { name: string; color?: string | null }): Promise<FinanceCategoryOut> {
-  if (isDemoMode()) return Promise.resolve(demoCreateFinanceCategory(payload));
   const response = await fetch(apiUrl("/api/v1/finance/categories"), {
     method: "POST",
     headers: bearer(true),
@@ -897,7 +837,6 @@ export async function patchFinanceCategory(
   categoryId: number,
   payload: { name?: string; color?: string | null },
 ): Promise<FinanceCategoryOut> {
-  if (isDemoMode()) return Promise.resolve(demoPatchFinanceCategory(categoryId, payload));
   const response = await fetch(apiUrl(`/api/v1/finance/categories/${categoryId}`), {
     method: "PATCH",
     headers: bearer(true),
@@ -909,10 +848,6 @@ export async function patchFinanceCategory(
 }
 
 export async function deleteFinanceCategory(categoryId: number): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteFinanceCategory(categoryId);
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl(`/api/v1/finance/categories/${categoryId}`), {
     method: "DELETE",
     headers: bearer(),
@@ -936,7 +871,6 @@ export type FinancePaymentFeeOut = {
 };
 
 export async function listFinancePaymentFees(): Promise<FinancePaymentFeeOut[]> {
-  if (isDemoMode()) return Promise.resolve(demoListFinanceFees());
   const response = await fetch(apiUrl("/api/v1/finance/payment-fees"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível listar taxas de pagamento."));
@@ -951,7 +885,6 @@ export async function createFinancePaymentFee(payload: {
   fee_fixed_amount: number;
   is_active?: boolean;
 }): Promise<FinancePaymentFeeOut> {
-  if (isDemoMode()) return Promise.resolve(demoCreateFinanceFee({ ...payload, is_active: payload.is_active ?? true }));
   const response = await fetch(apiUrl("/api/v1/finance/payment-fees"), {
     method: "POST",
     headers: bearer(true),
@@ -963,10 +896,6 @@ export async function createFinancePaymentFee(payload: {
 }
 
 export async function deleteFinancePaymentFee(feeId: number): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteFinanceFee(feeId);
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl(`/api/v1/finance/payment-fees/${feeId}`), {
     method: "DELETE",
     headers: bearer(),
@@ -982,7 +911,6 @@ export async function getFinanceSummary(params: {
   end_date: string;
   date_basis?: FinanceEntryDateBasis;
 }): Promise<FinanceSummaryOut> {
-  if (isDemoMode()) return Promise.resolve(demoGetFinanceSummary());
   const sp = new URLSearchParams();
   sp.set("start_date", params.start_date);
   sp.set("end_date", params.end_date);
@@ -998,7 +926,6 @@ export async function getAdvancedFinanceSummary(params: {
   end_date: string;
   date_basis?: FinanceEntryDateBasis;
 }): Promise<FinanceCategorySummaryOut[]> {
-  if (isDemoMode()) return Promise.resolve([]);
   const sp = new URLSearchParams();
   sp.set("start_date", params.start_date);
   sp.set("end_date", params.end_date);
@@ -1010,7 +937,6 @@ export async function getAdvancedFinanceSummary(params: {
 }
 
 export async function getFinanceSettings(): Promise<FinanceSettingsOut> {
-  if (isDemoMode()) return Promise.resolve(demoGetFinanceSettings());
   const response = await fetch(apiUrl("/api/v1/finance/settings"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar configurações do financeiro."));
@@ -1018,10 +944,7 @@ export async function getFinanceSettings(): Promise<FinanceSettingsOut> {
 }
 
 export async function getFinanceEntitlements(): Promise<FinanceEntitlements> {
-  if (isDemoMode()) {
-    const settings = await demoGetFinanceSettings();
-    return resolveFinanceEntitlements({ settings, planKey: "professional", planLabel: "Professional (demo)" });
-  }
+
   const response = await fetch(apiUrl("/api/v1/finance/entitlements"), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) throw new Error(errMessage(body, "Não foi possível carregar permissões do financeiro."));
@@ -1032,14 +955,7 @@ export async function updateFinanceSettings(payload: {
   finance_enabled: boolean;
   finance_mode: "basic" | "intermediate" | "management";
 }): Promise<FinanceSettingsOut> {
-  if (isDemoMode()) {
-    return Promise.resolve(
-      demoUpdateFinanceSettings({
-        finance_enabled: payload.finance_enabled,
-        selected_mode: payload.finance_mode,
-      }),
-    );
-  }
+
   const response = await fetch(apiUrl("/api/v1/finance/settings"), {
     method: "PATCH",
     headers: bearer(true),
@@ -1113,7 +1029,6 @@ export type FinanceGatewaysOut = {
 };
 
 export async function getFinanceGateways(): Promise<FinanceGatewaysOut> {
-  if (isDemoMode()) return Promise.resolve(demoGetFinanceGateways());
   const response = await fetch(apiUrl("/api/v1/finance/gateways"), { headers: bearer() });
   const body = await parseResponseOrApiError(response, "Não foi possível carregar gateways.");
   return body as FinanceGatewaysOut;
@@ -1173,7 +1088,6 @@ export async function testFinanceGatewayMercadoPago(payload: {
   public_key: string;
   sandbox?: boolean;
 }): Promise<{ ok: boolean; error: string | null; account_label: string | null; mp_user_id: string | null }> {
-  if (isDemoMode()) return Promise.resolve(demoTestFinanceGatewayMercadoPago());
   const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago/test"), {
     method: "POST",
     headers: bearer(true),
@@ -1200,7 +1114,6 @@ export async function upsertFinanceGatewayMercadoPago(payload: {
   mercadopago: FinanceGatewayMercadoPagoPublic;
   stone: FinanceGatewayStonePublic;
 }> {
-  if (isDemoMode()) return Promise.resolve(demoUpsertFinanceGatewayMercadoPago(payload));
   const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago"), {
     method: "PUT",
     headers: bearer(true),
@@ -1230,7 +1143,6 @@ export async function patchFinanceGatewayMercadoPagoProducts(
   mercadopago: FinanceGatewayMercadoPagoPublic;
   stone: FinanceGatewayStonePublic;
 }> {
-  if (isDemoMode()) return Promise.resolve(demoPatchFinanceGatewayMercadoPagoProducts(payload));
   const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago/products"), {
     method: "PATCH",
     headers: bearer(true),
@@ -1255,7 +1167,6 @@ export async function patchFinanceGatewayMercadoPagoWebhookSignature(payload: {
   mercadopago: FinanceGatewayMercadoPagoPublic;
   stone: FinanceGatewayStonePublic;
 }> {
-  if (isDemoMode()) return Promise.resolve(demoPatchFinanceGatewayMercadoPagoWebhookSignature(payload));
   const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago/webhook-signature"), {
     method: "PATCH",
     headers: bearer(true),
@@ -1272,10 +1183,6 @@ export async function patchFinanceGatewayMercadoPagoWebhookSignature(payload: {
 }
 
 export async function deleteFinanceGatewayMercadoPago(): Promise<void> {
-  if (isDemoMode()) {
-    demoDeleteFinanceGatewayMercadoPago();
-    return Promise.resolve();
-  }
   const response = await fetch(apiUrl("/api/v1/finance/gateways/mercadopago"), {
     method: "DELETE",
     headers: bearer(),

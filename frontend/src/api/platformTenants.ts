@@ -13,6 +13,14 @@ export type PlatformTenantListItem = {
   timezone: string;
   created_at: string;
   registration_email: string | null;
+  phone: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  address_district: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_postal_code: string | null;
   users_count: number;
   base_user_limit: number | null;
   extra_user_seats: number;
@@ -20,17 +28,15 @@ export type PlatformTenantListItem = {
   clients_count: number;
   service_orders_count: number;
   schedules_count: number;
+  last_access_at: string | null;
 };
 
 export type PlatformTenantDetail = PlatformTenantListItem & {
   business_days: string;
   workday_start: string;
   workday_end: string;
-  phone: string | null;
   email: string | null;
   website: string | null;
-  address_city: string | null;
-  address_state: string | null;
   plan_change_logs: Array<{
     id: number;
     previous_plan: string;

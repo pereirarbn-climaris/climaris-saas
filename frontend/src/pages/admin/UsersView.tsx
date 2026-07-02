@@ -11,7 +11,6 @@ import {
 } from "../../api/auth";
 import { getTenantId } from "../../lib/authStorage";
 import { toast } from "../../lib/toast";
-import { ToastHost } from "../../components/ToastHost";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input, Select } from "../../components/ui/input";
@@ -200,7 +199,6 @@ export function UsersView({ adminUser, refreshWorkspace }: Props) {
 
   return (
     <section className={layout.wrap} aria-labelledby="admin-users-title">
-      <ToastHost />
 
       <header className={layout.pageHeader}>
         <nav className={layout.breadcrumb} aria-label="Navegação">

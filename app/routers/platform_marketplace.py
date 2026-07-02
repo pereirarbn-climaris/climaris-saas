@@ -63,6 +63,8 @@ def _app_to_out(row: MarketplaceApp) -> PlatformMarketplaceAppOut:
         user_seats_per_unit=int(row.user_seats_per_unit or 0),
         sort_order=row.sort_order,
         is_active=row.is_active,
+        stripe_product_id=row.stripe_product_id,
+        stripe_price_id=row.stripe_price_id,
         created_at=row.created_at,
     )
 

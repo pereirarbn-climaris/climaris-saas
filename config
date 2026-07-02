@@ -1,0 +1,5 @@
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile /root/.ssh-keys/climaris_github_deploy
+  IdentitiesOnly yes

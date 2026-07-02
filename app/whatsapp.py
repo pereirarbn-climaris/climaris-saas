@@ -56,6 +56,12 @@ from models import (
 
 logger = logging.getLogger("erp.whatsapp")
 
+
+def _whatsapp_job_send_failure_detail(exc: HTTPException) -> str:
+    from app.whatsapp_error_messages import humanize_whatsapp_send_error
+
+    return humanize_whatsapp_send_error(str(exc.detail))
+
 # URL dedicada ao fluxo de lembretes/agenda (confirmar, reagendar, cancelar).
 # Outros webhooks WhatsApp (bot, campanhas, etc.) devem usar rotas separadas.
 WHATSAPP_WEBHOOK_AGENDA_PATH = "/api/v1/whatsapp/webhook/agenda"
@@ -168,12 +174,34 @@ class ProviderSendResult(dict):
     raw_response: dict[str, Any]
 
 
+def _coerce_provider_message_id(value: Any) -> str | None:
+    """Normaliza IDs de mensagem vindos da Evolution para formato estável."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if isinstance(value, (int, float, bool)):
+        normalized = str(value).strip()
+        return normalized or None
+    return None
+
+
 def normalize_whatsapp_number(value: str) -> str:
     digits = "".join(ch for ch in (value or "") if ch.isdigit())
     if not digits:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Número de WhatsApp inválido.")
+    # Remove duplicação acidental do DDI 55 (ex.: 5555169999301).
+    while digits.startswith("5555"):
+        digits = digits[2:]
+    # E.164 Brasil: 55 + DDD (2) + assinante (8–9 dígitos).
     if digits.startswith("55") and len(digits) in (12, 13):
         return digits
+    # Número salvo com DDI mas sem todos os dígitos (ex.: 55169999301) — recompõe sem duplicar 55.
+    if digits.startswith("55") and len(digits) > 2:
+        local = digits[2:]
+        if len(local) in (10, 11):
+            return f"55{local}"
     if len(digits) in (10, 11):
         return f"55{digits}"
     if len(digits) in (12, 13):
@@ -784,9 +812,9 @@ def _evolution_send_text(
     key_data = data.get("key") if isinstance(data, dict) else {}
     message_id = None
     if isinstance(key_data, dict):
-        message_id = key_data.get("id")
+        message_id = _coerce_provider_message_id(key_data.get("id"))
     if not message_id and isinstance(data, dict):
-        message_id = data.get("id") or data.get("messageId")
+        message_id = _coerce_provider_message_id(data.get("id")) or _coerce_provider_message_id(data.get("messageId"))
     return ProviderSendResult(message_id=message_id, raw_response=data)
 
 
@@ -824,9 +852,9 @@ def evolution_send_media_message(
     key_data = data.get("key") if isinstance(data, dict) else {}
     message_id = None
     if isinstance(key_data, dict):
-        message_id = key_data.get("id")
+        message_id = _coerce_provider_message_id(key_data.get("id"))
     if not message_id and isinstance(data, dict):
-        message_id = data.get("id") or data.get("messageId")
+        message_id = _coerce_provider_message_id(data.get("id")) or _coerce_provider_message_id(data.get("messageId"))
     return ProviderSendResult(message_id=message_id, raw_response=data)
 
 
@@ -1024,9 +1052,9 @@ def _evolution_send_buttons(
     key_data = data.get("key") if isinstance(data, dict) else {}
     message_id = None
     if isinstance(key_data, dict):
-        message_id = key_data.get("id")
+        message_id = _coerce_provider_message_id(key_data.get("id"))
     if not message_id and isinstance(data, dict):
-        message_id = data.get("id") or data.get("messageId")
+        message_id = _coerce_provider_message_id(data.get("id")) or _coerce_provider_message_id(data.get("messageId"))
     return ProviderSendResult(message_id=message_id, raw_response=data)
 
 
@@ -1120,17 +1148,21 @@ def dispatch_template(
     except HTTPException as exc:
         job.status = WhatsappMessageStatus.FAILED
         job.failed_at = datetime.now(timezone.utc)
-        job.error_message = str(exc.detail)
+        detail = _whatsapp_job_send_failure_detail(exc)
+        job.error_message = detail
         append_event(
             db,
             tenant_id=tenant_id,
             event_type="send_failed",
-            payload={"error": str(exc.detail)},
+            payload={"error": detail},
             job_id=job.id,
         )
         db.commit()
         db.refresh(job)
-        raise
+        from app.notifications import on_whatsapp_job_failed
+
+        on_whatsapp_job_failed(db, job)
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
     db.commit()
     db.refresh(job)
@@ -1184,17 +1216,21 @@ def dispatch_plain_whatsapp(
     except HTTPException as exc:
         job.status = WhatsappMessageStatus.FAILED
         job.failed_at = datetime.now(timezone.utc)
-        job.error_message = str(exc.detail)
+        detail = _whatsapp_job_send_failure_detail(exc)
+        job.error_message = detail
         append_event(
             db,
             tenant_id=tenant_id,
             event_type="send_failed",
-            payload={"error": str(exc.detail)},
+            payload={"error": detail},
             job_id=job.id,
         )
         db.commit()
         db.refresh(job)
-        raise
+        from app.notifications import on_whatsapp_job_failed
+
+        on_whatsapp_job_failed(db, job)
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
     db.commit()
     db.refresh(job)
@@ -1274,21 +1310,68 @@ def dispatch_appointment_reminder(
     except HTTPException as exc:
         job.status = WhatsappMessageStatus.FAILED
         job.failed_at = datetime.now(timezone.utc)
-        job.error_message = str(exc.detail)
+        detail = _whatsapp_job_send_failure_detail(exc)
+        job.error_message = detail
         append_event(
             db,
             tenant_id=tenant_id,
             event_type="send_failed",
-            payload={"error": str(exc.detail)},
+            payload={"error": detail},
             job_id=job.id,
         )
         db.commit()
         db.refresh(job)
-        raise
+        from app.notifications import on_whatsapp_job_failed
+
+        on_whatsapp_job_failed(db, job)
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
 
     db.commit()
     db.refresh(job)
     return job
+
+
+def dispatch_manual_schedule_reminder(
+    db: Session,
+    *,
+    tenant_id: int,
+    schedule_id: int,
+    created_by_user: User | None,
+) -> WhatsappMessageJob:
+    """Envio manual de lembrete para um agendamento (reenvio ou planos sem automação)."""
+    schedule = db.execute(
+        select(Schedule)
+        .where(Schedule.id == schedule_id, Schedule.tenant_id == tenant_id)
+        .options(selectinload(Schedule.client))
+    ).scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agendamento não encontrado.")
+    if schedule.status not in (ScheduleStatus.PENDING, ScheduleStatus.CONFIRMED):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Só é possível enviar lembrete para agendamentos pendentes ou confirmados.",
+        )
+    client = schedule.client
+    recipient = (client.whatsapp if client else None) or (client.phone if client else None)
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cliente sem WhatsApp ou telefone cadastrado.",
+        )
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    tenant_tz = _tenant_tz(tenant)
+    return dispatch_appointment_reminder(
+        db,
+        tenant_id=tenant_id,
+        created_by_user=created_by_user,
+        recipient_whatsapp=recipient,
+        nome_cliente=(client.name if client else "Cliente"),
+        data_hora=_format_local_datetime(schedule.starts_at, tenant_tz),
+        empresa=tenant.name,
+        reference_id=schedule.id,
+    )
 
 
 def _slugify_instance(value: str) -> str:
@@ -1479,16 +1562,32 @@ def get_instance_state(instance_name: str) -> dict[str, Any]:
 
 
 def disconnect_instance(instance_name: str) -> dict[str, Any]:
+    def _is_not_connected(detail: str) -> bool:
+        lowered = (detail or "").lower()
+        return "is not connected" in lowered or "not connected" in lowered
+
     last_exc: HTTPException | None = None
-    for method, path in (
-        ("DELETE", f"/instance/logout/{instance_name}"),
-        ("DELETE", f"/instance/disconnect/{instance_name}"),
-        ("PUT", f"/instance/restart/{instance_name}"),
-    ):
+    for method, path in (("DELETE", f"/instance/logout/{instance_name}"),):
         try:
             return _evolution_request(method, path)
         except HTTPException as exc:
+            if _is_not_connected(str(exc.detail)):
+                # Idempotência: se já não está conectado, tratamos como desconectado com sucesso.
+                return {"status": "SUCCESS", "error": False, "response": {"message": "Instance already disconnected"}}
             last_exc = exc
+    try:
+        state = get_instance_state(instance_name)
+        state_value = ""
+        if isinstance(state, dict):
+            inst = state.get("instance")
+            if isinstance(inst, dict):
+                state_value = str(inst.get("state") or "").strip().lower()
+            if not state_value:
+                state_value = str(state.get("state") or "").strip().lower()
+        if state_value in {"close", "closed", "disconnected", "not_connected"}:
+            return {"status": "SUCCESS", "error": False, "response": {"message": "Instance disconnected"}}
+    except HTTPException:
+        pass
     if last_exc:
         raise last_exc
     raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Falha ao desconectar instância do WhatsApp.")
@@ -2540,6 +2639,7 @@ def _should_route_to_preventive_first(db: Session, *, tenant_id: int, payload: d
     from app.preventive_maintenance import (
         PREVENTIVE_MORE_PREFIX,
         PREVENTIVE_SCHEDULE_PREFIX,
+        PREVENTIVE_CUSTOM_PREFIX,
         _extract_button_id_from_payload,
         _plain_text_from_evolution_upsert,
         _preventive_text_intent,
@@ -2560,7 +2660,9 @@ def _should_route_to_preventive_first(db: Session, *, tenant_id: int, payload: d
 
     btn_id = _extract_button_id_from_payload(data)
     if btn_id and (
-        btn_id.startswith(PREVENTIVE_MORE_PREFIX) or btn_id.startswith(PREVENTIVE_SCHEDULE_PREFIX)
+        btn_id.startswith(PREVENTIVE_MORE_PREFIX)
+        or btn_id.startswith(PREVENTIVE_SCHEDULE_PREFIX)
+        or btn_id.startswith(PREVENTIVE_CUSTOM_PREFIX)
     ):
         return True
 

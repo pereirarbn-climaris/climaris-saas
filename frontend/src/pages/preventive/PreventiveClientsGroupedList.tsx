@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ChevronDown, ClipboardList, ExternalLink, MessageCircle, Pencil, Trash2 } from "lucide-react";
 import type { PreventiveClientGroup, PreventiveItem } from "../../api/preventiveMaintenance";
 import { formatFriendlyDatePt } from "../../lib/preventiveLastService";
-import { groupCampaignBadges, preventiveCampaignBadges } from "../../lib/preventiveCampaignStatus";
+import { groupCampaignBadges, groupPreventiveWhatsappFailureMessage, preventiveCampaignBadges } from "../../lib/preventiveCampaignStatus";
 import { buildPreventiveServiceOrderUrl } from "../../lib/preventiveServiceOrder";
 import styles from "./PreventiveClientsGroupedList.module.css";
 
@@ -94,6 +94,7 @@ export function PreventiveClientsGroupedList({
         const alertCount = group.equipments.length;
         const overdueCount = group.equipments.filter((e) => e.dias_ate_vencimento < 0).length;
         const groupBadges = groupCampaignBadges(group.equipments);
+        const groupWhatsappError = groupPreventiveWhatsappFailureMessage(group.equipments);
 
         return (
           <article key={group.client_id} className={styles.card}>
@@ -117,10 +118,16 @@ export function PreventiveClientsGroupedList({
                         <span
                           key={badge.key}
                           className={`${styles.statusChip} ${styles[`statusChip_${badge.key}`]}`}
+                          title={badge.title}
                         >
                           {badge.label}
                         </span>
                       ))}
+                    </span>
+                  ) : null}
+                  {groupWhatsappError ? (
+                    <span className={styles.whatsappErrorText} role="alert">
+                      {groupWhatsappError}
                     </span>
                   ) : null}
                 </span>
@@ -190,6 +197,10 @@ export function PreventiveClientsGroupedList({
                       {group.equipments.map((row) => {
                         const tone = dueTone(row.dias_ate_vencimento);
                         const badges = preventiveCampaignBadges(row);
+                        const rowWhatsappError =
+                          badges.some((b) => b.key === "whatsapp_falhou")
+                            ? badges.find((b) => b.key === "whatsapp_falhou")?.title
+                            : null;
                         return (
                           <tr key={`${row.equipment_id ?? 0}-${row.service_id}-${row.data_proximo_vencimento}`}>
                             <td>
@@ -207,27 +218,35 @@ export function PreventiveClientsGroupedList({
                             </td>
                             <td>
                               {badges.length > 0 ? (
-                                <div className={styles.statusCell}>
-                                  {badges.map((badge) =>
-                                    badge.key === "agenda" && row.pending_service_order_id ? (
-                                      <Link
-                                        key={badge.key}
-                                        to={`/app/service-orders/${row.pending_service_order_id}`}
-                                        className={`${styles.statusChip} ${styles.statusChip_agenda} ${styles.statusChipLink}`}
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {badge.label}
-                                      </Link>
-                                    ) : (
-                                      <span
-                                        key={badge.key}
-                                        className={`${styles.statusChip} ${styles[`statusChip_${badge.key}`]}`}
-                                      >
-                                        {badge.label}
-                                      </span>
-                                    ),
-                                  )}
-                                </div>
+                                <>
+                                  <div className={styles.statusCell}>
+                                    {badges.map((badge) =>
+                                      badge.key === "agenda" && row.pending_service_order_id ? (
+                                        <Link
+                                          key={badge.key}
+                                          to={`/app/service-orders/${row.pending_service_order_id}`}
+                                          className={`${styles.statusChip} ${styles.statusChip_agenda} ${styles.statusChipLink}`}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {badge.label}
+                                        </Link>
+                                      ) : (
+                                        <span
+                                          key={badge.key}
+                                          className={`${styles.statusChip} ${styles[`statusChip_${badge.key}`]}`}
+                                          title={badge.title}
+                                        >
+                                          {badge.label}
+                                        </span>
+                                      ),
+                                    )}
+                                  </div>
+                                  {rowWhatsappError ? (
+                                    <p className={styles.rowWhatsappError} role="alert">
+                                      {rowWhatsappError}
+                                    </p>
+                                  ) : null}
+                                </>
                               ) : (
                                 <span className={styles.statusEmpty}>—</span>
                               )}

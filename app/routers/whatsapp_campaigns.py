@@ -26,8 +26,7 @@ from app.campaign_processor import (
 )
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
-from app.marketplace_util import tenant_has_marketplace_app
-from app.plan_rules import get_plan_definition
+from app.whatsapp_entitlements import require_whatsapp_module
 from app.schemas_campaigns import (
     CampaignAnalyticsOut,
     CampaignAssetOut,
@@ -50,17 +49,7 @@ router = APIRouter(prefix="/whatsapp/campaigns", tags=["whatsapp-campaigns"])
 
 
 def _require_whatsapp_module(db: Session, tenant_id: int) -> None:
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
-    if get_plan_definition(tenant.active_plan).is_beta_internal:
-        return
-    if tenant_has_marketplace_app(db, tenant_id, "whatsapp"):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Módulo WhatsApp não contratado. Solicite na Loja de integrações.",
-    )
+    require_whatsapp_module(db, tenant_id)
 
 
 @router.get("", response_model=list[CampaignOut], dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))])

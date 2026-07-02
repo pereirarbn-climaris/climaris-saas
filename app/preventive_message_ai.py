@@ -8,7 +8,7 @@ import re
 import ssl
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,9 @@ logger = logging.getLogger("erp.preventive_message_ai")
 _MAX_CHARS = 900
 _MIN_CHARS = 40
 
-_SYSTEM_PROMPT = """Você redige mensagens WhatsApp de manutenção preventiva para clientes de climatização.
+PreventiveAiFidelity = Literal["faithful", "balanced"]
+
+_SYSTEM_PROMPT_BALANCED = """Você redige mensagens WhatsApp de manutenção preventiva para clientes de climatização.
 
 Regras OBRIGATÓRIAS:
 1. Use SOMENTE fatos presentes em "Mensagem base" e no "Padrão da empresa".
@@ -34,6 +36,27 @@ Regras OBRIGATÓRIAS:
 7. NÃO inclua links, URLs, valores monetários ou promessas que não estejam na mensagem base.
 8. Responda APENAS com o texto final, sem explicações ou markdown extra."""
 
+_SYSTEM_PROMPT_FAITHFUL = """Você ajusta levemente mensagens WhatsApp de manutenção preventiva para clientes de climatização.
+
+Regras OBRIGATÓRIAS:
+1. Preserve a estrutura, ordem das ideias e o máximo possível das palavras da "Mensagem base".
+2. Use SOMENTE fatos presentes na "Mensagem base" e no "Padrão da empresa" — nada de inventar.
+3. Alterações permitidas: pequenos ajustes de fluidez, pontuação, acentuação e tom cordial.
+4. NÃO reescreva do zero, NÃO mude o sentido e NÃO adicione frases novas além do convite já implícito.
+5. Cumprimente pelo nome do cliente se já estiver na base; mantenha equipamento(s) e intervalo exatamente como informados.
+6. Máximo 900 caracteres. No máximo 1 emoji. Pode usar *negrito* do WhatsApp só se já fizer sentido na base.
+7. NÃO inclua links, URLs, valores monetários ou promessas extras.
+8. Responda APENAS com o texto final, sem explicações ou markdown extra."""
+
+
+def _resolve_fidelity_config(
+    fidelity: str | None,
+) -> tuple[PreventiveAiFidelity, str, float]:
+    level: PreventiveAiFidelity = "faithful" if (fidelity or "faithful") == "faithful" else "balanced"
+    if level == "faithful":
+        return level, _SYSTEM_PROMPT_FAITHFUL, 0.05
+    return level, _SYSTEM_PROMPT_BALANCED, 0.2
+
 
 def _extract_text_from_anthropic(data: dict[str, Any]) -> str:
     parts: list[str] = []
@@ -43,11 +66,13 @@ def _extract_text_from_anthropic(data: dict[str, Any]) -> str:
     return "\n".join(parts).strip()
 
 
-def _anthropic_messages_request(*, api_key: str, model: str, system: str, user: str) -> str | None:
+def _anthropic_messages_request(
+    *, api_key: str, model: str, system: str, user: str, temperature: float
+) -> str | None:
     payload = {
         "model": model,
         "max_tokens": 512,
-        "temperature": 0.2,
+        "temperature": temperature,
         "system": system,
         "messages": [{"role": "user", "content": user}],
     }
@@ -84,7 +109,13 @@ def _client_first_name(client_name: str) -> str:
     return parts[0] if parts else ""
 
 
-def validate_preventive_ai_message(*, text: str, rendered_body: str, client_name: str) -> bool:
+def validate_preventive_ai_message(
+    *,
+    text: str,
+    rendered_body: str,
+    client_name: str,
+    fidelity: PreventiveAiFidelity = "balanced",
+) -> bool:
     cleaned = (text or "").strip()
     if len(cleaned) < _MIN_CHARS or len(cleaned) > _MAX_CHARS:
         return False
@@ -105,6 +136,12 @@ def validate_preventive_ai_message(*, text: str, rendered_body: str, client_name
         hits = sum(1 for tok in base_tokens if tok in cleaned.lower())
         if hits == 0:
             return False
+    if fidelity == "faithful":
+        base_words = [w.lower() for w in re.findall(r"[A-Za-zÀ-ú]{3,}", rendered_body)]
+        if base_words:
+            overlap = sum(1 for w in base_words if w in cleaned.lower())
+            if overlap / len(base_words) < 0.45:
+                return False
     return True
 
 
@@ -116,10 +153,19 @@ def polish_preventive_whatsapp_message(
     rendered_body: str,
     client_name: str,
     template_pattern: str | None = None,
+    ai_message_enabled: bool | None = None,
+    ai_message_fidelity: str | None = None,
 ) -> str:
     """Reescreve a mensagem renderizada dentro do padrão; fallback silencioso se IA indisponível ou inválida."""
     base = (rendered_body or "").strip()
     if not base:
+        return base
+    enabled = (
+        ai_message_enabled
+        if ai_message_enabled is not None
+        else bool(getattr(tenant, "preventive_ai_message_enabled", True))
+    )
+    if not enabled:
         return base
     if not PREVENTIVE_AI_MESSAGE_ENABLED or not _is_ai_enabled(db, tenant_id):
         return base
@@ -127,19 +173,39 @@ def polish_preventive_whatsapp_message(
     if not api_key:
         return base
 
+    fidelity_level, system_prompt, temperature = _resolve_fidelity_config(
+        ai_message_fidelity or getattr(tenant, "preventive_ai_message_fidelity", None)
+    )
     pattern = (template_pattern or tenant.preventive_message_template or "").strip()
+    fidelity_hint = (
+        "Mantenha o texto o mais próximo possível da mensagem base — só polimento leve."
+        if fidelity_level == "faithful"
+        else "Personalize o tom mantendo todos os fatos da mensagem base."
+    )
     user_prompt = (
         f"Empresa: {tenant.name}\n\n"
         f"Padrão da empresa (referência de estilo — não invente fatos além da base):\n{pattern or '(padrão implícito)'}\n\n"
         f"Mensagem base (fatos confirmados — preserve estes dados):\n{base}\n\n"
-        f"Cliente: {client_name.strip() or 'Cliente'}"
+        f"Cliente: {client_name.strip() or 'Cliente'}\n\n"
+        f"Instrução de fidelidade: {fidelity_hint}"
     )
     model = resolve_claude_model(db) or CLAUDE_MODEL
-    polished = _anthropic_messages_request(api_key=api_key, model=model, system=_SYSTEM_PROMPT, user=user_prompt)
+    polished = _anthropic_messages_request(
+        api_key=api_key,
+        model=model,
+        system=system_prompt,
+        user=user_prompt,
+        temperature=temperature,
+    )
     if not polished:
         return base
     polished = polished.strip().strip('"').strip("'")
-    if validate_preventive_ai_message(text=polished, rendered_body=base, client_name=client_name):
+    if validate_preventive_ai_message(
+        text=polished,
+        rendered_body=base,
+        client_name=client_name,
+        fidelity=fidelity_level,
+    ):
         return polished
     logger.info("preventive AI message rejected by validator tenant_id=%s", tenant_id)
     return base

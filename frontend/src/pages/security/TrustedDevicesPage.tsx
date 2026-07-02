@@ -6,7 +6,6 @@ import {
   listTrustedDevices,
   type TrustedDeviceOut,
 } from "../../api/auth";
-import { ToastHost } from "../../components/ToastHost";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { DeleteConfirmModal } from "../../components/ui/delete-confirm-modal";
@@ -112,7 +111,6 @@ export function TrustedDevicesPage() {
 
   return (
     <section className={layout.wrap} aria-labelledby="trusted-devices-title">
-      <ToastHost />
 
       <DeleteConfirmModal
         open={revokeAllOpen}

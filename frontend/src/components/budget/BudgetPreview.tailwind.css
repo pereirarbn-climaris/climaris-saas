@@ -1,3 +1,4 @@
+
 @tailwind components;
 @tailwind utilities;
 
@@ -8,7 +9,6 @@
     font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif;
     font-size: 7px;
     line-height: 1.35;
-    color: #1e293b;
   }
 
   .budget-preview-fade {
@@ -16,7 +16,7 @@
   }
 
   .budget-preview-muted {
-    @apply text-slate-500;
+    color: inherit;
   }
 
   .budget-preview-table {
@@ -24,7 +24,8 @@
   }
 
   .budget-preview-table th {
-    @apply border-b px-1 py-0.5 text-left font-semibold text-white;
+    @apply border-b px-1 py-0.5 text-left font-semibold;
+    color: inherit;
   }
 
   .budget-preview-table td {

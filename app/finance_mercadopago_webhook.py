@@ -285,6 +285,7 @@ def _apply_payment_settlement(
                 db.rollback()
         return {"received": True, "matched": False, "payment_status": status, "payment_id": pid}
 
+    notify_paid = False
     if status in ("approved", "accredited"):
         for pa in _payment_preapproval_id_candidates(payment):
             if pa:
@@ -305,6 +306,7 @@ def _apply_payment_settlement(
                 entry.mercadopago_archived_preference_id = pref[:48]
             entry.gateway_preference_id = None
             db.add(entry)
+            notify_paid = True
             out = {"received": True, "matched": True, "entry_id": entry.id}
     elif status in ("charged_back", "reverted"):
         if entry.status == FinanceEntryStatus.PAID:
@@ -360,6 +362,15 @@ def _apply_payment_settlement(
         except Exception:
             db.rollback()
             raise
+        if notify_paid:
+            from app.notifications import notify_finance_entry_paid_if_needed
+
+            notify_finance_entry_paid_if_needed(
+                db,
+                entry=entry,
+                was_paid=False,
+                source_label="Mercado Pago",
+            )
     return out
 
 

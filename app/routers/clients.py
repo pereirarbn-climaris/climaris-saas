@@ -23,12 +23,14 @@ from app.client_cnpj import (
 )
 from app.cnpja_client import CnpjaHttpError, fetch_office_commercial, office_payload_to_lookup
 from app.platform_credentials import resolve_cnpja_api_key
+from app.spreadsheet_rows import normalize_rows_shape, parse_csv_rows, parse_xlsx_rows, rows_to_dict_records
 from app.routers.cnpj import _http_error_from_cnpja
 from app.schemas import (
     ClientAuditEntryOut,
     ClientCnpjCommercialRefreshOut,
     ClientCountOut,
     ClientCreate,
+    ClientDuplicateCheckOut,
     ClientImportSummaryOut,
     ClientOut,
     ClientServiceItemLinkRowOut,
@@ -280,6 +282,21 @@ def _csv_cell(v: Any) -> str:
     return str(v).replace("\r\n", " ").replace("\n", " ")
 
 
+def _client_import_rows_from_upload(raw: bytes, filename: str) -> list[dict[str, str]]:
+    lower = (filename or "").lower()
+    if lower.endswith(".xlsx"):
+        matrix = normalize_rows_shape(parse_xlsx_rows(raw))
+        records = rows_to_dict_records(matrix)
+        if not records:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Planilha sem cabeçalho ou dados.")
+        return records
+    text = raw.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV sem cabeçalho.")
+    return [dict(row) for row in reader]
+
+
 @router.get("", response_model=list[ClientOut])
 def list_clients(
     db: Annotated[Session, Depends(get_db)],
@@ -323,6 +340,65 @@ def count_clients(
         empresas=count_filtered(Client.tax_id_kind == "cnpj"),
         pessoas=count_filtered(Client.tax_id_kind == "cpf"),
         ativos=count_filtered(Client.is_active.is_(True)),
+    )
+
+
+@router.get("/check-duplicate", response_model=ClientDuplicateCheckOut)
+def check_client_duplicate(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    document: Annotated[str | None, Query(description="CPF/CNPJ para validação de duplicidade")] = None,
+    whatsapp: Annotated[str | None, Query(description="WhatsApp para validação de duplicidade")] = None,
+    exclude_client_id: Annotated[int | None, Query(ge=1)] = None,
+) -> ClientDuplicateCheckOut:
+    document_exists = False
+    whatsapp_exists = False
+
+    normalized_document: str | None = None
+    if document:
+        raw_document = document.strip()
+        if raw_document:
+            doc_digits = digits_only(raw_document)
+            inferred_kind: Literal["cpf", "cnpj"] | None = None
+            if len(doc_digits) == 11:
+                inferred_kind = "cpf"
+            elif len(doc_digits) == 14:
+                inferred_kind = "cnpj"
+            # No fluxo de digitação (onBlur), documento parcial ou inválido não deve
+            # disparar erro de API; só validamos duplicidade quando houver formato útil.
+            if inferred_kind is not None:
+                try:
+                    normalized_document = normalize_and_validate_tax_document(raw_document, inferred_kind)
+                except ValueError:
+                    normalized_document = None
+
+    normalized_whatsapp: str | None = None
+    if whatsapp:
+        wa_digits = digits_only(whatsapp)
+        if wa_digits:
+            normalized_whatsapp = wa_digits
+
+    if normalized_document:
+        query_document = select(Client.id).where(
+            Client.tenant_id == current_user.tenant_id,
+            Client.document == normalized_document,
+        )
+        if exclude_client_id is not None:
+            query_document = query_document.where(Client.id != exclude_client_id)
+        document_exists = db.execute(query_document.limit(1)).scalar_one_or_none() is not None
+
+    if normalized_whatsapp:
+        query_whatsapp = select(Client.id).where(
+            Client.tenant_id == current_user.tenant_id,
+            Client.whatsapp == normalized_whatsapp,
+        )
+        if exclude_client_id is not None:
+            query_whatsapp = query_whatsapp.where(Client.id != exclude_client_id)
+        whatsapp_exists = db.execute(query_whatsapp.limit(1)).scalar_one_or_none() is not None
+
+    return ClientDuplicateCheckOut(
+        document_exists=document_exists,
+        whatsapp_exists=whatsapp_exists,
     )
 
 
@@ -412,17 +488,21 @@ def import_clients_csv(
     raw = file.file.read()
     if not raw:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo vazio.")
-    text = raw.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV sem cabeçalho.")
+    filename = file.filename or ""
+    lower = filename.lower()
+    if not (lower.endswith(".csv") or lower.endswith(".txt") or lower.endswith(".xlsx")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato inválido. Use .csv ou .xlsx.")
+    try:
+        import_rows = _client_import_rows_from_upload(raw, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     created = 0
     updated = 0
     skipped = 0
     errors: list[str] = []
 
-    for i, row in enumerate(reader, start=2):
+    for i, row in enumerate(import_rows, start=2):
         try:
             with db.begin_nested():
                 name = (row.get("name") or "").strip()
@@ -970,7 +1050,10 @@ def list_client_equipments(
     ).scalar_one_or_none()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
-    query = select(Equipment).where(Equipment.client_id == client.id)
+    query = select(Equipment).where(
+        Equipment.client_id == client.id,
+        Equipment.preventive_reminder_only.is_(False),
+    )
     if only_active:
         query = query.where(Equipment.ativo.is_(True))
     if client_site_id is not None:

@@ -17,9 +17,27 @@ import {
 } from "../../api/preventiveMaintenance";
 import type { DashboardOutletContext } from "../dashboardContext";
 import { PreventiveCreateFormView } from "../../components/preventive";
-import { ToastHost } from "../../components/ToastHost";
 import { DeleteConfirmModal } from "../../components/ui/delete-confirm-modal";
+import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/input";
 import { toast } from "../../lib/toast";
+import { humanizeWhatsappSendError } from "../../lib/whatsappErrorMessages";
+import { groupHasMessageSent } from "../../lib/preventiveCampaignStatus";
+import {
+  preventiveModelOptions,
+  resolveTemplateKindForClientGroup,
+  type PreventiveTemplateKind,
+} from "../../lib/preventiveMessageTemplate";
 import tableStyles from "../listTableCommon.module.css";
 import { PreventiveClientsGroupedList } from "./PreventiveClientsGroupedList";
 import styles from "./PreventiveMaintenancePage.module.css";
@@ -57,6 +75,14 @@ export function PreventiveMaintenancePage() {
   const [deleteReminderTarget, setDeleteReminderTarget] = useState<PreventiveItem | null>(null);
   const [deletingReminder, setDeletingReminder] = useState(false);
   const [savingAutoSetting, setSavingAutoSetting] = useState(false);
+  const [sendConfirmClient, setSendConfirmClient] = useState<{
+    clientId: number;
+    clientName: string;
+    alreadySent: boolean;
+    templateKind: PreventiveTemplateKind;
+  } | null>(null);
+
+  const modelOptions = useMemo(() => preventiveModelOptions(settings), [settings]);
 
   const monthLabel = useMemo(() => formatMonthLabel(monthValue), [monthValue]);
   const parsedMonth = useMemo(() => parsePreventiveMonthValue(monthValue), [monthValue]);
@@ -175,8 +201,8 @@ export function PreventiveMaintenancePage() {
     [canEdit, autoWhatsappEnabled],
   );
 
-  const handleSendClientReminder = useCallback(
-    async (clientId: number) => {
+  const executeSendClientReminder = useCallback(
+    async (clientId: number, templateKind: PreventiveTemplateKind) => {
       if (!canEdit || !parsedMonth) return;
       setSendingClientId(clientId);
       try {
@@ -186,11 +212,12 @@ export function PreventiveMaintenancePage() {
           month: parsedMonth.month,
           promo_image_url: settings?.preventive_promo_image_url ?? null,
           technical_problem_hint: settings?.preventive_technical_problem_hint ?? null,
+          message_template_kind: templateKind,
         });
-        toast.success("Lembrete enviado por WhatsApp (processando em segundo plano).");
 
         if (result.processing_in_background) {
           const maxAttempts = 15;
+          let outcome: "sent" | "failed" | "timeout" = "timeout";
           for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             if (attempt > 0) {
               await new Promise((resolve) => window.setTimeout(resolve, 2000));
@@ -198,14 +225,30 @@ export function PreventiveMaintenancePage() {
             const grouped = await listPreventiveItemsGrouped(parsedMonth);
             setClients(grouped.clients);
             const group = grouped.clients.find((c) => c.client_id === clientId);
-            const sent = group?.equipments.some((row) => row.status_mensagem_enviada);
+            const rows = group?.equipments ?? [];
+            const sent = rows.some((row) => row.status_mensagem_enviada);
             if (sent) {
-              toast.success("Status atualizado: mensagem enviada.");
+              outcome = "sent";
+              toast.success("Lembrete enviado por WhatsApp.");
+              break;
+            }
+            const failedRow = rows.find(
+              (row) => row.ultimo_whatsapp_status === "failed" && row.ultimo_whatsapp_erro,
+            );
+            if (failedRow?.ultimo_whatsapp_erro) {
+              outcome = "failed";
+              toast.error(humanizeWhatsappSendError(failedRow.ultimo_whatsapp_erro));
               break;
             }
           }
+          if (outcome === "timeout") {
+            toast.success(
+              "Envio ainda em processamento. Atualize a lista em alguns segundos ou verifique as notificações.",
+            );
+          }
         } else {
           await refreshList();
+          toast.success("Lembrete enviado por WhatsApp.");
         }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Não foi possível enviar o lembrete.");
@@ -215,6 +258,28 @@ export function PreventiveMaintenancePage() {
     },
     [canEdit, parsedMonth, settings, refreshList],
   );
+
+  const handleRequestSendClientReminder = useCallback(
+    (clientId: number) => {
+      if (!canEdit || !parsedMonth) return;
+      const group = clients.find((c) => c.client_id === clientId);
+      if (!group) return;
+      setSendConfirmClient({
+        clientId,
+        clientName: group.client_name,
+        alreadySent: groupHasMessageSent(group.equipments),
+        templateKind: resolveTemplateKindForClientGroup(group, settings),
+      });
+    },
+    [canEdit, parsedMonth, clients, settings],
+  );
+
+  const handleConfirmSendClientReminder = useCallback(async () => {
+    if (!sendConfirmClient) return;
+    const { clientId, templateKind } = sendConfirmClient;
+    await executeSendClientReminder(clientId, templateKind);
+    setSendConfirmClient(null);
+  }, [sendConfirmClient, executeSendClientReminder]);
 
   const handleRequestDeleteManualReminder = useCallback(
     (row: PreventiveItem) => {
@@ -241,7 +306,6 @@ export function PreventiveMaintenancePage() {
 
   return (
     <div className={styles.wrap}>
-      <ToastHost />
       <header className={styles.pageHeader}>
         <div>
           <h1 className={styles.pageTitle}>Gestão Preventiva</h1>
@@ -433,7 +497,7 @@ export function PreventiveMaintenancePage() {
         loading={loading}
         canEdit={canEdit}
         sendingClientId={sendingClientId}
-        onSendClient={(clientId) => void handleSendClientReminder(clientId)}
+        onSendClient={(clientId) => handleRequestSendClientReminder(clientId)}
         onEditManualReminder={(row) => {
           if (!row.preventive_schedule_id) return;
           setEditScheduleId(row.preventive_schedule_id);
@@ -441,6 +505,68 @@ export function PreventiveMaintenancePage() {
         }}
         onDeleteManualReminder={handleRequestDeleteManualReminder}
       />
+
+      <AlertDialog
+        open={sendConfirmClient !== null}
+        onOpenChange={(open) => {
+          if (!open && sendingClientId === null) setSendConfirmClient(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {sendConfirmClient?.alreadySent ? "Enviar novamente?" : "Enviar lembrete WhatsApp"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {sendConfirmClient?.alreadySent
+                ? `Já foi enviado um lembrete para ${sendConfirmClient.clientName}. Confirme o modelo e envie novamente se desejar.`
+                : `Confirme o modelo da mensagem para ${sendConfirmClient?.clientName ?? "o cliente"}.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {sendConfirmClient ? (
+            <AlertDialogBody>
+              <label className={styles.sendDialogLabel} htmlFor="prev-send-template-kind">
+                Modelo da mensagem
+              </label>
+              <Select
+                id="prev-send-template-kind"
+                value={sendConfirmClient.templateKind}
+                onChange={(e) =>
+                  setSendConfirmClient((current) =>
+                    current
+                      ? {
+                          ...current,
+                          templateKind: e.target.value,
+                        }
+                      : current,
+                  )
+                }
+              >
+                {modelOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </AlertDialogBody>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={sendingClientId === sendConfirmClient?.clientId}
+              onClick={() => setSendConfirmClient(null)}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={sendingClientId === sendConfirmClient?.clientId}
+              onClick={() => void handleConfirmSendClientReminder()}
+            >
+              {sendingClientId === sendConfirmClient?.clientId ? "Enviando…" : "Enviar"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <DeleteConfirmModal
         open={deleteReminderTarget !== null}

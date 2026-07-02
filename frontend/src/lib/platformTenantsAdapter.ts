@@ -34,12 +34,14 @@ export function mapPlatformTenantToView(
     legalName: row.name,
     document: formatDocument(row.tax_document),
     ownerEmail: detail?.registration_email ?? detail?.email ?? row.registration_email ?? "—",
+    phone: detail?.phone ?? row.phone ?? "—",
     ownerName: row.name,
     plan: planKey,
     status: mapStatus(row.status, row.active_plan),
     usedLicenses: row.users_count,
     totalLicenses,
     createdAt: row.created_at,
+    lastActivityAt: detail?.last_access_at ?? row.last_access_at ?? undefined,
     monthlyRevenue: 0,
     billingHistory: [],
     modules: [],
@@ -50,10 +52,15 @@ export function mapPlatformTenantToView(
       userEmail: log.changed_by_email ?? undefined,
       details: undefined,
     })),
-    address:
-      detail?.address_city && detail?.address_state
-        ? { city: detail.address_city, state: detail.address_state }
-        : undefined,
+    address: {
+      street: detail?.address_street ?? row.address_street ?? null,
+      number: detail?.address_number ?? row.address_number ?? null,
+      complement: detail?.address_complement ?? row.address_complement ?? null,
+      district: detail?.address_district ?? row.address_district ?? null,
+      city: detail?.address_city ?? row.address_city ?? null,
+      state: detail?.address_state ?? row.address_state ?? null,
+      postalCode: detail?.address_postal_code ?? row.address_postal_code ?? null,
+    },
   };
 }
 

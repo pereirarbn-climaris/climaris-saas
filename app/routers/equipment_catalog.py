@@ -411,23 +411,15 @@ async def resolve_equipment_label_from_photos(
     claude_model = resolve_claude_model(db)
     catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
 
-    label = label_image or evaporator_image
-    label_bytes = await label.read() if label else None
+    label_bytes = await label_image.read() if label_image else None
     evap_bytes = await evaporator_image.read() if evaporator_image else None
     cond_bytes = await condenser_image.read() if condenser_image else None
 
     if kind_raw in ("auto", ""):
         classify_bytes = label_bytes or evap_bytes or cond_bytes
-        classify_ct = (
-            (label or evaporator_image or condenser_image).content_type
-            if (label or evaporator_image or condenser_image)
-            else None
-        )
-        classify_name = (
-            (label or evaporator_image or condenser_image).filename
-            if (label or evaporator_image or condenser_image)
-            else None
-        )
+        classify_file = label_image or evaporator_image or condenser_image
+        classify_ct = classify_file.content_type if classify_file else None
+        classify_name = classify_file.filename if classify_file else None
         kind = await classify_equipment_kind_from_images(
             label_bytes=classify_bytes,
             label_content_type=classify_ct,
@@ -442,7 +434,7 @@ async def resolve_equipment_label_from_photos(
 
     if kind == "climatizador":
         lb = label_bytes or evap_bytes
-        lf = label or evaporator_image
+        lf = label_image or evaporator_image
         result = await extract_climatizador_label_from_images(
             label_bytes=lb,
             label_content_type=lf.content_type if lf else None,
@@ -454,10 +446,10 @@ async def resolve_equipment_label_from_photos(
         result = await extract_ac_label_from_images(
             evaporator_bytes=evap_bytes or label_bytes,
             evaporator_content_type=(
-                evaporator_image.content_type if evaporator_image else label.content_type if label else None
+                evaporator_image.content_type if evaporator_image else label_image.content_type if label_image else None
             ),
             evaporator_filename=(
-                evaporator_image.filename if evaporator_image else label.filename if label else None
+                evaporator_image.filename if evaporator_image else label_image.filename if label_image else None
             ),
             condenser_bytes=cond_bytes,
             condenser_content_type=condenser_image.content_type if condenser_image else None,

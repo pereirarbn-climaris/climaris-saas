@@ -7,18 +7,51 @@ from types import SimpleNamespace
 
 from app.preventive_maintenance import (
     DEFAULT_MESSAGE_TEMPLATE,
+    DEFAULT_MESSAGE_TEMPLATE_FIRST,
+    MESES_PT,
     _merge_equipment_and_historico_preventive_items,
+    build_preventive_action_buttons,
     elapsed_preventive_interval_label,
     format_preventive_interval_label,
     group_preventive_items_by_client_and_due_month,
     render_preventive_grouped_message,
     render_preventive_message,
+    tenant_current_month_name_pt,
+    tenant_default_preventive_template_variant,
+    tenant_preventive_template_text,
 )
 
 
 def test_format_preventive_interval_label_months():
     assert format_preventive_interval_label(months_display=6) == "6 meses"
     assert format_preventive_interval_label(interval_value=1, interval_type="months") == "1 mês"
+
+
+def test_render_preventive_message_replaces_mes_atual():
+    tenant = SimpleNamespace(
+        preventive_message_template="Promoção de {mes_atual}: olá, {cliente}!",
+        preventive_technical_problem_hint=None,
+        timezone="America/Sao_Paulo",
+    )
+    text = render_preventive_message(
+        tenant=tenant,
+        client_name="Maria",
+        service_name="Higienização",
+        months_display=3,
+        equipment_name="Split",
+        brand_model="LG",
+    )
+    assert "{mes_atual}" not in text
+    assert "Maria" in text
+    mes_part = text.split(":")[0].replace("Promoção de ", "").strip()
+    assert mes_part in MESES_PT
+
+
+def test_tenant_current_month_name_pt():
+    from datetime import datetime, timezone
+
+    june = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+    assert tenant_current_month_name_pt("America/Sao_Paulo", reference=june) == "Junho"
 
 
 def test_render_preventive_message_replaces_new_tags():
@@ -63,6 +96,49 @@ def test_render_preventive_message_avoids_duplicate_service_in_parens():
     )
     assert "Limpeza hi-wall (Limpeza hi-wall)" not in text
     assert "Limpeza hi-wall" in text
+
+
+def test_render_preventive_message_uses_first_template_when_configured():
+    tenant = SimpleNamespace(
+        preventive_message_template="Recorrente: {cliente}",
+        preventive_message_template_first="Primeira: {cliente}",
+        preventive_technical_problem_hint=None,
+        timezone="America/Sao_Paulo",
+    )
+    first = render_preventive_message(
+        tenant=tenant,
+        client_name="Ana",
+        service_name="Higienização",
+        months_display=1,
+        template_variant="first",
+    )
+    returning = render_preventive_message(
+        tenant=tenant,
+        client_name="Ana",
+        service_name="Higienização",
+        months_display=1,
+        template_variant="returning",
+    )
+    assert first.startswith("Primeira:")
+    assert returning.startswith("Recorrente:")
+
+
+def test_tenant_default_preventive_template_variant():
+    returning = SimpleNamespace(preventive_default_template_kind="returning")
+    first = SimpleNamespace(preventive_default_template_kind="first")
+    empty = SimpleNamespace(preventive_default_template_kind=None)
+    assert tenant_default_preventive_template_variant(returning) == "returning"
+    assert tenant_default_preventive_template_variant(first) == "first"
+    assert tenant_default_preventive_template_variant(empty) == "returning"
+
+
+def test_tenant_preventive_template_text_defaults():
+    tenant = SimpleNamespace(
+        preventive_message_template=None,
+        preventive_message_template_first=None,
+    )
+    assert tenant_preventive_template_text(tenant, variant="first") == DEFAULT_MESSAGE_TEMPLATE_FIRST
+    assert tenant_preventive_template_text(tenant, variant="returning") == DEFAULT_MESSAGE_TEMPLATE
 
 
 def test_render_preventive_message_uses_default_when_empty():
@@ -110,6 +186,7 @@ def test_normalize_equipment_label_drops_duplicate_sala():
 def test_render_preventive_grouped_message_single_item():
     tenant = SimpleNamespace(
         preventive_message_template=None,
+        preventive_message_template_first=None,
         preventive_technical_problem_hint=None,
         timezone="America/Sao_Paulo",
     )
@@ -262,7 +339,12 @@ def test_expand_preventive_group_items_uses_full_group():
 
 
 def test_render_preventive_grouped_message_lists_equipments():
-    tenant = SimpleNamespace(preventive_message_template=None, preventive_technical_problem_hint=None)
+    tenant = SimpleNamespace(
+        preventive_message_template="Olá, {cliente}! Itens:\n{equipamentos_lista}",
+        preventive_message_template_first=None,
+        preventive_technical_problem_hint=None,
+        timezone="America/Sao_Paulo",
+    )
     items = [
         {
             "client_id": 1,
@@ -271,6 +353,7 @@ def test_render_preventive_grouped_message_lists_equipments():
             "data_proximo_vencimento": date(2026, 8, 17),
             "data_ultima_realizacao": date(2026, 2, 17),
             "equipment_identificacao": "Sala 01",
+            "equipment_tipo": "AR_CONDICIONADO",
         },
         {
             "client_id": 1,
@@ -279,10 +362,67 @@ def test_render_preventive_grouped_message_lists_equipments():
             "data_proximo_vencimento": date(2026, 8, 20),
             "data_ultima_realizacao": date(2026, 2, 20),
             "equipment_identificacao": "Sala 02",
+            "equipment_tipo": "AR_CONDICIONADO",
         },
     ]
     text = render_preventive_grouped_message(tenant=tenant, client_name="Grupo ADN", items=items)
     assert "Grupo ADN" in text
     assert "Sala 01" in text
     assert "Sala 02" in text
-    assert "2 equipamentos" in text
+
+
+def test_render_preventive_grouped_message_uses_template_without_list_tag():
+    tenant = SimpleNamespace(
+        preventive_message_template="Promo {cliente} em {mes_atual}!",
+        preventive_message_template_first=None,
+        preventive_technical_problem_hint=None,
+        timezone="America/Sao_Paulo",
+    )
+    items = [
+        {
+            "client_id": 1,
+            "service_name": "Preventiva",
+            "data_proximo_vencimento": date(2026, 7, 1),
+            "data_ultima_realizacao": date(2025, 7, 1),
+            "equipment_identificacao": "Sala",
+            "equipment_tipo": "AR_CONDICIONADO",
+        },
+        {
+            "client_id": 1,
+            "service_name": "Preventiva",
+            "data_proximo_vencimento": date(2026, 7, 1),
+            "data_ultima_realizacao": date(2025, 7, 1),
+            "equipment_identificacao": "Quarto",
+            "equipment_tipo": "AR_CONDICIONADO",
+        },
+    ]
+    text = render_preventive_grouped_message(tenant=tenant, client_name="Mayan", items=items)
+    assert "Promo Mayan" in text
+    assert "2 equipamentos" not in text
+
+
+def test_build_preventive_action_buttons_respects_toggles():
+    tenant = SimpleNamespace(
+        preventive_action_buttons_enabled=True,
+        preventive_button_schedule_enabled=True,
+        preventive_auto_schedule_enabled=True,
+        preventive_button_schedule_text="Agendar agora",
+        preventive_button_custom_enabled=True,
+        preventive_button_more_text="Quero saber mais",
+        preventive_button_custom_result="lead",
+    )
+    buttons = build_preventive_action_buttons(tenant, historico_servico_id=42, client_id=7)
+    assert len(buttons) == 2
+    assert buttons[0]["buttonId"].endswith("42")
+    assert buttons[1]["buttonText"]["displayText"] == "Quero saber mais"
+
+    tenant_off = SimpleNamespace(
+        preventive_action_buttons_enabled=False,
+        preventive_button_schedule_enabled=True,
+        preventive_auto_schedule_enabled=True,
+        preventive_button_schedule_text="Agendar",
+        preventive_button_custom_enabled=True,
+        preventive_button_more_text="Mais",
+        preventive_button_custom_result="reply",
+    )
+    assert build_preventive_action_buttons(tenant_off, historico_servico_id=1, client_id=1) == []

@@ -13,8 +13,13 @@ import styles from "./catalog-combobox.module.css";
 export type ClientComboboxItem = {
   id: string;
   nome: string;
+  endereco?: string;
+  contato?: string;
+  /** Compatível com `Cliente` da OS — alias de `contato` na exibição */
+  telefone?: string;
+  /** Usados na busca, não exibidos no dropdown */
   nomeFantasia?: string;
-  documento: string;
+  documento?: string;
 };
 
 export type ClientComboboxProps = {
@@ -30,8 +35,13 @@ export type ClientComboboxProps = {
   emptyMessage?: string;
 };
 
+function clientContato(c: ClientComboboxItem): string {
+  return (c.contato ?? c.telefone ?? "").trim();
+}
+
 function clientLabel(c: ClientComboboxItem): string {
-  return `${c.nome} - ${c.documento}`;
+  const contato = clientContato(c);
+  return contato ? `${c.nome} · ${contato}` : c.nome;
 }
 
 function clientMatchesQuery(c: ClientComboboxItem, query: string): boolean {
@@ -40,7 +50,9 @@ function clientMatchesQuery(c: ClientComboboxItem, query: string): boolean {
   return (
     matchesCatalogSearch(c.nome, q) ||
     matchesCatalogSearch(c.nomeFantasia ?? "", q) ||
-    matchesCatalogSearch(c.documento, q)
+    matchesCatalogSearch(c.documento ?? "", q) ||
+    matchesCatalogSearch(c.endereco ?? "", q) ||
+    matchesCatalogSearch(clientContato(c), q)
   );
 }
 
@@ -235,10 +247,12 @@ export function ClientCombobox({
                   >
                     <span className={styles.optionStack}>
                       <span className={styles.optionPrimary}>{client.nome}</span>
-                      {client.nomeFantasia ? (
-                        <span className={styles.optionMeta}>{client.nomeFantasia}</span>
+                      {client.endereco ? (
+                        <span className={styles.optionMeta}>{client.endereco}</span>
                       ) : null}
-                      <span className={styles.optionMeta}>{client.documento}</span>
+                      {clientContato(client) ? (
+                        <span className={styles.optionMeta}>{clientContato(client)}</span>
+                      ) : null}
                     </span>
                   </button>
                 </li>

@@ -4,7 +4,6 @@ import { createPmocPlanningSchedule } from "../../api/pmoc";
 import type { SuggestedSlotOut } from "../../api/serviceOrders";
 import { findBestAvailableSlots, formatSuggestedSlotLine } from "../../lib/findBestAvailableSlots";
 import { appendPmocMockAgendaEntries, type PmocMockAgendaEntry } from "../../lib/pmocAgendaMock";
-import { isDemoMode } from "../../lib/demoMode";
 import type { PlanningEquipmentRow } from "../../lib/pmocPlanningMock";
 import { formatDurationMinutes } from "../../lib/formatDuration";
 import { toast } from "../../lib/toast";
@@ -129,7 +128,7 @@ export function PmocPlanningScheduleModal({
     setErr("");
     void (async () => {
       try {
-        if (pmocId != null && !isDemoMode()) {
+        if (pmocId != null) {
           await createPmocPlanningSchedule(pmocId, {
             technician_id: Number(resolvedTechnicianId),
             starts_at: start.toISOString(),

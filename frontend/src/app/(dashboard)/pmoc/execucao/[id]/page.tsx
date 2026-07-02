@@ -11,7 +11,6 @@ import {
   type PmocPlanEquipmentOut,
   type PmocScheduledActivityOut,
 } from "../../../../../api/pmoc";
-import { ToastHost } from "../../../../../components/ToastHost";
 import { Badge } from "../../../../../components/ui/badge";
 import { Button } from "../../../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../../../components/ui/card";
@@ -100,6 +99,42 @@ export default function PmocExecucaoPage() {
     })),
   );
   const [generalNotes, setGeneralNotes] = useState("");
+  const [operationalData, setOperationalData] = useState({
+    voltagePhasePhase: "",
+    voltagePhaseNeutral: "",
+    currentA: "",
+    powerKw: "",
+    powerFactor: "",
+    suctionPressure: "",
+    dischargePressure: "",
+    superheatC: "",
+    subcoolingC: "",
+    returnC: "",
+    supplyC: "",
+    ambientC: "",
+    externalC: "",
+    deltaTC: "",
+    observedPerformance: "",
+  });
+  const [indoorAir, setIndoorAir] = useState({
+    ambientTemperatureC: "",
+    relativeHumidityPct: "",
+    co2Ppm: "",
+    airRenewalRate: "",
+    particulateMatter: "",
+    fungiBacteria: "",
+  });
+  const [serviceLog, setServiceLog] = useState({
+    technicianName: "",
+    executedService: "",
+    workedHours: "",
+    observations: "",
+    legalSignatureProvider: "",
+    materialName: "",
+    materialLot: "",
+    materialValidityDate: "",
+    materialQuantity: "",
+  });
   const [signatureBase64, setSignatureBase64] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -203,6 +238,56 @@ export default function PmocExecucaoPage() {
         photoReference: item.photoDataUrl,
       })),
       signatureBase64,
+      operationalData: {
+        electrical: {
+          voltagePhasePhase: operationalData.voltagePhasePhase ? Number(operationalData.voltagePhasePhase) : null,
+          voltagePhaseNeutral: operationalData.voltagePhaseNeutral ? Number(operationalData.voltagePhaseNeutral) : null,
+          currentA: operationalData.currentA ? Number(operationalData.currentA) : null,
+          powerKw: operationalData.powerKw ? Number(operationalData.powerKw) : null,
+          powerFactor: operationalData.powerFactor ? Number(operationalData.powerFactor) : null,
+        },
+        refrigeration: {
+          suctionPressure: operationalData.suctionPressure ? Number(operationalData.suctionPressure) : null,
+          dischargePressure: operationalData.dischargePressure ? Number(operationalData.dischargePressure) : null,
+          superheatC: operationalData.superheatC ? Number(operationalData.superheatC) : null,
+          subcoolingC: operationalData.subcoolingC ? Number(operationalData.subcoolingC) : null,
+        },
+        temperatures: {
+          returnC: operationalData.returnC ? Number(operationalData.returnC) : null,
+          supplyC: operationalData.supplyC ? Number(operationalData.supplyC) : null,
+          ambientC: operationalData.ambientC ? Number(operationalData.ambientC) : null,
+          externalC: operationalData.externalC ? Number(operationalData.externalC) : null,
+        },
+        performance: {
+          deltaTC: operationalData.deltaTC ? Number(operationalData.deltaTC) : null,
+          observedPerformance: operationalData.observedPerformance.trim() || null,
+        },
+      },
+      indoorAirQuality: {
+        ambientTemperatureC: indoorAir.ambientTemperatureC ? Number(indoorAir.ambientTemperatureC) : null,
+        relativeHumidityPct: indoorAir.relativeHumidityPct ? Number(indoorAir.relativeHumidityPct) : null,
+        co2Ppm: indoorAir.co2Ppm ? Number(indoorAir.co2Ppm) : null,
+        airRenewalRate: indoorAir.airRenewalRate.trim() || null,
+        particulateMatter: indoorAir.particulateMatter.trim() || null,
+        fungiBacteria: indoorAir.fungiBacteria.trim() || null,
+      },
+      serviceLog: {
+        technicianName: serviceLog.technicianName.trim() || null,
+        executedService: serviceLog.executedService.trim() || null,
+        workedHours: serviceLog.workedHours ? Number(serviceLog.workedHours) : null,
+        observations: serviceLog.observations.trim() || null,
+        legalSignatureProvider: serviceLog.legalSignatureProvider.trim() || null,
+        materials: serviceLog.materialName.trim()
+          ? [
+              {
+                name: serviceLog.materialName.trim(),
+                lotNumber: serviceLog.materialLot.trim() || null,
+                validityDate: serviceLog.materialValidityDate || null,
+                quantity: serviceLog.materialQuantity.trim() || null,
+              },
+            ]
+          : [],
+      },
     };
 
     setIsSubmitting(true);
@@ -241,7 +326,6 @@ export default function PmocExecucaoPage() {
       className="min-h-full bg-[#f8fafc] pb-10 font-[Inter,system-ui,sans-serif]"
       style={{ ["--pmoc-accent" as string]: "#006FEE" }}
     >
-      <ToastHost />
       <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 md:px-6 md:py-8">
         {/* Cabeçalho */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -483,6 +567,58 @@ export default function PmocExecucaoPage() {
               placeholder="Descreva condições gerais, recomendações ou pendências encontradas…"
               className="mt-2 w-full rounded-xl border border-[#e2e8f0] bg-white px-4 py-3 text-sm text-[#0f172a] placeholder:text-[#94a3b8] focus:border-[#006FEE] focus:outline-none focus:ring-2 focus:ring-[#006FEE]/20"
             />
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl shadow-sm">
+          <CardHeader>
+            <CardTitle style={{ fontFamily: "Poppins, Inter, sans-serif" }}>Medições Operacionais</CardTitle>
+            <CardDescription>Preencha medições elétricas, frigoríficas e térmicas da inspeção.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Tensão F-F (V)" value={operationalData.voltagePhasePhase} onChange={(e) => setOperationalData((d) => ({ ...d, voltagePhasePhase: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Tensão F-N (V)" value={operationalData.voltagePhaseNeutral} onChange={(e) => setOperationalData((d) => ({ ...d, voltagePhaseNeutral: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Corrente (A)" value={operationalData.currentA} onChange={(e) => setOperationalData((d) => ({ ...d, currentA: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Potência (kW)" value={operationalData.powerKw} onChange={(e) => setOperationalData((d) => ({ ...d, powerKw: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Fator de potência" value={operationalData.powerFactor} onChange={(e) => setOperationalData((d) => ({ ...d, powerFactor: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Pressão sucção" value={operationalData.suctionPressure} onChange={(e) => setOperationalData((d) => ({ ...d, suctionPressure: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Pressão descarga" value={operationalData.dischargePressure} onChange={(e) => setOperationalData((d) => ({ ...d, dischargePressure: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Superaquecimento (°C)" value={operationalData.superheatC} onChange={(e) => setOperationalData((d) => ({ ...d, superheatC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Sub-resfriamento (°C)" value={operationalData.subcoolingC} onChange={(e) => setOperationalData((d) => ({ ...d, subcoolingC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Retorno (°C)" value={operationalData.returnC} onChange={(e) => setOperationalData((d) => ({ ...d, returnC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Insuflamento (°C)" value={operationalData.supplyC} onChange={(e) => setOperationalData((d) => ({ ...d, supplyC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Ambiente (°C)" value={operationalData.ambientC} onChange={(e) => setOperationalData((d) => ({ ...d, ambientC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Externa (°C)" value={operationalData.externalC} onChange={(e) => setOperationalData((d) => ({ ...d, externalC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Delta T (°C)" value={operationalData.deltaTC} onChange={(e) => setOperationalData((d) => ({ ...d, deltaTC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm md:col-span-2" placeholder="Rendimento observado" value={operationalData.observedPerformance} onChange={(e) => setOperationalData((d) => ({ ...d, observedPerformance: e.target.value }))} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl shadow-sm">
+          <CardHeader>
+            <CardTitle style={{ fontFamily: "Poppins, Inter, sans-serif" }}>Qualidade do Ar e Serviço Executado</CardTitle>
+            <CardDescription>Rastreabilidade de QAI e consumíveis utilizados na manutenção.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Temperatura ambiente (°C)" value={indoorAir.ambientTemperatureC} onChange={(e) => setIndoorAir((d) => ({ ...d, ambientTemperatureC: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Umidade relativa (%)" value={indoorAir.relativeHumidityPct} onChange={(e) => setIndoorAir((d) => ({ ...d, relativeHumidityPct: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="CO2 (ppm)" value={indoorAir.co2Ppm} onChange={(e) => setIndoorAir((d) => ({ ...d, co2Ppm: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Taxa renovação de ar" value={indoorAir.airRenewalRate} onChange={(e) => setIndoorAir((d) => ({ ...d, airRenewalRate: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Material particulado" value={indoorAir.particulateMatter} onChange={(e) => setIndoorAir((d) => ({ ...d, particulateMatter: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Fungos/Bactérias" value={indoorAir.fungiBacteria} onChange={(e) => setIndoorAir((d) => ({ ...d, fungiBacteria: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Nome do técnico" value={serviceLog.technicianName} onChange={(e) => setServiceLog((d) => ({ ...d, technicianName: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Horas trabalhadas" value={serviceLog.workedHours} onChange={(e) => setServiceLog((d) => ({ ...d, workedHours: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Assinatura legal (ex.: ICP-Brasil)" value={serviceLog.legalSignatureProvider} onChange={(e) => setServiceLog((d) => ({ ...d, legalSignatureProvider: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm md:col-span-3" placeholder="Serviço executado" value={serviceLog.executedService} onChange={(e) => setServiceLog((d) => ({ ...d, executedService: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Consumível químico" value={serviceLog.materialName} onChange={(e) => setServiceLog((d) => ({ ...d, materialName: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Lote" value={serviceLog.materialLot} onChange={(e) => setServiceLog((d) => ({ ...d, materialLot: e.target.value }))} />
+              <input type="date" className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" value={serviceLog.materialValidityDate} onChange={(e) => setServiceLog((d) => ({ ...d, materialValidityDate: e.target.value }))} />
+              <input className="h-10 rounded-lg border border-[#e2e8f0] px-3 text-sm" placeholder="Quantidade" value={serviceLog.materialQuantity} onChange={(e) => setServiceLog((d) => ({ ...d, materialQuantity: e.target.value }))} />
+              <textarea className="min-h-[88px] rounded-lg border border-[#e2e8f0] px-3 py-2 text-sm md:col-span-2" placeholder="Observações do serviço" value={serviceLog.observations} onChange={(e) => setServiceLog((d) => ({ ...d, observations: e.target.value }))} />
+            </div>
           </CardContent>
         </Card>
 

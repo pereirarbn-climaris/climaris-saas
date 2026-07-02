@@ -7,7 +7,7 @@ import {
   tintHex,
   type BudgetPreviewTemplateId,
 } from "../../lib/budgetPdfTheme";
-import { normalizeBrandColor } from "../../lib/budgetPdfGenerator";
+import { normalizeBrandColor, normalizeFontColor } from "../../lib/budgetPdfGenerator";
 import "./BudgetPreview.tailwind.css";
 
 export type BudgetPreviewConfig = {
@@ -15,12 +15,37 @@ export type BudgetPreviewConfig = {
   technicalNotes?: string;
 };
 
+export type BudgetPreviewProRow = {
+  name: string;
+  qty: string;
+  unit: string;
+  unitPrice: string;
+  subtotal: string;
+};
+
+export type BudgetPreviewDraft = {
+  budgetCode?: string;
+  issueDate?: string;
+  clientName?: string;
+  products?: BudgetPreviewProRow[];
+  services?: BudgetPreviewProRow[];
+  productSubtotal?: string;
+  serviceSubtotal?: string;
+  total?: string;
+  validityDays?: number;
+};
+
 export type BudgetPreviewProps = {
   config: BudgetPreviewConfig;
   templateId: BudgetPreviewTemplateId;
   color: string;
+  fontColor?: string;
   warranty: string;
   paymentTerms: string;
+  paymentMethod?: string;
+  scopeText?: string;
+  technicalNotes?: string;
+  draft?: BudgetPreviewDraft;
 };
 
 const SAMPLE = {
@@ -49,7 +74,7 @@ function truncate(text: string, max: number): string {
 }
 
 type ClassicRow = { name: string; qty: string; price: string };
-type ProRow = { name: string; qty: string; unit: string; unitPrice: string; subtotal: string };
+type ProRow = BudgetPreviewProRow;
 
 function ItemsTableClassic({ title, rows, color }: { title: string; rows: ClassicRow[]; color: string }) {
   const cols = TABLE_THEME.classic.columns;
@@ -59,7 +84,6 @@ function ItemsTableClassic({ title, rows, color }: { title: string; rows: Classi
         className="mb-1 rounded-sm px-1.5 py-0.5 text-[6.5px] font-bold"
         style={{
           backgroundColor: tintHex(color, PDF_STYLES.lightTintFactor),
-          color,
         }}
       >
         {title}
@@ -104,7 +128,7 @@ function ItemsTableProfessional({
   const gridBorder = tintHex(color, theme.table.gridTint);
   return (
     <div className="mb-2 w-full">
-      <p className="mb-[1px] text-[6.5px] font-bold leading-tight text-slate-800">{sectionTitle}</p>
+      <p className="mb-[1px] text-[6.5px] font-bold leading-tight">{sectionTitle}</p>
       <table
         className="budget-preview-table budget-preview-table--pro w-full"
         style={{ borderColor: gridBorder }}
@@ -147,38 +171,36 @@ function LegalFooterClassic({
   warranty,
   paymentTerms,
   technicalNotes,
-  color,
 }: {
   warranty: string;
   paymentTerms: string;
   technicalNotes?: string;
-  color: string;
 }) {
   const hasAny = [warranty, paymentTerms, technicalNotes].some((t) => (t ?? "").trim());
   return (
     <div className="mt-auto border-t border-slate-200 pt-2">
-      <p className="mb-1 text-[6.5px] font-bold" style={{ color }}>
+      <p className="mb-1 text-[6.5px] font-bold">
         Condições comerciais
       </p>
       {!hasAny ? (
         <p className="budget-preview-muted text-[6px] italic">Garantia e pagamento aparecerão aqui.</p>
       ) : (
-        <div className="space-y-0.5 text-[6px] text-slate-600">
+        <div className="space-y-0.5 text-[6px]">
           {warranty.trim() ? (
             <p>
-              <span className="font-semibold text-slate-700">Garantia: </span>
+              <span className="font-semibold">Garantia: </span>
               {truncate(warranty, 140)}
             </p>
           ) : null}
           {paymentTerms.trim() ? (
             <p>
-              <span className="font-semibold text-slate-700">Pagamento: </span>
+              <span className="font-semibold">Pagamento: </span>
               {truncate(paymentTerms, 140)}
             </p>
           ) : null}
           {technicalNotes?.trim() ? (
             <p>
-              <span className="font-semibold text-slate-700">Observações: </span>
+              <span className="font-semibold">Observações: </span>
               {truncate(technicalNotes, 140)}
             </p>
           ) : null}
@@ -191,32 +213,50 @@ function LegalFooterClassic({
 function ConditionsSectionProfessional({
   warranty,
   paymentTerms,
+  paymentMethod,
+  observations,
+  validityDays = 15,
 }: {
   warranty: string;
   paymentTerms: string;
+  paymentMethod?: string;
+  observations?: string;
+  validityDays?: number;
 }) {
   const theme = TABLE_THEME.professional;
   return (
     <div className="mb-2">
-      <p className="mb-1 text-[6.5px] font-bold text-slate-800">{theme.sections.conditions}</p>
-      <div className="space-y-0.5 text-[6px] text-slate-600">
-        <p>Validade da Proposta: 15 dias a partir da data de emissão deste documento.</p>
+      <p className="mb-1 text-[6.5px] font-bold">{theme.sections.conditions}</p>
+      <div className="space-y-0.5 text-[6px]">
+        <p>
+          Validade da Proposta: {validityDays} dias a partir da data de emissão deste documento.
+        </p>
         {warranty.trim() ? (
           <p>
-            <span className="font-semibold text-slate-700">Garantia Técnica: </span>
+            <span className="font-semibold">Garantia Técnica: </span>
             {truncate(warranty, 120)}
           </p>
         ) : (
-          <p className="italic text-slate-400">Garantia técnica configurável nas definições.</p>
+          <p className="italic">Garantia técnica configurável nas definições.</p>
         )}
+        {paymentMethod?.trim() ? (
+          <p>
+            <span className="font-semibold">Forma de Pagamento: </span>
+            {truncate(paymentMethod, 120)}
+          </p>
+        ) : null}
         {paymentTerms.trim() ? (
           <p>
-            <span className="font-semibold text-slate-700">Forma de Pagamento: </span>
+            <span className="font-semibold">Condições de Pagamento: </span>
             {truncate(paymentTerms, 120)}
           </p>
-        ) : (
-          <p className="italic text-slate-400">Forma de pagamento configurável nas definições.</p>
-        )}
+        ) : null}
+        {observations?.trim() ? (
+          <p>
+            <span className="font-semibold">Observações: </span>
+            {truncate(observations, 120)}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -251,7 +291,7 @@ function TemplateClassic({
     <>
       <div className="mb-2 grid grid-cols-[18%_1fr_26%] gap-1 border-b border-dashed border-slate-200 pb-2">
         <div
-          className="flex aspect-square items-center justify-center rounded-full text-[7px] font-bold text-white"
+          className="flex aspect-square items-center justify-center rounded-full text-[7px] font-bold"
           style={{ backgroundColor: color }}
           aria-hidden
         >
@@ -268,7 +308,7 @@ function TemplateClassic({
       </div>
 
       <div
-        className="mb-2 rounded-sm px-2 py-1 text-[8px] font-bold text-white"
+        className="mb-2 rounded-sm px-2 py-1 text-[8px] font-bold"
         style={{ backgroundColor: color }}
       >
         Orçamento {SAMPLE.budgetCode}
@@ -286,7 +326,7 @@ function TemplateClassic({
 
       <div className="mb-2 flex justify-end">
         <span
-          className="rounded-sm px-2 py-0.5 text-[6.5px] font-bold text-white"
+          className="rounded-sm px-2 py-0.5 text-[6.5px] font-bold"
           style={{ backgroundColor: color }}
         >
           Total {SAMPLE.total}
@@ -297,16 +337,15 @@ function TemplateClassic({
         warranty={warranty}
         paymentTerms={paymentTerms}
         technicalNotes={technicalNotes}
-        color={color}
       />
 
       <div className="mt-2 grid grid-cols-2 gap-3 pt-2">
-        <div className="border-t border-slate-400 pt-1 text-center text-[5.5px] text-slate-500">
-          <span className="block font-semibold text-slate-700">{truncate(companyName, 24)}</span>
+        <div className="border-t border-slate-400 pt-1 text-center text-[5.5px]">
+          <span className="block font-semibold">{truncate(companyName, 24)}</span>
           Técnico responsável
         </div>
-        <div className="border-t border-slate-400 pt-1 text-center text-[5.5px] text-slate-500">
-          <span className="block font-semibold text-slate-700">Cliente Exemplo</span>
+        <div className="border-t border-slate-400 pt-1 text-center text-[5.5px]">
+          <span className="block font-semibold">Cliente Exemplo</span>
           Cliente
         </div>
       </div>
@@ -319,45 +358,58 @@ function TemplateProfessional({
   companyName,
   warranty,
   paymentTerms,
+  paymentMethod,
+  scopeText,
   technicalNotes,
+  draft,
 }: {
   color: string;
   companyName: string;
   warranty: string;
   paymentTerms: string;
+  paymentMethod?: string;
+  scopeText?: string;
   technicalNotes?: string;
+  draft?: BudgetPreviewDraft;
 }) {
   const theme = TABLE_THEME.professional;
-  const scopeBullets = scopeLinesFromText(technicalNotes ?? SAMPLE.scopeBullets.join("\n"));
+  const scopeBullets = scopeText?.trim()
+    ? scopeLinesFromText(scopeText)
+    : SAMPLE.scopeBullets;
   const headerDivider = tintHex(color, theme.header.dividerTint);
+  const products = draft?.products?.length ? draft.products : SAMPLE.products;
+  const services = draft?.services?.length ? draft.services : SAMPLE.services;
+  const clientName = draft?.clientName?.trim() || SAMPLE.client;
 
   return (
     <>
       <div className="mb-0 flex items-start justify-between gap-2 pb-2">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-bold leading-tight" style={{ color }}>
+          <p className="text-[11px] font-bold leading-tight">
             {companyName}
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-[7px] font-bold">ORÇAMENTO nº {SAMPLE.budgetCode}</p>
-          <p className="budget-preview-muted text-[5.5px]">Data de Emissão: {SAMPLE.issueDate}</p>
+          <p className="text-[7px] font-bold">ORÇAMENTO nº {draft?.budgetCode ?? SAMPLE.budgetCode}</p>
+          <p className="budget-preview-muted text-[5.5px]">
+            Data de Emissão: {draft?.issueDate ?? SAMPLE.issueDate}
+          </p>
         </div>
       </div>
       <hr className="mb-2 border-0" style={{ borderTop: `1px solid ${headerDivider}` }} />
 
       <div className="mb-2 grid grid-cols-2 gap-3">
         <div>
-          <p className="text-[5.5px] font-bold uppercase tracking-wide text-slate-800">
+          <p className="text-[5.5px] font-bold uppercase tracking-wide">
             {theme.partyLabels.client}
           </p>
-          <p className="text-[6.5px] font-bold">{SAMPLE.client}</p>
+          <p className="text-[6.5px] font-bold">{clientName}</p>
           <p className="budget-preview-muted text-[5.5px]">CNPJ: 00.000.000/0001-00</p>
           <p className="budget-preview-muted text-[5.5px]">Endereço do cliente</p>
           <p className="budget-preview-muted text-[5.5px]">Email · Tel</p>
         </div>
         <div>
-          <p className="text-[5.5px] font-bold uppercase tracking-wide text-slate-800">
+          <p className="text-[5.5px] font-bold uppercase tracking-wide">
             {theme.partyLabels.provider}
           </p>
           <p className="text-[6.5px] font-bold">{companyName}</p>
@@ -368,9 +420,9 @@ function TemplateProfessional({
       </div>
 
       <div className="mb-2">
-        <p className="mb-0.5 text-[6.5px] font-bold text-slate-800">{theme.sections.scope}</p>
+        <p className="mb-0.5 text-[6.5px] font-bold">{theme.sections.scope}</p>
         {scopeBullets.length > 0 ? (
-          <ul className="list-none space-y-0.5 pl-1 text-[5.5px] text-slate-600">
+          <ul className="list-none space-y-0.5 pl-1 text-[5.5px]">
             {scopeBullets.map((line) => (
               <li key={line}>• {truncate(line, 80)}</li>
             ))}
@@ -380,51 +432,82 @@ function TemplateProfessional({
         )}
       </div>
 
-      <ItemsTableProfessional
-        sectionTitle={theme.sections.products}
-        headerLabel={theme.sections.productsHeader}
-        rows={SAMPLE.products}
-        color={color}
-      />
-      <ItemsTableProfessional
-        sectionTitle={theme.sections.services}
-        headerLabel={theme.sections.servicesHeader}
-        rows={SAMPLE.services}
-        color={color}
-      />
+      {products.length > 0 ? (
+        <ItemsTableProfessional
+          sectionTitle={theme.sections.products}
+          headerLabel={theme.sections.productsHeader}
+          rows={products}
+          color={color}
+        />
+      ) : null}
+      {services.length > 0 ? (
+        <ItemsTableProfessional
+          sectionTitle={theme.sections.services}
+          headerLabel={theme.sections.servicesHeader}
+          rows={services}
+          color={color}
+        />
+      ) : null}
 
-      <div className="mb-2 space-y-0.5 text-right text-[5.5px] text-slate-700">
-        <p>
-          {theme.subtotalLabels.products}: <span className="font-semibold">{SAMPLE.productSubtotal}</span>
-        </p>
-        <p>
-          {theme.subtotalLabels.services}: <span className="font-semibold">{SAMPLE.serviceSubtotal}</span>
-        </p>
-        <p className="text-[6.5px] font-bold" style={{ color }}>
-          {theme.subtotalLabels.total}: {SAMPLE.total}
+      <div className="mb-2 space-y-0.5 text-right text-[5.5px]">
+        {products.length > 0 ? (
+          <p>
+            {theme.subtotalLabels.products}:{" "}
+            <span className="font-semibold">{draft?.productSubtotal ?? SAMPLE.productSubtotal}</span>
+          </p>
+        ) : null}
+        {services.length > 0 ? (
+          <p>
+            {theme.subtotalLabels.services}:{" "}
+            <span className="font-semibold">{draft?.serviceSubtotal ?? SAMPLE.serviceSubtotal}</span>
+          </p>
+        ) : null}
+        <p className="text-[6.5px] font-bold">
+          {theme.subtotalLabels.total}: {draft?.total ?? SAMPLE.total}
         </p>
       </div>
 
-      <ConditionsSectionProfessional warranty={warranty} paymentTerms={paymentTerms} />
+      <ConditionsSectionProfessional
+        warranty={warranty}
+        paymentTerms={paymentTerms}
+        paymentMethod={paymentMethod}
+        observations={technicalNotes}
+        validityDays={draft?.validityDays ?? 15}
+      />
 
       <div className="mt-auto grid grid-cols-2 gap-3 pt-3">
-        <div className="border-t border-slate-500 pt-1 text-center text-[5px] text-slate-500">
-          <span className="block font-semibold text-slate-700">{truncate(companyName, 22)}</span>
+        <div className="border-t border-slate-500 pt-1 text-center text-[5px]">
+          <span className="block font-semibold">{truncate(companyName, 22)}</span>
           Técnico Responsável
         </div>
-        <div className="border-t border-slate-500 pt-1 text-center text-[5px] text-slate-500">
-          <span className="block font-semibold text-slate-700">Cliente Exemplo</span>
+        <div className="border-t border-slate-500 pt-1 text-center text-[5px]">
+          <span className="block font-semibold">{truncate(clientName, 22)}</span>
           De Acordo / Assinatura do Cliente
         </div>
       </div>
 
-      <p className="mt-1 text-right text-[4.5px] text-slate-400">Página 1 de 1</p>
+      <p className="mt-1 text-right text-[4.5px]">Página 1 de 1</p>
     </>
   );
 }
 
-export function BudgetPreview({ config, templateId, color, warranty, paymentTerms }: BudgetPreviewProps) {
+export function BudgetPreview({
+  config,
+  templateId,
+  color,
+  fontColor,
+  warranty,
+  paymentTerms,
+  paymentMethod,
+  scopeText,
+  technicalNotes,
+  draft,
+}: BudgetPreviewProps) {
   const brandColor = useMemo(() => normalizeBrandColor(color, PDF_STYLES.defaultBrandColor), [color]);
+  const resolvedFontColor = useMemo(
+    () => normalizeFontColor(fontColor, PDF_STYLES.defaultFontColor),
+    [fontColor],
+  );
   const layoutKey = useMemo(() => normalizePreviewTemplateId(templateId), [templateId]);
   const companyName = config.companyName?.trim() || "Sua empresa";
 
@@ -433,12 +516,25 @@ export function BudgetPreview({ config, templateId, color, warranty, paymentTerm
       JSON.stringify({
         layoutKey,
         brandColor,
+        resolvedFontColor,
         warranty,
         paymentTerms,
+        paymentMethod,
+        draft,
         technical: config.technicalNotes ?? "",
         companyName,
       }),
-    [layoutKey, brandColor, warranty, paymentTerms, config.technicalNotes, companyName],
+    [
+      layoutKey,
+      brandColor,
+      resolvedFontColor,
+      warranty,
+      paymentTerms,
+      paymentMethod,
+      draft,
+      config.technicalNotes,
+      companyName,
+    ],
   );
 
   const [fadeIn, setFadeIn] = useState(true);
@@ -454,7 +550,10 @@ export function BudgetPreview({ config, templateId, color, warranty, paymentTerm
     companyName,
     warranty,
     paymentTerms,
-    technicalNotes: config.technicalNotes,
+    paymentMethod,
+    scopeText,
+    technicalNotes: technicalNotes ?? config.technicalNotes,
+    draft,
   };
 
   return (
@@ -462,7 +561,7 @@ export function BudgetPreview({ config, templateId, color, warranty, paymentTerm
       <div className="rounded-xl bg-gradient-to-br from-slate-200 via-slate-50 to-slate-200 p-3">
         <div
           className="budget-preview-sheet rounded border border-slate-300 shadow-[0_12px_28px_rgba(15,23,42,0.12)]"
-          style={{ aspectRatio: PDF_STYLES.page.aspectRatio }}
+          style={{ aspectRatio: PDF_STYLES.page.aspectRatio, color: resolvedFontColor }}
         >
           <div
             className={`budget-preview-fade flex h-full flex-col ${fadeIn ? "opacity-100" : "opacity-50"}`}

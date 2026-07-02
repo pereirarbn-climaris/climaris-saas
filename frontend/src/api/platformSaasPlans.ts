@@ -1,7 +1,9 @@
+import { apiErrorMessage } from "../lib/apiErrorMessage";
 import { apiUrl } from "../lib/apiUrl";
 import { getAccessToken } from "../lib/authStorage";
 
 export type FinanceModeCap = "basic" | "intermediate" | "management";
+export type DashboardTierCap = "basic" | "advanced" | "complete";
 
 export type SaasPlanCatalogRow = {
   plan_key: string;
@@ -9,12 +11,19 @@ export type SaasPlanCatalogRow = {
   description: string;
   footnote: string;
   finance_max_mode: FinanceModeCap;
+  dashboard_tier: DashboardTierCap;
   max_users: number | null;
   sort_order: number;
   is_beta_internal: boolean;
   can_contract: boolean;
   is_selectable_for_tenants: boolean;
   show_in_matrix: boolean;
+  monthly_price_brl: number | null;
+  stripe_product_id: string | null;
+  stripe_price_id: string | null;
+  products_inventory_enabled: boolean;
+  products_purchases_enabled: boolean;
+  products_max_images: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -25,11 +34,8 @@ function authHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
-function extractError(body: unknown, fallback: string): string {
-  if (body && typeof body === "object" && "detail" in body && typeof (body as { detail: unknown }).detail === "string") {
-    return (body as { detail: string }).detail;
-  }
-  return fallback;
+function extractError(body: unknown, fallback: string, response?: Response): string {
+  return apiErrorMessage(body, fallback, response);
 }
 
 export async function listPlatformSaasPlans(params?: {
@@ -44,7 +50,7 @@ export async function listPlatformSaasPlans(params?: {
     headers: authHeaders(),
   });
   const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(extractError(body, "Não foi possível carregar os planos."));
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível carregar os planos.", response));
   return body as SaasPlanCatalogRow[];
 }
 
@@ -54,12 +60,17 @@ export type SaasPlanCatalogCreate = {
   description?: string;
   footnote?: string;
   finance_max_mode?: FinanceModeCap;
+  dashboard_tier?: DashboardTierCap;
   max_users?: number | null;
   sort_order?: number;
   is_beta_internal?: boolean;
   can_contract?: boolean;
   is_selectable_for_tenants?: boolean;
   show_in_matrix?: boolean;
+  monthly_price_brl?: number | null;
+  products_inventory_enabled?: boolean;
+  products_purchases_enabled?: boolean;
+  products_max_images?: number | null;
 };
 
 export async function createPlatformSaasPlan(payload: SaasPlanCatalogCreate): Promise<SaasPlanCatalogRow> {
@@ -69,7 +80,7 @@ export async function createPlatformSaasPlan(payload: SaasPlanCatalogCreate): Pr
     body: JSON.stringify(payload),
   });
   const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(extractError(body, "Não foi possível criar o plano."));
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível criar o plano.", response));
   return body as SaasPlanCatalogRow;
 }
 
@@ -78,13 +89,44 @@ export type SaasPlanCatalogPatch = Partial<{
   description: string;
   footnote: string;
   finance_max_mode: FinanceModeCap;
+  dashboard_tier: DashboardTierCap;
   max_users: number | null;
   sort_order: number;
   is_beta_internal: boolean;
   can_contract: boolean;
   is_selectable_for_tenants: boolean;
   show_in_matrix: boolean;
+  monthly_price_brl: number | null;
+  stripe_product_id: string | null;
+  stripe_price_id: string | null;
+  products_inventory_enabled: boolean;
+  products_purchases_enabled: boolean;
+  products_max_images: number | null;
 }>;
+
+export type StripePlatformStatus = {
+  configured: boolean;
+  has_webhook_secret: boolean;
+  has_publishable_key: boolean;
+  webhook_url_hint: string;
+};
+
+export async function fetchStripePlatformStatus(): Promise<StripePlatformStatus> {
+  const response = await fetch(apiUrl("/api/v1/platform/stripe/status"), { headers: authHeaders() });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível carregar o status do Stripe.", response));
+  return body as StripePlatformStatus;
+}
+
+export async function syncPlatformPlanToStripe(planKey: string): Promise<SaasPlanCatalogRow> {
+  const response = await fetch(apiUrl(`/api/v1/platform/stripe/sync-plan/${encodeURIComponent(planKey)}`), {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível sincronizar com o Stripe.", response));
+  return body as SaasPlanCatalogRow;
+}
 
 export async function patchPlatformSaasPlan(planKey: string, payload: SaasPlanCatalogPatch): Promise<SaasPlanCatalogRow> {
   const response = await fetch(apiUrl(`/api/v1/platform/saas-plans/${encodeURIComponent(planKey)}`), {
@@ -93,7 +135,7 @@ export async function patchPlatformSaasPlan(planKey: string, payload: SaasPlanCa
     body: JSON.stringify(payload),
   });
   const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(extractError(body, "Não foi possível salvar o plano."));
+  if (!response.ok) throw new Error(extractError(body, "Não foi possível salvar o plano.", response));
   return body as SaasPlanCatalogRow;
 }
 
@@ -106,5 +148,5 @@ export async function deletePlatformSaasPlan(planKey: string): Promise<void> {
   });
   if (response.status === 204) return;
   const body: unknown = await response.json().catch(() => null);
-  throw new Error(extractError(body, "Não foi possível excluir o plano."));
+  throw new Error(extractError(body, "Não foi possível excluir o plano.", response));
 }

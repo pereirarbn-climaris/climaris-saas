@@ -170,6 +170,14 @@ export interface ClientFormViewProps {
   onTabChange?: (tab: TabId) => void;
   /** Callback de atualização dos dados do cliente */
   onClientChange?: (data: Partial<ClientData>) => void;
+  /** Callback ao sair do campo CPF/CNPJ para validação de duplicidade */
+  onDocumentoBlur?: () => void;
+  /** Callback ao sair do campo WhatsApp para validação de duplicidade */
+  onWhatsappBlur?: () => void;
+  /** Mensagem de duplicidade para CPF/CNPJ */
+  documentoDuplicateMessage?: string;
+  /** Mensagem de duplicidade para WhatsApp */
+  whatsappDuplicateMessage?: string;
   /** Consulta rápida CNPJA Open (cadastro inicial, sem créditos). */
   onConsultCNPJ?: (cnpj: string) => void;
   /** Validação fiscal CNPJA Comercial (dados completos para NFS-e). */
@@ -576,6 +584,11 @@ const styles = {
     color: 'var(--color-text-muted)',
     margin: 0,
   },
+  fieldError: {
+    margin: 0,
+    fontSize: 'var(--font-size-sm)',
+    color: 'var(--color-danger, #dc2626)',
+  },
   timelineTypeBadge: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -893,6 +906,10 @@ function CadastroAtivoToggle({
 function TabCadastro({
   client,
   onChange,
+  onDocumentoBlur,
+  onWhatsappBlur,
+  documentoDuplicateMessage,
+  whatsappDuplicateMessage,
   onConsultCNPJ,
   onConsultCNPJCommercial,
   onRefreshCnpjCommercial,
@@ -908,6 +925,10 @@ function TabCadastro({
 }: {
   client?: ClientData;
   onChange?: (data: Partial<ClientData>) => void;
+  onDocumentoBlur?: () => void;
+  onWhatsappBlur?: () => void;
+  documentoDuplicateMessage?: string;
+  whatsappDuplicateMessage?: string;
   onConsultCNPJ?: (cnpj: string) => void;
   onConsultCNPJCommercial?: (cnpj: string) => void;
   onRefreshCnpjCommercial?: () => void;
@@ -1111,6 +1132,7 @@ function TabCadastro({
                   placeholder="00.000.000/0000-00"
                   value={localClient.documento || ''}
                   onChange={(e) => handleDocumentoChange(e.target.value)}
+                  onBlur={onDocumentoBlur}
                   disabled={identCoreLocked}
                   readOnly={fiscalFieldsLocked}
                   title={fiscalFieldsLocked ? 'CNPJ protegido após validação na Receita' : undefined}
@@ -1169,11 +1191,17 @@ function TabCadastro({
               placeholder={localClient.type === 'pf' ? '000.000.000-00' : '00.000.000/0000-00'}
               value={localClient.documento || ''}
               onChange={(e) => handleDocumentoChange(e.target.value)}
+              onBlur={onDocumentoBlur}
               disabled={identCoreLocked}
               readOnly={fiscalFieldsLocked}
               title={fiscalFieldsLocked ? 'CNPJ protegido após validação na Receita' : undefined}
             />
           )}
+          {documentoDuplicateMessage ? (
+            <p style={styles.fieldError} role="alert">
+              {documentoDuplicateMessage}
+            </p>
+          ) : null}
         </div>
         )}
 
@@ -1319,10 +1347,16 @@ function TabCadastro({
           <PhoneInputWithContactPicker
             value={localClient.whatsapp || ''}
             onChange={(v) => handleChange('whatsapp', formatPhone(v))}
+            onBlur={onWhatsappBlur}
             disabled={readOnly}
             placeholder="(00) 00000-0000"
             inputStyle={styles.input}
           />
+          {whatsappDuplicateMessage ? (
+            <p style={styles.fieldError} role="alert">
+              {whatsappDuplicateMessage}
+            </p>
+          ) : null}
           </div>
         </div>
 
@@ -1901,6 +1935,10 @@ export function ClientFormView({
   activeTab: controlledActiveTab,
   onTabChange,
   onClientChange,
+  onDocumentoBlur,
+  onWhatsappBlur,
+  documentoDuplicateMessage,
+  whatsappDuplicateMessage,
   onConsultCNPJ,
   onConsultCNPJCommercial,
   onBuscarCep,
@@ -1988,6 +2026,10 @@ export function ClientFormView({
           <TabCadastro
             client={client}
             onChange={onClientChange}
+            onDocumentoBlur={onDocumentoBlur}
+            onWhatsappBlur={onWhatsappBlur}
+            documentoDuplicateMessage={documentoDuplicateMessage}
+            whatsappDuplicateMessage={whatsappDuplicateMessage}
             onConsultCNPJ={onConsultCNPJ}
             onConsultCNPJCommercial={onConsultCNPJCommercial}
             onRefreshCnpjCommercial={onRefreshCnpjCommercial}

@@ -9,7 +9,6 @@ import {
   type BudgetOut,
   type BudgetStatus,
 } from "../../api/budgets";
-import { runStorageReindex } from "../../api/system";
 import { listClients } from "../../api/clients";
 import type { DashboardOutletContext } from "../dashboardContext";
 import tableStyles from "../listTableCommon.module.css";
@@ -81,8 +80,6 @@ export function BudgetsListPage() {
   const [loading,      setLoading]      = useState(true);
   const [busyId,       setBusyId]       = useState<number | null>(null);
   const [msg,          setMsg]          = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [storageAlerts, setStorageAlerts] = useState<string[]>([]);
-  const [reindexBusy,  setReindexBusy]  = useState(false);
 
   // PDF preview
   const [previewOpen,     setPreviewOpen]     = useState(false);
@@ -101,14 +98,11 @@ export function BudgetsListPage() {
     setLoading(true);
     setMsg(null);
     try {
-      const [{ items: budgets, storage_alerts }, clients] = await Promise.all([
+      const [{ items: budgets }, clients] = await Promise.all([
         listBudgetsWithAlerts({ limit: 100 }),
         listClients({ limit: 200 }),
       ]);
       setAllRows(budgets);
-      setStorageAlerts(
-        storage_alerts.filter((alert) => alert.startsWith("Orçamento ")),
-      );
       setClientsMap(new Map(clients.map((c) => [c.id, c.name])));
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao carregar orçamentos." });
@@ -169,24 +163,6 @@ export function BudgetsListPage() {
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Erro ao aprovar orçamento." });
     } finally { setBusyId(null); }
-  }
-
-  async function onReindexStorage() {
-    if (!window.confirm("Reindexar arquivos no S3? Isso limpa o cache local e revalida etiquetas QR e PDFs de orçamentos.")) {
-      return;
-    }
-    setReindexBusy(true);
-    setMsg(null);
-    try {
-      const report = await runStorageReindex({ regenerate_invalid_qr: true, reupload_missing_budget_pdfs: true });
-      await load();
-      const summary = `Reindexação concluída: ${report.budgets_checked} orçamentos, ${report.qrcodes_checked} etiquetas QR.`;
-      setMsg({ kind: "ok", text: report.alerts.length ? `${summary} ${report.alerts.length} alerta(s) restante(s).` : summary });
-    } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Falha na reindexação." });
-    } finally {
-      setReindexBusy(false);
-    }
   }
 
   async function onOpenPdf(row: BudgetOut) {
@@ -253,17 +229,6 @@ export function BudgetsListPage() {
             Gerencie propostas comerciais e acompanhe o funil de aprovação
           </p>
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-        {ctx?.user.role === "admin" ? (
-          <button
-            type="button"
-            className={tableStyles.listToolbarBtnGhost}
-            disabled={reindexBusy || loading}
-            onClick={() => void onReindexStorage()}
-          >
-            {reindexBusy ? "Reindexando…" : "Reparar S3"}
-          </button>
-        ) : null}
         {canEdit ? (
           <Link className={tableStyles.listToolbarBtnPrimary} to="/app/budgets/new">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: "1.125rem", height: "1.125rem" }}>
@@ -272,33 +237,7 @@ export function BudgetsListPage() {
             Novo orçamento
           </Link>
         ) : null}
-        </div>
       </header>
-
-      {(storageAlerts.length > 0 || allRows.some((r) => r.storage_alert || r.pdf_file_missing)) ? (
-        <div
-          role="alert"
-          style={{
-            margin: 0,
-            padding: "0.75rem 1rem",
-            fontSize: "0.9375rem",
-            color: "#b45309",
-            background: "#fffbeb",
-            border: "1px solid #fde68a",
-            borderRadius: "0.75rem",
-          }}
-        >
-          <strong>Arquivos indisponíveis no S3</strong>
-          <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.25rem" }}>
-            {[...new Set([
-              ...storageAlerts,
-              ...allRows.map((r) => r.storage_alert).filter((a): a is string => Boolean(a)),
-            ])].map((alert) => (
-              <li key={alert}>{alert}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
 
       {/* ── Stat cards (4 cols) ─────────────────────────────────────────────── */}
       <div className={styles.heroStats}>
@@ -463,11 +402,6 @@ export function BudgetsListPage() {
                     <td>
                       <span className={styles.budgetId}>#{row.id}</span>
                       {row.observation ? <div className={styles.budgetObs}>{row.observation}</div> : null}
-                      {row.storage_alert ? (
-                        <div className={styles.budgetObs} style={{ color: "#b45309" }} role="alert">
-                          {row.storage_alert}
-                        </div>
-                      ) : null}
                     </td>
                     <td>{clientsMap.get(row.client_id) ?? `Cliente #${row.client_id}`}</td>
                     <td>

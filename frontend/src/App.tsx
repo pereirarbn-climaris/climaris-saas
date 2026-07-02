@@ -14,12 +14,14 @@ import { BudgetsListPage } from "./pages/budgets/BudgetsListPage";
 import { ClientFormPage } from "./pages/clients/ClientFormPage";
 import { EquipmentDocumentDetailPage } from "./pages/clients/EquipmentDocumentDetailPage";
 import { ClientsListPage } from "./pages/clients/ClientsListPage";
+import { AccountSettingsPage } from "./pages/account/AccountSettingsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TechnicianSchedulePage } from "./pages/agenda/TechnicianSchedulePage";
 import { DashboardHomePage } from "./pages/dashboard/DashboardHomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProductFormPage } from "./pages/products/ProductFormPage";
 import { ProductsListPage } from "./pages/products/ProductsListPage";
+import { RequirePurchasesPlan } from "./components/plan/PlanModuleRoute";
 import { PurchasesPage } from "./pages/purchases/PurchasesPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
@@ -32,11 +34,13 @@ import { PlatformSaasPlansPage } from "./pages/saas/PlatformSaasPlansPage";
 import { PublicEquipmentPage } from "./pages/public/PublicEquipmentPage";
 import { PublicPmocValidationPage } from "./pages/public/PublicPmocValidationPage";
 import { ServiceOrderFormPage } from "./pages/service-orders/ServiceOrderFormPage";
+import { DigitalWorkOrderPage } from "./pages/service-orders/DigitalWorkOrderPage";
 import { ServiceOrdersListPage } from "./pages/service-orders/ServiceOrdersListPage";
 import { TechnicianServiceOrderPage } from "./pages/technician/TechnicianServiceOrderPage";
 import { ServiceFormPage } from "./pages/services/ServiceFormPage";
 import { ServicesListPage } from "./pages/services/ServicesListPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
+import { PrivacyPolicyPage } from "./pages/legal/PrivacyPolicyPage";
 const FinanceDashboard = lazy(() =>
   import("./features/finance/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })),
 );
@@ -60,20 +64,29 @@ import { WhatsappBotPage } from "./pages/integrations/WhatsappBotPage";
 import { WhatsappBroadcastCampaignsPage } from "./pages/integrations/WhatsappBroadcastCampaignsPage";
 import { WhatsappIntegrationPage } from "./pages/integrations/WhatsappIntegrationPage";
 import { AiAssistantPage } from "./pages/integrations/AiAssistantPage";
+import { BillingPlansPage } from "./pages/billing/BillingPlansPage";
 import { MarketplacePage } from "./pages/marketplace/MarketplacePage";
 import { PlatformMarketplacePage } from "./pages/PlatformMarketplacePage";
 import { PlatformFinanceBanksPage } from "./pages/PlatformFinanceBanksPage";
 import { PlatformPagarmePage } from "./pages/platform/PlatformPagarmePage";
 import { PlatformBrandingPage } from "./pages/PlatformBrandingPage";
+import { PlatformInstitutionalSitePage } from "./pages/PlatformInstitutionalSitePage";
+import { PlatformDemoAgendaPage } from "./pages/PlatformDemoAgendaPage";
+import { PlatformWhatsappPage } from "./pages/PlatformWhatsappPage";
+import { PlatformProjectsPage } from "./pages/PlatformProjectsPage";
+import { PlatformNotificationsPage } from "./pages/PlatformNotificationsPage";
 import PmocConformidadePage from "./app/(dashboard)/pmoc/conformidade/[id]/page";
 import PmocExecucaoPage from "./app/(dashboard)/pmoc/execucao/[id]/page";
 import { PmocDetailPage } from "./pages/pmoc/PmocDetailPage";
 import { PmocListPage } from "./pages/pmoc/PmocListPage";
 import { PmocNewPage } from "./pages/pmoc/PmocNewPage";
+import { PmocSettingsPage } from "./pages/pmoc/PmocSettingsPage";
 import { TrustedDevicesPage } from "./pages/security/TrustedDevicesPage";
 import { NfsePage } from "./pages/fiscal/NfsePage";
 import { PreventiveMaintenancePage } from "./pages/preventive/PreventiveMaintenancePage";
 import { ManageQrCodesPage } from "./pages/qrcodes/ManageQrCodesPage";
+import { NotificationsPage } from "./pages/notifications/NotificationsPage";
+import { ToastHost } from "./components/ToastHost";
 
 function RootRedirect() {
   if (!getAccessToken()) {
@@ -99,6 +112,7 @@ export default function App() {
       <Route path="/public/pmoc-validation/:pmocId" element={<PublicPmocValidationPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/privacidade" element={<PrivacyPolicyPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/complete-registration" element={<CompleteRegistrationPage />} />
@@ -110,14 +124,23 @@ export default function App() {
         <Route path="chaves-api" element={<PlatformApiCredentialsPage />} />
         <Route path="loja" element={<PlatformMarketplacePage />} />
         <Route path="planos" element={<PlatformSaasPlansPage />} />
+        <Route path="cupons-stripe" element={<Navigate to="/operacao/planos?aba=cupons" replace />} />
         <Route path="bancos" element={<PlatformFinanceBanksPage />} />
         <Route path="pagar-me" element={<PlatformPagarmePage />} />
         <Route path="catalogo" element={<EquipmentCatalogPage />} />
         <Route path="categorias-equipamentos" element={<EquipmentCategoriesPage />} />
         <Route path="identidade-visual" element={<PlatformBrandingPage />} />
+        <Route path="site-institucional" element={<PlatformInstitutionalSitePage />} />
+        <Route path="agenda-demonstracoes" element={<PlatformDemoAgendaPage />} />
+        <Route path="whatsapp" element={<PlatformWhatsappPage />} />
+        <Route path="projetos" element={<PlatformProjectsPage />} />
+        <Route path="notificacoes" element={<PlatformNotificationsPage />} />
       </Route>
       <Route path="/app" element={<DashboardPage />}>
         <Route index element={<DashboardHomePage />} />
+        <Route path="conta" element={<AccountSettingsPage />} />
+        <Route path="notifications" element={<NotificationsPage />} />
+        <Route path="planos" element={<BillingPlansPage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="catalogo" element={<Navigate to="/operacao/catalogo" replace />} />
         <Route path="clients" element={<ClientsListPage />} />
@@ -127,7 +150,14 @@ export default function App() {
         <Route path="products" element={<ProductsListPage />} />
         <Route path="products/new" element={<ProductFormPage />} />
         <Route path="products/:productId" element={<ProductFormPage />} />
-        <Route path="purchases" element={<PurchasesPage />} />
+        <Route
+          path="purchases"
+          element={
+            <RequirePurchasesPlan>
+              <PurchasesPage />
+            </RequirePurchasesPlan>
+          }
+        />
         <Route path="inventory" element={<Navigate to="/app/products" replace />} />
         <Route path="services" element={<ServicesListPage />} />
         <Route path="services/new" element={<ServiceFormPage />} />
@@ -135,7 +165,9 @@ export default function App() {
         <Route path="service-orders" element={<ServiceOrdersListPage />} />
         <Route path="service-orders/new" element={<ServiceOrderFormPage />} />
         <Route path="service-orders/:orderId" element={<ServiceOrderFormPage />} />
+        <Route path="service-orders/:orderId/digital-os" element={<DigitalWorkOrderPage />} />
         <Route path="tecnico/os/:orderId" element={<TechnicianServiceOrderPage />} />
+        <Route path="tecnico/os/:orderId/digital-os" element={<DigitalWorkOrderPage />} />
         <Route path="budgets" element={<BudgetsListPage />} />
         <Route path="budgets/new" element={<BudgetFormPage />} />
         <Route path="budgets/:budgetId" element={<BudgetFormPage />} />
@@ -232,6 +264,7 @@ export default function App() {
           }
         />
         <Route path="pmoc/new" element={<PmocNewPage />} />
+        <Route path="pmoc/settings" element={<PmocSettingsPage />} />
         <Route path="pmoc/execucao/:id" element={<PmocExecucaoPage />} />
         <Route path="pmoc/conformidade/:id" element={<PmocConformidadePage />} />
         <Route path="pmoc/ativos" element={<Navigate to="/app/pmoc?status=active" replace />} />
@@ -244,6 +277,7 @@ export default function App() {
       <Route path="/" element={<RootRedirect />} />
       <Route path="*" element={<NotFoundRedirect />} />
     </Routes>
+    <ToastHost />
     </PlatformBrandingProvider>
   );
 }

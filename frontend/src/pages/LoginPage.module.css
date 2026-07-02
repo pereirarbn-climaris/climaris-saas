@@ -699,6 +699,24 @@
   background: var(--color-border);
 }
 
+.googleArea {
+  margin-top: 0.75rem;
+}
+
+.googleLabel {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.googleButtonMount {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  justify-content: center;
+}
+
 .secondaryBtn {
   width: 100%;
   min-height: var(--touch-target-min);

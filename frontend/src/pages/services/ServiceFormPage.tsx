@@ -10,7 +10,6 @@ import {
 } from "../../api/services";
 import { listProducts, type ProductOut } from "../../api/products";
 import { getAiSettings } from "../../api/ai";
-import { ToastHost } from "../../components/ToastHost";
 import { formatBrlDisplay, formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
@@ -525,7 +524,6 @@ export function ServiceFormPage() {
 
   return (
     <>
-      <ToastHost />
       <div className={styles.wrap}>
       <header className={styles.pageHeader}>
         <nav className={styles.breadcrumb} aria-label="Navegação">

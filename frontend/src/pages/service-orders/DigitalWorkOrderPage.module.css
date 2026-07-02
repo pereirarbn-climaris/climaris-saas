@@ -1,0 +1,165 @@
+.wrap {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding-bottom: 2rem;
+}
+
+.back {
+  display: inline-flex;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-primary, #0284c7);
+  text-decoration: none;
+}
+
+.header {
+  margin-bottom: 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.subtitle {
+  margin: 0.35rem 0 0;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.9rem;
+}
+
+.muted,
+.error,
+.toast,
+.hint {
+  font-size: 0.9rem;
+}
+
+.error {
+  color: var(--color-danger, #dc2626);
+}
+
+.card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.cardTitle {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.field input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--color-border, #cbd5e1);
+  border-radius: 0.5rem;
+}
+
+.btnPrimary {
+  padding: 0.55rem 0.9rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: var(--color-primary, #0284c7);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btnPrimary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toast {
+  margin: 0.65rem 0 0;
+  color: var(--color-text-muted, #64748b);
+}
+
+.hint {
+  margin-top: 1rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.offlineBanner {
+  margin: 0.5rem 0 0;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.5rem;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.offlineBannerFixed {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: -0.5rem -0.75rem 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.5rem;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.pendingSyncBadge {
+  margin: 0.5rem 0 0;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.5rem;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.btnSecondary {
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--color-border, #cbd5e1);
+  border-radius: 0.5rem;
+  background: #fff;
+  color: var(--color-text, #0f172a);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btnSecondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cardHint {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.evidenceList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}

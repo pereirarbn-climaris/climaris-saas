@@ -1,0 +1,366 @@
+.wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.9rem;
+  background: #fff;
+  padding: 1rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.monthTitle {
+  text-transform: capitalize;
+  min-width: 10rem;
+}
+
+.navBtn,
+.todayBtn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-bottom: 0.75rem;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dotAvailable,
+.dotBlocked,
+.dotFull,
+.dotDemo {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+}
+
+.dotAvailable {
+  background: #bae6fd;
+}
+
+.dotBlocked {
+  background: #fca5a5;
+}
+
+.dotFull {
+  background: #cbd5e1;
+}
+
+.dotDemo {
+  background: #0284c7;
+}
+
+.gridHead,
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.gridHead {
+  margin-bottom: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  text-align: center;
+}
+
+.gridLoading {
+  opacity: 0.6;
+}
+
+.cell {
+  min-height: 5.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.55rem;
+  background: #fff;
+  padding: 0.35rem;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.cellMuted {
+  opacity: 0.45;
+}
+
+.cellSelected {
+  outline: 2px solid #0ea5e9;
+}
+
+.cell_available {
+  background: #f0f9ff;
+}
+
+.cell_full {
+  background: #f8fafc;
+}
+
+.cell_closed,
+.cell_past {
+  background: #f1f5f9;
+}
+
+.dayNum {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.slotBadge,
+.blockedBadge,
+.demoBadge,
+.moreBadge {
+  font-size: 0.62rem;
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.3rem;
+  line-height: 1.3;
+}
+
+.slotBadge {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.blockedBadge {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.demoBadge {
+  background: #0284c7;
+  color: #fff;
+}
+
+.moreBadge {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.dayPanel {
+  margin-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.85rem;
+}
+
+.dayPanelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.dayPanel h4 {
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.dayActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.dayActionBtn,
+.dayActionBtnSecondary {
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dayActionBtn {
+  border: 1px solid #f87171;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.dayActionBtnSecondary {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+}
+
+.dayActionBtn:disabled,
+.dayActionBtnSecondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.blockReasonRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.85rem;
+}
+
+.blockReasonRow label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.blockReasonRow input {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.85rem;
+  max-width: 24rem;
+}
+
+.slotsSection,
+.demosSection {
+  margin-bottom: 0.85rem;
+}
+
+.slotsTitle {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.slotList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.slotItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  background: #f8fafc;
+}
+
+.slotInfo {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.slotInfo strong {
+  min-width: 3rem;
+}
+
+.slotStatus_available {
+  color: #0369a1;
+  font-size: 0.78rem;
+}
+
+.slotStatus_booked {
+  color: #0284c7;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.slotStatus_blocked {
+  color: #b91c1c;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.slotStatus_past {
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
+.slotActions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.slotBtn,
+.slotBtnDanger {
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.slotBtn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #334155;
+}
+
+.slotBtnDanger {
+  border: 1px solid #fca5a5;
+  background: #fff;
+  color: #b91c1c;
+}
+
+.slotBtn:disabled,
+.slotBtnDanger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dayList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.dayItem {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  padding: 0.5rem 0.65rem;
+  cursor: pointer;
+}
+
+.dayItem span {
+  display: block;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.dayItem span:last-child {
+  font-weight: 600;
+  color: #0369a1;
+}
+
+.empty {
+  color: #64748b;
+  font-size: 0.875rem;
+}

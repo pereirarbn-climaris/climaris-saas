@@ -37,6 +37,7 @@ import {
   defaultScheduleDate,
   formatScheduleSummary,
   isScheduledInFuture,
+  previewRecipientKey,
   type ScheduleMode,
 } from "./campaignDashboardUtils";
 import { toast } from "../../lib/toast";
@@ -55,6 +56,7 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
 
   const [preview, setPreview] = useState<CampaignPreview | null>(null);
   const [previewMode, setPreviewMode] = useState<SelectionMode | null>(null);
+  const [selectedPreviewRecipients, setSelectedPreviewRecipients] = useState<Map<string, ClientRow>>(new Map());
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [selectedClients, setSelectedClients] = useState<Map<number, ClientRow>>(new Map());
   const [clientSearch, setClientSearch] = useState("");
@@ -105,12 +107,29 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
   }, [historyCampaigns, compareData]);
 
   const hasAnyRecipients = useMemo(() => {
-    if (preview && previewMode === selectionMode) return preview.total > 0;
+    if (preview && previewMode === selectionMode) return selectedPreviewRecipients.size > 0;
     if (selectionMode === "manual") return selectedClients.size > 0 || externalLeads.length > 0;
     return externalLeads.length > 0;
-  }, [preview, previewMode, selectionMode, selectedClients.size, externalLeads.length]);
+  }, [preview, previewMode, selectionMode, selectedPreviewRecipients.size, selectedClients.size, externalLeads.length]);
 
-  const currentRecipientCount = preview && previewMode === selectionMode ? preview.total : null;
+  const currentRecipientCount =
+    preview && previewMode === selectionMode ? selectedPreviewRecipients.size : null;
+
+  const previewAllSelected = useMemo(() => {
+    if (!preview || preview.clients.length === 0) return false;
+    return preview.clients.every((c) => selectedPreviewRecipients.has(previewRecipientKey(c)));
+  }, [preview, selectedPreviewRecipients]);
+
+  const previewSomeSelected = selectedPreviewRecipients.size > 0 && !previewAllSelected;
+
+  const selectedPreviewEtaSeconds = useMemo(() => {
+    if (!preview?.estimated_duration_seconds || preview.total <= 0 || selectedPreviewRecipients.size === 0) {
+      return null;
+    }
+    return Math.round(
+      (preview.estimated_duration_seconds * selectedPreviewRecipients.size) / preview.total,
+    );
+  }, [preview, selectedPreviewRecipients.size]);
   const previewIsStale = preview == null || previewMode !== selectionMode;
 
   const scheduleSummary = useMemo(
@@ -119,7 +138,7 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
   );
   const isScheduledLater = scheduleMode === "later";
 
-  const campaignPayloadBase = useMemo(
+  const campaignSegmentPayload = useMemo(
     () => ({
       selection_mode: selectionMode,
       client_ids: selectionMode === "manual" ? selectedClientIds : [],
@@ -130,6 +149,30 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
     }),
     [selectionMode, selectedClientIds, inactiveDays, externalLeadIds, importBatchId, sendSpeed],
   );
+
+  const campaignPayloadBase = useMemo(() => {
+    if (preview && previewMode === selectionMode && selectedPreviewRecipients.size > 0) {
+      const selected = Array.from(selectedPreviewRecipients.values());
+      const clientIds = selected.filter((c) => c.source !== "external").map((c) => c.id);
+      const extIds = selected
+        .filter((c) => c.source === "external")
+        .map((c) => {
+          if (c.external_lead_id != null && c.external_lead_id > 0) return c.external_lead_id;
+          return c.id < 0 ? -c.id : null;
+        })
+        .filter((id): id is number => id != null && id > 0);
+      return {
+        ...campaignSegmentPayload,
+        selection_mode: "manual" as const,
+        client_ids: clientIds,
+        inactive_days: null,
+        external_lead_ids: extIds,
+        import_batch_id: extIds.length > 0 ? null : importBatchId,
+      };
+    }
+
+    return campaignSegmentPayload;
+  }, [campaignSegmentPayload, preview, previewMode, selectionMode, selectedPreviewRecipients, importBatchId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -170,6 +213,7 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
     setImportBatchId(null);
     setPreview(null);
     setPreviewMode(null);
+    setSelectedPreviewRecipients(new Map());
     setStep(1);
     setDispatchProgress(null);
     setScheduleMode("now");
@@ -196,8 +240,7 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
     setSelectedClients(new Map());
     setExternalLeads([]);
     setImportBatchId(null);
-    setPreview(null);
-    setPreviewMode(null);
+    clearPreviewSelection();
     setStep(edit ? 1 : 3);
     setWizardOpen(true);
     if (!edit) toast.success("Modelo carregado. Revise o público e dispare.");
@@ -265,8 +308,7 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
     });
     setExternalLeads(result.leads);
     setImportBatchId(result.import_batch_id);
-    setPreview(null);
-    setPreviewMode(null);
+    clearPreviewSelection();
     toast.success(result.summary_message ?? `${result.imported_count} contato(s) importados.`);
   }
 
@@ -296,9 +338,45 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
   function clearImportedLeads() {
     setExternalLeads([]);
     setImportBatchId(null);
+    clearPreviewSelection();
+  }
+
+  function clearPreviewSelection() {
     setPreview(null);
     setPreviewMode(null);
+    setSelectedPreviewRecipients(new Map());
   }
+
+  function selectAllPreviewRecipients(checked: boolean) {
+    if (!preview) return;
+    if (checked) {
+      setSelectedPreviewRecipients(new Map(preview.clients.map((c) => [previewRecipientKey(c), c])));
+      return;
+    }
+    setSelectedPreviewRecipients(new Map());
+  }
+
+  function togglePreviewRecipient(client: ClientRow, checked: boolean) {
+    const key = previewRecipientKey(client);
+    setSelectedPreviewRecipients((prev) => {
+      const next = new Map(prev);
+      if (checked) next.set(key, client);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  function selectAllManualClients(checked: boolean) {
+    if (checked) {
+      setSelectedClients(new Map(clients.map((c) => [c.id, c])));
+      return;
+    }
+    setSelectedClients(new Map());
+    clearPreviewSelection();
+  }
+
+  const manualAllSelected = clients.length > 0 && clients.every((c) => selectedClients.has(c.id));
+  const manualSomeSelected = selectedClients.size > 0 && !manualAllSelected;
 
   async function previewRecipients() {
     if (selectionMode === "manual" && selectedClientIds.length === 0 && externalLeads.length === 0) {
@@ -307,9 +385,10 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
     }
     setBusy(true);
     try {
-      const result = await previewCampaignRecipients(campaignPayloadBase);
+      const result = await previewCampaignRecipients(campaignSegmentPayload);
       setPreview(result);
       setPreviewMode(selectionMode);
+      setSelectedPreviewRecipients(new Map(result.clients.map((c) => [previewRecipientKey(c), c])));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Prévia indisponível.");
     } finally {
@@ -321,6 +400,10 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
     if (!canConfigure) return;
     if (previewIsStale) {
       toast.error('Gere a pré-visualização no passo "Público" antes de disparar.');
+      return;
+    }
+    if (selectedPreviewRecipients.size === 0) {
+      toast.error("Selecione ao menos um destinatário na pré-visualização.");
       return;
     }
     if (scheduleMode === "later") {
@@ -403,15 +486,13 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
       else next.delete(client.id);
       return next;
     });
-    setPreview(null);
-    setPreviewMode(null);
+    clearPreviewSelection();
   }
 
   function changeSelectionMode(mode: SelectionMode) {
     if (mode === selectionMode) return;
     setSelectionMode(mode);
-    setPreview(null);
-    setPreviewMode(null);
+    clearPreviewSelection();
   }
 
   function openReport(campaign: Campaign) {
@@ -525,6 +606,15 @@ export function WhatsappCampaignsTab({ canConfigure }: Props) {
           previewMode={previewMode}
           previewIsStale={previewIsStale}
           previewRecipients={() => void previewRecipients()}
+          selectedPreviewRecipients={selectedPreviewRecipients}
+          togglePreviewRecipient={togglePreviewRecipient}
+          selectAllPreviewRecipients={selectAllPreviewRecipients}
+          previewAllSelected={previewAllSelected}
+          previewSomeSelected={previewSomeSelected}
+          selectedPreviewEtaSeconds={selectedPreviewEtaSeconds}
+          selectAllManualClients={selectAllManualClients}
+          manualAllSelected={manualAllSelected}
+          manualSomeSelected={manualSomeSelected}
           hasAnyRecipients={hasAnyRecipients}
           currentRecipientCount={currentRecipientCount}
           dispatchProgress={dispatchProgress}

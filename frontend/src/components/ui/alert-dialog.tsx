@@ -112,14 +112,16 @@ export function AlertDialogAction({
   children: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
-  variant?: "default" | "warning" | "destructive";
+  variant?: "default" | "primary" | "warning" | "destructive";
 }) {
   const className =
     variant === "destructive"
       ? styles.btnDestructive
       : variant === "warning"
         ? styles.btnWarning
-        : styles.btnOutline;
+        : variant === "primary"
+          ? styles.btnPrimary
+          : styles.btnOutline;
   return (
     <button type="button" className={className} onClick={onClick} disabled={disabled}>
       {children}

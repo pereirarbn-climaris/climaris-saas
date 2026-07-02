@@ -8,6 +8,169 @@
   padding: 1.5rem;
 }
 
+.mobilePanel {
+  max-width: 34rem;
+  gap: 1rem;
+  padding: 0.3rem 0.1rem 1.35rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mobileHero {
+  margin: 0;
+  padding: 0.25rem 0.2rem 0;
+}
+
+.mobileTitle {
+  margin: 0;
+  font-size: clamp(1.5rem, 6vw, 1.9rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--mobile-page-title);
+}
+
+.mobileLead {
+  margin: 0.25rem 0 0;
+  font-size: 1rem;
+  color: var(--mobile-page-subtitle);
+}
+
+.mobileCardsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.mobileCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.72rem;
+  width: 100%;
+  min-height: 6.25rem;
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--mobile-card-border) 88%, #ffffff);
+  border-radius: 1rem;
+  background: var(--mobile-surface-elevated);
+  color: var(--mobile-card-text-strong);
+  padding: 0.95rem 0.9rem;
+  cursor: pointer;
+  backdrop-filter: blur(1.25px);
+  box-shadow: 0 12px 28px -20px rgba(15, 23, 42, 0.92), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.mobileCard:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--mobile-card-border) 95%, #ffffff);
+  box-shadow: 0 16px 34px -18px rgba(15, 23, 42, 0.98), inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.mobileCard:active {
+  background: color-mix(in srgb, var(--mobile-surface-elevated) 88%, #ffffff);
+  transform: translateY(0);
+}
+
+.mobileCard:focus-visible,
+.mobileBottomCard:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mobile-card-border) 80%, #ffffff);
+  outline-offset: 2px;
+}
+
+.mobileCardWide {
+  grid-column: span 2;
+  min-height: 5.4rem;
+}
+
+.mobileCardChip {
+  min-height: 3.55rem;
+  align-items: center;
+}
+
+.mobileCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.34);
+  flex-shrink: 0;
+  font-size: 1.05rem;
+}
+
+.mobileCardTextWrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mobileCardTitle {
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--mobile-card-text-strong);
+}
+
+.mobileCardSubtitle {
+  margin-top: 0.22rem;
+  font-size: 0.9rem;
+  line-height: 1.3;
+  color: var(--mobile-card-text-soft);
+}
+
+.mobileBottomGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+
+.mobileBottomCard {
+  border: 1px solid var(--mobile-card-border);
+  border-radius: 1rem;
+  padding: 0.78rem 0.5rem 0.74rem;
+  background: var(--mobile-surface-elevated);
+  color: var(--mobile-card-text-strong);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.42rem;
+  text-align: center;
+  min-height: 5.8rem;
+  cursor: pointer;
+  box-shadow: 0 12px 28px -20px rgba(15, 23, 42, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.mobileBottomCard:hover {
+  border-color: color-mix(in srgb, var(--mobile-card-border) 95%, #ffffff);
+  transform: translateY(-1px);
+}
+
+.mobileBottomCard:active {
+  background: color-mix(in srgb, var(--mobile-surface-elevated) 88%, #ffffff);
+  transform: translateY(0);
+}
+
+.mobileBottomIcon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.mobileBottomLabel {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.dashboardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 /* ——— Welcome Hero ——— */
 .hero {
   display: flex;
@@ -350,17 +513,34 @@
   stroke-linejoin: round;
 }
 
-/* ——— Chart + table grid ——— */
+/* ——— Chart + table grid (50/50, mesma altura) ——— */
 .contentGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.5rem;
-  align-items: start;
+  align-items: stretch;
 }
 
 .contentGridChart,
 .contentGridTable {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 22rem;
+}
+
+.contentGridCard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.contentGridCard > div {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (max-width: 1100px) {
@@ -752,5 +932,43 @@
   .highlightBtn {
     width: 100%;
     justify-content: center;
+  }
+
+  .mobilePanel {
+    padding: 0.75rem 0.62rem 2rem;
+    border-radius: 1rem;
+  }
+
+  .mobileTitle {
+    font-size: clamp(1.4rem, 7vw, 1.75rem);
+  }
+
+  .mobileLead {
+    font-size: 0.95rem;
+  }
+
+  .mobileCard {
+    min-height: 5.6rem;
+    padding: 0.86rem 0.82rem;
+  }
+
+  .mobileCardWide {
+    min-height: 5.15rem;
+  }
+
+  .mobileCardChip {
+    min-height: 3.35rem;
+  }
+
+  .mobileCardTitle {
+    font-size: 1rem;
+  }
+
+  .mobileCardSubtitle {
+    font-size: 0.84rem;
+  }
+
+  .mobileBottomLabel {
+    font-size: 0.88rem;
   }
 }

@@ -137,6 +137,9 @@ const styles = {
     boxShadow: 'var(--card-shadow)',
     padding: 'var(--card-padding-lg)',
     transition: 'box-shadow var(--motion-duration) var(--motion-easing)',
+    minHeight: '100%',
+    display: 'flex',
+    flexDirection: 'column' as const,
   },
   cardHeader: {
     display: 'flex',
@@ -203,6 +206,22 @@ const styles = {
     height: '0.625rem',
     borderRadius: '50%',
     flexShrink: 0,
+  },
+  monthLabelsRow: {
+    display: 'grid',
+    marginTop: 'var(--space-2)',
+    paddingLeft: '20%',
+    paddingRight: '20%',
+    gap: 'var(--space-1)',
+    alignItems: 'start',
+  },
+  monthLabel: {
+    textAlign: 'center' as const,
+    fontSize: 'var(--font-size-xs)',
+    fontWeight: 'var(--font-weight-medium)' as unknown as number,
+    color: '#475569',
+    lineHeight: 1.25,
+    letterSpacing: '0.01em',
   },
   tooltip: {
     position: 'absolute' as const,
@@ -352,9 +371,10 @@ export function RevenueChart({
     const allValues = data.flatMap(d => [d.revenue, d.target || 0]);
     const maxValue = Math.max(...allValues) * 1.15; // 15% de margem
 
-    const padding = { top: 20, right: 20, bottom: 40, left: 20 };
+    const padding = { top: 20, right: 20, bottom: 16, left: 20 };
     const chartWidth = 100; // Usamos porcentagem
-    const chartHeight = height - padding.top - padding.bottom;
+    const chartSvgHeight = height - 22;
+    const chartHeight = chartSvgHeight - padding.top - padding.bottom;
     
     const barWidth = (chartWidth - padding.left - padding.right) / data.length * 0.6;
     const barGap = (chartWidth - padding.left - padding.right) / data.length * 0.4;
@@ -381,7 +401,7 @@ export function RevenueChart({
       .map((p) => `${p.centerX},${p.y}`)
       .join(' ');
 
-    return { maxValue, points, trendPoints };
+    return { maxValue, points, trendPoints, chartSvgHeight: height - 22 };
   }, [data, height]);
 
   const handleMouseMove = (e: React.MouseEvent, index: number) => {
@@ -407,16 +427,19 @@ export function RevenueChart({
     );
   }
 
+  const chartSvgHeight = chartData.chartSvgHeight ?? height - 22;
+
   return (
-    <div style={{ ...styles.container, height }}>
-      <svg 
-        style={styles.svg} 
-        viewBox={`0 0 100 ${height}`}
+    <div style={styles.container}>
+      <svg
+        style={{ ...styles.svg, height: chartSvgHeight }}
+        viewBox={`0 0 100 ${chartSvgHeight}`}
         preserveAspectRatio="none"
+        aria-hidden
       >
         {/* Grid lines */}
         {[0.25, 0.5, 0.75, 1].map((ratio) => {
-          const y = 20 + (height - 60) * (1 - ratio);
+          const y = 20 + (chartSvgHeight - 36) * (1 - ratio);
           return (
             <line
               key={ratio}
@@ -439,7 +462,7 @@ export function RevenueChart({
               x={point.x - 2}
               y={20}
               width={point.barWidth + 4}
-              height={height - 60}
+              height={chartSvgHeight - 36}
               fill="transparent"
               style={{ cursor: onBarClick ? 'pointer' : 'default' }}
               onMouseMove={(e) => handleMouseMove(e as unknown as React.MouseEvent, index)}
@@ -475,26 +498,14 @@ export function RevenueChart({
               />
             )}
 
-            {/* Label do mês */}
-            <text
-              x={point.centerX}
-              y={height - 15}
-              textAnchor="middle"
-              fill="var(--color-text-muted)"
-              fontSize="3"
-              fontWeight="500"
-            >
-              {point.month}
-            </text>
-
             {/* Valor na barra */}
             {showValues && (
               <text
                 x={point.centerX}
                 y={point.y - 3}
                 textAnchor="middle"
-                fill="var(--color-text-muted)"
-                fontSize="2.5"
+                fill="#475569"
+                fontSize="6"
                 fontWeight="500"
               >
                 {formatCompactCurrency(point.revenue, currency, locale)}
@@ -516,6 +527,20 @@ export function RevenueChart({
           />
         )}
       </svg>
+
+      <div
+        style={{
+          ...styles.monthLabelsRow,
+          gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
+        }}
+        aria-hidden
+      >
+        {data.map((point) => (
+          <span key={point.month} style={styles.monthLabel}>
+            {point.month}
+          </span>
+        ))}
+      </div>
 
       {/* Tooltip */}
       {hoveredIndex !== null && (

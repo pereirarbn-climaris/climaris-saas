@@ -21,6 +21,20 @@
   min-width: 0;
 }
 
+.twoColumnGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--form-grid-column-gap);
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .twoColumnGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Card padrão de formulário com abas (mesmo padrão de Clientes). */
 .formCard {
   background: var(--color-surface-elevated);

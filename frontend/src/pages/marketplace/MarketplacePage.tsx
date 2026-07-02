@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   cancelMarketplaceRequest,
+  checkoutMarketplaceApp,
   fetchMarketplaceCatalog,
   fetchMyMarketplaceEntitlements,
   requestMarketplaceApp,
@@ -107,6 +108,21 @@ export function MarketplacePage() {
     return map;
   }, [mine]);
 
+  async function onStripeCheckout(slug: string, quantity: number) {
+    if (!isAdmin) return;
+    setMsg(null);
+    setRequestingSlug(slug);
+    try {
+      await checkoutMarketplaceApp({ slug, quantity });
+      setMsg({ kind: "ok", text: "Add-on contratado e ativado na sua assinatura Stripe." });
+      await load();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Falha na contratação automática." });
+    } finally {
+      setRequestingSlug(null);
+    }
+  }
+
   async function onRequest(slug: string, quantity: number) {
     if (!isAdmin) return;
     setMsg(null);
@@ -146,8 +162,8 @@ export function MarketplacePage() {
   return (
     <div className={styles.wrap}>
       <p className={styles.lead}>
-        Contrate serviços e módulos pagos para o seu workspace (ex.: WhatsApp oficial e acessos extras por usuário). Os valores são
-        referência comercial; a confirmação e o faturamento são tratados pela equipe Climaris após a solicitação.
+        Contrate módulos pagos para o workspace. Com assinatura de plano ativa no Stripe, add-ons sincronizados podem ser
+        contratados aqui com cobrança automática. Sem assinatura, use a solicitação manual (equipe Climaris).
       </p>
 
       {loading ? (
@@ -230,7 +246,12 @@ export function MarketplacePage() {
           {catalog.map((item) => {
             const ent = mineBySlug.get(item.slug);
             const hasEntitlement = Boolean(item.entitlement_id);
-            const canRequest = isAdmin && (!hasEntitlement || (item.allow_quantity && ent?.status === "active"));
+            const canStripeCheckout =
+              isAdmin &&
+              item.stripe_checkout_available &&
+              (!hasEntitlement || (item.allow_quantity && ent?.status === "active"));
+            const canRequest =
+              isAdmin && !canStripeCheckout && (!hasEntitlement || (item.allow_quantity && ent?.status === "active"));
             const canCancelRequest = isAdmin && Boolean(ent && ent.status === "requested");
             const configPath = integrationConfigPath(item.slug);
             const canConfigure = Boolean(ent && ent.status === "active" && configPath);
@@ -309,9 +330,23 @@ export function MarketplacePage() {
                       {cancellingEntitlementId === ent.id ? "Cancelando…" : "Cancelar"}
                     </button>
                   ) : null}
+                  {canStripeCheckout ? (
+                    <button
+                      type="button"
+                      className={styles.btnPrimary}
+                      disabled={requestingSlug === item.slug}
+                      onClick={() => void onStripeCheckout(item.slug, quantity)}
+                    >
+                      {requestingSlug === item.slug
+                        ? "Contratando…"
+                        : hasEntitlement && ent?.status === "active"
+                          ? "Adicionar unidades (Stripe)"
+                          : "Contratar agora (Stripe)"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    className={styles.btnPrimary}
+                    className={canStripeCheckout ? styles.btnGhost : styles.btnPrimary}
                     disabled={!canRequest || requestingSlug === item.slug}
                     onClick={() => void onRequest(item.slug, quantity)}
                   >
@@ -325,7 +360,9 @@ export function MarketplacePage() {
                           : ent?.status === "active"
                             ? "Integração ativa"
                             : "Solicitado"
-                        : "Solicitar integração"}
+                        : canStripeCheckout
+                          ? "Solicitar manualmente"
+                          : "Solicitar integração"}
                   </button>
                 </div>
                 {open && item.long_description ? <p className={styles.longDesc}>{item.long_description}</p> : null}

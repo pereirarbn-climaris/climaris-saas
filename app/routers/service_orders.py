@@ -4,18 +4,22 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.service_order_pdf import build_service_order_pdf
 from app.service_order_laudo import apply_laudo_patch
+from app.service_order_garantia_pdf import build_service_order_garantia_pdf, parse_garantia_from_description
 from app.service_order_laudo_pdf import build_service_order_laudo_pdf
+from app.service_order_meta import parse_tipo_servico
+from app.tenant_garantia_settings import get_tenant_garantia_settings
 from app.database import get_db
 from app.pagination import clamp_limit
 from app.limiter import limiter
 from app.dependencies import get_current_user, require_roles
+from app.spreadsheet_rows import header_index, normalize_header_label, normalize_rows_shape, parse_csv_rows, parse_xlsx_rows
 from app.services.service_preventive_config import apply_preventive_config_to_service
 from app.schemas import (
     EquipmentUsageReportRowOut,
@@ -24,12 +28,18 @@ from app.schemas import (
     ScheduleCancel,
     ScheduleReschedule,
     ServiceCreate,
+    ServiceImportErrorOut,
+    ServiceImportRequest,
+    ServiceImportResultOut,
+    ServiceImportRow,
     ServiceOrderApprove,
     ServiceOrderApproveOut,
     ServiceOrderCreate,
     ServiceOrderDetailsUpdate,
     ServiceOrderDiscountUpdate,
     ServiceOrderLaudoUpdate,
+    GarantiaVacuoEvidenceOut,
+    GarantiaStartupEvidenceOut,
     ServiceOrderOut,
     ServiceOrderStatusUpdate,
     ServiceOrderItemEquipmentUpdate,
@@ -1167,6 +1177,166 @@ def create_service(
     return _fetch_service_with_inputs(db, service_id=service.id, tenant_id=current_user.tenant_id)
 
 
+@router.post(
+    "/services/import",
+    response_model=ServiceImportResultOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def import_services(
+    payload: ServiceImportRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ServiceImportResultOut:
+    if not payload.items:
+        return ServiceImportResultOut(created_count=0, skipped_count=0, error_count=0, errors=[])
+
+    errors: list[ServiceImportErrorOut] = []
+    created_count = 0
+    skipped_count = 0
+    seen_names: set[str] = set()
+
+    for row in payload.items:
+        name = (row.name or "").strip()
+        if not name:
+            errors.append(ServiceImportErrorOut(row_number=row.row_number, name=None, message="Nome é obrigatório."))
+            continue
+        if len(name) > 150:
+            errors.append(
+                ServiceImportErrorOut(row_number=row.row_number, name=name, message="Nome deve ter no máximo 150 caracteres.")
+            )
+            continue
+        name_key = name.casefold()
+        if name_key in seen_names:
+            skipped_count += 1
+            continue
+        exists = db.execute(
+            select(Service).where(Service.tenant_id == current_user.tenant_id, Service.name == name)
+        ).scalar_one_or_none()
+        if exists is not None:
+            skipped_count += 1
+            continue
+        if row.price < 0:
+            errors.append(
+                ServiceImportErrorOut(row_number=row.row_number, name=name, message="Preço deve ser maior ou igual a 0.")
+            )
+            continue
+        if row.duration_minutes < 1:
+            errors.append(
+                ServiceImportErrorOut(
+                    row_number=row.row_number, name=name, message="Duração deve ser de pelo menos 1 minuto."
+                )
+            )
+            continue
+
+        seen_names.add(name_key)
+        service = Service(
+            tenant_id=current_user.tenant_id,
+            name=name,
+            description=(row.description or "").strip() or None,
+            price=row.price,
+            duration_minutes=row.duration_minutes,
+            is_active=row.is_active,
+        )
+        db.add(service)
+        created_count += 1
+
+    db.commit()
+    return ServiceImportResultOut(
+        created_count=created_count,
+        skipped_count=skipped_count,
+        error_count=len(errors),
+        errors=errors,
+    )
+
+
+@router.post(
+    "/services/import/file",
+    response_model=ServiceImportResultOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+async def import_services_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ServiceImportResultOut:
+    filename = (file.filename or "").lower()
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Arquivo vazio.")
+
+    if filename.endswith(".xlsx"):
+        rows = parse_xlsx_rows(content)
+    elif filename.endswith(".csv") or filename.endswith(".txt"):
+        rows = parse_csv_rows(content)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato inválido. Use .xlsx ou .csv.")
+
+    rows = normalize_rows_shape(rows)
+    if len(rows) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A planilha precisa de cabeçalho e linhas de dados.")
+
+    headers = [normalize_header_label(x) for x in rows[0]]
+    name_idx = header_index(headers, ["name", "nome", "description", "descricao"])
+    desc_idx = header_index(headers, ["description", "descricao", "descricao_completa"])
+    price_idx = header_index(headers, ["price", "preco_venda", "preco", "selling_price"])
+    duration_idx = header_index(headers, ["duration_minutes", "duracao_minutos", "duracao", "tempo_minutos"])
+    active_idx = header_index(headers, ["is_active", "ativo"])
+    if name_idx < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cabeçalho inválido. Use o modelo de importação.")
+
+    def to_num(value: str) -> float:
+        raw = str(value or "").strip()
+        if not raw:
+            return 0.0
+        if "," in raw and "." in raw:
+            normalized = raw.replace(".", "").replace(",", ".")
+        elif "," in raw:
+            normalized = raw.replace(",", ".")
+        else:
+            normalized = raw
+        return float(normalized)
+
+    def to_int(value: str, default: int) -> int:
+        raw = str(value or "").strip()
+        if not raw:
+            return default
+        return int(float(raw.replace(",", ".")))
+
+    def to_bool(value: str) -> bool:
+        txt = str(value or "").strip().lower()
+        if txt in ("0", "false", "nao", "não", "inativo", "n"):
+            return False
+        return True
+
+    items: list[ServiceImportRow] = []
+    for i, row in enumerate(rows[1:], start=2):
+        name = row[name_idx].strip() if len(row) > name_idx else ""
+        description = row[desc_idx].strip() if desc_idx >= 0 and len(row) > desc_idx else ""
+        if not name and not description:
+            continue
+        if not name:
+            name = description
+            description = ""
+        try:
+            price = to_num(row[price_idx] if price_idx >= 0 and len(row) > price_idx else "0")
+            duration_minutes = to_int(row[duration_idx] if duration_idx >= 0 and len(row) > duration_idx else "", 30)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Linha {i}: valores numéricos inválidos.") from None
+        is_active = to_bool(row[active_idx] if active_idx >= 0 and len(row) > active_idx else "sim")
+        items.append(
+            ServiceImportRow(
+                row_number=i,
+                name=name,
+                description=description or None,
+                price=price,
+                duration_minutes=duration_minutes,
+                is_active=is_active,
+            )
+        )
+
+    return import_services(ServiceImportRequest(items=items), db, current_user)
+
+
 @router.get(
     "/services",
     response_model=list[ServiceOut],
@@ -1460,6 +1630,198 @@ def patch_service_order_laudo(
     return refreshed
 
 
+@router.post(
+    "/service-orders/{order_id}/garantia/vacuo-evidence",
+    response_model=GarantiaVacuoEvidenceOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+@limiter.limit("30/minute")
+async def upload_garantia_vacuo_evidence(
+    request: Request,
+    order_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    latitude: Annotated[float, Form()],
+    longitude: Annotated[float, Form()],
+    captured_at: Annotated[str, Form()],
+    evidence_kind: Annotated[str, Form()] = "foto",
+    accuracy_meters: Annotated[float | None, Form()] = None,
+    captured_offline: Annotated[bool, Form()] = False,
+    extract_vacuum: Annotated[bool, Form()] = True,
+    file: UploadFile = File(...),
+) -> GarantiaVacuoEvidenceOut:
+    """Arquiva foto do visor ou relatório Testo (.tjf) com geolocalização."""
+    from app.platform_credentials import resolve_claude_api_key, resolve_claude_model
+    from app.service_order_garantia_media import upload_garantia_vacuo_evidence_file
+    from app.services.testo_tjf_parser import parse_testo_tjf_bytes
+    from app.services.vacuum_gauge_vision import extract_vacuum_gauge_from_image
+
+    kind = (evidence_kind or "foto").strip().lower()
+    if kind not in ("foto", "relatorio", "report"):
+        kind = "foto"
+    if kind == "report":
+        kind = "relatorio"
+
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível anexar evidência de vácuo em OS cancelada.",
+        )
+
+    raw = await file.read()
+    try:
+        uploaded = upload_garantia_vacuo_evidence_file(
+            tenant_id=current_user.tenant_id,
+            service_order_id=order.id,
+            file_bytes=raw,
+            source_filename=file.filename,
+            source_content_type=file.content_type,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    vacuo_microns: str | None = None
+    device_name: str | None = None
+    device_serial: str | None = None
+
+    is_tjf = uploaded.file_name.lower().endswith(".tjf") or uploaded.mime_type == "application/json"
+    if kind == "relatorio" or is_tjf:
+        parsed = parse_testo_tjf_bytes(raw)
+        vacuo_microns = parsed.get("vacuo_final_microns")
+        device_name = parsed.get("device_name")
+        device_serial = parsed.get("device_serial")
+    elif extract_vacuum and uploaded.mime_type.startswith("image/"):
+        try:
+            extraction = await extract_vacuum_gauge_from_image(
+                image_bytes=raw,
+                image_content_type=uploaded.mime_type,
+                image_filename=uploaded.file_name,
+                claude_api_key=resolve_claude_api_key(db),
+                claude_model=resolve_claude_model(db),
+            )
+            vacuo_microns = extraction.get("vacuo_final_microns")
+        except HTTPException:
+            pass
+
+    return GarantiaVacuoEvidenceOut(
+        storage_key=uploaded.storage_key,
+        public_url=uploaded.public_url,
+        file_name=uploaded.file_name,
+        mime_type=uploaded.mime_type,
+        size_bytes=uploaded.size_bytes,
+        vacuo_final_microns=vacuo_microns,
+        device_name=device_name,
+        device_serial=device_serial,
+        latitude=latitude,
+        longitude=longitude,
+        accuracy_meters=accuracy_meters,
+        captured_at=captured_at,
+        captured_offline=captured_offline,
+    )
+
+
+@router.post(
+    "/service-orders/{order_id}/garantia/startup-evidence",
+    response_model=GarantiaStartupEvidenceOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+@limiter.limit("30/minute")
+async def upload_garantia_startup_evidence(
+    request: Request,
+    order_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    latitude: Annotated[float, Form()],
+    longitude: Annotated[float, Form()],
+    captured_at: Annotated[str, Form()],
+    metric_key: Annotated[str, Form()],
+    accuracy_meters: Annotated[float | None, Form()] = None,
+    captured_offline: Annotated[bool, Form()] = False,
+    extract_value: Annotated[bool, Form()] = True,
+    file: UploadFile = File(...),
+) -> GarantiaStartupEvidenceOut:
+    """Arquiva foto de medição de startup (pressão, tensão, corrente, temperatura) com geolocalização."""
+    from app.platform_credentials import resolve_claude_api_key, resolve_claude_model
+    from app.service_order_garantia_media import upload_garantia_startup_evidence_file
+    from app.services.startup_metric_vision import VALID_STARTUP_METRIC_KEYS, extract_startup_metric_from_image
+
+    key = (metric_key or "").strip().lower()
+    if key not in VALID_STARTUP_METRIC_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Métrica inválida. Use: {', '.join(sorted(VALID_STARTUP_METRIC_KEYS))}.",
+        )
+
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    if order.status == OrderStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não é possível anexar evidência de startup em OS cancelada.",
+        )
+
+    raw = await file.read()
+    try:
+        uploaded = upload_garantia_startup_evidence_file(
+            tenant_id=current_user.tenant_id,
+            service_order_id=order.id,
+            metric_key=key,
+            file_bytes=raw,
+            source_filename=file.filename,
+            source_content_type=file.content_type,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    extracted: str | None = None
+    if extract_value and uploaded.mime_type.startswith("image/"):
+        try:
+            extraction = await extract_startup_metric_from_image(
+                metric_key=key,
+                image_bytes=raw,
+                image_content_type=uploaded.mime_type,
+                image_filename=uploaded.file_name,
+                claude_api_key=resolve_claude_api_key(db),
+                claude_model=resolve_claude_model(db),
+            )
+            extracted = extraction.get("extracted_value")
+        except HTTPException:
+            pass
+
+    return GarantiaStartupEvidenceOut(
+        metric_key=key,
+        storage_key=uploaded.storage_key,
+        public_url=uploaded.public_url,
+        file_name=uploaded.file_name,
+        mime_type=uploaded.mime_type,
+        size_bytes=uploaded.size_bytes,
+        extracted_value=extracted,
+        latitude=latitude,
+        longitude=longitude,
+        accuracy_meters=accuracy_meters,
+        captured_at=captured_at,
+        captured_offline=captured_offline,
+    )
+
+
 @router.get(
     "/service-orders/{order_id}/laudo/pdf",
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
@@ -1486,6 +1848,49 @@ def get_service_order_laudo_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="Laudo-OS-{order.id}.pdf"'},
+    )
+
+
+@router.get(
+    "/service-orders/{order_id}/garantia/pdf",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_service_order_garantia_pdf(
+    order_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    order = db.execute(
+        select(ServiceOrder)
+        .where(ServiceOrder.id == order_id, ServiceOrder.tenant_id == current_user.tenant_id)
+        .options(*_service_order_detail_options(for_stock=False))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordem de serviço não encontrada.")
+    _ensure_technician_order_access(order, current_user)
+    if parse_tipo_servico(order.description) != "instalacao":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PDF de garantia disponível apenas para ordens de serviço de instalação.",
+        )
+    client = db.get(Client, order.client_id)
+    tenant = db.get(Tenant, current_user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant não encontrado.")
+    garantia = parse_garantia_from_description(order.description)
+    settings = get_tenant_garantia_settings(db, tenant_id=current_user.tenant_id)
+    pdf_bytes = build_service_order_garantia_pdf(
+        order=order,
+        client=client,
+        tenant=tenant,
+        garantia=garantia,
+        settings=settings,
+        db=db,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="Termo-de-Garantia-OS-{order.id:03d}.pdf"'},
     )
 
 

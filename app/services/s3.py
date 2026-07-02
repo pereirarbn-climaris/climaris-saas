@@ -340,3 +340,18 @@ def generate_manual_presigned_url(
         },
         ExpiresIn=max(60, min(expires_seconds, 3600)),
     )
+
+
+def download_manual_pdf_bytes(s3_url: str, *, db: Session | None = None) -> bytes:
+    """Baixa o conteúdo binário de um manual PDF do S3."""
+    bucket, key = parse_s3_bucket_and_key_from_url(s3_url, db=db, purpose="manuais")
+    cfg = _resolve_s3_runtime_config(db)
+    if not cfg.access_key or not cfg.secret_key:
+        raise RuntimeError("Credenciais AWS S3 não configuradas para download de manual.")
+    client = _s3_client_from_config(cfg)
+    buf = io.BytesIO()
+    client.download_fileobj(bucket, key, buf)
+    data = buf.getvalue()
+    if not data:
+        raise ValueError("PDF vazio no armazenamento.")
+    return data

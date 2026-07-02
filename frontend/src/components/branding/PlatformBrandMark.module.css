@@ -21,7 +21,6 @@
 .markWithLogo {
   width: auto;
   height: auto;
-  max-height: 2.75rem;
   flex-shrink: 0;
   background: transparent;
   box-shadow: none;
@@ -29,12 +28,16 @@
   overflow: visible;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+}
+
+.markWithLogoExpanded {
+  max-height: 4.25rem;
 }
 
 .markWithLogoCollapsed {
   width: 100%;
-  justify-content: center;
+  max-height: 2.75rem;
 }
 
 .sidebarBrandCollapsed {
@@ -46,29 +49,42 @@
 
 .sidebarBrandExpanded {
   width: 100%;
-  justify-content: flex-start;
+  justify-content: center;
+  align-items: center;
   min-width: 0;
 }
 
 .logoImageSidebarCollapsed {
   display: block;
-  max-width: min(3.25rem, 100%);
+  max-width: min(2.75rem, 100%);
   max-height: 2.75rem;
   width: auto;
   height: auto;
   margin: 0 auto;
   object-fit: contain;
   object-position: center center;
+  transition: max-width 0.25s ease, max-height 0.25s ease;
 }
 
 .logoImageSidebarExpanded {
   display: block;
-  max-height: 2.75rem;
-  max-width: 2.75rem;
+  max-height: 4.25rem;
+  max-width: min(6.5rem, 100%);
   width: auto;
   height: auto;
   object-fit: contain;
   flex-shrink: 0;
+  transition: max-width 0.25s ease, max-height 0.25s ease;
+}
+
+.fallbackMarkExpanded {
+  width: 4rem !important;
+  height: 4rem !important;
+}
+
+.fallbackMarkCollapsed {
+  width: 2.75rem !important;
+  height: 2.75rem !important;
 }
 
 .markAuth {

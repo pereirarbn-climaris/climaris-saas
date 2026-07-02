@@ -18,6 +18,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -312,6 +313,12 @@ class Tenant(Base):
     # 0 = só lembrete no dia do vencimento; N>0 = também envia quando faltam N dias (calendário do tenant.timezone).
     preventive_auto_remind_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     preventive_auto_whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True, index=True)
+    subscription_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    subscription_current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    subscription_cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    subscription_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[TenantStatus] = mapped_column(
         Enum(TenantStatus, name="tenant_status", values_callable=lambda items: [item.value for item in items]),
         nullable=False,
@@ -606,6 +613,13 @@ class SaasPlanCatalog(Base):
     can_contract: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_selectable_for_tenants: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     show_in_matrix: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    monthly_price_brl: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    stripe_product_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    stripe_price_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    dashboard_tier: Mapped[str] = mapped_column(String(20), nullable=False, default="basic")
+    products_inventory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    products_purchases_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    products_max_images: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -1207,6 +1221,37 @@ class CustomerBillingAutomation(Base):
     client: Mapped["Client"] = relationship(back_populates="billing_automation")
 
 
+class TenantGarantiaSettings(Base):
+    """Textos e prazos padrão do termo de garantia de instalação por tenant."""
+
+    __tablename__ = "tenant_garantia_settings"
+
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    default_meses_garantia: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    prazo_garantia_servico: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nota_garantia_fabrica: Mapped[str | None] = mapped_column(Text, nullable=True)
+    termos_garantia: Mapped[str | None] = mapped_column(Text, nullable=True)
+    servicos_cobertos: Mapped[str | None] = mapped_column(Text, nullable=True)
+    condicoes_exclusoes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship()
+
+
+class ManualIngestionStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class EquipmentManual(Base):
     """Manual técnico em PDF no S3 — pode ser compartilhado por vários modelos do catálogo."""
 
@@ -1216,6 +1261,11 @@ class EquipmentManual(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     s3_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    ingestion_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ManualIngestionStatus.PENDING.value
+    )
+    ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1223,6 +1273,32 @@ class EquipmentManual(Base):
 
     tenant: Mapped["Tenant"] = relationship()
     catalog_entries: Mapped[list["EquipmentCatalog"]] = relationship(back_populates="manual")
+    manual_chunks: Mapped[list["ManualChunk"]] = relationship(
+        back_populates="manual", cascade="all, delete-orphan"
+    )
+
+
+class ManualChunk(Base):
+    """Trecho vetorizado de manual técnico (RAG) com metadados de origem."""
+
+    __tablename__ = "manual_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    manual_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_manuals.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    fabricante: Mapped[str] = mapped_column(String(120), nullable=False, default="", index=True)
+    modelo: Mapped[str] = mapped_column(String(120), nullable=False, default="", index=True)
+    tipo_documento: Mapped[str] = mapped_column(String(80), nullable=False, default="manual_tecnico", index=True)
+    versao: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    pagina_origem: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    manual: Mapped["EquipmentManual"] = relationship(back_populates="manual_chunks")
 
 
 class EquipmentCatalog(Base):
@@ -1573,6 +1649,154 @@ class PmocExecution(Base):
     equipment: Mapped["Equipment | None"] = relationship()
     performed_by: Mapped["User | None"] = relationship(foreign_keys=[performed_by_user_id])
     service_order: Mapped["ServiceOrder | None"] = relationship()
+
+
+class PmocBuildingProfile(Base):
+    __tablename__ = "pmoc_building_profiles"
+    __table_args__ = (UniqueConstraint("pmoc_id", name="uq_pmoc_building_profile_pmoc"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmoc_id: Mapped[int] = mapped_column(ForeignKey("pmoc_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    legal_representative: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    state_registration: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    activity_exercised: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    total_climatized_area_m2: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    floors_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_occupants: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    operation_hours: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    occupancy_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    power_outage_procedure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    critical_failure_procedure: Mapped[str | None] = mapped_column(Text, nullable=True)
+    annual_load_review_due: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    pmoc: Mapped["PmocPlan"] = relationship()
+
+
+class PmocEnvironment(Base):
+    __tablename__ = "pmoc_environments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmoc_id: Mapped[int] = mapped_column(ForeignKey("pmoc_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    equipment_id: Mapped[int | None] = mapped_column(ForeignKey("equipments.id", ondelete="SET NULL"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    environment_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    area_m2: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    ceiling_height_m: Mapped[float | None] = mapped_column(Numeric(8, 3), nullable=True)
+    air_volume_m3: Mapped[float | None] = mapped_column(Numeric(12, 3), nullable=True)
+    avg_occupants: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    activity_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    pmoc: Mapped["PmocPlan"] = relationship()
+    equipment: Mapped["Equipment | None"] = relationship()
+    equipment_links: Mapped[list["PmocEnvironmentEquipment"]] = relationship(
+        back_populates="environment", cascade="all, delete-orphan"
+    )
+
+
+class PmocEnvironmentEquipment(Base):
+    __tablename__ = "pmoc_environment_equipments"
+    __table_args__ = (UniqueConstraint("pmoc_environment_id", "equipment_id", name="uq_pmoc_environment_equipment"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmoc_environment_id: Mapped[int] = mapped_column(
+        ForeignKey("pmoc_environments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    equipment_id: Mapped[int] = mapped_column(ForeignKey("equipments.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    environment: Mapped["PmocEnvironment"] = relationship(back_populates="equipment_links")
+    equipment: Mapped["Equipment"] = relationship()
+
+
+class PmocExecutionMeasurement(Base):
+    __tablename__ = "pmoc_execution_measurements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmoc_execution_id: Mapped[int] = mapped_column(
+        ForeignKey("pmoc_executions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    metric_group: Mapped[str] = mapped_column(String(40), nullable=False)
+    metric_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    value_numeric: Mapped[float | None] = mapped_column(Numeric(14, 4), nullable=True)
+    value_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    execution: Mapped["PmocExecution"] = relationship()
+
+
+class PmocExecutionServiceLog(Base):
+    __tablename__ = "pmoc_execution_service_logs"
+    __table_args__ = (UniqueConstraint("pmoc_execution_id", name="uq_pmoc_execution_service_log_execution"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmoc_execution_id: Mapped[int] = mapped_column(
+        ForeignKey("pmoc_executions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    technician_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    executed_service: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worked_hours: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    observations: Mapped[str | None] = mapped_column(Text, nullable=True)
+    legal_signature_provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    execution: Mapped["PmocExecution"] = relationship()
+
+
+class PmocExecutionConsumable(Base):
+    __tablename__ = "pmoc_execution_consumables"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmoc_execution_id: Mapped[int] = mapped_column(
+        ForeignKey("pmoc_executions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    lot_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    validity_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    quantity: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    execution: Mapped["PmocExecution"] = relationship()
+
+
+class PmocServiceCatalog(Base):
+    __tablename__ = "pmoc_service_catalogs"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_pmoc_service_catalog_tenant_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    frequency: Mapped[PmocActivityFrequency] = mapped_column(
+        Enum(
+            PmocActivityFrequency,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=20,
+        ),
+        nullable=False,
+    )
+    equipment_types_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship()
 
 
 class PmocAirQualityAnalysis(Base):

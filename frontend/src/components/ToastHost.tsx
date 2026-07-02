@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { subscribeToast, clearPendingToast, type ToastPayload } from "../lib/toast";
+import { clearPendingToast, subscribeToast, type ToastPayload } from "../lib/toast";
 import styles from "./ToastHost.module.css";
 
-const AUTO_DISMISS_MS = 4500;
+const AUTO_DISMISS_OK_MS = 4500;
+const AUTO_DISMISS_ERR_MS = 6500;
 
 export function ToastHost() {
   const [toast, setToast] = useState<ToastPayload | null>(null);
@@ -11,11 +12,12 @@ export function ToastHost() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => {
+    const delay = toast.kind === "ok" ? AUTO_DISMISS_OK_MS : AUTO_DISMISS_ERR_MS;
+    const timer = window.setTimeout(() => {
       setToast(null);
       clearPendingToast();
-    }, AUTO_DISMISS_MS);
-    return () => window.clearTimeout(t);
+    }, delay);
+    return () => window.clearTimeout(timer);
   }, [toast]);
 
   if (!toast) return null;

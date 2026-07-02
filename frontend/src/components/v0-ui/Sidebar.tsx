@@ -379,11 +379,13 @@ import {
   
   interface SidebarContentProps {
     children: ReactNode;
+    id?: string;
   }
   
-  function SidebarContent({ children }: SidebarContentProps) {
+  function SidebarContent({ children, id }: SidebarContentProps) {
     return (
       <nav
+        id={id}
         style={{
           flex: 1,
           overflowY: "auto",

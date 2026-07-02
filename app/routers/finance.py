@@ -983,6 +983,17 @@ def create_finance_entry(
         db.refresh(row)
         _safe_send_whatsapp_for_finance_status(db, current_user, row)
         db.refresh(row)
+    if payload.status == FinanceEntryStatus.PAID:
+        from app.notifications import notify_finance_entry_paid_if_needed
+
+        for row in created:
+            notify_finance_entry_paid_if_needed(
+                db,
+                entry=row,
+                was_paid=False,
+                actor_user_id=current_user.id,
+                source_label="lançamento",
+            )
     if installments == 1:
         return JSONResponse(content=jsonable_encoder(_entry_to_out_with_client_hints(db, current_user.tenant_id, created[0])))
     return JSONResponse(
@@ -1063,6 +1074,8 @@ def patch_finance_entry(
     )
     assert_targets_editable(targets, allow_locked=payload.force_edit_locked)
 
+    prior_paid = {row.id: row.status == FinanceEntryStatus.PAID for row in targets}
+
     anchor_due = entry.due_date
     due_delta = (payload.due_date - anchor_due) if payload.due_date is not None else None
     bulk_edit = scope != "single" and len(targets) > 1
@@ -1098,6 +1111,18 @@ def patch_finance_entry(
         db.refresh(row)
         _safe_send_whatsapp_for_finance_status(db, current_user, row)
         db.refresh(row)
+
+    if payload.status == FinanceEntryStatus.PAID:
+        from app.notifications import notify_finance_entry_paid_if_needed
+
+        for row in targets:
+            notify_finance_entry_paid_if_needed(
+                db,
+                entry=row,
+                was_paid=prior_paid.get(row.id, False),
+                actor_user_id=current_user.id,
+                source_label="baixa manual",
+            )
 
     if scope == "single":
         return JSONResponse(content=jsonable_encoder(_entry_to_out_with_client_hints(db, current_user.tenant_id, targets[0])))

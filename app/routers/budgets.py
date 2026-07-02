@@ -3,14 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.budget_pdf import build_budget_pdf
+from app.budget_signature import process_and_upload_budget_signature
 from app.budget_template_settings import (
+    _get_or_create_row,
     apply_budget_defaults_from_settings,
     build_budget_template_preview_pdf,
     get_budget_template_settings,
@@ -20,14 +22,19 @@ from app.schemas_budget_template import BudgetTemplateSettingsOut, BudgetTemplat
 from app.database import get_db
 from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
-from app.schemas import BudgetCreate, BudgetRejectRequest, BudgetSendRequest
-from app.storage_integrity import get_budget_storage_alerts, normalize_budget_status, verify_budget_storage
-from app.storage_integrity import upload_budget_pdf_to_s3 as _upload_budget_pdf_to_s3
-from app.tenant_logo import generate_tenant_logo_presigned_url
+from app.schemas import BudgetCreate, BudgetRejectRequest, BudgetSendRequest, BudgetUpdate
+from app.config import public_app_base_url
+from app.storage_integrity import normalize_budget_status
+from app.tenant_logo import (
+    delete_tenant_logo_if_exists,
+    fetch_s3_image_bytes,
+    generate_tenant_logo_presigned_url,
+)
 from models import (
     Budget,
     BudgetProductItem,
     BudgetServiceItem,
+    BudgetTemplateSettings,
     BudgetStatus,
     Client,
     OrderStatus,
@@ -44,10 +51,11 @@ from models import (
 router = APIRouter(tags=["budgets"])
 
 
-def _budget_storage_alert(budget: Budget) -> str | None:
-    if getattr(budget, "pdf_file_missing", False):
-        return f"Orçamento {budget.id} indisponível: arquivo não encontrado"
-    return None
+def _budget_tracking_url(budget: Budget) -> str:
+    stored = getattr(budget, "tracking_url", None)
+    if stored and str(stored).strip():
+        return str(stored).strip()
+    return f"{public_app_base_url().rstrip('/')}/app/budgets/{budget.id}"
 
 
 def _budget_to_out(budget: Budget) -> dict:
@@ -74,6 +82,7 @@ def _budget_to_out(budget: Budget) -> dict:
         "id": budget.id,
         "tenant_id": budget.tenant_id,
         "client_id": budget.client_id,
+        "scope_text": budget.scope_text,
         "observation": budget.description,
         "status": budget.status.value if hasattr(budget.status, "value") else str(budget.status),
         "payment_method": budget.payment_method,
@@ -84,9 +93,9 @@ def _budget_to_out(budget: Budget) -> dict:
         "approved_at": budget.approved_at,
         "created_at": budget.created_at,
         "generated_service_order_id": budget.generated_service_order.id if budget.generated_service_order is not None else None,
-        "tracking_url": getattr(budget, "tracking_url", None),
-        "pdf_file_missing": bool(getattr(budget, "pdf_file_missing", False)),
-        "storage_alert": _budget_storage_alert(budget),
+        "tracking_url": _budget_tracking_url(budget),
+        "pdf_file_missing": False,
+        "storage_alert": None,
         "service_items": service_items,
         "product_items": product_items,
     }
@@ -131,8 +140,7 @@ def list_budgets(
         db.commit()
     payload = [_budget_to_out(row) for row in rows]
     if include_storage_alerts:
-        panel_alerts = get_budget_storage_alerts(current_user.tenant_id)
-        return JSONResponse(content=jsonable_encoder({"items": payload, "storage_alerts": panel_alerts}))
+        return JSONResponse(content=jsonable_encoder({"items": payload, "storage_alerts": []}))
     return JSONResponse(content=jsonable_encoder(payload))
 
 
@@ -164,6 +172,94 @@ def patch_budget_template_settings_route(
 
 
 @router.post(
+    "/budgets/template-settings/signature",
+    response_model=BudgetTemplateSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("20/minute")
+async def upload_budget_template_signature(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: UploadFile = File(...),
+) -> BudgetTemplateSettingsOut:
+    row = _get_or_create_row(db, tenant_id=current_user.tenant_id)
+    raw = await file.read()
+    try:
+        uploaded = process_and_upload_budget_signature(
+            tenant_id=current_user.tenant_id,
+            file_bytes=raw,
+            source_filename=file.filename,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha ao processar ou enviar assinatura: {str(exc)}",
+        ) from exc
+
+    previous_key = row.signature_s3_key
+    row.signature_s3_key = uploaded.s3_key
+    row.signature_url = uploaded.public_url
+    row.signature_content_type = uploaded.content_type
+    db.commit()
+    db.refresh(row)
+    if previous_key and previous_key != uploaded.s3_key:
+        delete_tenant_logo_if_exists(previous_key, db=db)
+    data = get_budget_template_settings(db, tenant_id=current_user.tenant_id)
+    return BudgetTemplateSettingsOut.model_validate(data)
+
+
+@router.get(
+    "/budgets/template-settings/signature/file",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def get_budget_template_signature_file(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    row = db.execute(
+        select(BudgetTemplateSettings).where(BudgetTemplateSettings.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if row is None or not row.signature_s3_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assinatura não cadastrada.")
+    try:
+        data, content_type = fetch_s3_image_bytes(row.signature_s3_key, db=db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(content=data, media_type=content_type, headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.delete(
+    "/budgets/template-settings/signature",
+    response_model=BudgetTemplateSettingsOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+@limiter.limit("30/minute")
+def delete_budget_template_signature(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BudgetTemplateSettingsOut:
+    row = _get_or_create_row(db, tenant_id=current_user.tenant_id)
+    old_key = row.signature_s3_key
+    row.signature_s3_key = None
+    row.signature_url = None
+    row.signature_content_type = None
+    db.commit()
+    if old_key:
+        delete_tenant_logo_if_exists(old_key, db=db)
+    data = get_budget_template_settings(db, tenant_id=current_user.tenant_id)
+    return BudgetTemplateSettingsOut.model_validate(data)
+
+
+@router.post(
     "/budgets/template-settings/preview-pdf",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
@@ -183,6 +279,7 @@ def post_budget_template_preview_pdf(
     draft = BudgetTemplateSettingsPatch(
         template_key=payload.template_key or "classic",
         brand_color=payload.brand_color or getattr(tenant, "pdf_primary_color", None) or "#0B7FAF",
+        font_color=payload.font_color or "#000000",
         default_warranty_terms=payload.default_warranty_terms,
         default_payment_terms=payload.default_payment_terms,
         default_technical_notes=payload.default_technical_notes,
@@ -237,21 +334,24 @@ def create_budget(
     if payload.validity_days < 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="validity_days must be at least 1.")
 
-    payment_terms, warranty_terms, observation = apply_budget_defaults_from_settings(
+    payment_terms, warranty_terms, scope_text, observation, payment_method = apply_budget_defaults_from_settings(
         db,
         tenant_id=current_user.tenant_id,
         payment_terms=payload.payment_terms,
         warranty_terms=payload.warranty_terms,
+        scope_text=payload.scope_text,
         observation=payload.observation,
+        payment_method=payload.payment_method,
     )
 
     budget = Budget(
         tenant_id=current_user.tenant_id,
         client_id=payload.client_id,
         title=f"Orcamento - {client.name}",
+        scope_text=scope_text,
         description=observation,
         status=BudgetStatus.DRAFT,
-        payment_method=payload.payment_method,
+        payment_method=payment_method,
         payment_terms=payment_terms,
         warranty_terms=warranty_terms,
         validity_days=payload.validity_days,
@@ -294,6 +394,102 @@ def create_budget(
     return {"id": budget.id, "status": budget.status.value}
 
 
+def _replace_budget_line_items(
+    db: Session,
+    *,
+    budget: Budget,
+    tenant_id: int,
+    services: list,
+    products: list,
+) -> None:
+    for item in list(budget.service_items):
+        db.delete(item)
+    for item in list(budget.product_items):
+        db.delete(item)
+    db.flush()
+
+    for service_item in services:
+        service = db.execute(
+            select(Service).where(Service.id == service_item.service_id, Service.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+        if service is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Service {service_item.service_id} not found.")
+        db.add(
+            BudgetServiceItem(
+                budget_id=budget.id,
+                service_id=service.id,
+                quantity=max(service_item.quantity, 1),
+                unit_price=service.price,
+                duration_minutes=service.duration_minutes,
+            )
+        )
+
+    for product_item in products:
+        product = db.execute(
+            select(Product).where(Product.id == product_item.product_id, Product.tenant_id == tenant_id)
+        ).scalar_one_or_none()
+        if product is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {product_item.product_id} not found.")
+        db.add(
+            BudgetProductItem(
+                budget_id=budget.id,
+                product_id=product.id,
+                quantity=max(product_item.quantity, 1),
+                unit_price=product.sale_price,
+            )
+        )
+
+
+@router.patch(
+    "/budgets/{budget_id}",
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+@limiter.limit("120/minute")
+def update_budget(
+    request: Request,
+    budget_id: int,
+    payload: BudgetUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    budget = db.execute(_budget_query_for_tenant(current_user.tenant_id).where(Budget.id == budget_id)).scalar_one_or_none()
+    if budget is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found.")
+    if budget.status == BudgetStatus.APPROVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approved budget cannot be edited.")
+
+    client = db.execute(
+        select(Client).where(Client.id == payload.client_id, Client.tenant_id == current_user.tenant_id)
+    ).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
+    if not payload.services:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Budget requires at least one service.")
+    if payload.validity_days < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="validity_days must be at least 1.")
+
+    budget.client_id = payload.client_id
+    budget.title = f"Orcamento - {client.name}"
+    budget.scope_text = payload.scope_text
+    budget.description = payload.observation
+    budget.payment_method = payload.payment_method
+    budget.payment_terms = payload.payment_terms
+    budget.warranty_terms = payload.warranty_terms
+    budget.validity_days = payload.validity_days
+
+    _replace_budget_line_items(
+        db,
+        budget=budget,
+        tenant_id=current_user.tenant_id,
+        services=payload.services,
+        products=payload.products,
+    )
+
+    db.commit()
+    db.refresh(budget)
+    return JSONResponse(content=jsonable_encoder(_budget_to_out(budget)))
+
+
 @router.post(
     "/budgets/{budget_id}/send",
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
@@ -321,12 +517,8 @@ def send_budget_to_client(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approved budget cannot be sent again.")
     budget.status = BudgetStatus.SENT
     budget.sent_at = payload.sent_at or datetime.now(timezone.utc)
-    tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
-    try:
-        budget.pdf_s3_key = _upload_budget_pdf_to_s3(budget, tenant, db)
-        verify_budget_storage(budget, db, reupload_missing=False)
-    except Exception:
-        budget.pdf_file_missing = True
+    budget.tracking_url = _budget_tracking_url(budget)
+    budget.pdf_file_missing = False
     db.commit()
     db.refresh(budget)
     return JSONResponse(content=jsonable_encoder(_budget_to_out(budget)))
@@ -428,6 +620,15 @@ def approve_budget(
     )
 
     db.commit()
+    from app.notifications import dispatch_budget_approved_notification, safe_commit_notification_dispatch
+
+    safe_commit_notification_dispatch(
+        db,
+        dispatch_budget_approved_notification,
+        budget=budget,
+        service_order_id=order.id,
+        actor=current_user,
+    )
     return {
         "budget_id": budget.id,
         "budget_status": budget.status.value,
@@ -456,8 +657,6 @@ def budget_pdf(
     ).scalar_one_or_none()
     if budget is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found.")
-    verify_budget_storage(budget, db, reupload_missing=False)
-    db.commit()
     tenant = db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id)).scalar_one()
     logo_url: str | None = getattr(tenant, "logo_url", None)
     logo_s3_key = getattr(tenant, "logo_s3_key", None)

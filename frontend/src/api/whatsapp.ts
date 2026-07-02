@@ -371,3 +371,15 @@ export async function sendWhatsappAppointmentReminder(
   }
   return body as WhatsappMessageJob;
 }
+
+export async function sendScheduleWhatsappReminder(scheduleId: number): Promise<WhatsappMessageJob> {
+  const response = await fetch(apiUrl(`/api/v1/whatsapp/schedules/${scheduleId}/send-reminder`), {
+    method: "POST",
+    headers: jsonHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível enviar lembrete de agendamento."));
+  }
+  return body as WhatsappMessageJob;
+}

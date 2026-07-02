@@ -9,18 +9,27 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from models import (
+    Budget,
+    BudgetStatus,
     Client,
     FinanceEntry,
     FinanceEntryStatus,
     FinanceEntryType,
     OrderStatus,
+    PmocOccurrence,
+    PmocOccurrenceStatus,
+    PmocPlan,
+    PmocPlanStatus,
     Schedule,
+    ScheduleStatus,
     ScheduleTechnician,
     ServiceOrder,
     ServiceOrderProductItem,
     ServiceOrderServiceItem,
     ServiceOrderTechnician,
     Tenant,
+    User,
+    UserRole,
 )
 
 AVERAGE_FALLBACK_DAYS = 90
@@ -329,6 +338,337 @@ def _recent_orders_load_options():
         .selectinload(ScheduleTechnician.technician),
         selectinload(ServiceOrder.technicians).selectinload(ServiceOrderTechnician.technician),
     )
+
+
+_ORDER_STATUS_LABELS: dict[str, str] = {
+    "pending": "Pendentes",
+    "scheduled": "Agendadas",
+    "in_progress": "Em andamento",
+    "completed": "Concluídas",
+    "cancelled": "Canceladas",
+}
+
+
+def _day_datetime_bounds(day: date) -> tuple[datetime, datetime]:
+    start = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=timezone.utc)
+    end = datetime(day.year, day.month, day.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
+    return start, end
+
+
+def _count_completed_orders_in_period(db: Session, tenant_id: int, start: datetime, end: datetime) -> int:
+    total = db.scalar(
+        select(func.count(ServiceOrder.id)).where(
+            ServiceOrder.tenant_id == tenant_id,
+            ServiceOrder.status == OrderStatus.DONE,
+            ServiceOrder.closed_at.isnot(None),
+            ServiceOrder.closed_at >= start,
+            ServiceOrder.closed_at <= end,
+        )
+    )
+    return int(total or 0)
+
+
+def _count_pending_budgets(db: Session, tenant_id: int) -> int:
+    total = db.scalar(
+        select(func.count(Budget.id)).where(
+            Budget.tenant_id == tenant_id,
+            Budget.status == BudgetStatus.SENT,
+        )
+    )
+    return int(total or 0)
+
+
+def _count_schedules_on_day(db: Session, tenant_id: int, day: date) -> int:
+    start, end = _day_datetime_bounds(day)
+    total = db.scalar(
+        select(func.count(Schedule.id)).where(
+            Schedule.tenant_id == tenant_id,
+            Schedule.starts_at >= start,
+            Schedule.starts_at <= end,
+            Schedule.status != ScheduleStatus.CANCELLED,
+        )
+    )
+    return int(total or 0)
+
+
+def _count_new_clients_in_period(db: Session, tenant_id: int, start: datetime, end: datetime) -> int:
+    total = db.scalar(
+        select(func.count(Client.id)).where(
+            Client.tenant_id == tenant_id,
+            Client.created_at >= start,
+            Client.created_at <= end,
+        )
+    )
+    return int(total or 0)
+
+
+def _budget_conversion_rate(db: Session, tenant_id: int, start: datetime, end: datetime) -> float | None:
+    sent = db.scalar(
+        select(func.count(Budget.id)).where(
+            Budget.tenant_id == tenant_id,
+            Budget.sent_at.isnot(None),
+            Budget.sent_at >= start,
+            Budget.sent_at <= end,
+        )
+    )
+    approved = db.scalar(
+        select(func.count(Budget.id)).where(
+            Budget.tenant_id == tenant_id,
+            Budget.status == BudgetStatus.APPROVED,
+            Budget.approved_at.isnot(None),
+            Budget.approved_at >= start,
+            Budget.approved_at <= end,
+        )
+    )
+    sent_count = int(sent or 0)
+    if sent_count == 0:
+        return None
+    return round(int(approved or 0) / sent_count * 100.0, 1)
+
+
+def compute_dashboard_extended_kpis(
+    db: Session,
+    tenant: Tenant,
+    *,
+    year: int | None = None,
+    month: int | None = None,
+) -> dict:
+    today = date.today()
+    period_year = year if year is not None else today.year
+    period_month = month if month is not None else today.month
+    period_start, period_end = month_datetime_bounds(period_year, period_month)
+
+    monthly_revenue, _, _ = compute_monthly_consolidated_revenue(db, tenant, period_year, period_month)
+    prev_year, prev_month = add_months(period_year, period_month, -1)
+    prev_revenue, _, _ = compute_monthly_consolidated_revenue(db, tenant, prev_year, prev_month)
+
+    revenue_growth_percent: float | None = None
+    if prev_revenue > 0:
+        revenue_growth_percent = round((monthly_revenue - prev_revenue) / prev_revenue * 100.0, 1)
+
+    return {
+        "period_year": period_year,
+        "period_month": period_month,
+        "completed_orders_month": _count_completed_orders_in_period(db, tenant.id, period_start, period_end),
+        "pending_budgets": _count_pending_budgets(db, tenant.id),
+        "schedules_today": _count_schedules_on_day(db, tenant.id, today),
+        "revenue_growth_percent": revenue_growth_percent,
+        "previous_month_revenue": round(prev_revenue, 2),
+        "new_clients_month": _count_new_clients_in_period(db, tenant.id, period_start, period_end),
+        "budget_conversion_rate": _budget_conversion_rate(db, tenant.id, period_start, period_end),
+    }
+
+
+def compute_order_status_breakdown(db: Session, tenant_id: int) -> list[dict]:
+    rows = db.execute(
+        select(ServiceOrder.status, func.count(ServiceOrder.id))
+        .where(ServiceOrder.tenant_id == tenant_id)
+        .group_by(ServiceOrder.status)
+    ).all()
+    items: list[dict] = []
+    for status, count in rows:
+        key = dashboard_order_status(status)
+        items.append(
+            {
+                "status": key,
+                "label": _ORDER_STATUS_LABELS.get(key, key),
+                "count": int(count or 0),
+            }
+        )
+    order = ("pending", "scheduled", "in_progress", "completed", "cancelled")
+    items.sort(key=lambda x: order.index(x["status"]) if x["status"] in order else 99)
+    return items
+
+
+def compute_upcoming_schedules(db: Session, tenant_id: int, *, limit: int = 5) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    schedules = db.scalars(
+        select(Schedule)
+        .where(
+            Schedule.tenant_id == tenant_id,
+            Schedule.starts_at >= now,
+            Schedule.status.notin_((ScheduleStatus.CANCELLED, ScheduleStatus.COMPLETED)),
+        )
+        .options(
+            selectinload(Schedule.client),
+            selectinload(Schedule.technicians).selectinload(ScheduleTechnician.technician),
+        )
+        .order_by(Schedule.starts_at.asc())
+        .limit(limit)
+    ).all()
+
+    items: list[dict] = []
+    for schedule in schedules:
+        tech_names = [
+            t.technician.full_name.strip()
+            for t in schedule.technicians
+            if t.technician and t.technician.full_name
+        ]
+        client_name = (schedule.client.name.strip() if schedule.client and schedule.client.name else "") or "—"
+        items.append(
+            {
+                "id": schedule.id,
+                "client_name": client_name,
+                "starts_at": schedule.starts_at,
+                "ends_at": schedule.ends_at,
+                "status": schedule.status.value,
+                "technician_names": tech_names,
+                "service_order_id": schedule.service_order_id,
+            }
+        )
+    return items
+
+
+def compute_financial_snapshot(db: Session, tenant: Tenant) -> dict:
+    if not tenant.finance_enabled:
+        return {
+            "finance_enabled": False,
+            "accounts_receivable": 0.0,
+            "accounts_payable": 0.0,
+            "overdue_receivable": 0.0,
+            "overdue_payable": 0.0,
+            "overdue_receivable_count": 0,
+            "overdue_payable_count": 0,
+            "net_cash_position": 0.0,
+        }
+
+    receivable_statuses = (FinanceEntryStatus.PENDING, FinanceEntryStatus.OVERDUE)
+    payable_statuses = (FinanceEntryStatus.PENDING, FinanceEntryStatus.OVERDUE)
+
+    accounts_receivable = float(
+        db.scalar(
+            select(func.coalesce(func.sum(FinanceEntry.amount), 0)).where(
+                FinanceEntry.tenant_id == tenant.id,
+                FinanceEntry.entry_type == FinanceEntryType.INCOME,
+                FinanceEntry.status.in_(receivable_statuses),
+            )
+        )
+        or 0
+    )
+    accounts_payable = float(
+        db.scalar(
+            select(func.coalesce(func.sum(FinanceEntry.amount), 0)).where(
+                FinanceEntry.tenant_id == tenant.id,
+                FinanceEntry.entry_type == FinanceEntryType.EXPENSE,
+                FinanceEntry.status.in_(payable_statuses),
+            )
+        )
+        or 0
+    )
+    overdue_receivable = float(
+        db.scalar(
+            select(func.coalesce(func.sum(FinanceEntry.amount), 0)).where(
+                FinanceEntry.tenant_id == tenant.id,
+                FinanceEntry.entry_type == FinanceEntryType.INCOME,
+                FinanceEntry.status == FinanceEntryStatus.OVERDUE,
+            )
+        )
+        or 0
+    )
+    overdue_payable = float(
+        db.scalar(
+            select(func.coalesce(func.sum(FinanceEntry.amount), 0)).where(
+                FinanceEntry.tenant_id == tenant.id,
+                FinanceEntry.entry_type == FinanceEntryType.EXPENSE,
+                FinanceEntry.status == FinanceEntryStatus.OVERDUE,
+            )
+        )
+        or 0
+    )
+    overdue_receivable_count = int(
+        db.scalar(
+            select(func.count(FinanceEntry.id)).where(
+                FinanceEntry.tenant_id == tenant.id,
+                FinanceEntry.entry_type == FinanceEntryType.INCOME,
+                FinanceEntry.status == FinanceEntryStatus.OVERDUE,
+            )
+        )
+        or 0
+    )
+    overdue_payable_count = int(
+        db.scalar(
+            select(func.count(FinanceEntry.id)).where(
+                FinanceEntry.tenant_id == tenant.id,
+                FinanceEntry.entry_type == FinanceEntryType.EXPENSE,
+                FinanceEntry.status == FinanceEntryStatus.OVERDUE,
+            )
+        )
+        or 0
+    )
+
+    return {
+        "finance_enabled": True,
+        "accounts_receivable": round(accounts_receivable, 2),
+        "accounts_payable": round(accounts_payable, 2),
+        "overdue_receivable": round(overdue_receivable, 2),
+        "overdue_payable": round(overdue_payable, 2),
+        "overdue_receivable_count": overdue_receivable_count,
+        "overdue_payable_count": overdue_payable_count,
+        "net_cash_position": round(accounts_receivable - accounts_payable, 2),
+    }
+
+
+def compute_pmoc_operations_summary(db: Session, tenant_id: int) -> dict:
+    active_plans = int(
+        db.scalar(
+            select(func.count(PmocPlan.id)).where(
+                PmocPlan.tenant_id == tenant_id,
+                PmocPlan.status == PmocPlanStatus.ACTIVE,
+            )
+        )
+        or 0
+    )
+    open_occurrences = int(
+        db.scalar(
+            select(func.count(PmocOccurrence.id)).where(
+                PmocOccurrence.tenant_id == tenant_id,
+                PmocOccurrence.status == PmocOccurrenceStatus.OPEN,
+            )
+        )
+        or 0
+    )
+    return {
+        "active_pmoc_plans": active_plans,
+        "open_occurrences": open_occurrences,
+    }
+
+
+def compute_technician_workload(db: Session, tenant_id: int, *, day: date | None = None) -> list[dict]:
+    target_day = day or date.today()
+    start, end = _day_datetime_bounds(target_day)
+    technicians = db.scalars(
+        select(User).where(
+            User.tenant_id == tenant_id,
+            User.role == UserRole.TECHNICIAN,
+            User.is_active.is_(True),
+        )
+    ).all()
+
+    items: list[dict] = []
+    for tech in technicians:
+        count = int(
+            db.scalar(
+                select(func.count(Schedule.id))
+                .join(ScheduleTechnician, ScheduleTechnician.schedule_id == Schedule.id)
+                .where(
+                    Schedule.tenant_id == tenant_id,
+                    ScheduleTechnician.technician_id == tech.id,
+                    Schedule.starts_at >= start,
+                    Schedule.starts_at <= end,
+                    Schedule.status != ScheduleStatus.CANCELLED,
+                )
+            )
+            or 0
+        )
+        items.append(
+            {
+                "technician_id": tech.id,
+                "technician_name": tech.full_name.strip() or "Técnico",
+                "schedules_count": count,
+            }
+        )
+    items.sort(key=lambda x: (-x["schedules_count"], x["technician_name"]))
+    return items
 
 
 def compute_dashboard_recent_orders(

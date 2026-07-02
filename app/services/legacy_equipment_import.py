@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.equipment_preventive_reminder import equipment_is_preventive_reminder_only
 from models import ClientEquipment, Equipment
 
 
@@ -36,6 +37,7 @@ def import_orphan_legacy_equipments_for_client(
     if linked_ids:
         orphans_query = orphans_query.where(Equipment.id.not_in(linked_ids))
     orphans = db.execute(orphans_query).scalars().all()
+    orphans = [equipment for equipment in orphans if not equipment_is_preventive_reminder_only(equipment)]
 
     created = 0
     for equipment in orphans:

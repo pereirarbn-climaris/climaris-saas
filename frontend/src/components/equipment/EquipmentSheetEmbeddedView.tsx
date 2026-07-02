@@ -18,9 +18,10 @@ import type { MaintenanceEvent } from "../v0-ui/clients/PublicEquipmentProfileVi
 import formLayout from "../../pages/formLayout.module.css";
 import { EquipmentHistoryEventCard } from "./EquipmentHistoryEventCard";
 import { EquipmentManualsTab } from "./EquipmentManualsTab";
+import { EquipmentKnowledgeChat } from "./EquipmentKnowledgeChat";
 import styles from "./EquipmentSheetEmbeddedView.module.css";
 
-type TabId = "dados" | "preventiva" | "historico" | "manuais";
+type TabId = "dados" | "preventiva" | "historico" | "manuais" | "assistente";
 
 type Props = {
   equipment: EquipmentItem;
@@ -306,6 +307,16 @@ export function EquipmentSheetEmbeddedView({
             >
               Manuais
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "assistente"}
+              disabled={isEditing}
+              className={`${formLayout.formCardTab} ${styles.tabBtn} ${activeTab === "assistente" ? formLayout.formCardTabActive : ""} ${activeTab === "assistente" ? styles.tabBtnActive : ""}`}
+              onClick={() => setActiveTab("assistente")}
+            >
+              Iris
+            </button>
           </div>
 
           <div className={`${formLayout.formCardContent} ${styles.tabScroll}`}>
@@ -546,11 +557,19 @@ export function EquipmentSheetEmbeddedView({
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : activeTab === "manuais" ? (
               <div className={styles.tabContent}>
                 <EquipmentManualsTab equipment={equipment} />
               </div>
-            )}
+            ) : activeTab === "assistente" ? (
+              <div className={styles.tabContent}>
+                <EquipmentKnowledgeChat
+                  equipmentId={equipment.id}
+                  brandName={equipment.brandName}
+                  modelName={equipment.modelName}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

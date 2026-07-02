@@ -9,6 +9,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import {
+  checkClientDuplicate,
   cnpjCommercialCooldownDaysRemaining,
   createClient,
   deleteClient,
@@ -26,7 +27,7 @@ import {
   listCatalogCategories,
   updateClientCatalogEquipmentStatus,
 } from "../../api/equipmentCatalog";
-import { fetchCepLookup } from "../../api/cep";
+import { cepLookupHasUsefulData, cepLookupSuccessMessage, fetchCepLookup } from "../../api/cep";
 import { fetchCnpjCommercial, fetchCnpjOpen } from "../../api/cnpj";
 import { listBudgets } from "../../api/budgets";
 import { listPmocPlans } from "../../api/pmoc";
@@ -67,7 +68,6 @@ import {
 } from "../../lib/clientFormViewAdapter";
 import { DeactivateEquipmentConfirmModal } from "../../components/equipment/DeactivateEquipmentConfirmModal";
 import { DeleteEquipmentConfirmModal } from "../../components/equipment/DeleteEquipmentConfirmModal";
-import { ToastHost } from "../../components/ToastHost";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./ClientFormPage.module.css";
@@ -131,12 +131,24 @@ export function ClientFormPage() {
   );
   const [deactivateEquipmentTarget, setDeactivateEquipmentTarget] = useState<EquipmentItem | null>(null);
   const [deleteEquipmentTarget, setDeleteEquipmentTarget] = useState<EquipmentItem | null>(null);
+  const [duplicateErrors, setDuplicateErrors] = useState<{ documento?: string; whatsapp?: string }>({});
 
   const docDigits = useMemo(() => digitsOnly(clientData.documento).slice(0, 14), [clientData.documento]);
+  const whatsappDigits = useMemo(() => digitsOnly(clientData.whatsapp ?? "").slice(0, 11), [clientData.whatsapp]);
   const cepDigits = useMemo(
     () => digitsOnly(clientData.endereco?.cep ?? "").slice(0, 8),
     [clientData.endereco?.cep],
   );
+  const docDigitsRef = useRef(docDigits);
+  const whatsappDigitsRef = useRef(whatsappDigits);
+
+  useEffect(() => {
+    docDigitsRef.current = docDigits;
+  }, [docDigits]);
+
+  useEffect(() => {
+    whatsappDigitsRef.current = whatsappDigits;
+  }, [whatsappDigits]);
 
   const isDirty = useMemo(() => {
     if (isNew) {
@@ -153,6 +165,28 @@ export function ClientFormPage() {
     () => cnpjCommercialCooldownDaysRemaining(clientData.lastCnpjCommercialUpdate),
     [clientData.lastCnpjCommercialUpdate],
   );
+
+  useEffect(() => {
+    if (!msg) return;
+    if (msg.kind === "err") toast.error(msg.text);
+    else toast.success(msg.text);
+  }, [msg]);
+
+  useEffect(() => {
+    if (cepErr) toast.error(cepErr);
+  }, [cepErr]);
+
+  useEffect(() => {
+    if (cnpjLookupErr) toast.error(cnpjLookupErr);
+  }, [cnpjLookupErr]);
+
+  useEffect(() => {
+    if (relatedErr) toast.error(relatedErr);
+  }, [relatedErr]);
+
+  useEffect(() => {
+    if (error) toast.error(error);
+  }, [error]);
 
   useEffect(() => {
     if (clientData.type !== "pj" && activeTab === "pmoc") {
@@ -344,8 +378,73 @@ export function ClientFormPage() {
   }, [activeTab, idNum, isNew, clientData.type]);
 
   const handleClientChange = useCallback((patch: Partial<ClientData>) => {
+    if (Object.prototype.hasOwnProperty.call(patch, "documento")) {
+      setDuplicateErrors((prev) => (prev.documento ? { ...prev, documento: undefined } : prev));
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "whatsapp")) {
+      setDuplicateErrors((prev) => (prev.whatsapp ? { ...prev, whatsapp: undefined } : prev));
+    }
     setClientData((prev) => mergeViewData(prev, patch));
   }, []);
+
+  const validateDuplicateFields = useCallback(
+    async (fields: { checkDocument: boolean; checkWhatsapp: boolean }): Promise<boolean> => {
+      const payload: { document?: string; whatsapp?: string; excludeClientId?: number } = {};
+      const requestDoc = docDigitsRef.current;
+      const requestWa = whatsappDigitsRef.current;
+
+      if (fields.checkDocument) {
+        if (!requestDoc) {
+          setDuplicateErrors((prev) => (prev.documento ? { ...prev, documento: undefined } : prev));
+        } else if (requestDoc.length === 11 || requestDoc.length === 14) {
+          payload.document = requestDoc;
+        }
+      }
+
+      if (fields.checkWhatsapp) {
+        if (!requestWa) {
+          setDuplicateErrors((prev) => (prev.whatsapp ? { ...prev, whatsapp: undefined } : prev));
+        } else if (requestWa.length >= 10) {
+          payload.whatsapp = requestWa;
+        }
+      }
+
+      if (!payload.document && !payload.whatsapp) return true;
+      if (!isNew && Number.isFinite(idNum) && idNum > 0) payload.excludeClientId = idNum;
+
+      try {
+        const result = await checkClientDuplicate(payload);
+        if (payload.document && docDigitsRef.current === requestDoc) {
+          setDuplicateErrors((prev) => ({
+            ...prev,
+            documento: result.document_exists ? "CPF/CNPJ já cadastrado." : undefined,
+          }));
+        }
+        if (payload.whatsapp && whatsappDigitsRef.current === requestWa) {
+          setDuplicateErrors((prev) => ({
+            ...prev,
+            whatsapp: result.whatsapp_exists ? "WhatsApp já cadastrado." : undefined,
+          }));
+        }
+        return !(result.document_exists || result.whatsapp_exists);
+      } catch (e) {
+        setMsg({
+          kind: "err",
+          text: e instanceof Error ? e.message : "Não foi possível validar duplicidade no cadastro.",
+        });
+        return false;
+      }
+    },
+    [idNum, isNew],
+  );
+
+  const onDocumentoBlur = useCallback(async () => {
+    await validateDuplicateFields({ checkDocument: true, checkWhatsapp: false });
+  }, [validateDuplicateFields]);
+
+  const onWhatsappBlur = useCallback(async () => {
+    await validateDuplicateFields({ checkDocument: false, checkWhatsapp: true });
+  }, [validateDuplicateFields]);
 
   const onBuscarCep = useCallback(async () => {
     if (readOnly) return;
@@ -358,6 +457,10 @@ export function ClientFormPage() {
     setMsg(null);
     try {
       const data = await fetchCepLookup(cepDigits);
+      if (!cepLookupHasUsefulData(data)) {
+        setCepErr("CEP não encontrado ou sem dados de endereço.");
+        return;
+      }
       setClientData((prev) => {
         const cur = digitsOnly(prev.endereco?.cep ?? "").slice(0, 8);
         if (cur !== cepDigits) return prev;
@@ -379,7 +482,7 @@ export function ClientFormPage() {
       });
       setMsg({
         kind: "ok",
-        text: "Endereço preenchido pela consulta de CEP. Clique em Salvar para gravar.",
+        text: cepLookupSuccessMessage(data),
       });
     } catch (e) {
       setCepErr(e instanceof Error ? e.message : "Não foi possível buscar o CEP.");
@@ -624,17 +727,24 @@ export function ClientFormPage() {
       return;
     }
 
+    const duplicatesOk = await validateDuplicateFields({ checkDocument: true, checkWhatsapp: true });
+    if (!duplicatesOk) {
+      setMsg({ kind: "err", text: "CPF/CNPJ ou WhatsApp já cadastrado para outro cliente." });
+      return;
+    }
+
     setSaving(true);
     try {
       if (isNew) {
         const created = await createClient(viewDataToCreatePayload(clientData));
+        toast.success("Cliente salvo com sucesso");
         navigate(`/app/clients/${created.id}`, { replace: true });
       } else {
         const updated = await updateClient(idNum, viewDataToUpdatePayload(clientData));
         const view = clientOutToViewData(updated);
         setClientData(view);
         savedClientSnapshotRef.current = serializeClientFormSnapshot(view);
-        toast.success("Alterações salvas com sucesso!");
+        toast.success("Cliente salvo com sucesso");
       }
     } catch (err) {
       setMsg({ kind: "err", text: err instanceof Error ? err.message : "Erro ao salvar." });
@@ -688,7 +798,7 @@ export function ClientFormPage() {
         <Link className={styles.btnBackLink} to="/app/clients">
           ← Voltar à lista
         </Link>
-        <p className={styles.msgErr}>{error}</p>
+        <p className={styles.loading}>Não foi possível carregar este cliente.</p>
       </div>
     );
   }
@@ -737,11 +847,6 @@ export function ClientFormPage() {
       </header>
 
       {relatedLoading && !isNew ? <p className={styles.loading}>Carregando equipamentos, OS e orçamentos…</p> : null}
-      {relatedErr ? <p className={styles.msgErr}>{relatedErr}</p> : null}
-      {cepErr ? <p className={styles.msgErr}>{cepErr}</p> : null}
-      {cnpjLookupErr ? <p className={styles.msgErr}>{cnpjLookupErr}</p> : null}
-
-      <ToastHost />
 
       <DeactivateEquipmentConfirmModal
         equipment={deactivateEquipmentTarget}
@@ -796,6 +901,10 @@ export function ClientFormPage() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onClientChange={handleClientChange}
+          onDocumentoBlur={() => void onDocumentoBlur()}
+          onWhatsappBlur={() => void onWhatsappBlur()}
+          documentoDuplicateMessage={duplicateErrors.documento}
+          whatsappDuplicateMessage={duplicateErrors.whatsapp}
           onConsultCNPJ={onConsultCNPJ}
           onConsultCNPJCommercial={canConsultCnpjCommercial ? onConsultCNPJCommercial : undefined}
           onRefreshCnpjCommercial={
@@ -846,7 +955,6 @@ export function ClientFormPage() {
           }
         />
 
-        {msg?.kind === "err" ? <p className={styles.msgErr}>{msg.text}</p> : null}
       </form>
 
       <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">

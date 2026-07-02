@@ -6,7 +6,8 @@ from app.pmoc_service import build_pmoc_create_validation_issues
 def test_build_pmoc_create_validation_issues_all_missing():
     issues = build_pmoc_create_validation_issues(
         client_id=0,
-        client_site_id=0,
+        client_site_id=None,
+        requires_site=True,
         equipment_ids=[],
         responsible_name=None,
     )
@@ -21,6 +22,18 @@ def test_build_pmoc_create_validation_issues_ok():
     issues = build_pmoc_create_validation_issues(
         client_id=1,
         client_site_id=2,
+        requires_site=True,
+        equipment_ids=[10],
+        responsible_name="Eng. João Silva",
+    )
+    assert issues == []
+
+
+def test_build_pmoc_create_validation_issues_without_site_requirement():
+    issues = build_pmoc_create_validation_issues(
+        client_id=1,
+        client_site_id=None,
+        requires_site=False,
         equipment_ids=[10],
         responsible_name="Eng. João Silva",
     )

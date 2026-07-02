@@ -10,6 +10,37 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.schemas_whatsapp import WhatsappMessageJobOut
 
 
+class PreventiveModelAutomation(BaseModel):
+    ai_message_enabled: bool = True
+    ai_message_fidelity: Literal["faithful", "balanced"] = "faithful"
+    auto_schedule_enabled: bool = False
+    action_buttons_enabled: bool = False
+    button_schedule_enabled: bool = True
+    button_schedule_text: str = Field(default="Agendar agora", max_length=80)
+    button_custom_enabled: bool = True
+    button_more_text: str = Field(default="Sim, quero saber mais", max_length=80)
+    button_custom_result: Literal["lead", "reply", "handoff", "url"] = "lead"
+    button_custom_reply_text: str | None = None
+    button_custom_url: str | None = Field(default=None, max_length=500)
+    technical_problem_hint: str | None = Field(default=None, max_length=500)
+
+
+class PreventiveModelAttachment(BaseModel):
+    promo_image_enabled: bool = False
+    promo_image_url: str | None = Field(default=None, max_length=500)
+    promo_image_s3_key: str | None = Field(default=None, max_length=500)
+    promo_image_mimetype: str = Field(default="image/jpeg", max_length=80)
+    has_banner: bool = False
+
+
+class PreventiveMessageModel(BaseModel):
+    id: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=80)
+    body: str = Field(default="", max_length=12_000)
+    automation: PreventiveModelAutomation = Field(default_factory=PreventiveModelAutomation)
+    attachment: PreventiveModelAttachment = Field(default_factory=PreventiveModelAttachment)
+
+
 class PreventiveSettingsOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -22,9 +53,24 @@ class PreventiveSettingsOut(BaseModel):
     preventive_button_more_text: str = Field(default="Sim, quero saber mais", max_length=80)
     preventive_button_schedule_text: str = Field(default="Agendar agora", max_length=80)
     preventive_message_template: str | None = None
+    preventive_message_template_first: str | None = None
+    preventive_message_models: list[PreventiveMessageModel] = Field(default_factory=list)
+    preventive_default_template_model_id: str = "returning"
+    preventive_default_template_kind: Literal["first", "returning"] = "returning"
+    preventive_ai_message_enabled: bool = True
+    preventive_ai_message_fidelity: Literal["faithful", "balanced"] = "faithful"
     preventive_auto_remind_days_before: int = Field(default=0, ge=0, le=90)
     preventive_auto_whatsapp_enabled: bool = False
+    preventive_auto_schedule_enabled: bool = False
+    preventive_action_buttons_enabled: bool = False
+    preventive_button_schedule_enabled: bool = True
+    preventive_button_custom_enabled: bool = True
+    preventive_button_custom_result: Literal["lead", "reply", "handoff", "url"] = "lead"
+    preventive_button_custom_reply_text: str | None = None
+    preventive_button_custom_url: str | None = None
     default_message_template: str | None = None
+    default_message_template_first: str | None = None
+    default_message_template_returning: str | None = None
 
 
 class PreventiveSettingsPatch(BaseModel):
@@ -36,8 +82,21 @@ class PreventiveSettingsPatch(BaseModel):
     preventive_button_more_text: str | None = Field(default=None, max_length=80)
     preventive_button_schedule_text: str | None = Field(default=None, max_length=80)
     preventive_message_template: str | None = None
+    preventive_message_template_first: str | None = None
+    preventive_message_models: list[PreventiveMessageModel] | None = None
+    preventive_default_template_model_id: str | None = Field(default=None, max_length=32)
+    preventive_default_template_kind: Literal["first", "returning"] | None = None
+    preventive_ai_message_enabled: bool | None = None
+    preventive_ai_message_fidelity: Literal["faithful", "balanced"] | None = None
     preventive_auto_remind_days_before: int | None = Field(default=None, ge=0, le=90)
     preventive_auto_whatsapp_enabled: bool | None = None
+    preventive_auto_schedule_enabled: bool | None = None
+    preventive_action_buttons_enabled: bool | None = None
+    preventive_button_schedule_enabled: bool | None = None
+    preventive_button_custom_enabled: bool | None = None
+    preventive_button_custom_result: Literal["lead", "reply", "handoff", "url"] | None = None
+    preventive_button_custom_reply_text: str | None = None
+    preventive_button_custom_url: str | None = Field(default=None, max_length=500)
 
 
 class HistoricoServicoCreate(BaseModel):
@@ -195,6 +254,7 @@ class PreventiveSendRequest(BaseModel):
     promo_image_base64: str | None = Field(default=None, max_length=350_000)
     promo_image_mimetype: str | None = Field(default=None, max_length=80)
     technical_problem_hint: str | None = Field(default=None, max_length=500)
+    message_template_kind: Literal["first", "returning"] | None = None
 
     @field_validator("promo_image_base64")
     @classmethod
@@ -280,6 +340,7 @@ class PreventiveRegisterEntryCreate(BaseModel):
     promo_image_base64: str | None = Field(default=None, max_length=350_000)
     promo_image_mimetype: str | None = Field(default=None, max_length=80)
     technical_problem_hint: str | None = Field(default=None, max_length=500)
+    message_template_kind: Literal["first", "returning"] | None = None
 
     @model_validator(mode="after")
     def _client_xor(self) -> PreventiveRegisterEntryCreate:
@@ -313,6 +374,7 @@ class PreventiveManualReminderOut(BaseModel):
     reminder_local_date: date | None = None
     reminder_local_time: str | None = None
     is_temporary_equipment: bool = False
+    message_template_kind: Literal["first", "returning"] | None = None
 
 
 class PreventiveManualReminderUpdate(BaseModel):
@@ -320,6 +382,7 @@ class PreventiveManualReminderUpdate(BaseModel):
     data_realizacao: date
     equipment_label: str | None = Field(default=None, max_length=120)
     notes: str | None = Field(default=None, max_length=4000)
+    message_template_kind: Literal["first", "returning"] | None = None
 
 
 class PreventiveLeadOut(BaseModel):

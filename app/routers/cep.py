@@ -1,4 +1,4 @@
-"""Consulta de CEP via ViaCEP (https://viacep.com.br/)."""
+"""Consulta de CEP via ViaCEP (https://viacep.com.br/) com fallback BrasilAPI."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from app.schemas import CepLookupOut, CepStreetMatchOut, CepStreetSearchOut
 from models import User
 
 VIACEP_TMPL = "https://viacep.com.br/ws/{cep}/json/"
+BRASILAPI_CEP_TMPL = "https://brasilapi.com.br/api/cep/v1/{cep}"
 NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_FETCH_LIMIT = 50
 STREET_SEARCH_MAX_RETURN = 40
@@ -114,8 +115,104 @@ def _fetch_viacep_json(digits: str) -> dict:
     return raw
 
 
+def _format_cep(digits: str) -> str:
+    d = re.sub(r"\D", "", digits or "")[:8]
+    if len(d) == 8:
+        return f"{d[:5]}-{d[5:]}"
+    return d
+
+
+def _viacep_errored(data: dict) -> bool:
+    """ViaCEP sinaliza CEP inexistente com erro booleano ou string 'true'."""
+    erro = data.get("erro")
+    if erro is True:
+        return True
+    if isinstance(erro, str) and erro.strip().lower() in ("true", "1", "yes", "sim"):
+        return True
+    return False
+
+
+def _cep_out_has_useful_data(out: CepLookupOut) -> bool:
+    return bool(
+        (out.address_street or "").strip()
+        or (out.address_district or "").strip()
+        or (out.address_city or "").strip()
+    )
+
+
+def _fetch_brasilapi_cep_json(digits: str) -> dict:
+    url = BRASILAPI_CEP_TMPL.format(cep=digits)
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Climaris-ERP/1.0 (CEP lookup)",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            body = resp.read().decode("utf-8")
+            parsed = json.loads(body)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="CEP não encontrado.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"BrasilAPI retornou HTTP {exc.code}.",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Não foi possível consultar o CEP. Tente novamente em instantes.",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Resposta inválida da BrasilAPI.")
+    return parsed
+
+
+def _brasilapi_to_out(data: dict, digits: str) -> CepLookupOut:
+    def s(key: str) -> str | None:
+        v = data.get(key)
+        if v is None:
+            return None
+        t = str(v).strip()
+        return t if t else None
+
+    cep_fmt = _format_cep(s("cep") or digits)
+    uf = s("state")
+    if uf and len(uf) > 2:
+        uf = uf[:2].upper()
+
+    return CepLookupOut(
+        source="brasilapi",
+        cep=cep_fmt,
+        address_street=s("street"),
+        address_complement=None,
+        address_district=s("neighborhood"),
+        address_city=s("city"),
+        address_state=uf,
+        address_postal_code=cep_fmt,
+        address_ibge_code=None,
+    )
+
+
+def _lookup_cep_brasilapi(digits: str) -> CepLookupOut:
+    data = _fetch_brasilapi_cep_json(digits)
+    out = _brasilapi_to_out(data, digits)
+    if not _cep_out_has_useful_data(out):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CEP não encontrado ou sem dados de endereço.",
+        )
+    return out
+
+
 def _viacep_to_out(data: dict) -> CepLookupOut:
-    if data.get("erro") is True:
+    if _viacep_errored(data):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CEP não encontrado na base dos Correios.")
 
     def s(key: str) -> str | None:
@@ -548,4 +645,9 @@ def lookup_cep(
     """Retorna logradouro, bairro, cidade, UF e código IBGE a partir do CEP (somente usuário autenticado)."""
     digits = _cep_digits(cep)
     raw = _fetch_viacep_json(digits)
-    return _viacep_to_out(raw)
+    if _viacep_errored(raw):
+        return _lookup_cep_brasilapi(digits)
+    out = _viacep_to_out(raw)
+    if not _cep_out_has_useful_data(out):
+        return _lookup_cep_brasilapi(digits)
+    return out

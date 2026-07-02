@@ -1,11 +1,25 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { forgotPasswordRequest, loginRequest, resendVerificationEmailRequest } from "../api/auth";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  forgotPasswordRequest,
+  getGoogleAuthConfig,
+  googleLoginRequest,
+  loginRequest,
+  resendVerificationEmailRequest,
+} from "../api/auth";
 import { isPlatformAdminEmail } from "../lib/platformAdmin";
+import {
+  clearPendingCheckoutPlan,
+  isPaidContractPlan,
+  readPendingCheckoutPlan,
+  startPaidPlanCheckout,
+} from "../lib/paidPlanCheckout";
+import { renderGoogleButton, setGoogleClientIdRuntime } from "../lib/googleIdentity";
+import { normalizePlanKey } from "../lib/planRules";
 import { setAccessToken, setRefreshToken, setTenantId, clearRefreshToken } from "../lib/authStorage";
-import { DEMO_ACCESS_TOKEN } from "../lib/demoMode";
 import { PlatformBrandMark } from "../components/branding/PlatformBrandMark";
 import { usePlatformBranding } from "../context/PlatformBrandingContext";
+import { toast } from "../lib/toast";
 import styles from "./LoginPage.module.css";
 
 const MailIcon = () => (
@@ -45,7 +59,12 @@ const ShieldCheckIcon = () => (
   </svg>
 );
 
-type LoginLocationState = { fromRegister?: boolean; registeredEmail?: string; emailVerificationPending?: boolean } | null;
+type LoginLocationState = {
+  fromRegister?: boolean;
+  registeredEmail?: string;
+  emailVerificationPending?: boolean;
+  pendingCheckoutPlan?: string;
+} | null;
 
 const FA_SESSION_KEY = "climaris_2fa_pending";
 const FA_SESSION_MAX_MS = 18 * 60 * 1000; // um pouco acima do TTL do backend (2FA)
@@ -54,6 +73,7 @@ const LAST_LOGIN_EMAIL_KEY = "climaris_last_login_email";
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { branding } = usePlatformBranding();
 
   const [email, setEmail] = useState("");
@@ -76,7 +96,17 @@ export function LoginPage() {
   /** Desbloqueia campos após foco — ajuda o preenchimento automático do Chrome em inputs controlados. */
   const [credentialFieldsUnlocked, setCredentialFieldsUnlocked] = useState(false);
   const [rememberEmail, setRememberEmail] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
+  const [googleIdTokenPending, setGoogleIdTokenPending] = useState<string | null>(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
   const submitLock = useRef(false);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!message.text || message.kind === "idle") return;
+    if (message.kind === "error") toast.error(message.text);
+    else if (message.kind === "success") toast.success(message.text);
+  }, [message]);
 
   useEffect(() => {
     if (typeof sessionStorage === "undefined") return;
@@ -97,12 +127,17 @@ export function LoginPage() {
 
   useEffect(() => {
     const st = location.state as LoginLocationState;
-    if (st?.fromRegister && typeof st.registeredEmail === "string" && st.registeredEmail.trim()) {
-      setEmail(st.registeredEmail.trim().toLowerCase());
+    if (st?.fromRegister) {
+      if (typeof st.registeredEmail === "string" && st.registeredEmail.trim()) {
+        setEmail(st.registeredEmail.trim().toLowerCase());
+      }
+      const paidCheckout = st.pendingCheckoutPlan && isPaidContractPlan(st.pendingCheckoutPlan);
       setMessage({
         text: st.emailVerificationPending
-          ? "Cadastro criado. Confirme seu e-mail antes de entrar."
-          : "Conta criada. Entre com o mesmo e-mail e senha.",
+          ? paidCheckout
+            ? "Cadastro criado. Confirme seu e-mail e entre para concluir o pagamento no Stripe."
+            : "Cadastro criado. Confirme seu e-mail antes de entrar."
+          : "Conta criada. Entre com Google ou com seu e-mail e senha.",
         kind: "success",
       });
       navigate(location.pathname, { replace: true, state: {} });
@@ -122,34 +157,165 @@ export function LoginPage() {
     }
   }, []);
 
+  useEffect(() => {
+    void (async () => {
+      try {
+        const cfg = await getGoogleAuthConfig();
+        setGoogleClientIdRuntime(cfg.client_id);
+        setGoogleEnabled(Boolean(cfg.enabled && cfg.client_id));
+      } catch {
+        setGoogleEnabled(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!googleEnabled) return;
+    if (!googleButtonRef.current) return;
+    void renderGoogleButton(googleButtonRef.current, {
+      text: "signin_with",
+      onCredential: (idToken) => {
+        void onGoogleSignIn(idToken);
+      },
+    }).catch((err) => {
+      const text = err instanceof Error ? err.message : "Não foi possível carregar o botão do Google.";
+      setMessage({ text, kind: "error" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleEnabled]);
+
+  async function finalizeLogin(
+    result: {
+      access_token: string;
+      tenant_id: number;
+      refresh_token?: string | null;
+      must_change_password: boolean;
+      is_platform_operator: boolean;
+    },
+    mailHint: string
+  ) {
+    setCaptchaToken(null);
+    setCaptchaQuestion("");
+    setCaptchaAnswer("");
+    setTwoFactorToken(null);
+    setTwoFactorCode("");
+    setTrustThisDevice(false);
+    setGoogleIdTokenPending(null);
+    if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(FA_SESSION_KEY);
+    setAccessToken(result.access_token);
+    setTenantId(result.tenant_id);
+    if (result.refresh_token) setRefreshToken(result.refresh_token);
+    else clearRefreshToken();
+    setMessage({
+      text: result.must_change_password
+        ? "Login ok. Você precisa alterar a senha temporária (use o fluxo da API ou peça ao admin)."
+        : "Login realizado com sucesso.",
+      kind: "success",
+    });
+    try {
+      if (typeof localStorage !== "undefined") {
+        if (rememberEmail && mailHint) localStorage.setItem(LAST_LOGIN_EMAIL_KEY, mailHint);
+        else if (!rememberEmail) localStorage.removeItem(LAST_LOGIN_EMAIL_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+    const goPlatform = result.is_platform_operator === true || (mailHint ? isPlatformAdminEmail(mailHint) : false);
+    const urlPlan = searchParams.get("plan");
+    const wantsCheckout = searchParams.get("checkout") === "1" || Boolean(readPendingCheckoutPlan());
+    const checkoutPlan = normalizePlanKey(
+      urlPlan || readPendingCheckoutPlan() || (location.state as LoginLocationState)?.pendingCheckoutPlan || "",
+    );
+
+    if (!goPlatform && wantsCheckout && isPaidContractPlan(checkoutPlan)) {
+      clearPendingCheckoutPlan();
+      setMessage({ text: "Redirecionando para o pagamento seguro…", kind: "success" });
+      try {
+        const outcome = await startPaidPlanCheckout(checkoutPlan);
+        if (outcome === "redirect") return;
+        if (outcome === "upgraded") {
+          navigate("/app/planos", { replace: true, state: { checkoutMessage: "Plano ativado com sucesso." } });
+          return;
+        }
+      } catch (checkoutErr) {
+        const detail = checkoutErr instanceof Error ? checkoutErr.message : "Não foi possível iniciar o pagamento.";
+        navigate(`/app/planos?checkout=error&plan=${encodeURIComponent(checkoutPlan)}`, {
+          replace: true,
+          state: { checkoutError: detail },
+        });
+        return;
+      }
+    } else {
+      clearPendingCheckoutPlan();
+    }
+
+    navigate(goPlatform ? "/operacao" : "/app", { replace: true });
+  }
+
+  async function onGoogleSignIn(idToken: string) {
+    if (submitLock.current) return;
+    submitLock.current = true;
+    setGoogleSubmitting(true);
+    setCanResendVerification(false);
+    setMessage({ text: "Entrando com Google...", kind: "idle" });
+    try {
+      const result = await googleLoginRequest({ id_token: idToken });
+      if (result.two_factor_required) {
+        const t = result.two_factor_token ?? null;
+        setTwoFactorToken(t);
+        setGoogleIdTokenPending(idToken);
+        setTrustThisDevice(false);
+        setMessage({ text: "Enviamos um código de 2 fatores para seu e-mail.", kind: "success" });
+        return;
+      }
+      await finalizeLogin(result, email.trim().toLowerCase());
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Não foi possível entrar com Google.";
+      setMessage({ text, kind: "error" });
+    } finally {
+      submitLock.current = false;
+      setGoogleSubmitting(false);
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (submitLock.current) return;
     const mail = email.trim().toLowerCase();
-    if (!mail) {
-      setMessage({ text: "Informe o e-mail.", kind: "error" });
-      return;
-    }
-    if (!password) {
-      setMessage({ text: "Informe a senha.", kind: "error" });
-      return;
+    const validatingGoogle2FA = Boolean(twoFactorToken && googleIdTokenPending);
+    if (!validatingGoogle2FA) {
+      if (!mail) {
+        setMessage({ text: "Informe o e-mail.", kind: "error" });
+        return;
+      }
+      if (!password) {
+        setMessage({ text: "Informe a senha.", kind: "error" });
+        return;
+      }
     }
 
     submitLock.current = true;
     setSubmitting(true);
     setCanResendVerification(false);
-    setMessage({ text: "Entrando...", kind: "idle" });
+    setMessage({ text: validatingGoogle2FA ? "Validando código..." : "Entrando...", kind: "idle" });
 
     try {
-      const result = await loginRequest({
-        email: mail,
-        password,
-        captcha_token: captchaToken ?? undefined,
-        captcha_answer: captchaAnswer.trim() || undefined,
-        two_factor_token: twoFactorToken ?? undefined,
-        two_factor_code: twoFactorCode.trim() || undefined,
-        trust_this_device: twoFactorToken ? trustThisDevice : undefined,
-      });
+      const result = validatingGoogle2FA
+        ? await googleLoginRequest({
+            id_token: googleIdTokenPending as string,
+            two_factor_token: twoFactorToken ?? undefined,
+            two_factor_code: twoFactorCode.trim() || undefined,
+            trust_this_device: trustThisDevice,
+          })
+        : await loginRequest({
+            email: mail,
+            password,
+            captcha_token: captchaToken ?? undefined,
+            captcha_answer: captchaAnswer.trim() || undefined,
+            two_factor_token: twoFactorToken ?? undefined,
+            two_factor_code: twoFactorCode.trim() || undefined,
+            trust_this_device: twoFactorToken ? trustThisDevice : undefined,
+          });
       if (result.captcha_required) {
         setCaptchaToken(result.captcha_token ?? null);
         setCaptchaQuestion(result.captcha_question ?? "Complete o CAPTCHA de segurança.");
@@ -159,6 +325,7 @@ export function LoginPage() {
       if (result.two_factor_required) {
         const t = result.two_factor_token ?? null;
         setTwoFactorToken(t);
+        setGoogleIdTokenPending(null);
         setTrustThisDevice(false);
         if (typeof sessionStorage !== "undefined" && t) {
           sessionStorage.setItem(FA_SESSION_KEY, JSON.stringify({ email: mail, token: t, at: Date.now() }));
@@ -166,33 +333,7 @@ export function LoginPage() {
         setMessage({ text: "Enviamos um código de 2 fatores para seu e-mail.", kind: "success" });
         return;
       }
-      setCaptchaToken(null);
-      setCaptchaQuestion("");
-      setCaptchaAnswer("");
-      setTwoFactorToken(null);
-      setTwoFactorCode("");
-      setTrustThisDevice(false);
-      if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(FA_SESSION_KEY);
-      setAccessToken(result.access_token);
-      setTenantId(result.tenant_id);
-      if (result.refresh_token) setRefreshToken(result.refresh_token);
-      else clearRefreshToken();
-      setMessage({
-        text: result.must_change_password
-          ? "Login ok. Você precisa alterar a senha temporária (use o fluxo da API ou peça ao admin)."
-          : "Login realizado com sucesso.",
-        kind: "success",
-      });
-      try {
-        if (typeof localStorage !== "undefined") {
-          if (rememberEmail) localStorage.setItem(LAST_LOGIN_EMAIL_KEY, mail);
-          else localStorage.removeItem(LAST_LOGIN_EMAIL_KEY);
-        }
-      } catch {
-        /* ignore */
-      }
-      const goPlatform = result.is_platform_operator === true || isPlatformAdminEmail(mail);
-      navigate(goPlatform ? "/operacao" : "/app", { replace: true });
+      await finalizeLogin(result, mail);
     } catch (err) {
       const text = err instanceof Error ? err.message : "Não foi possível conectar ao servidor.";
       setMessage({ text, kind: "error" });
@@ -297,11 +438,6 @@ export function LoginPage() {
             <h2 id="login-form-title" className={styles.cardTitle}>
               Entrar na sua conta
             </h2>
-            <p className={styles.cardSubtitle}>
-              Insira suas credenciais para acessar o painel. A senha pode ser salva pelo{" "}
-              <strong>gerenciador de senhas do navegador</strong> (ex.: Chrome) ao entrar — o {branding.platform_name} não armazena sua
-              senha.
-            </p>
           </div>
 
           <form
@@ -329,6 +465,7 @@ export function LoginPage() {
                   onChange={(e) => {
                     const v = e.target.value;
                     setEmail(v);
+                    setGoogleIdTokenPending(null);
                     if (twoFactorToken) {
                       setTwoFactorToken(null);
                       setTwoFactorCode("");
@@ -476,6 +613,13 @@ export function LoginPage() {
             </button>
           </form>
 
+          {googleEnabled ? (
+            <div className={styles.googleArea} aria-busy={googleSubmitting}>
+              <p className={styles.googleLabel}>Ou entre com</p>
+              <div ref={googleButtonRef} className={styles.googleButtonMount} />
+            </div>
+          ) : null}
+
           <div className={styles.divider}>
             <span>Novo por aqui?</span>
           </div>
@@ -494,57 +638,12 @@ export function LoginPage() {
             Criar uma conta
           </button>
 
-          <button
-            type="button"
-            className={styles.demoBtn}
-            onClick={() => {
-              setAccessToken(DEMO_ACCESS_TOKEN);
-              setTenantId(1);
-              setMessage({ text: "Entrando em modo demonstracao...", kind: "success" });
-              setTimeout(() => navigate("/app", { replace: true }), 500);
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-              <circle cx="12" cy="12" r="10" />
-              <polygon points="10 8 16 12 10 16 10 8" />
-            </svg>
-            Entrar como Demo
-          </button>
-          
           {canResendVerification ? (
             <button type="button" className={styles.resendLink} onClick={() => void onResendVerificationEmail()} disabled={resending}>
               {resending ? "Reenviando..." : "Reenviar e-mail de confirmação"}
             </button>
           ) : null}
 
-          {message.text && (
-            <div
-              className={
-                message.kind === "error"
-                  ? styles.messageError
-                  : message.kind === "success"
-                    ? styles.messageSuccess
-                    : styles.message
-              }
-              role={message.kind === "error" ? "alert" : "status"}
-              aria-live={message.kind === "error" ? "assertive" : "polite"}
-            >
-              {message.kind === "error" && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" x2="12" y1="8" y2="12" />
-                  <line x1="12" x2="12.01" y1="16" y2="16" />
-                </svg>
-              )}
-              {message.kind === "success" && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-              )}
-              {message.text}
-            </div>
-          )}
         </div>
         
         <p className={styles.footerText}>
