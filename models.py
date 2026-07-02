@@ -310,6 +310,19 @@ class Tenant(Base):
     preventive_button_more_text: Mapped[str] = mapped_column(String(80), nullable=False, default="Sim, quero saber mais")
     preventive_button_schedule_text: Mapped[str] = mapped_column(String(80), nullable=False, default="Agendar agora")
     preventive_message_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preventive_message_template_first: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preventive_default_template_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="returning")
+    preventive_ai_message_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preventive_ai_message_fidelity: Mapped[str] = mapped_column(String(16), nullable=False, default="faithful")
+    preventive_auto_schedule_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    preventive_action_buttons_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    preventive_button_schedule_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preventive_button_custom_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preventive_button_custom_result: Mapped[str] = mapped_column(String(16), nullable=False, default="lead")
+    preventive_button_custom_reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preventive_button_custom_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    preventive_message_models_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preventive_default_template_model_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 0 = só lembrete no dia do vencimento; N>0 = também envia quando faltam N dias (calendário do tenant.timezone).
     preventive_auto_remind_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     preventive_auto_whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -595,6 +608,291 @@ class PlatformBranding(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class DemoAppointmentStatus(str, enum.Enum):
+    SCHEDULED = "scheduled"
+    CONFIRMED = "confirmed"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    NO_SHOW = "no_show"
+
+
+class PlatformProjectStatus(str, enum.Enum):
+    LEAD = "lead"
+    ONBOARDING = "onboarding"
+    IMPLEMENTATION = "implementation"
+    DELIVERED = "delivered"
+    ON_HOLD = "on_hold"
+    CANCELLED = "cancelled"
+
+
+class PlatformProjectPriority(str, enum.Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class PlatformProjectTaskStatus(str, enum.Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    BLOCKED = "blocked"
+
+
+class WebsiteLead(Base):
+    __tablename__ = "website_leads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="website", index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="new", index=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    technicians_count: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    selected_plan: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    lgpd_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
+class PlatformWebsiteSettings(Base):
+    __tablename__ = "platform_website_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hero_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    hero_subtitle: Mapped[str] = mapped_column(String(500), nullable=False)
+    seo_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    seo_description: Mapped[str] = mapped_column(String(500), nullable=False)
+    contact_email: Mapped[str] = mapped_column(String(254), nullable=False, default="contato@climaris.com.br")
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    legal_name: Mapped[str] = mapped_column(String(160), nullable=False, default="Climaris")
+    trade_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    cnpj: Mapped[str | None] = mapped_column(String(18), nullable=True)
+    is_verified_cnpj: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cnpj_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dpo_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    dpo_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    address_street: Mapped[str] = mapped_column(String(200), nullable=False)
+    address_city: Mapped[str] = mapped_column(String(80), nullable=False, default="Araraquara")
+    address_state: Mapped[str] = mapped_column(String(2), nullable=False, default="SP")
+    address_postal: Mapped[str] = mapped_column(String(12), nullable=False, default="14800-000")
+    services_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    hero_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    hero_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    hero_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dashboard_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    dashboard_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    dashboard_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finance_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    finance_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    finance_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    orders_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    orders_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    orders_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PlatformWebsitePage(Base):
+    __tablename__ = "platform_website_pages"
+
+    slug: Mapped[str] = mapped_column(String(80), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    path: Mapped[str] = mapped_column(String(200), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    subtitle: Mapped[str] = mapped_column(String(200), nullable=False)
+    hero_description: Mapped[str] = mapped_column(String(500), nullable=False)
+    seo_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    seo_description: Mapped[str] = mapped_column(String(500), nullable=False)
+    sections_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    outcomes_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    images_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class DemoAppointment(Base):
+    __tablename__ = "demo_appointments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    website_lead_id: Mapped[int | None] = mapped_column(
+        ForeignKey("website_leads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    technicians_count: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    selected_plan: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=45)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default=DemoAppointmentStatus.SCHEDULED.value, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class DemoScheduleBlock(Base):
+    __tablename__ = "demo_schedule_blocks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PlatformProject(Base):
+    __tablename__ = "platform_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    company_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    contact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    demo_appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("demo_appointments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default=PlatformProjectStatus.LEAD.value, index=True
+    )
+    priority: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=PlatformProjectPriority.NORMAL.value
+    )
+    delivery_deadline: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tasks: Mapped[list["PlatformProjectTask"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class PlatformProjectTask(Base):
+    __tablename__ = "platform_project_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("platform_projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default=PlatformProjectTaskStatus.PENDING.value, index=True
+    )
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    project: Mapped["PlatformProject"] = relationship(back_populates="tasks")
+
+
+class NotificationKind(str, enum.Enum):
+    SERVICE_ORDER_CREATED = "service_order_created"
+    SERVICE_ORDER_SCHEDULED = "service_order_scheduled"
+    SERVICE_ORDER_STARTED = "service_order_started"
+    SERVICE_ORDER_DONE = "service_order_done"
+    SERVICE_ORDER_CANCELLED = "service_order_cancelled"
+    BUDGET_APPROVED = "budget_approved"
+    FINANCE_PAYMENT_RECEIVED = "finance_payment_received"
+    WHATSAPP_SEND_FAILED = "whatsapp_send_failed"
+    PLATFORM_ANNOUNCEMENT = "platform_announcement"
+    SYSTEM = "system"
+
+
+class UserNotification(Base):
+    __tablename__ = "user_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    link_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    entity_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    actor_user: Mapped["User | None"] = relationship(foreign_keys=[actor_user_id])
+
+
+class PlatformNotificationBroadcast(Base):
+    __tablename__ = "platform_notification_broadcasts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    link_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    audience: Mapped[str] = mapped_column(String(40), nullable=False, default="all", index=True)
+    recipients_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tenant_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    created_by_user: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
+
+    @property
+    def audience_label(self) -> str | None:
+        from app.platform_broadcast_audiences import AUDIENCE_LABELS
+
+        return AUDIENCE_LABELS.get(self.audience)
+
+    @property
+    def created_by_name(self) -> str | None:
+        return self.created_by_user.full_name if self.created_by_user else None
 
 
 class SaasPlanCatalog(Base):
@@ -1058,6 +1356,7 @@ class Equipment(Base):
     filtro_dimensoes: Mapped[str | None] = mapped_column(String(120), nullable=True)
     filtro_periodicidade_limpeza: Mapped[str | None] = mapped_column(String(120), nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preventive_reminder_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     public_token: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -1177,6 +1476,7 @@ class EquipmentServicePreventiveSchedule(Base):
         ForeignKey("service_orders.id", ondelete="SET NULL"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    message_template_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -2394,6 +2694,7 @@ class Budget(Base):
     payment_method: Mapped[str | None] = mapped_column(String(120))
     payment_terms: Mapped[str | None] = mapped_column(Text)
     warranty_terms: Mapped[str | None] = mapped_column(Text)
+    scope_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     validity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -2486,9 +2787,21 @@ class BudgetTemplateSettings(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
     template_key: Mapped[str] = mapped_column(String(32), nullable=False, default="classic")
     brand_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#0B7FAF")
+    font_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#000000")
     default_warranty_terms: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_payment_terms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_payment_method: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_scope_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_technical_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_validity_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    warranty_presets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_presets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_method_presets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_presets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    technical_presets_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signature_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signature_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signature_content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
