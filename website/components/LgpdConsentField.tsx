@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { demoSchedulingEnabled } from "@/lib/site-config";
 
 type Props = {
   id?: string;
@@ -10,6 +11,10 @@ type Props = {
 };
 
 export function LgpdConsentField({ id = "lgpd_consent", checked, onChange, compact = false }: Props) {
+  const purpose = demoSchedulingEnabled
+    ? "contato comercial e agendamento de demonstração"
+    : "contato comercial";
+
   return (
     <label
       htmlFor={id}
@@ -31,7 +36,7 @@ export function LgpdConsentField({ id = "lgpd_consent", checked, onChange, compa
         <Link href="/privacidade" className="font-medium text-primary hover:underline" target="_blank">
           Política de Privacidade e LGPD
         </Link>{" "}
-        e autorizo o tratamento dos meus dados para contato comercial e agendamento de demonstração.
+        e autorizo o tratamento dos meus dados para {purpose}.
       </span>
     </label>
   );

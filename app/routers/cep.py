@@ -21,6 +21,7 @@ from models import User
 
 VIACEP_TMPL = "https://viacep.com.br/ws/{cep}/json/"
 BRASILAPI_CEP_TMPL = "https://brasilapi.com.br/api/cep/v1/{cep}"
+BRASILAPI_CEP_V2_TMPL = "https://brasilapi.com.br/api/cep/v2/{cep}"
 NOMINATIM_SEARCH = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_FETCH_LIMIT = 50
 STREET_SEARCH_MAX_RETURN = 40
@@ -141,37 +142,48 @@ def _cep_out_has_useful_data(out: CepLookupOut) -> bool:
 
 
 def _fetch_brasilapi_cep_json(digits: str) -> dict:
-    url = BRASILAPI_CEP_TMPL.format(cep=digits)
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Climaris-ERP/1.0 (CEP lookup)",
-        },
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            body = resp.read().decode("utf-8")
-            parsed = json.loads(body)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
+    last_exc: Exception | None = None
+    for tmpl in (BRASILAPI_CEP_TMPL, BRASILAPI_CEP_V2_TMPL):
+        url = tmpl.format(cep=digits)
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "Climaris-ERP/1.0 (CEP lookup)",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                body = resp.read().decode("utf-8")
+                parsed = json.loads(body)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                last_exc = HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="CEP não encontrado.",
+                )
+                continue
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="CEP não encontrado.",
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"BrasilAPI retornou HTTP {exc.code}.",
             ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"BrasilAPI retornou HTTP {exc.code}.",
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Não foi possível consultar o CEP. Tente novamente em instantes.",
-        ) from exc
-    if not isinstance(parsed, dict):
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Resposta inválida da BrasilAPI.")
-    return parsed
+        except urllib.error.URLError as exc:
+            last_exc = HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Não foi possível consultar o CEP. Tente novamente em instantes.",
+            )
+            continue
+        if not isinstance(parsed, dict):
+            last_exc = HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Resposta inválida da BrasilAPI.",
+            )
+            continue
+        return parsed
+    if isinstance(last_exc, HTTPException):
+        raise last_exc
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CEP não encontrado.")
 
 
 def _brasilapi_to_out(data: dict, digits: str) -> CepLookupOut:
@@ -236,6 +248,7 @@ def _viacep_to_out(data: dict) -> CepLookupOut:
     merged_comp = " — ".join(parts) if parts else None
 
     return CepLookupOut(
+        source="viacep",
         cep=cep_fmt or "",
         address_street=s("logradouro"),
         address_complement=merged_comp,

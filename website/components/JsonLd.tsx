@@ -59,7 +59,7 @@ export async function LocalBusinessJsonLd() {
       "@type": "Offer",
       price: "0",
       priceCurrency: "BRL",
-      description: "Demonstração comercial disponível mediante contato",
+      description: "Contato comercial disponível mediante formulário",
     },
     provider: { "@id": `${siteConfig.url}/#organization` },
     featureList: siteConfig.productPillars,

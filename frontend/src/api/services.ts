@@ -12,6 +12,11 @@ export type ServiceOut = {
   btu_min: number | null;
   btu_max: number | null;
   service_category: string | null;
+  code: string | null;
+  service_type: string | null;
+  require_photo: boolean;
+  icon_key: string | null;
+  notes: string | null;
   applies_residential: boolean;
   applies_commercial: boolean;
   is_active: boolean;
@@ -21,6 +26,9 @@ export type ServiceOut = {
   preventive_enabled: boolean;
   preventive_interval_type: "days" | "months" | "years" | null;
   preventive_interval_value: number | null;
+  visible_in_service_order: boolean;
+  visible_in_pmoc: boolean;
+  visible_in_contract: boolean;
   product_inputs: Array<{
     id: number;
     product_id: number;
@@ -46,6 +54,11 @@ export type ServiceCreatePayload = {
   btu_min?: number | null;
   btu_max?: number | null;
   service_category?: string | null;
+  code?: string | null;
+  service_type?: string | null;
+  require_photo?: boolean;
+  icon_key?: string | null;
+  notes?: string | null;
   applies_residential?: boolean;
   applies_commercial?: boolean;
   is_active?: boolean;
@@ -55,6 +68,9 @@ export type ServiceCreatePayload = {
   preventive_enabled?: boolean;
   preventive_interval_type?: "days" | "months" | "years" | null;
   preventive_interval_value?: number | null;
+  visible_in_service_order?: boolean;
+  visible_in_pmoc?: boolean;
+  visible_in_contract?: boolean;
   product_inputs?: ServiceProductInputPayload[];
 };
 
@@ -67,6 +83,11 @@ export type ServiceUpdatePayload = {
   btu_min?: number | null;
   btu_max?: number | null;
   service_category?: string | null;
+  code?: string | null;
+  service_type?: string | null;
+  require_photo?: boolean;
+  icon_key?: string | null;
+  notes?: string | null;
   applies_residential?: boolean;
   applies_commercial?: boolean;
   is_active?: boolean;
@@ -76,6 +97,9 @@ export type ServiceUpdatePayload = {
   preventive_enabled?: boolean;
   preventive_interval_type?: "days" | "months" | "years" | null;
   preventive_interval_value?: number | null;
+  visible_in_service_order?: boolean;
+  visible_in_pmoc?: boolean;
+  visible_in_contract?: boolean;
   product_inputs?: ServiceProductInputPayload[];
 };
 
@@ -113,7 +137,12 @@ function jsonHeaders(): HeadersInit {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
-export async function listServices(params?: { q?: string; skip?: number; limit?: number }): Promise<ServiceOut[]> {
+export async function listServices(params?: {
+  q?: string;
+  skip?: number;
+  limit?: number;
+  context?: "service_order" | "pmoc" | "contract";
+}): Promise<ServiceOut[]> {
   const q = params?.q?.trim();
   const skip = params?.skip ?? 0;
   const limit = clampApiLimit(params?.limit, 50);
@@ -121,6 +150,7 @@ export async function listServices(params?: { q?: string; skip?: number; limit?:
   sp.set("skip", String(skip));
   sp.set("limit", String(limit));
   if (q) sp.set("q", q);
+  if (params?.context) sp.set("context", params.context);
   const response = await fetch(apiUrl(`/api/v1/services?${sp.toString()}`), { headers: bearer() });
   const body = await parseBody(response);
   if (!response.ok) {

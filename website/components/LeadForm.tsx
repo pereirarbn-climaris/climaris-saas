@@ -4,8 +4,8 @@ import { FormEvent, useState } from "react";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { DemoBookingCalendar } from "@/components/DemoBookingCalendar";
 import { LgpdConsentField } from "@/components/LgpdConsentField";
-import { submitDemoAppointment } from "@/lib/api";
-import { cta, technicianTeamOptions } from "@/lib/site-config";
+import { submitDemoAppointment, submitLead } from "@/lib/api";
+import { cta, demoSchedulingEnabled, publicCtaLabel, technicianTeamOptions } from "@/lib/site-config";
 
 type FormState = "idle" | "loading" | "success" | "error";
 
@@ -15,7 +15,11 @@ type Props = {
   submitLabel?: string;
 };
 
-export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary }: Props) {
+export function LeadForm({
+  onSuccess,
+  compact = false,
+  submitLabel = publicCtaLabel(),
+}: Props) {
   const [state, setState] = useState<FormState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -30,7 +34,7 @@ export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary
     const form = event.currentTarget;
     const data = new FormData(form);
 
-    if (!scheduledAt) {
+    if (demoSchedulingEnabled && !scheduledAt) {
       setState("error");
       setError("Selecione um horário para a demonstração.");
       return;
@@ -43,7 +47,11 @@ export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary
     }
 
     if (String(data.get("hp_trap") ?? "").trim()) {
-      setSuccessMessage("Demonstração agendada com sucesso! Você receberá a confirmação por e-mail e WhatsApp.");
+      setSuccessMessage(
+        demoSchedulingEnabled
+          ? "Demonstração agendada com sucesso! Você receberá a confirmação por e-mail e WhatsApp."
+          : cta.leadSuccess,
+      );
       setState("success");
       form.reset();
       setScheduledAt(null);
@@ -51,17 +59,27 @@ export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary
     }
 
     try {
-      const result = await submitDemoAppointment({
+      const base = {
         name: String(data.get("name") ?? ""),
         email: String(data.get("email") ?? ""),
         phone: String(data.get("phone") ?? "") || undefined,
         company: String(data.get("company") ?? "") || undefined,
         job_title: String(data.get("job_title") ?? "") || undefined,
         technicians_count: String(data.get("technicians_count") ?? "") || undefined,
-        scheduled_at: scheduledAt,
-        lgpd_consent: true,
-      });
-      setSuccessMessage(result.message);
+        lgpd_consent: true as const,
+      };
+
+      if (demoSchedulingEnabled) {
+        const result = await submitDemoAppointment({
+          ...base,
+          scheduled_at: scheduledAt!,
+        });
+        setSuccessMessage(result.message);
+      } else {
+        const result = await submitLead(base);
+        setSuccessMessage(result.message || cta.leadSuccess);
+      }
+
       setState("success");
       form.reset();
       setScheduledAt(null);
@@ -92,6 +110,9 @@ export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary
       </div>
     );
   }
+
+  const submitDisabled =
+    state === "loading" || !lgpdConsent || (demoSchedulingEnabled && !scheduledAt);
 
   return (
     <form onSubmit={handleSubmit} className={compact ? "space-y-4" : "space-y-5"} noValidate>
@@ -169,7 +190,9 @@ export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary
         </div>
       </div>
 
-      <DemoBookingCalendar value={scheduledAt} onChange={setScheduledAt} />
+      {demoSchedulingEnabled ? (
+        <DemoBookingCalendar value={scheduledAt} onChange={setScheduledAt} />
+      ) : null}
 
       <LgpdConsentField checked={lgpdConsent} onChange={setLgpdConsent} />
 
@@ -179,11 +202,7 @@ export function LeadForm({ onSuccess, compact = false, submitLabel = cta.primary
         </p>
       ) : null}
 
-      <button
-        type="submit"
-        className="btn-primary w-full sm:w-auto"
-        disabled={state === "loading" || !scheduledAt || !lgpdConsent}
-      >
+      <button type="submit" className="btn-primary w-full sm:w-auto" disabled={submitDisabled}>
         {state === "loading" ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />

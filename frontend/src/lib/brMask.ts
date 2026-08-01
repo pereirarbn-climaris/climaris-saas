@@ -22,6 +22,23 @@ export function formatCnpjInput(raw: string): string {
   return `${x.slice(0, 2)}.${x.slice(2, 5)}.${x.slice(5, 8)}/${x.slice(8, 12)}-${x.slice(12)}`;
 }
 
+/** Valida dígitos verificadores de CNPJ (14 dígitos). */
+export function isValidCnpjDigits(raw: string): boolean {
+  const d = digitsOnly(raw);
+  if (d.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(d)) return false;
+  const nums = d.split("").map((c) => Number(c));
+  const calc = (weights: number[]) => {
+    const sum = weights.reduce((acc, w, i) => acc + w * nums[i], 0);
+    const mod = sum % 11;
+    return mod < 2 ? 0 : 11 - mod;
+  };
+  const d1 = calc([5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  if (nums[12] !== d1) return false;
+  const d2 = calc([6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  return nums[13] === d2;
+}
+
 /** CEP: 00000-000 (até 8 dígitos). */
 export function formatCepInput(raw: string): string {
   const x = digitsOnly(raw).slice(0, 8);

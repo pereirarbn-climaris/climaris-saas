@@ -16,7 +16,7 @@ export function FloatingChatButton({ onClick, ariaExpanded = false }: Props) {
       aria-expanded={ariaExpanded}
       aria-haspopup="dialog"
     >
-      <IrisAvatar size="md" className={styles.avatar} />
+      <IrisAvatar size="lg" className={styles.avatar} />
       <span className={styles.pulse} aria-hidden />
     </button>
   );

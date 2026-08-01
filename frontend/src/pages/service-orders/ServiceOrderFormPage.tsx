@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { listTenantUsers } from "../../api/auth";
-import { listClientHvacEquipments, listClientsAll } from "../../api/clients";
+import { listClientsAll, listClientSites, type ClientSiteOut } from "../../api/clients";
 import { listProducts } from "../../api/products";
 import { listServices } from "../../api/services";
 import {
@@ -45,7 +45,16 @@ import {
   computeDiscountAmountFromView,
   computeOrderTotalFromView,
 } from "../../lib/serviceOrderDiscount";
-import { COMPANY_TECHNICIAN_ID, technicianIdsForApi } from "../../lib/serviceOrderCompanyTechnician";
+import {
+  clientSiteIdForApi,
+  loadServiceOrderEquipmentsForSite,
+  SERVICE_ORDER_MATRIX_SITE_VALUE,
+} from "../../lib/serviceOrderClientSite";
+import {
+  COMPANY_TECHNICIAN_ID,
+  scheduleTechniciansChanged,
+  technicianIdsForApi,
+} from "../../lib/serviceOrderCompanyTechnician";
 import { buildSchedulingTechnicians } from "../../lib/serviceOrderSchedulingTechnicians";
 import { syncGarantiaEquipmentToClient } from "../../lib/serviceOrderGarantiaEquipmentSync";
 import { isVacuoPendingUpload, syncAllGarantiaVacuumPending } from "../../lib/garantiaVacuumSync";
@@ -96,6 +105,9 @@ export function ServiceOrderFormPage() {
     () => buildSchedulingTechnicians(tecnicos, ctx?.tenant?.trade_name ?? ctx?.tenant?.name),
     [tecnicos, ctx?.tenant?.trade_name, ctx?.tenant?.name],
   );
+  const [clientSites, setClientSites] = useState<ClientSiteOut[]>([]);
+  const [loadingClientSites, setLoadingClientSites] = useState(false);
+  const [activeClientId, setActiveClientId] = useState("");
   const [equipamentosCliente, setEquipamentosCliente] = useState<ReturnType<typeof mapEquipmentsToFormView>>([]);
   const [servicesCatalog, setServicesCatalog] = useState<Awaited<ReturnType<typeof listServices>>>([]);
   const [productsCatalog, setProductsCatalog] = useState<Awaited<ReturnType<typeof listProducts>>>([]);
@@ -113,6 +125,7 @@ export function ServiceOrderFormPage() {
   const [error, setError] = useState<string | null>(null);
   const [complianceBlock, setComplianceBlock] = useState<ServiceOrderMissingRequirement[] | null>(null);
   const [digitalWorkOrderId, setDigitalWorkOrderId] = useState<string | null>(null);
+  const createInFlightRef = useRef(false);
 
   const isAssignedTech = useMemo(
     () => (orderRow && isTechnician ? isAssignedTechnician(orderRow, userId) : false),
@@ -184,14 +197,33 @@ export function ServiceOrderFormPage() {
     return orderRow.status === "scheduled" || orderRow.status === "approved" || orderRow.status === "in_progress";
   }, [isNew, orderRow, canEditGeneral]);
 
-  const loadEquipments = useCallback(async (clientId: string) => {
+  const loadClientSites = useCallback(async (clientId: string) => {
+    const cid = Number(clientId);
+    if (!Number.isFinite(cid) || cid < 1) {
+      setClientSites([]);
+      return [];
+    }
+    setLoadingClientSites(true);
+    try {
+      const rows = await listClientSites(cid);
+      setClientSites(rows);
+      return rows;
+    } catch {
+      setClientSites([]);
+      return [];
+    } finally {
+      setLoadingClientSites(false);
+    }
+  }, []);
+
+  const loadEquipments = useCallback(async (clientId: string, siteId?: string) => {
     const cid = Number(clientId);
     if (!Number.isFinite(cid) || cid < 1) {
       setEquipamentosCliente([]);
       return;
     }
     try {
-      const rows = await listClientHvacEquipments(cid, { only_active: true });
+      const rows = await loadServiceOrderEquipmentsForSite(cid, clientSiteIdForApi(siteId));
       setEquipamentosCliente(mapEquipmentsToFormView(rows));
     } catch {
       setEquipamentosCliente([]);
@@ -205,7 +237,7 @@ export function ServiceOrderFormPage() {
         const [clients, users, services, products] = await Promise.all([
           listClientsAll(),
           listTenantUsers({ limit: API_MAX_PAGE_LIMIT }),
-          listServices({ limit: API_MAX_PAGE_LIMIT }),
+          listServices({ limit: API_MAX_PAGE_LIMIT, context: "service_order" }),
           listProducts({ limit: API_MAX_PAGE_LIMIT }),
         ]);
         if (cancelled) return;
@@ -338,8 +370,10 @@ export function ServiceOrderFormPage() {
         }
         setServiceOrder(view);
         setOrderRow(order);
+        setActiveClientId(view.clienteId);
         setSchedulingPanelKey(`order-${order.id}-${order.schedule?.starts_at ?? "none"}-${order.status}`);
-        await loadEquipments(view.clienteId);
+        await loadClientSites(view.clienteId);
+        await loadEquipments(view.clienteId, view.clientSiteId);
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Erro ao carregar ordem de serviço.");
@@ -351,7 +385,7 @@ export function ServiceOrderFormPage() {
     return () => {
       cancelled = true;
     };
-  }, [isNew, orderId, idNum, loadEquipments, isTechnician, userId, searchParams]);
+  }, [isNew, orderId, idNum, loadEquipments, loadClientSites, isTechnician, userId, searchParams]);
 
   useEffect(() => {
     if (!orderRow || productsCatalog.length === 0) return;
@@ -362,9 +396,19 @@ export function ServiceOrderFormPage() {
 
   const handleClienteChange = useCallback(
     (clienteId: string) => {
-      void loadEquipments(clienteId);
+      setActiveClientId(clienteId);
+      void loadClientSites(clienteId);
+      void loadEquipments(clienteId, SERVICE_ORDER_MATRIX_SITE_VALUE);
     },
-    [loadEquipments],
+    [loadClientSites, loadEquipments],
+  );
+
+  const handleClientSiteChange = useCallback(
+    (siteId: string) => {
+      if (!activeClientId) return;
+      void loadEquipments(activeClientId, siteId);
+    },
+    [loadEquipments, activeClientId],
   );
 
   const handleSuggestSlots = useCallback(
@@ -443,7 +487,7 @@ export function ServiceOrderFormPage() {
     }
   }, [orderRow, canStartAttendance, productsCatalog]);
 
-  const handleCompleteOrder = useCallback(async (options?: { forceClose?: boolean }) => {
+  const handleCompleteOrder = useCallback(async (options?: { forceClose?: boolean; dataRealizacao?: string }) => {
     if (!orderRow || !canCompleteOrder) return;
     setIsCompleting(true);
     if (!options?.forceClose) {
@@ -451,7 +495,10 @@ export function ServiceOrderFormPage() {
       setDigitalWorkOrderId(null);
     }
     try {
-      await patchServiceOrderStatus(orderRow.id, "done", { force_close: options?.forceClose });
+      await patchServiceOrderStatus(orderRow.id, "done", {
+        force_close: options?.forceClose,
+        data_realizacao: options?.dataRealizacao ?? null,
+      });
       setComplianceBlock(null);
       setDigitalWorkOrderId(null);
       await refreshOrderState(orderRow.id);
@@ -585,6 +632,9 @@ export function ServiceOrderFormPage() {
             toast.error("Sem permissão para criar ordem de serviço.");
             return;
           }
+          if (createInFlightRef.current) return;
+          createInFlightRef.current = true;
+
           const payload = viewDataToCreatePayload(saveData, {
             clientName,
             services: servicesCatalog,
@@ -593,15 +643,31 @@ export function ServiceOrderFormPage() {
           console.log("Payload enviado para a OS:", payload);
           const created = await createServiceOrder(payload);
           const startsAt = buildScheduleStartsAt(saveData);
+          let scheduleError: string | null = null;
           if (startsAt) {
-            await approveServiceOrder(created.id, {
-              starts_at: startsAt,
-              technician_ids: technicianIdsForApi(saveData.tecnicoId),
-              notes: saveData.observacoesInternas?.trim() || undefined,
-            });
+            try {
+              await approveServiceOrder(created.id, {
+                starts_at: startsAt,
+                technician_ids: technicianIdsForApi(saveData.tecnicoId),
+                notes: saveData.observacoesInternas?.trim() || undefined,
+              });
+            } catch (scheduleErr) {
+              scheduleError =
+                scheduleErr instanceof Error ? scheduleErr.message : "Não foi possível agendar a OS.";
+            }
           }
-          toast.success("Ordem de serviço criada.");
+
           navigate(`/app/service-orders/${created.id}`, { replace: true });
+
+          if (scheduleError) {
+            toast.error(
+              `OS #${created.id} criada, mas o agendamento falhou: ${scheduleError} Corrija a data/hora e salve novamente nesta OS.`,
+            );
+          } else if (startsAt) {
+            toast.success("Ordem de serviço criada e agendada.");
+          } else {
+            toast.success("Ordem de serviço criada. Informe data e hora e salve para agendar.");
+          }
           return;
         }
 
@@ -640,7 +706,10 @@ export function ServiceOrderFormPage() {
         }
 
         const detailsPayload = buildOrderDetailsPayload(saveData);
-        const osDetailsPayload = { description: detailsPayload.description };
+        const osDetailsPayload = {
+          description: detailsPayload.description,
+          client_site_id: clientSiteIdForApi(saveData.clientSiteId) ?? null,
+        };
         console.log("Payload enviado para a OS:", {
           orderId,
           details: osDetailsPayload,
@@ -687,7 +756,14 @@ export function ServiceOrderFormPage() {
           const startsAt = buildScheduleStartsAt(saveData);
           if (startsAt && refreshed.schedule?.id) {
             const currentStart = refreshed.schedule.starts_at;
-            if (new Date(currentStart).getTime() !== new Date(startsAt).getTime()) {
+            const startChanged =
+              new Date(currentStart).getTime() !== new Date(startsAt).getTime();
+            const techniciansChanged = scheduleTechniciansChanged(
+              refreshed.technician_ids,
+              saveData.tecnicoId,
+              true,
+            );
+            if (startChanged || techniciansChanged) {
               await rescheduleSchedule(refreshed.schedule.id, {
                 starts_at: startsAt,
                 technician_ids: technicianIdsForApi(saveData.tecnicoId),
@@ -721,6 +797,7 @@ export function ServiceOrderFormPage() {
           toast.error(message);
         }
       } finally {
+        createInFlightRef.current = false;
         setIsSaving(false);
       }
     },
@@ -806,6 +883,9 @@ export function ServiceOrderFormPage() {
         onSave={handleSave}
         onCancel={() => navigate(isTechnician ? "/app/tecnico" : "/app/service-orders")}
         onClienteChange={handleClienteChange}
+        clientSites={clientSites}
+        loadingClientSites={loadingClientSites}
+        onClientSiteChange={handleClientSiteChange}
         orderId={!isNew && Number.isFinite(idNum) ? idNum : undefined}
         onSuggestSlots={handleSuggestSlots}
         linesReadOnly={linesReadOnly}

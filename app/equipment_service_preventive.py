@@ -12,10 +12,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.equipment_preventive_reminder import equipment_is_preventive_reminder_only
 from app.equipment_preventive_rules import compute_next_due_datetime, get_tenant_equipment
-from app.preventive_maintenance import client_whatsapp_destination, tenant_local_date
+from app.preventive_maintenance import (
+    client_site_header_label,
+    preventive_whatsapp_destination,
+    tenant_local_date,
+)
 from app.services.service_preventive_config import preventive_config_from_service
 from models import (
     Client,
+    ClientSite,
     Equipment,
     EquipmentServicePreventiveOverride,
     EquipmentServicePreventiveSchedule,
@@ -126,6 +131,7 @@ def _schedule_row_to_dict(
         "pending_service_order_id": None,
         "awaiting_completion": False,
         "has_override": override is not None and override.is_active,
+        "is_active": bool(schedule.is_active),
     }
 
 
@@ -475,6 +481,7 @@ def _pending_schedules_from_open_orders(
                 "pending_service_order_id": order.id,
                 "awaiting_completion": True,
                 "has_override": override is not None and override.is_active,
+                "is_active": True,
             }
     return list(pending.values())
 
@@ -493,7 +500,6 @@ def list_equipment_service_preventive_schedules(
             select(EquipmentServicePreventiveSchedule)
             .where(
                 EquipmentServicePreventiveSchedule.equipment_id == equipment_id,
-                EquipmentServicePreventiveSchedule.is_active.is_(True),
                 EquipmentServicePreventiveSchedule.next_due_at.isnot(None),
             )
             .options(joinedload(EquipmentServicePreventiveSchedule.service))
@@ -527,6 +533,52 @@ def list_equipment_service_preventive_schedules(
 
     out.sort(key=lambda item: item["service_name"].lower())
     return out
+
+
+def set_equipment_service_preventive_active(
+    db: Session,
+    *,
+    tenant_id: int,
+    equipment_id: int,
+    service_id: int,
+    is_active: bool,
+) -> dict[str, Any]:
+    get_tenant_equipment(db, tenant_id=tenant_id, equipment_id=equipment_id)
+    service = db.execute(
+        select(Service).where(Service.id == service_id, Service.tenant_id == tenant_id)
+    ).scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Serviço não encontrado.")
+    if not service.preventive_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ative a gestão preventiva no cadastro do serviço antes de usar este controle.",
+        )
+
+    override = db.execute(
+        select(EquipmentServicePreventiveOverride).where(
+            EquipmentServicePreventiveOverride.equipment_id == equipment_id,
+            EquipmentServicePreventiveOverride.service_id == service_id,
+            EquipmentServicePreventiveOverride.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+    schedule = db.execute(
+        select(EquipmentServicePreventiveSchedule).where(
+            EquipmentServicePreventiveSchedule.equipment_id == equipment_id,
+            EquipmentServicePreventiveSchedule.service_id == service_id,
+        )
+    ).scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agenda preventiva não encontrada. Conclua uma OS deste serviço para habilitar o controle.",
+        )
+
+    schedule.is_active = bool(is_active)
+    db.add(schedule)
+    db.commit()
+    db.refresh(schedule)
+    return _schedule_row_to_dict(schedule, service=service, override=override)
 
 
 def upsert_equipment_service_preventive_override(
@@ -652,6 +704,7 @@ def _schedule_to_preventive_item(
     schedule: EquipmentServicePreventiveSchedule,
     service: Service,
     today: date,
+    site: ClientSite | None = None,
 ) -> dict[str, Any]:
     next_due = schedule.next_due_at
     if next_due is None:
@@ -668,9 +721,18 @@ def _schedule_to_preventive_item(
             last_at = last_at.replace(tzinfo=timezone.utc)
         last_date = last_at.date()
 
-    ok_wa, dest = client_whatsapp_destination(client)
+    resolved_site = site
+    if resolved_site is None and getattr(equipment, "client_site", None) is not None:
+        resolved_site = equipment.client_site
+    ok_wa, dest = preventive_whatsapp_destination(client, resolved_site)
     ident = (equipment.identificacao or equipment.local_instalacao or equipment.ambiente_nome or "").strip()
     tipo = equipment.tipo.value if equipment.tipo is not None else None
+    site_id = int(resolved_site.id) if resolved_site is not None else (
+        int(equipment.client_site_id) if equipment.client_site_id else None
+    )
+    site_name = (resolved_site.name or "").strip() if resolved_site is not None else None
+    site_type = (resolved_site.site_type or "").strip().lower() if resolved_site is not None else None
+    site_label = client_site_header_label(resolved_site)
 
     return {
         "historico_servico_id": 0,
@@ -679,6 +741,10 @@ def _schedule_to_preventive_item(
         "is_manual_reminder": _schedule_is_manual_reminder(schedule),
         "client_id": client.id,
         "client_name": client.name,
+        "client_site_id": site_id,
+        "client_site_name": site_name or None,
+        "client_site_type": site_type or None,
+        "client_site_label": site_label,
         "service_id": int(service.id),
         "service_name": str(service.name),
         "equipment_id": equipment.id,
@@ -1009,10 +1075,11 @@ def list_preventive_items_by_equipment_month(
         month_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
     rows = db.execute(
-        select(EquipmentServicePreventiveSchedule, Equipment, Client, Service)
+        select(EquipmentServicePreventiveSchedule, Equipment, Client, Service, ClientSite)
         .join(Equipment, Equipment.id == EquipmentServicePreventiveSchedule.equipment_id)
         .join(Client, Client.id == Equipment.client_id)
         .join(Service, Service.id == EquipmentServicePreventiveSchedule.service_id)
+        .outerjoin(ClientSite, ClientSite.id == Equipment.client_site_id)
         .where(
             Client.tenant_id == tenant_id,
             Equipment.ativo.is_(True),
@@ -1027,7 +1094,7 @@ def list_preventive_items_by_equipment_month(
     ).all()
 
     flat: list[dict[str, Any]] = []
-    for schedule, equipment, client, service in rows:
+    for schedule, equipment, client, service, site in rows:
         if bool(client.preventive_campaign_opt_out):
             continue
         flat.append(
@@ -1037,6 +1104,7 @@ def list_preventive_items_by_equipment_month(
                 schedule=schedule,
                 service=service,
                 today=today,
+                site=site,
             )
         )
 
@@ -1060,24 +1128,32 @@ def list_preventive_items_by_equipment_month(
         )
     )
 
-    legacy_by_client: dict[int, dict[str, Any]] = {}
+    legacy_by_client: dict[tuple[int, int | None], dict[str, Any]] = {}
     for row in flat:
         cid = int(row["client_id"])
-        if cid not in legacy_by_client:
-            legacy_by_client[cid] = {
+        site_id = int(row["client_site_id"]) if row.get("client_site_id") else None
+        key = (cid, site_id)
+        if key not in legacy_by_client:
+            legacy_by_client[key] = {
                 "client_id": cid,
                 "client_name": row["client_name"],
+                "client_site_id": site_id,
+                "client_site_name": row.get("client_site_name"),
+                "client_site_type": row.get("client_site_type"),
+                "client_site_label": row.get("client_site_label"),
                 "whatsapp_valido": row["whatsapp_valido"],
                 "whatsapp_destino": row.get("whatsapp_destino"),
                 "equipments": [],
             }
-        legacy_by_client[cid]["equipments"].append(row)
+        legacy_by_client[key]["equipments"].append(row)
 
     clients = sorted(
         legacy_by_client.values(),
         key=lambda g: (
-            g["equipments"][0]["dias_ate_vencimento"] if g["equipments"] else 999,
             g["client_name"].lower(),
+            0 if (g.get("client_site_type") or "").lower() == "matriz" else (1 if g.get("client_site_id") else 2),
+            str(g.get("client_site_name") or "").lower(),
+            g["equipments"][0]["dias_ate_vencimento"] if g["equipments"] else 999,
         ),
     )
 
@@ -1106,10 +1182,11 @@ def list_schedule_preventive_items_in_window(
     deadline = today + timedelta(days=max(0, window_days))
 
     rows = db.execute(
-        select(EquipmentServicePreventiveSchedule, Equipment, Client, Service)
+        select(EquipmentServicePreventiveSchedule, Equipment, Client, Service, ClientSite)
         .join(Equipment, Equipment.id == EquipmentServicePreventiveSchedule.equipment_id)
         .join(Client, Client.id == Equipment.client_id)
         .join(Service, Service.id == EquipmentServicePreventiveSchedule.service_id)
+        .outerjoin(ClientSite, ClientSite.id == Equipment.client_site_id)
         .where(
             Client.tenant_id == tenant_id,
             Equipment.ativo.is_(True),
@@ -1122,7 +1199,7 @@ def list_schedule_preventive_items_in_window(
     ).all()
 
     flat: list[dict[str, Any]] = []
-    for schedule, equipment, client, service in rows:
+    for schedule, equipment, client, service, site in rows:
         if bool(client.preventive_campaign_opt_out):
             continue
         next_due = schedule.next_due_at
@@ -1140,6 +1217,7 @@ def list_schedule_preventive_items_in_window(
                 schedule=schedule,
                 service=service,
                 today=today,
+                site=site,
             )
         )
 
@@ -1172,18 +1250,38 @@ def find_preventive_group_for_client_month(
     client_id: int,
     year: int,
     month: int,
+    client_site_id: int | None = None,
 ) -> dict[str, Any] | None:
-    """Grupo de envio WhatsApp para um cliente no mês exibido na Gestão Preventiva."""
+    """Grupo de envio WhatsApp para um cliente (e filial, se informada) no mês da Gestão Preventiva."""
     payload = list_preventive_items_by_equipment_month(
         db,
         tenant_id=tenant_id,
         year=year,
         month=month,
     )
+    wanted_site = int(client_site_id) if client_site_id is not None else None
     client_group = next(
-        (g for g in payload.get("clients", []) if int(g["client_id"]) == int(client_id)),
+        (
+            g
+            for g in payload.get("clients", [])
+            if int(g["client_id"]) == int(client_id)
+            and (
+                (g.get("client_site_id") is None and wanted_site is None)
+                or (
+                    g.get("client_site_id") is not None
+                    and wanted_site is not None
+                    and int(g["client_site_id"]) == wanted_site
+                )
+            )
+        ),
         None,
     )
+    if client_group is None and wanted_site is None:
+        # Compat: se a UI antiga não envia filial, usa o primeiro grupo do cliente.
+        client_group = next(
+            (g for g in payload.get("clients", []) if int(g["client_id"]) == int(client_id)),
+            None,
+        )
     if client_group is None:
         return None
     items = [row for row in client_group.get("equipments", []) if row.get("whatsapp_valido")]
@@ -1195,6 +1293,10 @@ def find_preventive_group_for_client_month(
     return {
         "client_id": int(client_id),
         "client_name": str(client_group["client_name"]),
+        "client_site_id": client_group.get("client_site_id"),
+        "client_site_name": client_group.get("client_site_name"),
+        "client_site_type": client_group.get("client_site_type"),
+        "client_site_label": client_group.get("client_site_label"),
         "due_year": int(due.year),
         "due_month": int(due.month),
         "whatsapp_valido": True,

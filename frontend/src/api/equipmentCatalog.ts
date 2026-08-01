@@ -74,6 +74,8 @@ export type EquipmentManualListOut = {
 
 export type EquipmentCatalogComponentType = "UNICO" | "EVAPORADORA" | "CONDENSADORA";
 
+export type CatalogWriteAction = "created" | "updated" | "unchanged";
+
 export type EquipmentCatalogOut = {
   id: string;
   category_id: string;
@@ -90,6 +92,8 @@ export type EquipmentCatalogOut = {
   manual_id: string | null;
   manual: EquipmentManualBriefOut | null;
   manual_url: string | null;
+  catalog_action?: CatalogWriteAction | null;
+  catalog_filled_fields?: string[] | null;
 };
 
 export type EquipmentCatalogListOut = {
@@ -131,6 +135,9 @@ export type ClientEquipmentOut = {
   tag: string;
   installation_reference?: string | null;
   installation_date: string | null;
+  manufacture_year?: number | null;
+  gas_charge_kg?: number | null;
+  notes?: string | null;
   is_active: boolean;
   legacy_equipment_id: number | null;
   legacy_fabricante?: string | null;
@@ -142,6 +149,26 @@ export type ClientEquipmentOut = {
   components: ClientEquipmentComponentOut[];
   can_delete?: boolean;
   delete_block_reason?: string | null;
+  /** true quando o equipamento foi cadastrado sem marca/modelo conhecidos
+   * (placeholder "a identificar") — precisa ser identificado em campo. */
+  pending_identification?: boolean;
+};
+
+export type ClientEquipmentIdentifyPayload = {
+  catalog_id: string;
+  serial_number?: string | null;
+};
+
+/** Mesmo formato de `EquipmentLabelResolveOut` (api/equipmentCatalogAi.ts). */
+export type PendingIdentificationCatalogOut = {
+  equipment_kind: string;
+  catalog_id: string;
+  catalog_created: boolean;
+  category_id: string;
+  category_name: string;
+  brand: string;
+  model_display: string;
+  suggested_identificacao?: string | null;
 };
 
 export type ClientEquipmentManualOut = {
@@ -164,6 +191,9 @@ export type ClientEquipmentCreatePayload = {
   installation_reference?: string | null;
   client_site_id?: number | null;
   installation_date?: string | null;
+  manufacture_year?: number | null;
+  gas_charge_kg?: number | null;
+  notes?: string | null;
   qrcode_code_id?: string | null;
   components: ClientEquipmentComponentCreatePayload[];
   /** Legado: um único componente */
@@ -274,6 +304,95 @@ export async function listEquipmentManuals(): Promise<EquipmentManualListOut> {
   return body as EquipmentManualListOut;
 }
 
+// ---------------------------------------------------------------------------
+// Cadastro via manual (IA): upload avulso + extração estruturada de especificações
+// e códigos de erro, para revisão antes de criar itens no catálogo.
+// ---------------------------------------------------------------------------
+
+export type EquipmentManualUploadOut = {
+  id: string;
+  title: string;
+  s3_url: string;
+  ingestion_status: string;
+  extraction_status: string;
+};
+
+export type EquipmentManualExtractionCandidateOut = {
+  marca: string | null;
+  modelo: string | null;
+  modelo_evaporadora: string | null;
+  modelo_condensadora: string | null;
+  categoria_sugerida: string | null;
+  component_type_sugerido: string | null;
+  capacidade: string | null;
+  fluido_refrigerante: string | null;
+  tensao: string | null;
+  tecnologia: string | null;
+  especificacoes_tecnicas: Record<string, string | number | boolean>;
+  confianca: string | null;
+  paginas_origem: number[];
+};
+
+export type EquipmentManualErrorCodeOut = {
+  id: string;
+  codigo: string;
+  titulo: string;
+  descricao: string;
+  causa_provavel: string | null;
+  acao_recomendada: string | null;
+  pagina_origem: number | null;
+};
+
+export type EquipmentManualExtractionOut = {
+  manual_id: string;
+  extraction_status: "pending" | "processing" | "ready" | "failed" | string;
+  extraction_error: string | null;
+  extracted_at: string | null;
+  documento: { tipo_manual?: string; resumo?: string };
+  equipamentos: EquipmentManualExtractionCandidateOut[];
+  avisos: string[];
+  error_codes: EquipmentManualErrorCodeOut[];
+};
+
+export async function uploadStandaloneManual(file: File, title?: string): Promise<EquipmentManualUploadOut> {
+  const form = new FormData();
+  form.set("file", file);
+  if (title?.trim()) form.set("title", title.trim());
+  const response = await fetch(apiUrl("/api/v1/equipment-catalog/manuals/upload"), {
+    method: "POST",
+    headers: bearer(),
+    body: form,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível enviar o manual.", response.status));
+  }
+  return body as EquipmentManualUploadOut;
+}
+
+export async function triggerManualAiExtraction(manualId: string): Promise<EquipmentManualExtractionOut> {
+  const response = await fetch(apiUrl(`/api/v1/equipment-catalog/manuals/${manualId}/extract`), {
+    method: "POST",
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível iniciar a leitura do manual pela IA.", response.status));
+  }
+  return body as EquipmentManualExtractionOut;
+}
+
+export async function getManualAiExtraction(manualId: string): Promise<EquipmentManualExtractionOut> {
+  const response = await fetch(apiUrl(`/api/v1/equipment-catalog/manuals/${manualId}/extraction`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível obter o resultado da extração.", response.status));
+  }
+  return body as EquipmentManualExtractionOut;
+}
+
 export type EquipmentCatalogDuplicateCheckOut = {
   exists: boolean;
   catalog_id: string | null;
@@ -372,7 +491,15 @@ export async function createEquipmentCatalog(form: FormData): Promise<EquipmentC
   return body as EquipmentCatalogOut;
 }
 
-export async function createEquipmentCatalogWithExistingManual(form: FormData): Promise<EquipmentCatalogOut> {
+export interface CreateCatalogResult {
+  entry: EquipmentCatalogOut;
+  action: CatalogWriteAction;
+  filledFields: string[];
+}
+
+export async function createEquipmentCatalogWithExistingManual(
+  form: FormData,
+): Promise<CreateCatalogResult> {
   const response = await fetch(apiUrl("/api/v1/equipment-catalog/with-existing-manual"), {
     method: "POST",
     headers: bearer(),
@@ -386,7 +513,23 @@ export async function createEquipmentCatalogWithExistingManual(form: FormData): 
         : "Não foi possível cadastrar o modelo no catálogo.";
     throw new Error(errorMessage(body, fallback, response.status));
   }
-  return body as EquipmentCatalogOut;
+  const entry = body as EquipmentCatalogOut;
+  const fromBody = (entry.catalog_action || "").toLowerCase();
+  const fromHeader = (response.headers.get("X-Catalog-Action") || "").toLowerCase();
+  const rawAction = fromBody || fromHeader || "created";
+  const action: CatalogWriteAction =
+    rawAction === "updated" || rawAction === "unchanged" ? rawAction : "created";
+  const filledFromBody = entry.catalog_filled_fields || [];
+  const filledRaw = response.headers.get("X-Catalog-Filled-Fields") || "";
+  const filledFromHeader = filledRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return {
+    entry,
+    action,
+    filledFields: filledFromBody.length > 0 ? filledFromBody : filledFromHeader,
+  };
 }
 
 export async function updateEquipmentCatalog(
@@ -440,6 +583,9 @@ export type ClientEquipmentUpdatePayload = {
   tag?: string;
   installation_reference?: string | null;
   installation_date?: string | null;
+  manufacture_year?: number | null;
+  gas_charge_kg?: number | null;
+  notes?: string | null;
   is_active?: boolean;
   client_site_id?: number | null;
   qrcode_code_id?: string | null;
@@ -529,4 +675,40 @@ export async function deleteClientCatalogEquipment(equipmentId: string): Promise
   if (response.status === 204) return;
   const body = await parseBody(response);
   throw new Error(errorMessage(body, "Não foi possível excluir o equipamento.", response.status));
+}
+
+/**
+ * Retorna (criando se necessário) o item de catálogo placeholder usado
+ * quando ainda não se sabe a marca/modelo do equipamento — fluxo
+ * "Não sei a marca/modelo — identificar depois em campo".
+ */
+export async function fetchPendingIdentificationCatalog(
+  equipmentKind: "ar_condicionado" | "climatizador",
+): Promise<PendingIdentificationCatalogOut> {
+  const response = await fetch(
+    apiUrl(`/api/v1/equipment-catalog/pending-identification?equipment_kind=${equipmentKind}`),
+    { headers: bearer() },
+  );
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível preparar o cadastro sem marca/modelo.", response.status));
+  }
+  return body as PendingIdentificationCatalogOut;
+}
+
+/** Substitui o componente "a identificar" pela marca/modelo real (identificação em campo). */
+export async function identifyClientCatalogEquipment(
+  equipmentId: string,
+  payload: ClientEquipmentIdentifyPayload,
+): Promise<ClientEquipmentOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/equipments/${equipmentId}/identify`), {
+    method: "PATCH",
+    headers: { ...bearer(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível identificar o equipamento.", response.status));
+  }
+  return body as ClientEquipmentOut;
 }

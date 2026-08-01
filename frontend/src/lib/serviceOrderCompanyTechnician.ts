@@ -28,6 +28,24 @@ export function technicianIdFromApi(ids: number[] | null | undefined, hasSchedul
   return "";
 }
 
+function normalizeTechnicianIdsForCompare(ids: number[] | undefined): number[] {
+  return ids?.length ? [...ids].sort((a, b) => a - b) : [];
+}
+
+/** Indica se o técnico do formulário difere do agendamento salvo na API. */
+export function scheduleTechniciansChanged(
+  currentIds: number[] | null | undefined,
+  tecnicoId: string | null | undefined,
+  hasSchedule: boolean,
+): boolean {
+  const desired = normalizeTechnicianIdsForCompare(technicianIdsForApi(tecnicoId));
+  const current = normalizeTechnicianIdsForCompare(
+    technicianIdsForApi(technicianIdFromApi(currentIds, hasSchedule)),
+  );
+  if (desired.length !== current.length) return true;
+  return desired.some((id, index) => id !== current[index]);
+}
+
 export function companyTechnicianLabel(companyName?: string | null): string {
   const name = (companyName ?? "").trim() || "Empresa";
   return `${name} (expediente da empresa)`;

@@ -10,7 +10,7 @@ import { SiteShell } from "@/components/SiteShell";
 import { SocialProofSection } from "@/components/SocialProofSection";
 import { WhyClimarisSection } from "@/components/WhyClimarisSection";
 import { buildPageMetadata } from "@/lib/metadata";
-import { cta, siteConfig } from "@/lib/site-config";
+import { publicCtaLabel, siteConfig } from "@/lib/site-config";
 
 export const metadata = buildPageMetadata({
   title: "ERP e Sistema de Gestão para Empresas de Refrigeração",
@@ -61,13 +61,13 @@ export default function HomePage() {
               Pronto para modernizar a gestão da sua empresa?
             </h2>
             <p className="text-text-muted">
-              Agende uma demonstração personalizada e veja como o {siteConfig.name} organiza contratos,
-              orçamentos e conformidade técnica na prática.
+              Fale com nossa equipe e veja como o {siteConfig.name} organiza contratos, orçamentos e
+              conformidade técnica na prática.
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
             <Link href="/contato" className="btn-solid">
-              {cta.primary}
+              {publicCtaLabel()}
               <ArrowRight className="ml-2 h-4 w-4" aria-hidden />
             </Link>
             <Link href="/planos" className="btn-outline">

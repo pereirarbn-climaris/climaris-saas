@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { LeadCaptureDialog } from "@/components/LeadCaptureDialog";
+import { demoSchedulingEnabled } from "@/lib/site-config";
 
 export type LeadModalIntent = "demo" | "plan";
 
@@ -23,7 +24,10 @@ export function LeadModalProvider({ children }: { children: ReactNode }) {
   const [options, setOptions] = useState<LeadModalOptions>({ intent: "demo" });
 
   const openLeadModal = useCallback((opts?: LeadModalOptions) => {
-    setOptions({ intent: opts?.intent ?? "demo", planKey: opts?.planKey, planLabel: opts?.planLabel });
+    const intent = opts?.intent ?? "demo";
+    // Demonstração oculta temporariamente — não abre o modal de agenda.
+    if (intent === "demo" && !demoSchedulingEnabled) return;
+    setOptions({ intent, planKey: opts?.planKey, planLabel: opts?.planLabel });
     setOpen(true);
   }, []);
 

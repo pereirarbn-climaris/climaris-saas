@@ -59,7 +59,7 @@ const sectionBodyStyle: React.CSSProperties = {
 export interface ServiceOrderLineSectionsProps {
   servicos: ServiceLineDraft[];
   pecas: ProductLineDraft[];
-  onServicosChange: (lines: ServiceLineDraft[]) => void;
+  onServicosChange: (lines: ServiceLineDraft[] | ((prev: ServiceLineDraft[]) => ServiceLineDraft[])) => void;
   onPecasChange: (lines: ProductLineDraft[]) => void;
   servicesCatalog: ServiceOut[];
   productsCatalog: ProductOut[];
@@ -391,9 +391,9 @@ export function ServiceOrderLineSections({
               <div style={{ marginBottom: "0.75rem" }}>
                 <button
                   type="button"
-                  onClick={() =>
-                    onServicosChange(linkServicesToAllSelectedEquipment(servicos, equipamentosIds))
-                  }
+                    onClick={() =>
+                      onServicosChange((prev) => linkServicesToAllSelectedEquipment(prev, equipamentosIds))
+                    }
                   style={{
                     height: "2.25rem",
                     padding: "0 0.85rem",
@@ -415,7 +415,7 @@ export function ServiceOrderLineSections({
               servicos={servicos}
               canEditEquipmentLinks={canEditEquipmentLinks}
               onToggle={(equipmentId, lineLocalId, checked) =>
-                onServicosChange(toggleServiceOnEquipment(servicos, equipmentId, lineLocalId, checked))
+                onServicosChange((prev) => toggleServiceOnEquipment(prev, equipmentId, lineLocalId, checked))
               }
             />
           </>

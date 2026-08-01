@@ -236,6 +236,11 @@ export function EquipmentCatalogPage() {
         onSave={(data, id) => void handleSave(data, id)}
         onDelete={handleDelete}
         onFiltersChange={handleFiltersChange}
+        onImportedFromManual={() => {
+          setSuccess('Equipamento(s) cadastrado(s) via manual (IA) com sucesso.');
+          void loadCatalog();
+          void loadManuals();
+        }}
       />
     </div>
   );

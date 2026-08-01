@@ -11,6 +11,7 @@ import { EquipmentCatalogPage } from "./pages/admin/EquipmentCatalogPage";
 import { EquipmentCategoriesPage } from "./pages/admin/EquipmentCategoriesPage";
 import { BudgetFormPage } from "./pages/budgets/BudgetFormPage";
 import { BudgetsListPage } from "./pages/budgets/BudgetsListPage";
+import { ClientContractFormPage } from "./pages/clients/ClientContractFormPage";
 import { ClientFormPage } from "./pages/clients/ClientFormPage";
 import { EquipmentDocumentDetailPage } from "./pages/clients/EquipmentDocumentDetailPage";
 import { ClientsListPage } from "./pages/clients/ClientsListPage";
@@ -20,6 +21,8 @@ import { TechnicianSchedulePage } from "./pages/agenda/TechnicianSchedulePage";
 import { DashboardHomePage } from "./pages/dashboard/DashboardHomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProductFormPage } from "./pages/products/ProductFormPage";
+import { EditProductPage } from "./pages/products/EditProductPage";
+import { NewProductPage } from "./pages/products/NewProductPage";
 import { ProductsListPage } from "./pages/products/ProductsListPage";
 import { RequirePurchasesPlan } from "./components/plan/PlanModuleRoute";
 import { PurchasesPage } from "./pages/purchases/PurchasesPage";
@@ -37,7 +40,8 @@ import { ServiceOrderFormPage } from "./pages/service-orders/ServiceOrderFormPag
 import { DigitalWorkOrderPage } from "./pages/service-orders/DigitalWorkOrderPage";
 import { ServiceOrdersListPage } from "./pages/service-orders/ServiceOrdersListPage";
 import { TechnicianServiceOrderPage } from "./pages/technician/TechnicianServiceOrderPage";
-import { ServiceFormPage } from "./pages/services/ServiceFormPage";
+import { CreateServicePage } from "./pages/services/CreateServicePage";
+import { EditServicePage } from "./pages/services/EditServicePage";
 import { ServicesListPage } from "./pages/services/ServicesListPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 import { PrivacyPolicyPage } from "./pages/legal/PrivacyPolicyPage";
@@ -145,11 +149,13 @@ export default function App() {
         <Route path="catalogo" element={<Navigate to="/operacao/catalogo" replace />} />
         <Route path="clients" element={<ClientsListPage />} />
         <Route path="clients/new" element={<ClientFormPage />} />
+        <Route path="clients/:clientId/contracts/new" element={<ClientContractFormPage />} />
         <Route path="clients/:clientId" element={<ClientFormPage />} />
         <Route path="equipments/:equipmentId/documents/:documentId" element={<EquipmentDocumentDetailPage />} />
         <Route path="products" element={<ProductsListPage />} />
-        <Route path="products/new" element={<ProductFormPage />} />
-        <Route path="products/:productId" element={<ProductFormPage />} />
+        <Route path="products/new" element={<NewProductPage />} />
+        <Route path="products/:productId" element={<EditProductPage />} />
+        <Route path="products/:productId/advanced" element={<ProductFormPage />} />
         <Route
           path="purchases"
           element={
@@ -160,8 +166,8 @@ export default function App() {
         />
         <Route path="inventory" element={<Navigate to="/app/products" replace />} />
         <Route path="services" element={<ServicesListPage />} />
-        <Route path="services/new" element={<ServiceFormPage />} />
-        <Route path="services/:serviceId" element={<ServiceFormPage />} />
+        <Route path="services/new" element={<CreateServicePage />} />
+        <Route path="services/:serviceId" element={<EditServicePage />} />
         <Route path="service-orders" element={<ServiceOrdersListPage />} />
         <Route path="service-orders/new" element={<ServiceOrderFormPage />} />
         <Route path="service-orders/:orderId" element={<ServiceOrderFormPage />} />

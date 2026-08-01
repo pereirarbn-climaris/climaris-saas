@@ -24,6 +24,7 @@ from app.dependencies import get_current_user, require_roles
 from app.limiter import limiter
 from app.schemas import BudgetCreate, BudgetRejectRequest, BudgetSendRequest, BudgetUpdate
 from app.config import public_app_base_url
+from app.services.client_sites import get_client_site_for_client
 from app.storage_integrity import normalize_budget_status
 from app.tenant_logo import (
     delete_tenant_logo_if_exists,
@@ -82,6 +83,7 @@ def _budget_to_out(budget: Budget) -> dict:
         "id": budget.id,
         "tenant_id": budget.tenant_id,
         "client_id": budget.client_id,
+        "client_site_id": budget.client_site_id,
         "scope_text": budget.scope_text,
         "observation": budget.description,
         "status": budget.status.value if hasattr(budget.status, "value") else str(budget.status),
@@ -334,6 +336,16 @@ def create_budget(
     if payload.validity_days < 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="validity_days must be at least 1.")
 
+    resolved_site_id: int | None = None
+    if payload.client_site_id is not None:
+        get_client_site_for_client(
+            db,
+            site_id=payload.client_site_id,
+            client_id=payload.client_id,
+            tenant_id=current_user.tenant_id,
+        )
+        resolved_site_id = payload.client_site_id
+
     payment_terms, warranty_terms, scope_text, observation, payment_method = apply_budget_defaults_from_settings(
         db,
         tenant_id=current_user.tenant_id,
@@ -347,6 +359,7 @@ def create_budget(
     budget = Budget(
         tenant_id=current_user.tenant_id,
         client_id=payload.client_id,
+        client_site_id=resolved_site_id,
         title=f"Orcamento - {client.name}",
         scope_text=scope_text,
         description=observation,
@@ -468,7 +481,18 @@ def update_budget(
     if payload.validity_days < 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="validity_days must be at least 1.")
 
+    resolved_site_id: int | None = None
+    if payload.client_site_id is not None:
+        get_client_site_for_client(
+            db,
+            site_id=payload.client_site_id,
+            client_id=payload.client_id,
+            tenant_id=current_user.tenant_id,
+        )
+        resolved_site_id = payload.client_site_id
+
     budget.client_id = payload.client_id
+    budget.client_site_id = resolved_site_id
     budget.title = f"Orcamento - {client.name}"
     budget.scope_text = payload.scope_text
     budget.description = payload.observation
@@ -571,6 +595,7 @@ def approve_budget(
     order = ServiceOrder(
         tenant_id=current_user.tenant_id,
         client_id=budget.client_id,
+        client_site_id=budget.client_site_id,
         source_budget_id=budget.id,
         title=budget.title,
         description=budget.description,
@@ -651,6 +676,7 @@ def budget_pdf(
         .where(Budget.id == budget_id)
         .options(
             selectinload(Budget.client),
+            selectinload(Budget.client_site),
             selectinload(Budget.service_items).selectinload(BudgetServiceItem.service),
             selectinload(Budget.product_items).selectinload(BudgetProductItem.product),
         )

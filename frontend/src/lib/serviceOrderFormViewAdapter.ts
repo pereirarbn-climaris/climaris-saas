@@ -33,6 +33,7 @@ import type { ClientOut, EquipmentOut } from "../api/clients";
 import type { ProductOut } from "../api/products";
 import type { ServiceOut } from "../api/services";
 import { normalizeGarantiaFields } from "./serviceOrderGarantia";
+import { clientSiteIdForApi, clientSiteIdFromApi } from "./serviceOrderClientSite";
 import { technicianIdFromApi, technicianIdsForApi } from "./serviceOrderCompanyTechnician";
 import type {
   OrderStatus,
@@ -427,6 +428,9 @@ export function serviceOrderOutToViewData(order: ServiceOrderOut): ServiceOrderD
     id: String(order.id),
     numero: String(order.id),
     clienteId: String(order.client_id),
+    clientSiteId: clientSiteIdFromApi(order.client_site_id),
+    serviceAddress: order.service_address ?? undefined,
+    clientSiteName: order.client_site_name ?? undefined,
     tecnicoId: technicianIdFromApi(order.technician_ids, Boolean(order.schedule)),
     status: mapApiStatusToForm(order.status),
     tipoServico: laudo.tipoServico ?? inferServiceType(order, meta),
@@ -499,7 +503,7 @@ export function mapOrdersToListView(
             : null,
       serviceType: inferListServiceType(o, meta),
       status: mapApiStatusToList(o.status),
-      openedAt: o.schedule?.starts_at ?? new Date().toISOString(),
+      openedAt: o.opened_at ?? o.schedule?.starts_at ?? "",
       scheduledAt: o.schedule?.starts_at,
       totalValue: orderGrandTotal(o),
       estimatedMinutes: o.total_duration_minutes ?? 0,
@@ -521,13 +525,20 @@ export function computeListMetrics(orders: ServiceOrder[]): ServiceOrderMetrics 
     return d.getTime() === today.getTime();
   };
 
+  const orderReferenceDate = (o: ServiceOrder) => o.scheduledAt ?? o.openedAt;
+
   return {
-    todayTotal: orders.filter((o) => isSameDay(o.openedAt)).length,
+    todayTotal: orders.filter((o) => {
+      const ref = orderReferenceDate(o);
+      return ref ? isSameDay(ref) : false;
+    }).length,
     inExecution: orders.filter((o) => o.status === "em_andamento").length,
     awaitingParts: orders.filter((o) => o.status === "aguardando_pecas").length,
     completedMonth: orders.filter((o) => {
       if (o.status !== "concluida") return false;
-      const d = new Date(o.openedAt);
+      const ref = orderReferenceDate(o);
+      if (!ref) return false;
+      const d = new Date(ref);
       return !Number.isNaN(d.getTime()) && d >= monthStart;
     }).length,
   };
@@ -591,6 +602,7 @@ export function viewDataToCreatePayload(
 
   return {
     client_id: Number(data.clienteId),
+    client_site_id: clientSiteIdForApi(data.clientSiteId),
     title: `OS - ${ctx.clientName}`,
     description,
     technician_ids: technicianIdsForApi(data.tecnicoId) ?? [],
@@ -681,6 +693,7 @@ export function serializeServiceOrderFormSnapshot(data: ServiceOrderData): strin
 
   return JSON.stringify({
     clienteId: data.clienteId,
+    clientSiteId: data.clientSiteId,
     tecnicoId: data.tecnicoId,
     status: data.status,
     tipoServico: data.tipoServico,

@@ -71,6 +71,8 @@ export function clientOutToViewData(c: ClientOut): ClientData {
     stateRegistration: c.state_registration ?? undefined,
     ieIndicator: c.ie_indicator ?? undefined,
     municipalRegistration: c.municipal_registration ?? undefined,
+    rg: c.rg ?? undefined,
+    birthDate: c.birth_date ?? undefined,
     addressIbgeCode: digitsOnly(c.address_ibge_code ?? "").slice(0, 7) || undefined,
     preventiveCampaignOptOut: Boolean(c.preventive_campaign_opt_out),
     isActive: c.is_active !== false,
@@ -81,6 +83,9 @@ export function clientOutToViewData(c: ClientOut): ClientData {
     legalNature: c.legal_nature ?? undefined,
     registrationStatus: c.registration_status ?? undefined,
     foundedAt: c.founded_at ?? undefined,
+    notes: c.notes ?? "",
+    tags: Array.isArray(c.tags) ? c.tags : [],
+    createdAt: c.created_at ?? null,
     endereco: {
       cep: formatCepInput(c.address_postal_code ?? ""),
       logradouro: c.address_street ?? "",
@@ -109,6 +114,8 @@ export function serializeClientFormSnapshot(data: ClientData): string {
     stateRegistration: (data.stateRegistration ?? "").trim(),
     ieIndicator: data.ieIndicator ?? "",
     municipalRegistration: (data.municipalRegistration ?? "").trim(),
+    rg: (data.rg ?? "").trim(),
+    birthDate: (data.birthDate ?? "").trim(),
     addressIbgeCode: digitsOnly(data.addressIbgeCode ?? ""),
     preventiveCampaignOptOut: Boolean(data.preventiveCampaignOptOut),
     isActive: data.isActive !== false,
@@ -117,6 +124,8 @@ export function serializeClientFormSnapshot(data: ClientData): string {
     legalNature: (data.legalNature ?? "").trim(),
     registrationStatus: (data.registrationStatus ?? "").trim(),
     foundedAt: (data.foundedAt ?? "").trim(),
+    notes: (data.notes ?? "").trim(),
+    tags: [...(data.tags ?? [])].sort(),
     endereco: {
       cep: digitsOnly(end.cep ?? ""),
       logradouro: (end.logradouro ?? "").trim(),
@@ -139,6 +148,8 @@ export function emptyViewData(): ClientData {
     email: "",
     isActive: true,
     preventiveCampaignOptOut: false,
+    notes: "",
+    tags: [],
     endereco: {},
   };
 }
@@ -293,6 +304,8 @@ export function viewDataToCreatePayload(data: ClientData): ClientCreatePayload {
     ...(ibge.length === 7 ? { address_ibge_code: ibge } : {}),
     preventive_campaign_opt_out: Boolean(data.preventiveCampaignOptOut),
     is_active: data.isActive !== false,
+    notes: data.notes?.trim() || undefined,
+    tags: data.tags ?? [],
     ...(data.isVerifiedCnpj ? { is_verified_cnpj: true } : {}),
   };
   if (document) base.document = document;
@@ -309,6 +322,9 @@ export function viewDataToCreatePayload(data: ClientData): ClientCreatePayload {
     base.founded_at = data.foundedAt?.trim() || undefined;
   } else {
     base.optante_mei = false;
+    base.rg = data.rg?.trim() || undefined;
+    base.birth_date = data.birthDate?.trim() || undefined;
+    base.contact_person_name = data.contactPersonName?.trim() || undefined;
   }
   return base;
 }
@@ -333,11 +349,15 @@ export function viewDataToUpdatePayload(data: ClientData): ClientUpdatePayload {
     state_registration: create.state_registration ?? null,
     ie_indicator: create.ie_indicator ?? null,
     municipal_registration: create.municipal_registration ?? null,
+    rg: create.rg ?? null,
+    birth_date: create.birth_date ?? null,
     main_activity_code: create.main_activity_code ?? null,
     main_activity_description: create.main_activity_description ?? null,
     legal_nature: create.legal_nature ?? null,
     registration_status: create.registration_status ?? null,
     founded_at: create.founded_at ?? null,
+    notes: create.notes ?? null,
+    tags: create.tags ?? [],
     ...(create.document ? { document: create.document } : {}),
   };
 }
@@ -362,7 +382,7 @@ export function mapOrdersToView(rows: ServiceOrderOut[]): ServiceOrder[] {
     descricao: o.title,
     status: mapOrderStatus(o.status),
     valor: orderTotal(o),
-    data: o.schedule?.starts_at ?? new Date().toISOString(),
+    data: o.opened_at ?? o.schedule?.starts_at ?? "",
     tecnico: o.assigned_technician_name ?? undefined,
   }));
 }

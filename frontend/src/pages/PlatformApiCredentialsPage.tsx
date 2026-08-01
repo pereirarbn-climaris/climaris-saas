@@ -24,6 +24,7 @@ export function PlatformApiCredentialsPage() {
   const [smtpMsg, setSmtpMsg] = useState("");
   const [googleMsg, setGoogleMsg] = useState("");
   const [claudeMsg, setClaudeMsg] = useState("");
+  const [openaiMsg, setOpenaiMsg] = useState("");
   const [stripeMsg, setStripeMsg] = useState("");
   const [whatsOfficialMsg, setWhatsOfficialMsg] = useState("");
 
@@ -70,6 +71,11 @@ export function PlatformApiCredentialsPage() {
   const [clearClaudeKey, setClearClaudeKey] = useState(false);
   const [savingClaude, setSavingClaude] = useState(false);
 
+  const [openaiDisplayName, setOpenaiDisplayName] = useState("OpenAI (embeddings Iris)");
+  const [openaiApiKey, setOpenaiApiKey] = useState("");
+  const [clearOpenaiKey, setClearOpenaiKey] = useState(false);
+  const [savingOpenai, setSavingOpenai] = useState(false);
+
   const [stripeDisplayName, setStripeDisplayName] = useState("Stripe (planos de acesso)");
   const [stripeSecretKey, setStripeSecretKey] = useState("");
   const [stripePublishableKey, setStripePublishableKey] = useState("");
@@ -89,6 +95,7 @@ export function PlatformApiCredentialsPage() {
   const smtp = useMemo(() => rows.find((r) => r.provider_slug === "smtp") ?? null, [rows]);
   const google = useMemo(() => rows.find((r) => r.provider_slug === "google-oauth") ?? null, [rows]);
   const claude = useMemo(() => rows.find((r) => r.provider_slug === "claude") ?? null, [rows]);
+  const openai = useMemo(() => rows.find((r) => r.provider_slug === "openai") ?? null, [rows]);
   const stripe = useMemo(() => rows.find((r) => r.provider_slug === "stripe") ?? null, [rows]);
   const whatsOfficial = useMemo(() => rows.find((r) => r.provider_slug === "whatsapp-official") ?? null, [rows]);
 
@@ -181,6 +188,13 @@ export function PlatformApiCredentialsPage() {
     setClaudeApiKey("");
     setClearClaudeKey(false);
   }, [claude?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!openai) return;
+    setOpenaiDisplayName(openai.display_name || "OpenAI (embeddings Iris)");
+    setOpenaiApiKey("");
+    setClearOpenaiKey(false);
+  }, [openai?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!stripe) return;
@@ -438,6 +452,33 @@ export function PlatformApiCredentialsPage() {
       setClaudeMsg(error instanceof Error ? error.message : "Não foi possível salvar Claude.");
     } finally {
       setSavingClaude(false);
+    }
+  }
+
+  async function onSubmitOpenai(e: FormEvent) {
+    e.preventDefault();
+    setPageErr("");
+    setOpenaiMsg("");
+    setSavingOpenai(true);
+    try {
+      const saved = await upsertPlatformApiCredential("openai", {
+        display_name: openaiDisplayName.trim() || "OpenAI (embeddings Iris)",
+        api_base_url: "https://api.openai.com",
+        api_key: openaiApiKey.trim() || undefined,
+        clear_api_key: clearOpenaiKey,
+      });
+      setOpenaiApiKey("");
+      setClearOpenaiKey(false);
+      setOpenaiMsg(
+        saved.has_api_key
+          ? "Chave OpenAI salva com sucesso."
+          : "Configuração salva sem chave ativa.",
+      );
+      await refresh();
+    } catch (error) {
+      setOpenaiMsg(error instanceof Error ? error.message : "Não foi possível salvar OpenAI.");
+    } finally {
+      setSavingOpenai(false);
     }
   }
 
@@ -873,7 +914,7 @@ export function PlatformApiCredentialsPage() {
             </span>
           </div>
           <p className={styles.integrationMeta}>
-            Usada no WhatsApp bot, assistente e leitura de etiquetas de equipamentos. Última atualização:{" "}
+            Usada no WhatsApp bot, assistente Iris (respostas) e leitura de etiquetas de equipamentos. Última atualização:{" "}
             {fmtDate(claude?.key_updated_at ?? claude?.updated_at ?? null)}
           </p>
           <form onSubmit={onSubmitClaude} className={styles.section}>
@@ -906,6 +947,45 @@ export function PlatformApiCredentialsPage() {
               {savingClaude ? "Salvando..." : "Salvar Claude"}
             </button>
             {claudeMsg ? <p className={styles.contactHint}>{claudeMsg}</p> : null}
+          </form>
+        </article>
+
+        <article className={styles.integrationCard}>
+          <div className={styles.integrationHeader}>
+            <h3 className={styles.cardTitle}>OpenAI (embeddings Iris)</h3>
+            <span className={`${styles.badge} ${openai?.has_api_key ? styles.badgeActive : styles.badgeSuspended}`}>
+              {openai?.has_api_key ? "Conectado" : "Pendente"}
+            </span>
+          </div>
+          <p className={styles.integrationMeta}>
+            Usada pela Iris para indexar e buscar trechos nos manuais técnicos (modelo text-embedding-3-small). A resposta
+            em linguagem natural continua sendo gerada pelo Claude. Última atualização:{" "}
+            {fmtDate(openai?.key_updated_at ?? openai?.updated_at ?? null)}
+          </p>
+          <form onSubmit={onSubmitOpenai} className={styles.section}>
+            <input
+              className={styles.link}
+              value={openaiDisplayName}
+              onChange={(e) => setOpenaiDisplayName(e.target.value)}
+              placeholder="Nome de exibição"
+            />
+            <input className={styles.link} value="https://api.openai.com" disabled aria-readonly />
+            <input
+              className={styles.link}
+              type="password"
+              value={openaiApiKey}
+              onChange={(e) => setOpenaiApiKey(e.target.value)}
+              placeholder="Nova API key OpenAI (sk-..., vazio = manter)"
+              autoComplete="new-password"
+            />
+            <label className={styles.note}>
+              <input type="checkbox" checked={clearOpenaiKey} onChange={(e) => setClearOpenaiKey(e.target.checked)} />{" "}
+              Remover API key OpenAI salva
+            </label>
+            <button className={`${styles.link} ${styles.linkPrimary}`} disabled={savingOpenai} type="submit">
+              {savingOpenai ? "Salvando..." : "Salvar OpenAI"}
+            </button>
+            {openaiMsg ? <p className={styles.contactHint}>{openaiMsg}</p> : null}
           </form>
         </article>
       </section>

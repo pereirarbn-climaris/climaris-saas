@@ -12,15 +12,15 @@
   border: none;
   border-radius: 50%;
   cursor: pointer;
-  background: linear-gradient(145deg, #0f2a52 0%, #1e3a5f 100%);
-  box-shadow:
-    0 0 0 3px rgba(43, 155, 255, 0.35),
-    0 8px 24px rgba(15, 42, 82, 0.35);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  background: transparent;
+  box-shadow: none;
+  transition: transform 0.15s ease;
 }
 
 .avatar {
-  box-shadow: none;
+  box-shadow:
+    0 0 0 3px rgba(43, 155, 255, 0.28),
+    0 8px 22px rgba(15, 42, 82, 0.38);
 }
 
 .pulse {
@@ -34,9 +34,12 @@
 
 .fab:hover {
   transform: scale(1.05);
+}
+
+.fab:hover .avatar {
   box-shadow:
-    0 0 0 4px rgba(43, 155, 255, 0.4),
-    0 10px 28px rgba(15, 42, 82, 0.4);
+    0 0 0 4px rgba(43, 155, 255, 0.38),
+    0 10px 26px rgba(15, 42, 82, 0.42);
 }
 
 .fab:active {

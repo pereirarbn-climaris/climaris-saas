@@ -19,6 +19,7 @@ from app.equipment_service_preventive import (
     list_equipment_service_preventive_schedules,
     list_preventive_items_by_equipment_month,
     reset_equipment_service_preventive_override,
+    set_equipment_service_preventive_active,
     update_manual_preventive_reminder,
     upsert_equipment_service_preventive_override,
 )
@@ -73,6 +74,7 @@ from app.schemas_preventive import (
     EquipmentPreventiveRuleCreate,
     EquipmentPreventiveRuleOut,
     EquipmentPreventiveRuleUpdate,
+    EquipmentServicePreventiveActiveUpdate,
     EquipmentServicePreventiveOverrideUpsert,
     EquipmentServicePreventiveScheduleListOut,
     EquipmentServicePreventiveScheduleOut,
@@ -295,6 +297,28 @@ def put_equipment_service_preventive_schedule(
     return EquipmentServicePreventiveScheduleOut.model_validate(row)
 
 
+@router.patch(
+    "/equipment/{equipment_id}/service-schedules/{service_id}/active",
+    response_model=EquipmentServicePreventiveScheduleOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def patch_equipment_service_preventive_schedule_active(
+    equipment_id: Annotated[int, Path(ge=1)],
+    service_id: Annotated[int, Path(ge=1)],
+    payload: EquipmentServicePreventiveActiveUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentServicePreventiveScheduleOut:
+    row = set_equipment_service_preventive_active(
+        db,
+        tenant_id=current_user.tenant_id,
+        equipment_id=equipment_id,
+        service_id=service_id,
+        is_active=payload.is_active,
+    )
+    return EquipmentServicePreventiveScheduleOut.model_validate(row)
+
+
 @router.delete(
     "/equipment/{equipment_id}/service-schedules/{service_id}",
     response_model=EquipmentServicePreventiveScheduleOut,
@@ -381,6 +405,10 @@ def list_items(
         PreventiveClientGroupOut(
             client_id=int(g["client_id"]),
             client_name=str(g["client_name"]),
+            client_site_id=g.get("client_site_id"),
+            client_site_name=g.get("client_site_name"),
+            client_site_type=g.get("client_site_type"),
+            client_site_label=g.get("client_site_label"),
             whatsapp_valido=bool(g.get("whatsapp_valido")),
             whatsapp_destino=g.get("whatsapp_destino"),
             equipments=[PreventiveItemOut.model_validate(eq) for eq in g.get("equipments", [])],
@@ -485,6 +513,7 @@ def send_reminder(
             client_id=payload.client_id,
             year=payload.year,
             month=payload.month,
+            client_site_id=payload.client_site_id,
         )
     else:
         group = find_preventive_group_for_item(
@@ -522,6 +551,7 @@ def send_reminder(
         payload.year,
         payload.month,
         payload.message_template_kind,
+        payload.client_site_id,
     )
     return PreventiveSendReminderOut(processing_in_background=True, whatsapp_job=None)
 

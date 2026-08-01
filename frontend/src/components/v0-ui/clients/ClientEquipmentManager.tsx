@@ -24,11 +24,16 @@
 import React, { useState, useEffect } from "react";
 import { listClientSites, type ClientSiteOut } from "../../../api/clients";
 import { useKnowledgeChatContextOptional } from "../../../context/KnowledgeChatContext";
-import { updateClientCatalogEquipmentSite } from "../../../api/equipmentCatalog";
+import {
+  updateClientCatalogEquipmentSite,
+  fetchPendingIdentificationCatalog,
+} from "../../../api/equipmentCatalog";
 import type { CategoryFieldDefinition, TechnicalSpecRow } from "../../../lib/categoryFieldDefinitions";
-import { validateQrCode } from "../../../api/qrcodes";
+import { generateQrCodes, validateQrCode } from "../../../api/qrcodes";
 import { parseScannedQrCode } from "../../../lib/qrcodeScan";
+import { buildQrLabelPreviewItems, buildQrLabelsPdfBlob } from "../../../lib/qrcodeLabelsPdf";
 import { QrCodeScannerModal } from "../../qrcodes/QrCodeScannerModal";
+import { EquipmentQrCodeCard } from "../../equipment/EquipmentQrCodeCard";
 import { EquipmentSheetModal } from "../../equipment/EquipmentSheetModal";
 import { EquipmentTechnicalSpecsGrid } from "../../equipment/EquipmentTechnicalSpecsGrid";
 import { ClientAddEquipmentModeChoose } from "../../clients/ClientAddEquipmentModeChoose";
@@ -45,7 +50,6 @@ import { categoryFromLabelResolve } from "../../../lib/equipmentLabelResolveCate
 // ============================================================
 
 import {
-  CATEGORY_ICON_KEYS,
   getCategoryVisual,
   isAcLikeIconKey,
   supportsMultiSplitCategory,
@@ -54,6 +58,14 @@ import {
 import { matchesCatalogSearch } from "../../../lib/catalogSearch";
 
 export type EquipmentCategory = CategoryIconKey;
+
+/**
+ * Categorias habilitadas para NOVO cadastro de equipamento na ficha do cliente.
+ * Por decisão de produto (jul/2026), o cadastro fica restrito a Ar-condicionado
+ * e Climatizador — as demais (geladeira, bebedouro, outros) ficam ocultas por
+ * enquanto, sem remover o suporte já existente no catálogo/backend.
+ */
+const ENABLED_EQUIPMENT_CATEGORY_ICON_KEYS: CategoryIconKey[] = ["ar_condicionado", "climatizador"];
 
 export type EquipmentCategoryPickerOption = {
   id: string;
@@ -115,6 +127,9 @@ export interface EquipmentItem {
   installationReference?: string;
   location: string;
   installationDate: string;
+  manufactureYear?: number | null;
+  gasChargeKg?: number | null;
+  notes?: string | null;
   status: EquipmentStatus;
   specs: {
     gasType?: string;
@@ -129,6 +144,9 @@ export interface EquipmentItem {
   publicToken?: string | null;
   /** Cartela QR vinculada (ex.: QR0000012). */
   qrcodeCodeId?: string | null;
+  /** true quando o equipamento foi cadastrado sem marca/modelo conhecidos
+   * ("a identificar") — precisa ser identificado em campo. */
+  pendingIdentification?: boolean;
   hasManual: boolean;
   /** Pode excluir permanentemente (sem vínculos em OS, PMOC, etc.). */
   canDelete?: boolean;
@@ -166,6 +184,9 @@ export interface NewEquipmentData {
   tag: string;
   installationReference?: string;
   installationDate: string;
+  manufactureYear?: number | null;
+  gasChargeKg?: number | null;
+  notes?: string | null;
   /** Filial/obra; omitir ou null = endereço principal / matriz. */
   clientSiteId?: number | null;
 }
@@ -418,10 +439,11 @@ const CheckIcon = () => (
   </svg>
 );
 
-const SearchIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="11" cy="11" r="8" />
-    <path d="m21 21-4.3-4.3" />
+const IconInfoOutline = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="9" />
+    <line x1="12" y1="11" x2="12" y2="16" />
+    <line x1="12" y1="8" x2="12" y2="8.01" />
   </svg>
 );
 
@@ -876,6 +898,10 @@ type CatalogPickState = {
   selectedModel: CatalogModel | null;
   showBrandDropdown: boolean;
   showModelDropdown: boolean;
+  /** true quando o usuário optou por "Não sei a marca/modelo" — o equipamento
+   * é vinculado ao item de catálogo placeholder e precisa ser identificado
+   * em campo (ver `EquipmentQrCodeCard`-like fluxo em `identifyClientCatalogEquipment`). */
+  pendingIdentification?: boolean;
 };
 
 const emptyCatalogPick = (): CatalogPickState => ({
@@ -885,6 +911,7 @@ const emptyCatalogPick = (): CatalogPickState => ({
   selectedModel: null,
   showBrandDropdown: false,
   showModelDropdown: false,
+  pendingIdentification: false,
 });
 
 type EvaporatorSlot = CatalogPickState & { slotId: string };
@@ -1009,6 +1036,103 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
+const fieldLabelStyle: React.CSSProperties = {
+  display: "block",
+  marginBottom: "0.5rem",
+  fontSize: "var(--font-size-sm)",
+  fontWeight: "var(--font-weight-medium)",
+  color: "var(--color-text)",
+};
+
+const fieldHintStyle: React.CSSProperties = {
+  margin: "0.35rem 0 0",
+  fontSize: "var(--font-size-xs)",
+  color: "var(--color-text-muted)",
+};
+
+/** Card com cabeçalho (ícone + título + descrição) usado para agrupar seções do formulário
+ * de forma consistente com o restante do app (ex.: ficha de edição do equipamento). */
+const FormCard: React.FC<{
+  icon: React.ReactNode;
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}> = ({ icon, title, hint, children }) => (
+  <div
+    style={{
+      border: "1px solid var(--color-border)",
+      borderRadius: "var(--card-radius)",
+      backgroundColor: "var(--color-surface-elevated)",
+      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+      padding: "1.1rem 1.25rem 1.25rem",
+      display: "flex",
+      flexDirection: "column",
+      gap: "1rem",
+    }}
+  >
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.65rem" }}>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 30,
+          height: 30,
+          flexShrink: 0,
+          borderRadius: "0.6rem",
+          backgroundColor: "var(--color-primary-soft, rgba(37, 99, 235, 0.1))",
+          color: "var(--color-primary)",
+        }}
+      >
+        {icon}
+      </span>
+      <div>
+        <h3 style={{ margin: 0, fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-semibold)", color: "var(--color-text)" }}>
+          {title}
+        </h3>
+        {hint ? (
+          <p style={{ margin: "0.15rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>{hint}</p>
+        ) : null}
+      </div>
+    </div>
+    {children}
+  </div>
+);
+
+const InfoIcon = () => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <line x1="12" y1="16" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12.01" y2="8" />
+  </svg>
+);
+
+const MapPinIcon = () => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+    <circle cx="12" cy="10" r="3" />
+  </svg>
+);
+
+const ClipboardIcon = () => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    <line x1="9" y1="12" x2="15" y2="12" />
+    <line x1="9" y1="16" x2="13" y2="16" />
+  </svg>
+);
+
+const GaugeIcon = () => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 14 15.5 10.5" />
+    <path d="M12 22a10 10 0 1 1 10-10 9.9 9.9 0 0 1-2.5 6.6" />
+    <path d="M4.9 4.9 6 6" />
+    <path d="M2 12h2" />
+    <path d="M12 2v2" />
+  </svg>
+);
+
 interface CatalogSearchBlockProps {
   title: string;
   catalog: EquipmentCatalog;
@@ -1019,7 +1143,16 @@ interface CatalogSearchBlockProps {
   pick: CatalogPickState;
   onChange: (next: CatalogPickState) => void;
   onModelSelected?: () => void;
+  /** Exibe o atalho "Não sei a marca/modelo" (só no fluxo padrão, não em Multi-Split). */
+  allowUnknown?: boolean;
 }
+
+const selectStyle: React.CSSProperties = {
+  ...inputStyle,
+  paddingLeft: "var(--input-padding-x)",
+  appearance: "auto",
+  cursor: "pointer",
+};
 
 const CatalogSearchBlock: React.FC<CatalogSearchBlockProps> = ({
   title,
@@ -1031,11 +1164,15 @@ const CatalogSearchBlock: React.FC<CatalogSearchBlockProps> = ({
   pick,
   onChange,
   onModelSelected,
+  allowUnknown,
 }) => {
+  const [unknownLoading, setUnknownLoading] = useState(false);
+  const [unknownError, setUnknownError] = useState("");
+
   const filteredBrands = filterBrandsForPick(
     catalog,
     category,
-    pick.brandSearch,
+    "",
     componentType,
     standardAcUnicoOnly,
     categoryId,
@@ -1044,231 +1181,212 @@ const CatalogSearchBlock: React.FC<CatalogSearchBlockProps> = ({
     catalog,
     category,
     pick.selectedBrand?.id,
-    pick.modelSearch,
+    "",
     componentType,
     standardAcUnicoOnly,
     categoryId,
   );
 
-  const selectBrand = (brand: CatalogBrand) => {
+  const selectBrand = (brand: CatalogBrand | null) => {
     onChange({
       ...pick,
       selectedBrand: brand,
-      brandSearch: brand.name,
-      showBrandDropdown: false,
+      brandSearch: brand?.name ?? "",
       selectedModel: null,
       modelSearch: "",
+      pendingIdentification: false,
     });
   };
 
-  const tryAutoSelectBrand = (brandSearch: string): CatalogBrand | null => {
-    const q = brandSearch.trim().toLowerCase();
-    if (!q) return null;
-    const brands = filterBrandsForPick(
-      catalog,
-      category,
-      brandSearch,
-      componentType,
-      standardAcUnicoOnly,
-      categoryId,
-    );
-    const exact = brands.find((b) => b.name.toLowerCase() === q);
-    if (exact) return exact;
-    if (brands.length === 1 && q.length >= 2) return brands[0] ?? null;
-    return null;
-  };
-
-  const selectModel = (model: CatalogModel) => {
+  const selectModel = (model: CatalogModel | null) => {
     onChange({
       ...pick,
       selectedModel: model,
-      modelSearch: model.name,
-      showModelDropdown: false,
+      modelSearch: model?.name ?? "",
+      pendingIdentification: false,
     });
-    onModelSelected?.();
+    if (model) onModelSelected?.();
   };
+
+  const handleUnknown = async () => {
+    setUnknownError("");
+    setUnknownLoading(true);
+    try {
+      const kind = category === "climatizador" ? "climatizador" : "ar_condicionado";
+      const result = await fetchPendingIdentificationCatalog(kind);
+      const brand: CatalogBrand = { id: `pending::${result.category_id}`, name: result.brand, categories: [category] };
+      const model: CatalogModel = {
+        id: result.catalog_id,
+        brandId: brand.id,
+        categoryId: result.category_id,
+        name: result.model_display,
+        category,
+        componentType: componentType ?? "UNICO",
+        specs: {},
+        fieldDefinitions: [],
+        technicalData: {},
+        technicalSpecs: [],
+        hasManual: false,
+      };
+      onChange({
+        ...pick,
+        selectedBrand: brand,
+        selectedModel: model,
+        brandSearch: brand.name,
+        modelSearch: model.name,
+        pendingIdentification: true,
+      });
+      onModelSelected?.();
+    } catch (e) {
+      setUnknownError(e instanceof Error ? e.message : "Não foi possível preparar o cadastro sem marca/modelo.");
+    } finally {
+      setUnknownLoading(false);
+    }
+  };
+
+  if (pick.pendingIdentification) {
+    return (
+      <section style={{ marginBottom: "1.25rem" }}>
+        <h4 style={{ margin: "0 0 0.75rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--color-text)" }}>
+          {title}
+        </h4>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.75rem",
+            padding: "0.85rem 1rem",
+            borderRadius: 12,
+            border: "1px solid var(--color-warning-border, #fcd34d)",
+            backgroundColor: "var(--color-warning-bg, #fffbeb)",
+          }}
+        >
+          <span style={{ color: "var(--color-warning, #b45309)", marginTop: 2 }}>
+            <IconInfoOutline />
+          </span>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
+              Equipamento será cadastrado como &quot;a identificar&quot;
+            </p>
+            <p style={{ margin: "0.25rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
+              Já é possível cadastrar serviços e OS para ele. A marca e o modelo reais deverão ser
+              preenchidos pelo técnico quando chegar ao local do cliente.
+            </p>
+            <button
+              type="button"
+              onClick={() => selectBrand(null)}
+              style={{
+                marginTop: "0.5rem",
+                background: "none",
+                border: "none",
+                padding: 0,
+                fontSize: "var(--font-size-xs)",
+                fontWeight: "var(--font-weight-medium)",
+                color: "var(--color-primary)",
+                cursor: "pointer",
+                textDecoration: "underline",
+              }}
+            >
+              Escolher marca/modelo agora
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section style={{ marginBottom: "1.25rem" }}>
       <h4 style={{ margin: "0 0 0.75rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--color-text)" }}>
         {title}
       </h4>
-      <div style={{ marginBottom: "1rem", position: "relative" }}>
+      <div style={{ marginBottom: "1rem" }}>
         <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
           Marca
         </label>
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-text-subtle)" }}>
-            <SearchIcon />
-          </span>
-          <input
-            type="text"
-            value={pick.brandSearch}
-            onChange={(e) => {
-              const brandSearch = e.target.value;
-              const auto = tryAutoSelectBrand(brandSearch);
-              if (auto) {
-                selectBrand(auto);
-                return;
-              }
-              onChange({
-                ...pick,
-                brandSearch,
-                showBrandDropdown: true,
-                selectedBrand: null,
-                selectedModel: null,
-                modelSearch: "",
-              });
-            }}
-            onFocus={() => onChange({ ...pick, showBrandDropdown: true })}
-            onBlur={() => {
-              const auto = tryAutoSelectBrand(pick.brandSearch);
-              if (auto && !pick.selectedBrand) selectBrand(auto);
-            }}
-            placeholder="Digite para buscar..."
-            style={{
-              ...inputStyle,
-              paddingLeft: "2.5rem",
-              border: `1px solid ${pick.selectedBrand ? "var(--color-success)" : "var(--color-border)"}`,
-            }}
-          />
-          {pick.selectedBrand && (
-            <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-success)" }}>
-              <CheckIcon />
-            </span>
-          )}
-        </div>
-        {pick.showBrandDropdown && filteredBrands.length > 0 && !pick.selectedBrand ? (
-          <div
-            style={{
-              position: "absolute",
-              top: "100%",
-              left: 0,
-              right: 0,
-              marginTop: 4,
-              backgroundColor: "var(--color-surface-elevated)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--input-radius)",
-              boxShadow: "var(--card-shadow)",
-              maxHeight: 200,
-              overflowY: "auto",
-              zIndex: 10,
-            }}
-          >
-            {filteredBrands.map((brand) => (
-              <button
-                key={brand.id}
-                type="button"
-                onClick={() => selectBrand(brand)}
-                style={{
-                  width: "100%",
-                  padding: "0.75rem 1rem",
-                  backgroundColor: "transparent",
-                  border: "none",
-                  borderBottom: "1px solid var(--color-border)",
-                  textAlign: "left",
-                  fontSize: "var(--font-size-base)",
-                  color: "var(--color-text)",
-                  cursor: "pointer",
-                }}
-              >
-                {brand.name}
-              </button>
-            ))}
-          </div>
-        ) : pick.brandSearch.trim() && !pick.selectedBrand ? (
-          <CatalogPickEmptyHint
-            category={category}
-            categoryId={categoryId}
-            catalog={catalog}
-            search={pick.brandSearch.trim()}
-          />
-        ) : null}
+        <select
+          value={pick.selectedBrand?.id ?? ""}
+          onChange={(e) => {
+            const brand = filteredBrands.find((b) => b.id === e.target.value) ?? null;
+            selectBrand(brand);
+          }}
+          style={{
+            ...selectStyle,
+            border: `1px solid ${pick.selectedBrand ? "var(--color-success)" : "var(--color-border)"}`,
+          }}
+        >
+          <option value="">Selecione a marca...</option>
+          {filteredBrands.map((brand) => (
+            <option key={brand.id} value={brand.id}>
+              {brand.name}
+            </option>
+          ))}
+        </select>
+        {filteredBrands.length === 0 && (
+          <CatalogPickEmptyHint category={category} categoryId={categoryId} catalog={catalog} search="" />
+        )}
       </div>
-      <div style={{ position: "relative" }}>
+      <div>
         <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
           Modelo
         </label>
-        <div style={{ position: "relative" }}>
-          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-text-subtle)" }}>
-            <SearchIcon />
-          </span>
-          <input
-            type="text"
-            value={pick.modelSearch}
-            onChange={(e) =>
-              onChange({
-                ...pick,
-                modelSearch: e.target.value,
-                showModelDropdown: true,
-                selectedModel: null,
-              })
-            }
-            onFocus={() => onChange({ ...pick, showModelDropdown: true })}
-            placeholder={pick.selectedBrand ? "Digite para buscar..." : "Selecione a marca primeiro"}
-            disabled={!pick.selectedBrand}
-            style={{
-              ...inputStyle,
-              paddingLeft: "2.5rem",
-              backgroundColor: pick.selectedBrand ? "var(--color-surface)" : "var(--color-border)",
-              border: `1px solid ${pick.selectedModel ? "var(--color-success)" : "var(--color-border)"}`,
-              opacity: pick.selectedBrand ? 1 : 0.6,
-            }}
-          />
-          {pick.selectedModel && (
-            <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-success)" }}>
-              <CheckIcon />
-            </span>
-          )}
-        </div>
-        {pick.showModelDropdown && filteredModels.length > 0 && !pick.selectedModel && (
-          <div
-            style={{
-              position: "absolute",
-              top: "100%",
-              left: 0,
-              right: 0,
-              marginTop: 4,
-              backgroundColor: "var(--color-surface-elevated)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--input-radius)",
-              boxShadow: "var(--card-shadow)",
-              maxHeight: 200,
-              overflowY: "auto",
-              zIndex: 10,
-            }}
-          >
-            {filteredModels.map((model) => (
-              <button
-                key={model.id}
-                type="button"
-                onClick={() => selectModel(model)}
-                style={{
-                  width: "100%",
-                  padding: "0.75rem 1rem",
-                  backgroundColor: "transparent",
-                  border: "none",
-                  borderBottom: "1px solid var(--color-border)",
-                  textAlign: "left",
-                  fontSize: "var(--font-size-base)",
-                  color: "var(--color-text)",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ fontWeight: "var(--font-weight-medium)" }}>{model.name}</div>
-                <div style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)", marginTop: 2 }}>
-                  {model.specs.capacityBTU ? `${model.specs.capacityBTU.toLocaleString("pt-BR")} BTUs` : ""}
-                  {model.specs.gasType ? ` • ${model.specs.gasType}` : ""}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+        <select
+          value={pick.selectedModel?.id ?? ""}
+          onChange={(e) => {
+            const model = filteredModels.find((m) => m.id === e.target.value) ?? null;
+            selectModel(model);
+          }}
+          disabled={!pick.selectedBrand}
+          style={{
+            ...selectStyle,
+            backgroundColor: pick.selectedBrand ? "var(--color-surface)" : "var(--color-border)",
+            border: `1px solid ${pick.selectedModel ? "var(--color-success)" : "var(--color-border)"}`,
+            opacity: pick.selectedBrand ? 1 : 0.6,
+            cursor: pick.selectedBrand ? "pointer" : "not-allowed",
+          }}
+        >
+          <option value="">{pick.selectedBrand ? "Selecione o modelo..." : "Selecione a marca primeiro"}</option>
+          {filteredModels.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+              {model.specs.capacityBTU ? ` · ${model.specs.capacityBTU.toLocaleString("pt-BR")} BTUs` : ""}
+            </option>
+          ))}
+        </select>
       </div>
       {pick.selectedModel && (
         <p style={{ margin: "0.5rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-success)" }}>
           Selecionado: {pick.selectedBrand?.name} — {pick.selectedModel.name}
         </p>
+      )}
+      {allowUnknown && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <button
+            type="button"
+            onClick={() => void handleUnknown()}
+            disabled={unknownLoading}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.4rem",
+              background: "none",
+              border: "none",
+              padding: 0,
+              fontSize: "var(--font-size-xs)",
+              fontWeight: "var(--font-weight-medium)",
+              color: "var(--color-text-muted)",
+              cursor: unknownLoading ? "default" : "pointer",
+              textDecoration: "underline",
+            }}
+          >
+            {unknownLoading ? "Preparando..." : "Não sei a marca ou modelo — identificar depois em campo"}
+          </button>
+          {unknownError && (
+            <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-danger)" }}>
+              {unknownError}
+            </p>
+          )}
+        </div>
       )}
     </section>
   );
@@ -1398,7 +1516,7 @@ const ChangeEquipmentSiteDialog: React.FC<{
   );
 };
 
-interface AddEquipmentModalProps {
+export interface AddEquipmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   clientId?: number;
@@ -1410,7 +1528,7 @@ interface AddEquipmentModalProps {
   isSubmitting?: boolean;
 }
 
-const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
+export const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   isOpen,
   onClose,
   clientId,
@@ -1443,7 +1561,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   const [aiLabelMsg, setAiLabelMsg] = useState<string | null>(null);
   const [aiFormError, setAiFormError] = useState("");
 
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2>(1);
   const [selectedCategory, setSelectedCategory] = useState<EquipmentCategory | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [isMultiSplit, setIsMultiSplit] = useState(false);
@@ -1457,6 +1575,9 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     tag: "",
     installationReference: "",
     installationDate: "",
+    manufactureYear: "",
+    gasChargeKg: "",
+    notes: "",
     clientSiteId: null as number | null,
     qrcodeCodeId: "",
   });
@@ -1464,6 +1585,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   const [qrcodeMsg, setQrcodeMsg] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
   const [qrcodeValidating, setQrcodeValidating] = useState(false);
+  const [qrcodeGenerating, setQrcodeGenerating] = useState(false);
 
   const resetWizard = () => {
     setRegistrationMode("choose");
@@ -1485,11 +1607,15 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
       tag: "",
       installationReference: "",
       installationDate: "",
+      manufactureYear: "",
+      gasChargeKg: "",
+      notes: "",
       clientSiteId: null,
       qrcodeCodeId: "",
     });
     setQrcodeLocked(false);
     setQrcodeMsg("");
+    setQrcodeGenerating(false);
   };
 
   const applyLabelResolve = (resolved: EquipmentLabelResolveOut) => {
@@ -1592,6 +1718,51 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     }
   };
 
+  /** Gera um novo código no inventário de etiquetas QR e já vincula ao cadastro atual. */
+  const generateAndLockQrcode = async (): Promise<void> => {
+    setQrcodeGenerating(true);
+    setQrcodeMsg("");
+    try {
+      const result = await generateQrCodes(1);
+      const newCode = result.first_code_id;
+      if (!newCode) {
+        setQrcodeMsg("Não foi possível gerar um novo código. Tente novamente.");
+        return;
+      }
+      await validateAndLockQrcode(newCode);
+    } catch (e) {
+      setQrcodeMsg(e instanceof Error ? e.message : "Falha ao gerar novo código QR.");
+    } finally {
+      setQrcodeGenerating(false);
+    }
+  };
+
+  /** Gera a imagem (data URL) da etiqueta para pré-visualização, sem chamar a API de PDF. */
+  const previewQrLabel = async (codeId: string): Promise<string | null> => {
+    const code = parseScannedQrCode(codeId);
+    if (!code) return null;
+    try {
+      const [item] = await buildQrLabelPreviewItems([{ codeId: code }]);
+      return item?.dataUrl ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Gera o PDF da etiqueta térmica (1 código) e abre em nova aba para impressão. */
+  const printQrLabel = async (codeId: string): Promise<void> => {
+    const code = parseScannedQrCode(codeId);
+    if (!code) return;
+    try {
+      const blob = await buildQrLabelsPdfBlob([{ codeId: code }], "thermal_58");
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      setQrcodeMsg(e instanceof Error ? e.message : "Falha ao gerar etiqueta para impressão.");
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) resetWizard();
   }, [isOpen]);
@@ -1638,15 +1809,20 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
   const multiSplitCategory =
     selectedCategory !== null && supportsMultiSplitCategory(selectedCategory);
 
+  // Por ora, o cadastro manual de equipamentos fica restrito a Ar-condicionado
+  // e Climatizador (mesmo escopo já aplicado no fluxo de leitura por IA).
+  // As demais categorias (geladeira, bebedouro, outros) voltam a aparecer aqui
+  // quando forem suportadas na ficha do cliente.
+  const enabledCategoriesOptions = (categoryOptions ?? []).filter((c) => isAcLikeIconKey(c.iconKey));
   const categoryPickerItems =
-    categoryOptions && categoryOptions.length > 0
-      ? categoryOptions.map((c) => ({
+    enabledCategoriesOptions.length > 0
+      ? enabledCategoriesOptions.map((c) => ({
           key: c.id,
           categoryId: c.id,
           iconKey: c.iconKey,
           label: c.name,
         }))
-      : CATEGORY_ICON_KEYS.map((iconKey) => ({
+      : ENABLED_EQUIPMENT_CATEGORY_ICON_KEYS.map((iconKey) => ({
           key: iconKey,
           categoryId: null as string | null,
           iconKey,
@@ -1710,13 +1886,14 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     return [];
   };
 
-  const canProceedStep1 = selectedCategory !== null;
-  const canProceedStep2 = multiSplitActive
-    ? Boolean(condenserPick.selectedModel) &&
-      evaporatorSlots.length > 0 &&
-      evaporatorSlots.every((s) => s.selectedModel)
-    : Boolean(standardPick.selectedModel);
-  const canProceedStep3 = canProceedStep2;
+  // Fluxo simplificado em 2 passos: 1) categoria + marca/modelo, 2) instalação.
+  const canProceedStep1 =
+    selectedCategory !== null &&
+    (multiSplitActive
+      ? Boolean(condenserPick.selectedModel) &&
+        evaporatorSlots.length > 0 &&
+        evaporatorSlots.every((s) => s.selectedModel)
+      : Boolean(standardPick.selectedModel));
 
   const multiSplitSerialKeys = (): string[] => {
     const keys = ["condenser"];
@@ -1724,10 +1901,13 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     return keys;
   };
 
+  // Equipamento "a identificar" (marca/modelo desconhecidos): a série também
+  // ainda não é conhecida, então não é exigida — o técnico preenche tudo
+  // junto na identificação em campo.
   const canSubmit = multiSplitActive
     ? formData.tag.trim() &&
       multiSplitSerialKeys().every((k) => (componentSerials[k] ?? "").trim())
-    : formData.serialNumber.trim() && formData.tag.trim();
+    : (standardPick.pendingIdentification || formData.serialNumber.trim()) && formData.tag.trim();
 
   const handleSubmit = async () => {
     if (!selectedCategory || !canSubmit || isSubmitting) return;
@@ -1765,6 +1945,9 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
         tag: formData.tag,
         installationReference: formData.installationReference,
         installationDate: formData.installationDate,
+        manufactureYear: formData.manufactureYear.trim() ? Number(formData.manufactureYear) : null,
+        gasChargeKg: formData.gasChargeKg.trim() ? Number(formData.gasChargeKg.replace(",", ".")) : null,
+        notes: formData.notes,
         clientSiteId: formData.clientSiteId,
         qrcodeCodeId: formData.qrcodeCodeId.trim() || null,
       };
@@ -1778,6 +1961,9 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
         tag: formData.tag,
         installationReference: formData.installationReference,
         installationDate: formData.installationDate,
+        manufactureYear: formData.manufactureYear.trim() ? Number(formData.manufactureYear) : null,
+        gasChargeKg: formData.gasChargeKg.trim() ? Number(formData.gasChargeKg.replace(",", ".")) : null,
+        notes: formData.notes,
         clientSiteId: formData.clientSiteId,
         qrcodeCodeId: formData.qrcodeCodeId.trim() || null,
       };
@@ -1787,8 +1973,6 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
 
   const handleContinue = () => {
     if (step === 1 && canProceedStep1) setStep(2);
-    else if (step === 2 && canProceedStep2) setStep(3);
-    else if (step === 3 && canProceedStep3) setStep(4);
   };
 
   const handleBack = () => {
@@ -1806,7 +1990,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
       setRegistrationMode("choose");
       return;
     }
-    setStep((prev) => (prev - 1) as 1 | 2 | 3 | 4);
+    setStep(1);
   };
 
   const canSubmitAi =
@@ -1815,10 +1999,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
     Boolean(aiForm.catalogId) &&
     Boolean(aiCategory);
 
-  const continueDisabled =
-    (step === 1 && !canProceedStep1) ||
-    (step === 2 && !canProceedStep2) ||
-    (step === 3 && !canProceedStep3);
+  const continueDisabled = step === 1 && !canProceedStep1;
 
   if (!isOpen) return null;
 
@@ -1880,7 +2061,9 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                 ? "Escolha como cadastrar"
                 : registrationMode === "ai"
                   ? "Leitura da etiqueta com IA"
-                  : `Passo ${step} de 4`}
+                  : step === 1
+                    ? "Passo 1 de 2 · Categoria, marca e modelo"
+                    : "Passo 2 de 2 · Instalação e QR Code"}
             </p>
           </div>
           <button
@@ -1909,7 +2092,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
             <div
               style={{
                 height: "100%",
-                width: `${(step / 4) * 100}%`,
+                width: `${(step / 2) * 100}%`,
                 backgroundColor: "var(--color-primary)",
                 transition: "width 0.3s ease",
               }}
@@ -1959,9 +2142,12 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                 onChange={(siteId) => setFormData((prev) => ({ ...prev, clientSiteId: siteId }))}
                 highlightedSiteName={highlightedSiteName}
               />
-              <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                Selecione a categoria do equipamento
+              <h3 style={{ margin: "0 0 0.25rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-semibold)", color: "var(--color-text)" }}>
+                Categoria do equipamento
               </h3>
+              <p style={{ margin: "0 0 1rem", fontSize: "var(--font-size-sm)", color: "var(--color-text-muted)" }}>
+                Por enquanto, cadastramos apenas Ar-condicionado e Climatizador.
+              </p>
               {categoryPickerItems.length === 0 ? (
                 <p style={{ margin: 0, color: "var(--color-text-muted)", fontSize: "var(--font-size-sm)" }}>
                   Nenhuma categoria disponível. Verifique o catálogo em Operação ou recarregue a página.
@@ -1970,7 +2156,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(9.5rem, 1fr))",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(9.5rem, 1fr))",
                   gap: "0.75rem",
                 }}
               >
@@ -1998,19 +2184,20 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                         alignItems: "center",
                         justifyContent: "center",
                         gap: "0.75rem",
-                        padding: "1.25rem",
-                        backgroundColor: isSelected ? `${config.color}10` : "var(--color-surface)",
+                        padding: "1.5rem 1.25rem",
+                        backgroundColor: isSelected ? `${config.color}10` : "#fff",
                         border: `2px solid ${isSelected ? config.color : "var(--color-border)"}`,
                         borderRadius: "var(--card-radius)",
+                        boxShadow: isSelected ? `0 6px 16px -8px ${config.color}66` : "0 1px 2px rgba(15, 23, 42, 0.04)",
                         cursor: "pointer",
                         transition: "all 0.15s ease",
                       }}
                     >
                       <div
                         style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 12,
+                          width: 52,
+                          height: 52,
+                          borderRadius: 14,
                           backgroundColor: `${config.color}15`,
                           display: "flex",
                           alignItems: "center",
@@ -2020,7 +2207,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                       >
                         {config.icon}
                       </div>
-                      <span style={{ fontSize: "var(--font-size-base)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
+                      <span style={{ fontSize: "var(--font-size-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--color-text)" }}>
                         {item.label}
                       </span>
                     </button>
@@ -2095,11 +2282,11 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
             </div>
           )}
 
-          {/* Step 2: Busca no catálogo (multi-split ou unidade única) */}
-          {registrationMode === "manual" && step === 2 && selectedCategory && (
-            <div>
+          {/* Busca no catálogo (multi-split ou unidade única) — mesma tela do passo 1 */}
+          {registrationMode === "manual" && step === 1 && selectedCategory && (
+            <div style={{ marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid var(--color-border)" }}>
               <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                {multiSplitActive ? "Monte o conjunto Multi-Split" : "Busque no catálogo"}
+                {multiSplitActive ? "Monte o conjunto Multi-Split" : "Busque marca e modelo no catálogo"}
               </h3>
 
               {multiSplitActive ? (
@@ -2177,14 +2364,15 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                   standardAcUnicoOnly={selectedCategory === "ar_condicionado"}
                   pick={standardPick}
                   onChange={setStandardPick}
+                  allowUnknown
                 />
               )}
             </div>
           )}
 
-          {/* Step 3: Ficha técnica autopreenchida */}
-          {registrationMode === "manual" && step === 3 && selectedCategory && selectedModelsForReview().length > 0 && (
-            <div>
+          {/* Ficha técnica autopreenchida — mesma tela do passo 1, aparece após escolher o modelo */}
+          {registrationMode === "manual" && step === 1 && selectedCategory && selectedModelsForReview().length > 0 && (
+            <div style={{ marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid var(--color-border)" }}>
               <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
                 {multiSplitActive ? "Resumo do conjunto Multi-Split" : "Ficha técnica do catálogo"}
               </h3>
@@ -2218,20 +2406,14 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
             </div>
           )}
 
-          {/* Step 4: Dados da instalação */}
-          {registrationMode === "manual" && step === 4 && (
-            <div>
-              <h3 style={{ margin: "0 0 1rem", fontSize: "var(--font-size-md)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                Dados da instalação
-              </h3>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {/* Passo 2: Dados da instalação */}
+          {registrationMode === "manual" && step === 2 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "1.1rem" }}>
+              <FormCard icon={<ClipboardIcon />} title="Identificação" hint="Número de série, TAG e data de instalação do aparelho.">
                 {multiSplitActive ? (
                   <>
                     <div>
-                      <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                        Número de Série — Condensadora *
-                      </label>
+                      <label style={fieldLabelStyle}>Número de Série — Condensadora *</label>
                       <input
                         type="text"
                         value={componentSerials.condenser ?? ""}
@@ -2240,7 +2422,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                         style={inputStyle}
                       />
                       {condenserPick.selectedModel && (
-                        <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
+                        <p style={fieldHintStyle}>
                           {condenserPick.selectedBrand?.name} {condenserPick.selectedModel.name}
                         </p>
                       )}
@@ -2248,9 +2430,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                     {evaporatorSlots.map((slot, index) =>
                       slot.selectedModel ? (
                         <div key={slot.slotId}>
-                          <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                            Número de Série — Evaporadora {index + 1} *
-                          </label>
+                          <label style={fieldLabelStyle}>Número de Série — Evaporadora {index + 1} *</label>
                           <input
                             type="text"
                             value={componentSerials[slot.slotId] ?? ""}
@@ -2258,7 +2438,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                             placeholder={`Série da evaporadora ${index + 1}`}
                             style={inputStyle}
                           />
-                          <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
+                          <p style={fieldHintStyle}>
                             {slot.selectedBrand?.name} {slot.selectedModel.name}
                           </p>
                         </div>
@@ -2267,145 +2447,51 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                   </>
                 ) : (
                   <div>
-                    <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                      Número de Série *
-                    </label>
+                    <label style={fieldLabelStyle}>Número de Série{standardPick.pendingIdentification ? "" : " *"}</label>
                     <input
                       type="text"
                       value={formData.serialNumber}
                       onChange={(e) => setFormData((prev) => ({ ...prev, serialNumber: e.target.value }))}
-                      placeholder="Ex: SN123456789"
+                      placeholder={
+                        standardPick.pendingIdentification
+                          ? "Ainda não identificado — deixe em branco"
+                          : "Ex: SN123456789"
+                      }
                       style={inputStyle}
                     />
+                    {standardPick.pendingIdentification && (
+                      <p style={fieldHintStyle}>
+                        Equipamento a identificar em campo — a série será preenchida junto com a marca/modelo.
+                      </p>
+                    )}
                   </div>
                 )}
 
                 <div>
-                  <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                    QR Code (etiqueta física)
-                  </label>
-                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
-                    <input
-                      type="text"
-                      value={formData.qrcodeCodeId}
-                      readOnly={qrcodeLocked}
-                      onChange={(e) => {
-                        const next = e.target.value.toUpperCase();
-                        setFormData((prev) => ({ ...prev, qrcodeCodeId: next }));
-                        if (qrcodeMsg) setQrcodeMsg("");
-                        if (qrcodeLocked) setQrcodeLocked(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !qrcodeLocked && formData.qrcodeCodeId.trim()) {
-                          e.preventDefault();
-                          void validateAndLockQrcode(formData.qrcodeCodeId);
-                        }
-                      }}
-                      placeholder="Ex: QR0000035 ou escaneie"
-                      style={{ ...inputStyle, flex: 1 }}
-                    />
-                    {!qrcodeLocked ? (
-                      <button
-                        type="button"
-                        disabled={!formData.qrcodeCodeId.trim() || qrcodeValidating}
-                        onClick={() => void validateAndLockQrcode(formData.qrcodeCodeId)}
-                        style={{
-                          padding: "0 0.75rem",
-                          borderRadius: "var(--input-radius)",
-                          border: "1px solid var(--color-border)",
-                          background: "var(--color-surface)",
-                          fontSize: "var(--font-size-xs)",
-                          fontWeight: "var(--font-weight-medium)",
-                          cursor:
-                            !formData.qrcodeCodeId.trim() || qrcodeValidating ? "not-allowed" : "pointer",
-                          opacity: !formData.qrcodeCodeId.trim() || qrcodeValidating ? 0.6 : 1,
-                        }}
-                      >
-                        {qrcodeValidating ? "Validando…" : "Validar"}
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      title="Escanear etiqueta"
-                      disabled={qrcodeLocked || qrcodeValidating}
-                      onClick={() => setScannerOpen(true)}
-                      style={{
-                        width: "var(--input-height)",
-                        minWidth: "var(--input-height)",
-                        borderRadius: "var(--input-radius)",
-                        border: "1px solid var(--color-border)",
-                        background: "var(--color-surface)",
-                        cursor: qrcodeLocked ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      📷
-                    </button>
-                    {qrcodeLocked ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setQrcodeLocked(false);
-                          setFormData((prev) => ({ ...prev, qrcodeCodeId: "" }));
-                          setQrcodeMsg("");
-                        }}
-                        style={{
-                          padding: "0 0.75rem",
-                          borderRadius: "var(--input-radius)",
-                          border: "1px solid var(--color-border)",
-                          background: "var(--color-surface)",
-                          fontSize: "var(--font-size-xs)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        Trocar
-                      </button>
-                    ) : null}
-                  </div>
-                  {qrcodeMsg ? (
-                    <p
-                      style={{
-                        margin: "0.35rem 0 0",
-                        fontSize: "var(--font-size-xs)",
-                        color: qrcodeLocked ? "#047857" : "var(--color-error)",
-                      }}
-                    >
-                      {qrcodeMsg}
-                    </p>
-                  ) : (
-                    <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
-                      Opcional: digite o código (ex.: QR0000035) e clique em Validar, ou use o escaneamento.
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                    Tag / Localização do Aparelho *
-                  </label>
+                  <label style={fieldLabelStyle}>Tag / Localização do Aparelho *</label>
                   <input
                     type="text"
                     value={formData.tag}
                     onChange={(e) => setFormData((prev) => ({ ...prev, tag: e.target.value }))}
                     placeholder="Ex: Sala da Diretoria, Recepção..."
-                    style={{
-                      width: "100%",
-                      height: "var(--input-height)",
-                      padding: "0 var(--input-padding-x)",
-                      backgroundColor: "var(--color-surface)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: "var(--input-radius)",
-                      fontSize: "var(--font-size-base)",
-                      color: "var(--color-text)",
-                      outline: "none",
-                      boxSizing: "border-box",
-                    }}
+                    style={inputStyle}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                    Referência de localização
-                  </label>
+                  <label style={fieldLabelStyle}>Data de Instalação</label>
+                  <input
+                    type="date"
+                    value={formData.installationDate}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, installationDate: e.target.value }))}
+                    style={inputStyle}
+                  />
+                </div>
+              </FormCard>
+
+              <FormCard icon={<MapPinIcon />} title="Localização" hint="Onde o técnico encontra o aparelho no cliente.">
+                <div>
+                  <label style={fieldLabelStyle}>Referência de localização</label>
                   <textarea
                     value={formData.installationReference}
                     onChange={(e) => setFormData((prev) => ({ ...prev, installationReference: e.target.value }))}
@@ -2420,34 +2506,87 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
                       resize: "vertical",
                     }}
                   />
-                  <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
-                    Detalhe onde o técnico encontra o aparelho em campo (aparece na O.S. e no PMOC).
-                  </p>
+                  <p style={fieldHintStyle}>Detalhe onde o técnico encontra o aparelho em campo (aparece na O.S. e no PMOC).</p>
                 </div>
+              </FormCard>
 
+              <FormCard
+                icon={<GaugeIcon />}
+                title="Detalhes técnicos adicionais"
+                hint="Opcional — ajuda o técnico e entra nos relatórios de PMOC."
+              >
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(9rem, 1fr))", gap: "1rem" }}>
+                  <div>
+                    <label style={fieldLabelStyle}>Ano de fabricação</label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={formData.manufactureYear}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, manufactureYear: e.target.value }))}
+                      placeholder="Ex: 2024"
+                      min={1970}
+                      max={2100}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={fieldLabelStyle}>Carga de gás (kg)</label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      value={formData.gasChargeKg}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, gasChargeKg: e.target.value }))}
+                      placeholder="Ex: 1,05"
+                      min={0}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
                 <div>
-                  <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "var(--font-size-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--color-text)" }}>
-                    Data de Instalação
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.installationDate}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, installationDate: e.target.value }))}
+                  <label style={fieldLabelStyle}>Observações</label>
+                  <textarea
+                    value={formData.notes}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
+                    placeholder="Ex: Acesso difícil, cliente pediu atenção especial, equipamento antigo..."
+                    rows={3}
                     style={{
-                      width: "100%",
-                      height: "var(--input-height)",
-                      padding: "0 var(--input-padding-x)",
-                      backgroundColor: "var(--color-surface)",
-                      border: "1px solid var(--color-border)",
-                      borderRadius: "var(--input-radius)",
-                      fontSize: "var(--font-size-base)",
-                      color: "var(--color-text)",
-                      outline: "none",
-                      boxSizing: "border-box",
+                      ...inputStyle,
+                      height: "auto",
+                      minHeight: "4rem",
+                      paddingTop: "0.65rem",
+                      paddingBottom: "0.65rem",
+                      resize: "vertical",
                     }}
                   />
                 </div>
-              </div>
+              </FormCard>
+
+              <FormCard icon={<InfoIcon />} title="QR Code do equipamento" hint="Vincule uma cartela pré-impressa para acesso rápido em campo.">
+                <EquipmentQrCodeCard
+                  codeId={formData.qrcodeCodeId}
+                  locked={qrcodeLocked}
+                  message={qrcodeMsg}
+                  validating={qrcodeValidating}
+                  generating={qrcodeGenerating}
+                  disabled={isSubmitting}
+                  onCodeChange={(next) => {
+                    setFormData((prev) => ({ ...prev, qrcodeCodeId: next }));
+                    if (qrcodeMsg) setQrcodeMsg("");
+                    if (qrcodeLocked) setQrcodeLocked(false);
+                  }}
+                  onValidate={() => void validateAndLockQrcode(formData.qrcodeCodeId)}
+                  onOpenScanner={() => setScannerOpen(true)}
+                  onGenerate={() => void generateAndLockQrcode()}
+                  onClear={() => {
+                    setQrcodeLocked(false);
+                    setFormData((prev) => ({ ...prev, qrcodeCodeId: "" }));
+                    setQrcodeMsg("");
+                  }}
+                  onPreview={() => previewQrLabel(formData.qrcodeCodeId)}
+                  onPrintLabel={() => printQrLabel(formData.qrcodeCodeId)}
+                />
+              </FormCard>
             </div>
           )}
         </div>
@@ -2513,7 +2652,7 @@ const AddEquipmentModal: React.FC<AddEquipmentModalProps> = ({
               <CheckIcon />
               {isSubmitting ? "Salvando…" : "Salvar Equipamento"}
             </button>
-          ) : registrationMode === "choose" ? null : step < 4 ? (
+          ) : registrationMode === "choose" ? null : step < 2 ? (
             <button
               type="button"
               onClick={handleContinue}

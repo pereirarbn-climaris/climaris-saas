@@ -36,6 +36,19 @@ PROFESSIONAL_BODY_INDENT = 2 * mm
 
 
 def _client_address_single_line(budget: Budget) -> str:
+    site = getattr(budget, "client_site", None)
+    if site is not None:
+        parts = [
+            getattr(site, "street", None),
+            getattr(site, "number", None),
+            getattr(site, "neighborhood", None),
+            getattr(site, "city", None),
+            getattr(site, "state", None),
+        ]
+        filtered = [str(p).strip() for p in parts if p and str(p).strip()]
+        if filtered:
+            return ", ".join(filtered)
+
     parts = [
         getattr(budget.client, "address_street", None),
         getattr(budget.client, "address_number", None),
@@ -142,20 +155,18 @@ def _draw_scope_section(
     font_bold: str,
     bullets: list[str],
     text_color: colors.Color,
+    section_number: int,
 ) -> float:
+    """Só é chamada quando há ao menos um item de escopo (ver build_professional_budget_pdf)."""
     y = _draw_professional_section_title(
         c,
         y=y,
         margin_x=margin_x,
         font_bold=font_bold,
-        title="1. ESCOPO TÉCNICO DE MÃO DE OBRA E EXECUÇÃO",
+        title=f"{section_number}. ESCOPO TÉCNICO DE MÃO DE OBRA E EXECUÇÃO",
         text_color=text_color,
     )
     body_x = margin_x + PROFESSIONAL_BODY_INDENT
-    if not bullets:
-        c.setFont(font, 7.4)
-        c.drawString(body_x, y, "—")
-        return y - 5 * mm
     c.setFont(font, 7.3)
     for bullet in bullets:
         for line in _wrap_scope_line(bullet, max_chars=98):
@@ -198,6 +209,20 @@ def _draw_professional_section_title(
     return y - 4.5 * mm
 
 
+def _conditions_has_content(config: TemplateConfig, budget: Budget) -> bool:
+    if int(budget.validity_days or 0) > 0:
+        return True
+    if config.warranty_text:
+        return True
+    if (config.payment_method_text or budget.payment_method or "").strip():
+        return True
+    if (config.payment_terms_text or "").strip():
+        return True
+    if (config.observations_text or "").strip():
+        return True
+    return False
+
+
 def _draw_conditions_section(
     c: canvas.Canvas,
     *,
@@ -209,13 +234,15 @@ def _draw_conditions_section(
     config: TemplateConfig,
     budget: Budget,
     text_color: colors.Color,
+    section_number: int,
 ) -> float:
+    """Só é chamada quando há ao menos uma condição comercial (ver _conditions_has_content)."""
     y = _draw_professional_section_title(
         c,
         y=y,
         margin_x=margin_x,
         font_bold=font_bold,
-        title="4. CONDIÇÕES E GARANTIAS COMERCIAIS",
+        title=f"{section_number}. CONDIÇÕES E GARANTIAS COMERCIAIS",
         text_color=text_color,
     )
     body_x = margin_x + PROFESSIONAL_BODY_INDENT
@@ -335,6 +362,9 @@ def build_professional_budget_pdf(
     contact = getattr(client, "contact_person_name", None)
     if contact and str(contact).strip():
         client_lines.append(f"A/C: {str(contact).strip()}")
+    site = getattr(budget, "client_site", None)
+    if site is not None and str(getattr(site, "name", "") or "").strip():
+        client_lines.append(f"Filial: {str(site.name).strip()}")
     client_lines.extend(
         [
             f"CNPJ: {mask_tax_document(client.document)}",
@@ -363,19 +393,24 @@ def build_professional_budget_pdf(
         text_color=text_color,
     )
 
-    y -= PROFESSIONAL_SECTION_GAP
+    # Seções numeradas (1, 2, 3, 4...) dinamicamente — seções sem conteúdo não aparecem no orçamento.
+    section_number = 1
     manual_scope = scope_bullet_lines(config.scope_text)
     bullets = manual_scope if manual_scope else scope_bullets_from_budget_services(budget)
-    y = _draw_scope_section(
-        c,
-        y=y,
-        margin_x=margin_x,
-        content_width=content_width,
-        font=font,
-        font_bold=font_bold,
-        bullets=bullets,
-        text_color=text_color,
-    )
+    if bullets:
+        y -= PROFESSIONAL_SECTION_GAP
+        y = _draw_scope_section(
+            c,
+            y=y,
+            margin_x=margin_x,
+            content_width=content_width,
+            font=font,
+            font_bold=font_bold,
+            bullets=bullets,
+            text_color=text_color,
+            section_number=section_number,
+        )
+        section_number += 1
 
     product_rows, service_rows, product_sub, service_sub, grand_total = collect_professional_budget_rows(
         budget, desc_style
@@ -385,7 +420,7 @@ def build_professional_budget_pdf(
         y -= PROFESSIONAL_SECTION_GAP
         y = draw_professional_detail_table(
             c,
-            section_title="2. DETALHAMENTO DE PRODUTOS E MATERIAIS APLICADOS",
+            section_title=f"{section_number}. DETALHAMENTO DE PRODUTOS E MATERIAIS APLICADOS",
             header_label="DESCRIÇÃO DO PRODUTO / INSUMO TÉCNICO",
             rows=product_rows,
             y_top=y,
@@ -397,12 +432,13 @@ def build_professional_budget_pdf(
             font_bold=font_bold,
             text_color=text_color,
         )
+        section_number += 1
 
     if service_rows:
         y -= PROFESSIONAL_SECTION_GAP
         y = draw_professional_detail_table(
             c,
-            section_title="3. DETALHAMENTO DOS SERVIÇOS TÉCNICOS (MÃO DE OBRA)",
+            section_title=f"{section_number}. DETALHAMENTO DOS SERVIÇOS TÉCNICOS (MÃO DE OBRA)",
             header_label="DESCRIÇÃO DO SERVIÇO TÉCNICO EXECUTADO",
             rows=service_rows,
             y_top=y,
@@ -414,6 +450,7 @@ def build_professional_budget_pdf(
             font_bold=font_bold,
             text_color=text_color,
         )
+        section_number += 1
 
     y -= 3 * mm
     y = draw_professional_totals_block(
@@ -428,19 +465,22 @@ def build_professional_budget_pdf(
         service_sub=service_sub if service_rows else None,
         grand_total=grand_total,
     )
-    y -= PROFESSIONAL_SECTION_GAP
 
-    y = _draw_conditions_section(
-        c,
-        y=y,
-        margin_x=margin_x,
-        font=font,
-        font_bold=font_bold,
-        brand_blue=brand_blue,
-        config=config,
-        budget=budget,
-        text_color=text_color,
-    )
+    if _conditions_has_content(config, budget):
+        y -= PROFESSIONAL_SECTION_GAP
+        y = _draw_conditions_section(
+            c,
+            y=y,
+            margin_x=margin_x,
+            font=font,
+            font_bold=font_bold,
+            brand_blue=brand_blue,
+            config=config,
+            budget=budget,
+            text_color=text_color,
+            section_number=section_number,
+        )
+        section_number += 1
 
     needs_signature_page = y < 42 * mm
     total_pages = 2 if needs_signature_page else 1
@@ -465,7 +505,8 @@ def build_professional_budget_pdf(
             signature_url=signature_url,
         )
     else:
-        sign_y = max(28 * mm, y - 12 * mm)
+        # Assinatura sempre fixa na parte de baixo da folha, independente do tamanho do conteúdo acima.
+        sign_y = 28 * mm
         c.setStrokeColor(colors.HexColor("#666666"))
         left_x1 = margin_x + 8 * mm
         left_x2 = margin_x + 82 * mm

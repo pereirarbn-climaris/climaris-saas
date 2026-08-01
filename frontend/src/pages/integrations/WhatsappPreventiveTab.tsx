@@ -41,6 +41,7 @@ type ConfigSection = 1 | 2 | 3;
 
 export type PreventiveSettingsDraft = {
   preventive_auto_remind_days_before: number;
+  preventive_auto_whatsapp_mode: "days_before" | "month_first_business_day";
   preventive_default_template_model_id: string;
 };
 
@@ -189,6 +190,7 @@ export function WhatsappPreventiveTab({
             90,
             Math.max(0, Math.floor(Number(settingsDraft.preventive_auto_remind_days_before) || 0)),
           ),
+          preventive_auto_whatsapp_mode: settingsDraft.preventive_auto_whatsapp_mode,
           preventive_default_template_model_id: settingsDraft.preventive_default_template_model_id,
         }),
       ]);
@@ -653,22 +655,51 @@ export function WhatsappPreventiveTab({
                       placeholder="Ex.: perdas de eficiência energética e PMOC"
                     />
 
-                    <label className={styles.fieldLabel} htmlFor="wa-prev-auto-days">
-                      Lembrete automático (dias antes do vencimento; 0 = no dia)
+                    <label className={styles.fieldLabel} htmlFor="wa-prev-auto-mode">
+                      Envio automático — quando disparar
                     </label>
-                    <input
-                      id="wa-prev-auto-days"
+                    <select
+                      id="wa-prev-auto-mode"
                       className={styles.textInput}
-                      type="number"
-                      min={0}
-                      max={90}
-                      value={settingsDraft.preventive_auto_remind_days_before}
+                      value={settingsDraft.preventive_auto_whatsapp_mode}
                       onChange={(e) =>
                         onSettingsDraftChange({
-                          preventive_auto_remind_days_before: Number(e.target.value),
+                          preventive_auto_whatsapp_mode:
+                            e.target.value === "month_first_business_day"
+                              ? "month_first_business_day"
+                              : "days_before",
                         })
                       }
-                    />
+                    >
+                      <option value="days_before">X dias antes do vencimento</option>
+                      <option value="month_first_business_day">Primeiro dia útil do mês (todos do mês)</option>
+                    </select>
+
+                    {settingsDraft.preventive_auto_whatsapp_mode === "days_before" ? (
+                      <>
+                        <label className={styles.fieldLabel} htmlFor="wa-prev-auto-days">
+                          Lembrete automático (dias antes do vencimento; 0 = no dia)
+                        </label>
+                        <input
+                          id="wa-prev-auto-days"
+                          className={styles.textInput}
+                          type="number"
+                          min={0}
+                          max={90}
+                          value={settingsDraft.preventive_auto_remind_days_before}
+                          onChange={(e) =>
+                            onSettingsDraftChange({
+                              preventive_auto_remind_days_before: Number(e.target.value),
+                            })
+                          }
+                        />
+                      </>
+                    ) : (
+                      <p className={styles.hint}>
+                        No primeiro dia útil do mês (expediente e feriados da empresa), envia um WhatsApp por
+                        cliente/filial com todos os equipamentos que vencem naquele mês.
+                      </p>
+                    )}
 
                     <label className={styles.fieldLabel} htmlFor="wa-prev-default-template">
                       Modelo padrão em novos lembretes

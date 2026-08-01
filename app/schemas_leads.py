@@ -69,4 +69,4 @@ class WebsiteLeadOut(BaseModel):
 
 class WebsiteLeadCreateOut(BaseModel):
     id: int
-    message: str = "Recebemos seu interesse. Nossa equipe entrará em contato para agendar a demonstração."
+    message: str = "Recebemos seu contato! Nossa equipe retornará em breve."

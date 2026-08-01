@@ -19,7 +19,14 @@ import {
 } from '../../../lib/serviceOrderFormViewAdapter'
 import type { ProductOut } from '../../../api/products'
 import type { ServiceOut } from '../../../api/services'
+import type { ClientSiteOut } from '../../../api/clients'
 import type { SuggestedSlotOut } from '../../../api/serviceOrders'
+import {
+  SERVICE_ORDER_MATRIX_SITE_VALUE,
+  clientSiteLabel,
+  formatClientSiteAddressLine,
+  isServiceOrderMatrixSite,
+} from '../../../lib/serviceOrderClientSite'
 import type { TenantOut } from '../../../api/auth'
 import type { ServiceOrderMissingRequirement } from '../../../types/serviceOrders'
 import { ComplianceBlockedAlert } from '../../service-orders/ComplianceBlockedAlert'
@@ -152,6 +159,9 @@ export interface ServiceOrderData {
   id?: string
   numero?: string
   clienteId: string
+  clientSiteId?: string
+  serviceAddress?: string
+  clientSiteName?: string
   tecnicoId: string
   status: ServiceOrderStatus
   tipoServico: ServiceType
@@ -230,6 +240,11 @@ export interface ServiceOrderFormViewProps {
   onGeneratePDF?: (osId: string) => void
   /** Callback quando cliente muda (para buscar equipamentos) */
   onClienteChange?: (clienteId: string) => void
+  /** Filiais/obras do cliente selecionado */
+  clientSites?: ClientSiteOut[]
+  loadingClientSites?: boolean
+  /** Callback quando matriz/filial muda (recarrega equipamentos) */
+  onClientSiteChange?: (siteId: string) => void
   /** ID numérico da OS (edição) — usado nas sugestões de agenda */
   orderId?: number
   /** Busca janelas livres (manhã/tarde) na API */
@@ -254,7 +269,7 @@ export interface ServiceOrderFormViewProps {
   isCancellingOrder?: boolean
   /** Admin/recepção: concluir OS agendada/em andamento sem passar pelo fluxo de assinatura */
   canCompleteOrder?: boolean
-  onCompleteOrder?: (options?: { forceClose?: boolean }) => void | Promise<void>
+  onCompleteOrder?: (options?: { forceClose?: boolean; dataRealizacao?: string }) => void | Promise<void>
   isCompletingOrder?: boolean
   complianceBlock?: ServiceOrderMissingRequirement[] | null
   digitalWorkOrderId?: string | null
@@ -1173,6 +1188,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   onCancel,
   onGeneratePDF,
   onClienteChange,
+  clientSites = [],
+  loadingClientSites = false,
+  onClientSiteChange,
   orderId,
   onSuggestSlots,
   linesReadOnly = false,
@@ -1206,6 +1224,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     const laudo = serviceOrder ? resolveLaudoFieldsFromServiceOrder(serviceOrder) : null
     return {
     clienteId: serviceOrder?.clienteId || '',
+    clientSiteId: serviceOrder?.clientSiteId || SERVICE_ORDER_MATRIX_SITE_VALUE,
+    serviceAddress: serviceOrder?.serviceAddress,
+    clientSiteName: serviceOrder?.clientSiteName,
     tecnicoId: serviceOrder?.tecnicoId || '',
     status: serviceOrder?.status || 'pendente',
     tipoServico: serviceOrder?.tipoServico || 'corretiva',
@@ -1250,17 +1271,32 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   const [cancelOrderOpen, setCancelOrderOpen] = useState(false)
   const [completeOrderOpen, setCompleteOrderOpen] = useState(false)
   const [forceCloseWithoutCompliance, setForceCloseWithoutCompliance] = useState(false)
+  const [performedDate, setPerformedDate] = useState('')
   const [cancelReason, setCancelReason] = useState('')
   const savedSnapshotRef = useRef('')
 
   const hasComplianceBlock = Boolean(complianceBlock && complianceBlock.length > 0)
   const canConfirmComplete = !hasComplianceBlock || (isAdmin && forceCloseWithoutCompliance)
 
+  const defaultPerformedDate = useMemo(() => {
+    const fromSchedule = (formData.dataAgendamento || serviceOrder?.dataAgendamento || '').trim()
+    if (/^\d{4}-\d{2}-\d{2}/.test(fromSchedule)) return fromSchedule.slice(0, 10)
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  }, [formData.dataAgendamento, serviceOrder?.dataAgendamento])
+
   useEffect(() => {
     if (hasComplianceBlock) {
       setCompleteOrderOpen(true)
     }
   }, [hasComplianceBlock])
+
+  useEffect(() => {
+    if (completeOrderOpen) {
+      setPerformedDate(defaultPerformedDate)
+    }
+  }, [completeOrderOpen, defaultPerformedDate])
 
   const confirmCancelSchedule = useCallback(async () => {
     if (!onCancelSchedule) return
@@ -1270,14 +1306,18 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
 
   const confirmCompleteOrder = useCallback(async () => {
     if (!onCompleteOrder) return
+    const dataRealizacao = (performedDate || defaultPerformedDate).trim().slice(0, 10)
     try {
-      await onCompleteOrder({ forceClose: isAdmin && forceCloseWithoutCompliance })
+      await onCompleteOrder({
+        forceClose: isAdmin && forceCloseWithoutCompliance,
+        dataRealizacao: /^\d{4}-\d{2}-\d{2}$/.test(dataRealizacao) ? dataRealizacao : undefined,
+      })
       setCompleteOrderOpen(false)
       setForceCloseWithoutCompliance(false)
     } catch {
       /* Mantém o diálogo aberto para exibir pendências de compliance. */
     }
-  }, [onCompleteOrder, isAdmin, forceCloseWithoutCompliance])
+  }, [onCompleteOrder, isAdmin, forceCloseWithoutCompliance, performedDate, defaultPerformedDate])
 
   const confirmCancelOrder = useCallback(async () => {
     if (!onCancelOrder) return
@@ -1296,6 +1336,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     const laudoBaseline = resolveLaudoFieldsFromServiceOrder(serviceOrder)
     const baseline: ServiceOrderData = {
       clienteId: serviceOrder.clienteId || '',
+      clientSiteId: serviceOrder.clientSiteId || SERVICE_ORDER_MATRIX_SITE_VALUE,
+      serviceAddress: serviceOrder.serviceAddress,
+      clientSiteName: serviceOrder.clientSiteName,
       tecnicoId: serviceOrder.tecnicoId || '',
       status: serviceOrder.status || 'pendente',
       tipoServico: serviceOrder.tipoServico || 'corretiva',
@@ -1341,6 +1384,9 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     const laudo = resolveLaudoFieldsFromServiceOrder(serviceOrder)
     setFormData({
       clienteId: serviceOrder.clienteId || '',
+      clientSiteId: serviceOrder.clientSiteId || SERVICE_ORDER_MATRIX_SITE_VALUE,
+      serviceAddress: serviceOrder.serviceAddress,
+      clientSiteName: serviceOrder.clientSiteName,
       tecnicoId: serviceOrder.tecnicoId || '',
       status: serviceOrder.status || 'pendente',
       tipoServico: serviceOrder.tipoServico || 'corretiva',
@@ -1445,9 +1491,23 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
   
   const handleClienteChange = useCallback((clienteId: string) => {
     updateField('clienteId', clienteId)
+    updateField('clientSiteId', SERVICE_ORDER_MATRIX_SITE_VALUE)
     updateField('equipamentosIds', [])
+    updateField('servicos', [])
     onClienteChange?.(clienteId)
   }, [updateField, onClienteChange])
+
+  const handleClientSiteChange = useCallback((siteId: string) => {
+    updateField('clientSiteId', siteId)
+    updateField('equipamentosIds', [])
+    setFormData((prev) => ({
+      ...prev,
+      clientSiteId: siteId,
+      equipamentosIds: [],
+      servicos: prev.servicos.map((line) => ({ ...line, equipmentIds: [], equipmentId: undefined })),
+    }))
+    onClientSiteChange?.(siteId)
+  }, [updateField, onClientSiteChange])
   
   const toggleEquipamento = useCallback((id: string) => {
     setFormData((prev) => {
@@ -1636,6 +1696,21 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
     () => clientes.find((c) => c.id === formData.clienteId),
     [clientes, formData.clienteId],
   )
+
+  const selectedClientSite = useMemo(
+    () => clientSites.find((site) => String(site.id) === formData.clientSiteId) ?? null,
+    [clientSites, formData.clientSiteId],
+  )
+
+  const serviceAddressLabel = useMemo(() => {
+    if (formData.serviceAddress?.trim()) return formData.serviceAddress.trim()
+    if (!isServiceOrderMatrixSite(formData.clientSiteId) && selectedClientSite) {
+      return formatClientSiteAddressLine(selectedClientSite)
+    }
+    return selectedCliente?.endereco
+  }, [formData.serviceAddress, formData.clientSiteId, selectedClientSite, selectedCliente?.endereco])
+
+  const showClientSiteField = Boolean(formData.clienteId) && clientSites.length > 0
 
   const selectedTecnico = useMemo(
     () => tecnicos.find((t) => t.id === formData.tecnicoId),
@@ -1842,6 +1917,46 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
                   O cliente não pode ser alterado após a OS ser salva.
                 </p>
               ) : null}
+
+              {showClientSiteField ? (
+                <FormField label="Local do serviço" fullWidth>
+                  <Select
+                    options={[
+                      { value: SERVICE_ORDER_MATRIX_SITE_VALUE, label: 'Matriz (cadastro principal)' },
+                      ...clientSites.map((site) => ({
+                        value: String(site.id),
+                        label: clientSiteLabel(site),
+                      })),
+                    ]}
+                    value={formData.clientSiteId || SERVICE_ORDER_MATRIX_SITE_VALUE}
+                    onChange={handleClientSiteChange}
+                    disabled={!canEditGeneral || clientLocked || loadingClientSites}
+                  />
+                </FormField>
+              ) : null}
+
+              {formData.clienteId && (showClientSiteField || formData.clientSiteName || serviceAddressLabel) ? (
+                <div
+                  style={{
+                    padding: 'var(--space-3)',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--color-surface-elevated)',
+                    border: '1px solid var(--color-border)',
+                  }}
+                >
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: 'var(--space-1)' }}>
+                    Endereço do atendimento
+                  </div>
+                  <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text)' }}>
+                    {!isServiceOrderMatrixSite(formData.clientSiteId) && (selectedClientSite || formData.clientSiteName)
+                      ? `${formData.clientSiteName || selectedClientSite?.name || 'Filial'} — `
+                      : showClientSiteField
+                        ? 'Matriz — '
+                        : ''}
+                    {serviceAddressLabel || 'Endereço não informado no cadastro.'}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </FormCard>
 
@@ -1852,7 +1967,12 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
           <ServiceOrderLineSections
             servicos={formData.servicos}
             pecas={formData.pecas}
-            onServicosChange={(servicos) => setFormData((prev) => ({ ...prev, servicos }))}
+            onServicosChange={(servicos) =>
+              setFormData((prev) => ({
+                ...prev,
+                servicos: typeof servicos === "function" ? servicos(prev.servicos) : servicos,
+              }))
+            }
             onPecasChange={(pecas) => setFormData((prev) => ({ ...prev, pecas }))}
             servicesCatalog={servicesCatalog}
             productsCatalog={productsCatalog}
@@ -2292,7 +2412,10 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
         open={completeOrderOpen}
         onOpenChange={(open) => {
           setCompleteOrderOpen(open)
-          if (!open) setForceCloseWithoutCompliance(false)
+          if (!open) {
+            setForceCloseWithoutCompliance(false)
+            setPerformedDate('')
+          }
         }}
       >
         <AlertDialogContent labelledBy="os-complete-order-title" describedBy="os-complete-order-desc">
@@ -2304,6 +2427,24 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               {inventoryEnabled ? " e consome estoque reservado" : ""} — sem exigir assinatura do cliente.
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <AlertDialogBody>
+            <label className={headerStyles.completeDateLabel} htmlFor="os-complete-performed-date">
+              Data de realização do serviço
+            </label>
+            <input
+              id="os-complete-performed-date"
+              className={headerStyles.completeDateInput}
+              type="date"
+              value={performedDate || defaultPerformedDate}
+              onChange={(e) => setPerformedDate(e.target.value)}
+              disabled={isCompletingOrder}
+            />
+            <p className={headerStyles.completeDateHint}>
+              Usada como última realização na gestão preventiva (próxima validade). Prefill com a data do
+              agendamento.
+            </p>
+          </AlertDialogBody>
 
           {hasComplianceBlock && orderId ? (
             <ComplianceBlockedAlert
@@ -2326,6 +2467,7 @@ export const ServiceOrderFormView: React.FC<ServiceOrderFormViewProps> = ({
               onClick={() => {
                 setCompleteOrderOpen(false)
                 setForceCloseWithoutCompliance(false)
+                setPerformedDate('')
               }}
               disabled={isCompletingOrder}
             >

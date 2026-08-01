@@ -189,7 +189,7 @@ def build_classic_budget_pdf(
         c.drawRightString(total_x + total_w - 2.2 * mm, total_y + 1.7 * mm, money(total))
         section_y = total_y - 8 * mm
 
-    legal_y = draw_legal_footer(
+    draw_legal_footer(
         c,
         y_start=section_y,
         margin_x=margin_x,
@@ -204,7 +204,8 @@ def build_classic_budget_pdf(
         validity_days=int(budget.validity_days or 0),
         payment_method=budget.payment_method,
     )
-    sign_y = max(22 * mm, legal_y - 6 * mm)
+    # Assinatura sempre fixa na parte de baixo da folha, independente do tamanho do conteúdo acima.
+    sign_y = 25 * mm
     draw_signatures(
         c,
         width=width,

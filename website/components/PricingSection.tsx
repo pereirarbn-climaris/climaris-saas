@@ -14,7 +14,7 @@ import {
   type PublicPlan,
   fetchPublicPlans,
 } from "@/lib/plans";
-import { cta, freeTrial, registerUrl } from "@/lib/site-config";
+import { cta, demoSchedulingEnabled, freeTrial, publicCtaLabel, registerUrl } from "@/lib/site-config";
 
 function CellValue({ value }: { value: boolean | string }) {
   if (typeof value === "string") {
@@ -165,13 +165,19 @@ export function PricingSection({ showComparison = true }: { showComparison?: boo
         ) : null}
 
         <div className="mt-8 text-center">
-          <button
-            type="button"
-            className="text-sm font-semibold text-primary hover:underline"
-            onClick={() => openLeadModal({ intent: "demo" })}
-          >
-            {cta.primary} — comparar planos com um consultor
-          </button>
+          {demoSchedulingEnabled ? (
+            <button
+              type="button"
+              className="text-sm font-semibold text-primary hover:underline"
+              onClick={() => openLeadModal({ intent: "demo" })}
+            >
+              {cta.primary} — comparar planos com um consultor
+            </button>
+          ) : (
+            <Link href="/contato" className="text-sm font-semibold text-primary hover:underline">
+              {publicCtaLabel()} — comparar planos com um consultor
+            </Link>
+          )}
         </div>
 
         {showComparison && comparisonPlans.length > 0 ? (

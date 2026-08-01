@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from
 import { Link, Navigate, useMatch, useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { createBudget, fetchBudgetPdfBlob, getBudget, updateBudget, type BudgetOut, type BudgetStatus } from "../../api/budgets";
 import { fetchBudgetTemplateSettings } from "../../api/budgetTemplates";
-import { getClient, type ClientOut } from "../../api/clients";
+import { getClient, listClientSites, type ClientOut, type ClientSiteOut } from "../../api/clients";
 import { listProducts, type ProductOut } from "../../api/products";
 import { listServices, type ServiceOut } from "../../api/services";
 import { BudgetPresetPicker } from "../../components/budget/BudgetPresetPicker";
@@ -15,8 +15,16 @@ import {
 } from "../../lib/budgetPdfGenerator";
 import { toast } from "../../lib/toast";
 import { TABLE_THEME_PROFESSIONAL } from "../../lib/budgetPdfTheme";
-import { formatClientScheduleAddress, formatPhoneBr } from "../../lib/clientContactDisplay";
+import { formatPhoneBr } from "../../lib/clientContactDisplay";
 import { sortByNameAsc } from "../../lib/localeSort";
+import {
+  clientSiteIdForApi,
+  clientSiteIdFromApi,
+  clientSiteLabel,
+  isServiceOrderMatrixSite,
+  resolveServiceOrderAddressLabel,
+  SERVICE_ORDER_MATRIX_SITE_VALUE,
+} from "../../lib/serviceOrderClientSite";
 import { getTenantDisplayName } from "../../lib/tenantDisplay";
 import type { DashboardOutletContext } from "../dashboardContext";
 import styles from "./BudgetFormPage.module.css";
@@ -26,6 +34,7 @@ type SelectedProduct = { product_id: number; quantity: number };
 
 type BudgetFormSnapshot = {
   clientId: string;
+  clientSiteId: string;
   scopeText: string;
   observation: string;
   paymentMethod: string;
@@ -39,6 +48,7 @@ type BudgetFormSnapshot = {
 function serializeBudgetFormSnapshot(state: BudgetFormSnapshot): string {
   return JSON.stringify({
     clientId: state.clientId,
+    clientSiteId: state.clientSiteId,
     scopeText: state.scopeText.trim(),
     observation: state.observation.trim(),
     paymentMethod: state.paymentMethod.trim(),
@@ -154,6 +164,9 @@ export function BudgetFormPage() {
 
   const [selectedClient, setSelectedClient] = useState<ClientOut | null>(null);
   const [clientId, setClientId] = useState("");
+  const [clientSites, setClientSites] = useState<ClientSiteOut[]>([]);
+  const [clientSiteId, setClientSiteId] = useState(SERVICE_ORDER_MATRIX_SITE_VALUE);
+  const [loadingClientSites, setLoadingClientSites] = useState(false);
   const [scopeText, setScopeText] = useState("");
   const [observation, setObservation] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -210,6 +223,7 @@ export function BudgetFormPage() {
   const currentSnapshot = useMemo(
     (): BudgetFormSnapshot => ({
       clientId,
+      clientSiteId,
       scopeText,
       observation,
       paymentMethod,
@@ -221,6 +235,7 @@ export function BudgetFormPage() {
     }),
     [
       clientId,
+      clientSiteId,
       scopeText,
       observation,
       paymentMethod,
@@ -272,6 +287,7 @@ export function BudgetFormPage() {
           if (cancelled) return;
           setBudget(loaded);
           setClientId(String(loaded.client_id));
+          setClientSiteId(clientSiteIdFromApi(loaded.client_site_id));
           setScopeText(loaded.scope_text ?? "");
           setObservation(loaded.observation ?? "");
           setPaymentMethod(loaded.payment_method ?? "");
@@ -285,6 +301,7 @@ export function BudgetFormPage() {
           setBaseline(
             serializeBudgetFormSnapshot({
               clientId: String(loaded.client_id),
+              clientSiteId: clientSiteIdFromApi(loaded.client_site_id),
               scopeText: loaded.scope_text ?? "",
               observation: loaded.observation ?? "",
               paymentMethod: loaded.payment_method ?? "",
@@ -328,15 +345,32 @@ export function BudgetFormPage() {
     const cid = Number(clientId);
     if (!Number.isFinite(cid) || cid < 1) {
       setSelectedClient(null);
+      setClientSites([]);
+      setClientSiteId(SERVICE_ORDER_MATRIX_SITE_VALUE);
       return;
     }
     let cancelled = false;
-    void getClient(cid)
-      .then((c) => {
-        if (!cancelled) setSelectedClient(c);
+    setLoadingClientSites(true);
+    void Promise.all([getClient(cid), listClientSites(cid)])
+      .then(([client, sites]) => {
+        if (cancelled) return;
+        setSelectedClient(client);
+        setClientSites(sites);
+        setClientSiteId((prev) => {
+          if (!isServiceOrderMatrixSite(prev) && sites.some((site) => String(site.id) === prev)) {
+            return prev;
+          }
+          return SERVICE_ORDER_MATRIX_SITE_VALUE;
+        });
       })
       .catch(() => {
-        if (!cancelled) setSelectedClient(null);
+        if (cancelled) return;
+        setSelectedClient(null);
+        setClientSites([]);
+        setClientSiteId(SERVICE_ORDER_MATRIX_SITE_VALUE);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingClientSites(false);
       });
     return () => {
       cancelled = true;
@@ -400,6 +434,7 @@ export function BudgetFormPage() {
   function buildBudgetPayload() {
     return {
       client_id: Number(clientId),
+      client_site_id: clientSiteIdForApi(clientSiteId) ?? null,
       scope_text: scopeText.trim() || null,
       observation: observation.trim() || null,
       payment_method: paymentMethod.trim() || null,
@@ -509,6 +544,12 @@ export function BudgetFormPage() {
     window.open(`${digits ? `https://wa.me/${digits}` : "https://wa.me/"}?text=${text}`, "_blank");
   }
 
+  const selectedClientSite = useMemo(
+    () => clientSites.find((site) => String(site.id) === clientSiteId) ?? null,
+    [clientSites, clientSiteId],
+  );
+  const showClientSiteField = Boolean(clientId) && clientSites.length > 0;
+
   const providerAddress = tenant
     ? formatPartyAddress([
         tenant.address_street,
@@ -518,9 +559,8 @@ export function BudgetFormPage() {
       ])
     : "—";
 
-  const clientAddress = selectedClient
-    ? formatClientScheduleAddress(selectedClient) ?? "—"
-    : "—";
+  const clientAddress =
+    resolveServiceOrderAddressLabel(selectedClient, selectedClientSite, clientSiteId) ?? "—";
 
   const tableStyle = { "--budget-brand": normalizeBrandColor(brandColor) } as CSSProperties;
 
@@ -588,6 +628,14 @@ export function BudgetFormPage() {
                   <>
                     <p className={styles.partyName}>{selectedClient?.name ?? (clientId ? `Cliente #${clientId}` : "—")}</p>
                     <p className={styles.partyMeta}>CNPJ: {selectedClient?.document || "—"}</p>
+                    {showClientSiteField || selectedClientSite ? (
+                      <p className={styles.partyMeta}>
+                        Filial:{" "}
+                        {!isServiceOrderMatrixSite(clientSiteId) && selectedClientSite
+                          ? clientSiteLabel(selectedClientSite)
+                          : "Matriz (cadastro principal)"}
+                      </p>
+                    ) : null}
                     <p className={styles.partyMeta}>{clientAddress}</p>
                     <p className={styles.partyMeta}>
                       Email: {selectedClient?.email || "—"}
@@ -603,7 +651,14 @@ export function BudgetFormPage() {
                       <p className={styles.partyMeta}>CNPJ: {selectedClient.document || "—"}</p>
                       <p className={styles.partyMeta}>{clientAddress}</p>
                     </div>
-                    <button type="button" className={styles.btnGhost} onClick={() => setClientId("")}>
+                    <button
+                      type="button"
+                      className={styles.btnGhost}
+                      onClick={() => {
+                        setClientId("");
+                        setClientSiteId(SERVICE_ORDER_MATRIX_SITE_VALUE);
+                      }}
+                    >
                       Trocar
                     </button>
                   </div>
@@ -612,6 +667,32 @@ export function BudgetFormPage() {
                 ) : (
                   <ClientPicker inputId="budget-client" value={clientId} onChange={setClientId} pinned={selectedClient ?? undefined} />
                 )}
+                {showClientSiteField ? (
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor="budget-client-site">
+                      Filial / local
+                    </label>
+                    <select
+                      id="budget-client-site"
+                      className={styles.select}
+                      value={clientSiteId || SERVICE_ORDER_MATRIX_SITE_VALUE}
+                      onChange={(e) => setClientSiteId(e.target.value)}
+                      disabled={readOnly || loadingClientSites}
+                    >
+                      <option value={SERVICE_ORDER_MATRIX_SITE_VALUE}>Matriz (cadastro principal)</option>
+                      {clientSites.map((site) => (
+                        <option key={site.id} value={String(site.id)}>
+                          {clientSiteLabel(site)}
+                        </option>
+                      ))}
+                    </select>
+                    {!isServiceOrderMatrixSite(clientSiteId) && selectedClientSite ? (
+                      <p className={styles.fieldHint}>
+                        Endereço da filial: {clientAddress}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <div className={styles.partyCard}>

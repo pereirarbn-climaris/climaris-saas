@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import type { ServiceOut } from "../../api/services";
 import { ClientPhoneContactActions } from "../../components/ClientPhoneContactActions";
 import { buildClientPhoneContactRows, googleMapsSearchUrl, wazeSearchUrl } from "../../lib/clientContactDisplay";
@@ -228,6 +229,7 @@ export function TechnicianServiceOrderView({
             <EquipmentCard
               key={String(card.equipment_id ?? "unlinked")}
               card={card}
+              clientId={order.client_id}
               completedServiceIds={completedServiceIds}
               canExecute={canExecute}
               busy={busy}
@@ -290,6 +292,7 @@ export function TechnicianServiceOrderView({
 
 function EquipmentCard({
   card,
+  clientId,
   completedServiceIds,
   canExecute,
   busy,
@@ -297,6 +300,7 @@ function EquipmentCard({
   onAddService,
 }: {
   card: ServiceOrderEquipmentCardOut;
+  clientId: number;
   completedServiceIds: Set<number>;
   canExecute: boolean;
   busy: boolean;
@@ -313,6 +317,14 @@ function EquipmentCard({
         <p className={styles.equipmentDuration}>
           Tempo no aparelho: {formatDurationMinutes(card.total_duration_minutes)}
         </p>
+        {card.equipment_pending_identification ? (
+          <p className={styles.pendingIdentificationBanner}>
+            ⚠️ Equipamento a identificar — informe a marca e o modelo reais antes de concluir esta OS.{" "}
+            <Link to={`/app/clients/${clientId}?tab=equipamentos`} className={styles.pendingIdentificationLink}>
+              Identificar agora
+            </Link>
+          </p>
+        ) : null}
       </div>
       <ul className={styles.serviceList}>
         {card.services.map((service) => (

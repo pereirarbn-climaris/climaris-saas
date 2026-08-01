@@ -19,6 +19,7 @@ import {
   technicalDataFromCatalog,
 } from "./categoryFieldDefinitions";
 import { normalizeCategoryIconKey } from "./equipmentCategoryIcons";
+import { isPendingIdentificationBrand } from "./equipmentPendingIdentification";
 
 function categorySlugFromCatalog(category: EquipmentCatalogOut["category"]): EquipmentCategory {
   return normalizeCategoryIconKey(category.icon_key, category.name);
@@ -98,6 +99,10 @@ export function buildEquipmentCatalogView(items: EquipmentCatalogOut[]): Equipme
   const models: CatalogModel[] = [];
 
   for (const item of items) {
+    // O item placeholder ("Marca não identificada") não deve aparecer como
+    // opção normal de marca/modelo no seletor — só é usado explicitamente
+    // pelo botão "Não sei a marca/modelo" (fetchPendingIdentificationCatalog).
+    if (isPendingIdentificationBrand(item.brand)) continue;
     const category = categorySlugFromCatalog(item.category);
     const bKey = brandKey(item.brand, item.category_id);
     if (!brandMap.has(bKey)) {
@@ -209,6 +214,9 @@ export function mapClientEquipmentToView(row: ClientEquipmentOut, sites?: Client
     clientSiteId: row.client_site_id ?? null,
     siteName: resolveSiteName(row.client_site_id, sites),
     installationDate: row.installation_date ?? "",
+    manufactureYear: row.manufacture_year ?? null,
+    gasChargeKg: row.gas_charge_kg ?? null,
+    notes: row.notes ?? null,
     status: row.is_active ? "ativo" : "inativo",
     specs: {
       gasType: (catalog?.fluid_type ?? technicalData.fluid_type) as string | undefined,
@@ -227,6 +235,7 @@ export function mapClientEquipmentToView(row: ClientEquipmentOut, sites?: Client
     canDelete: row.can_delete ?? false,
     deleteBlockReason: row.delete_block_reason ?? null,
     components: components.map(mapComponentToView),
+    pendingIdentification: row.pending_identification ?? isPendingIdentificationBrand(legacyBrand),
   };
 }
 
@@ -235,6 +244,11 @@ export function newEquipmentDataToCreatePayload(data: NewEquipmentData) {
   const siteId = data.clientSiteId != null && data.clientSiteId > 0 ? data.clientSiteId : null;
   const siteFields = siteId != null ? { client_site_id: siteId } : {};
   const qrcode = data.qrcodeCodeId?.trim() || null;
+  const extraFields = {
+    manufacture_year: data.manufactureYear ?? null,
+    gas_charge_kg: data.gasChargeKg ?? null,
+    notes: data.notes?.trim() || null,
+  };
   if (data.components && data.components.length > 0) {
     return {
       tag: data.tag.trim(),
@@ -242,6 +256,7 @@ export function newEquipmentDataToCreatePayload(data: NewEquipmentData) {
       installation_date: installationDate,
       qrcode_code_id: qrcode,
       ...siteFields,
+      ...extraFields,
       components: data.components.map((c) => ({
         catalog_id: c.catalogId,
         serial_number: c.serialNumber.trim() || null,
@@ -254,6 +269,7 @@ export function newEquipmentDataToCreatePayload(data: NewEquipmentData) {
     installation_date: installationDate,
     qrcode_code_id: qrcode,
     ...siteFields,
+    ...extraFields,
     components: [
       {
         catalog_id: data.modelId ?? "",

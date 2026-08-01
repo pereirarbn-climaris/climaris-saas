@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { createService, importServicesFile, listServices, type ServiceOut } from "../../api/services";
+import { ServiceRowIcon } from "../../components/services/serviceIcons";
 import { CatalogListHeaderActions } from "../../components/ui/CatalogListHeaderActions";
 import { ImportSpreadsheetModal } from "../../components/ui/ImportSpreadsheetModal";
 import type { DashboardOutletContext } from "../dashboardContext";
@@ -299,7 +300,7 @@ export function ServicesListPage() {
       <header className={listStyles.pageHeader}>
         <div>
           <h1 className={listStyles.pageTitle}>Serviços</h1>
-          <p className={listStyles.pageSubtitle}>Gerencie todos os serviços da sua empresa</p>
+          <p className={listStyles.pageSubtitle}>Gerencie os serviços cadastrados na sua empresa</p>
         </div>
         {canEdit ? (
           <CatalogListHeaderActions
@@ -436,6 +437,15 @@ export function ServicesListPage() {
         <div className={styles.tableCard}>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
+              <colgroup>
+                <col className={styles.colService} />
+                <col className={styles.colDuration} />
+                <col className={styles.colPrice} />
+                <col className={styles.colMaterial} />
+                <col className={styles.colProfit} />
+                <col className={styles.colStatus} />
+                <col className={styles.colActions} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Servico</th>
@@ -466,9 +476,7 @@ export function ServicesListPage() {
                     >
                       <td>
                         <div className={styles.serviceCell}>
-                          <div className={styles.serviceIcon}>
-                            <WrenchIcon />
-                          </div>
+                          <ServiceRowIcon service={s} className={styles.serviceIcon} />
                           <div className={styles.serviceInfo}>
                             <span className={styles.serviceName}>{s.name}</span>
                             {s.description ? (

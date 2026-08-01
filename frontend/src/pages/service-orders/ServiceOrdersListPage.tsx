@@ -22,6 +22,7 @@ import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import styles from "./ServiceOrdersListPage.module.css";
 
 const SERVICE_ORDERS_UI_PAGE_SIZE = 25;
+const CURRENT_PERIOD_DAYS = 90;
 type DateFilter = "current" | "today" | "week" | "month" | "all";
 
 function isWithinCurrentWeek(dateValue: Date, now: Date): boolean {
@@ -38,6 +39,7 @@ function isWithinCurrentWeek(dateValue: Date, now: Date): boolean {
 function matchesDateFilter(order: ServiceOrder, filter: DateFilter): boolean {
   if (filter === "all") return true;
   const source = order.scheduledAt ?? order.openedAt;
+  if (!source) return false;
   const value = new Date(source);
   if (Number.isNaN(value.getTime())) return false;
   const now = new Date();
@@ -47,8 +49,14 @@ function matchesDateFilter(order: ServiceOrder, filter: DateFilter): boolean {
   if (filter === "week") {
     return isWithinCurrentWeek(value, now);
   }
-  if (filter === "month" || filter === "current") {
+  if (filter === "month") {
     return value.getMonth() === now.getMonth() && value.getFullYear() === now.getFullYear();
+  }
+  if (filter === "current") {
+    const cutoff = new Date(now);
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - CURRENT_PERIOD_DAYS);
+    return value >= cutoff;
   }
   return true;
 }
@@ -66,7 +74,7 @@ export function ServiceOrdersListPage() {
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServiceOrderStatus | "">("");
   const [technicianFilter, setTechnicianFilter] = useState("");
-  const [dateFilter, setDateFilter] = useState<DateFilter>("current");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [listPage, setListPage] = useState(1);
   const [isMobileLayout, setIsMobileLayout] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
@@ -127,10 +135,11 @@ export function ServiceOrdersListPage() {
     if (technicianFilter) {
       rows = rows.filter((o) => o.technician?.id === technicianFilter);
     }
-    if (dateFilter) {
+    const q = searchText.toLowerCase();
+    const applyDateFilter = dateFilter !== "all" && !q;
+    if (applyDateFilter) {
       rows = rows.filter((o) => matchesDateFilter(o, dateFilter));
     }
-    const q = searchText.toLowerCase();
     if (q) {
       rows = rows.filter((o) => {
         const idMatch = o.number.includes(q) || o.id.includes(q.replace("#", ""));
@@ -205,7 +214,7 @@ export function ServiceOrdersListPage() {
       <header className={listStyles.pageHeader}>
         <div>
           <h1 className={listStyles.pageTitle}>Ordens de serviço</h1>
-          <p className={listStyles.pageSubtitle}>Gerencie todas as OS da sua empresa</p>
+          <p className={listStyles.pageSubtitle}>Gerencie as ordens de serviço da sua empresa</p>
         </div>
         {canEdit && !isMobileLayout ? (
           <Link className={`${tableStyles.listToolbarBtnPrimary} ${styles.newOsDesktopBtn}`} to="/app/service-orders/new">
@@ -330,7 +339,7 @@ function OsListToolbar({
             value={dateFilter}
             onChange={(e) => onDateFilter(e.target.value as DateFilter)}
           >
-            <option value="current">Período atual</option>
+            <option value="current">Últimos 90 dias</option>
             <option value="today">Hoje</option>
             <option value="week">Esta semana</option>
             <option value="month">Este mês</option>

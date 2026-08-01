@@ -97,6 +97,10 @@
   /* Border radius de botao */
   --btn-radius: 0.625rem;       /* 10px */
 
+  /* Botoes de acao em linhas de tabela (editar / excluir) */
+  --row-action-btn-size: var(--btn-height-md); /* 44px — alvo de toque confortavel */
+  --row-action-btn-gap: 0.5rem;              /* 8px */
+
   /* ========== CARDS ========== */
   --card-radius: 1rem;          /* 16px */
   --card-padding: 1.25rem;      /* 20px */

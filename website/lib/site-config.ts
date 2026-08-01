@@ -67,14 +67,25 @@ export function loginUrl(): string {
   return `${siteConfig.appUrl}/login`;
 }
 
+/** Temporário: oculta agendamento de demonstração no site institucional. */
+export const demoSchedulingEnabled = false;
+
 export const cta = {
   primary: "Agendar Demonstração",
   secondary: "Falar com um Consultor",
+  /** CTA público enquanto a demonstração estiver oculta. */
+  contact: "Falar com um Consultor",
   freeTrial: freeTrial.title,
   login: "Entrar",
   loginHint: "Já é cliente?",
   formSuccess: "Demonstração agendada! Você receberá a confirmação por e-mail e WhatsApp.",
+  leadSuccess: "Recebemos seu contato! Nossa equipe retornará em breve.",
 } as const;
+
+/** Rótulo do CTA principal do site (demo ou contato). */
+export function publicCtaLabel(): string {
+  return demoSchedulingEnabled ? cta.primary : cta.contact;
+}
 
 export const routes = [
   { path: "/", label: "Início" },
@@ -109,7 +120,7 @@ export const benefits = [
 export const howItWorks = [
   {
     step: "01",
-    title: "Agende uma demonstração",
+    title: demoSchedulingEnabled ? "Agende uma demonstração" : "Fale com um consultor",
     description:
       "Conte sobre sua operação: porte da equipe, volume de OS e principais desafios de gestão.",
   },

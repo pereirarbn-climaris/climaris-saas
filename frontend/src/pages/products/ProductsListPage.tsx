@@ -5,7 +5,7 @@ import {
   useState,
   type MouseEvent,
 } from "react";
-import { useNavigate, useOutletContext } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { patchTenantAdmin } from "../../api/auth";
 import {
   countProducts,
@@ -21,7 +21,6 @@ import { ListPaginationBar } from "../../components/ui/list-pagination";
 import { FormSwitch } from "../../components/ui/form-switch";
 import { ImportSpreadsheetModal } from "../../components/ui/ImportSpreadsheetModal";
 import type { DashboardOutletContext } from "../dashboardContext";
-import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import { isInventoryActive, isInventoryAllowedByPlan } from "../../lib/planProducts";
 import tableStyles from "../listTableCommon.module.css";
 import styles from "./ProductsListPage.module.css";
@@ -282,10 +281,25 @@ export function ProductsListPage() {
 
   return (
     <div className={`${styles.wrap} ${isMobileLayout ? styles.wrapMobile : ""}`}>
-      <header className={`${listStyles.pageHeader} ${isMobileLayout ? styles.mobileHeader : ""}`}>
-        <div>
-          <h1 className={listStyles.pageTitle}>Produtos</h1>
-          <p className={listStyles.pageSubtitle}>Gerencie todos os produtos da sua empresa</p>
+      <nav className={styles.breadcrumb} aria-label="Navegação">
+        <Link className={styles.breadcrumbLink} to="/app/products">
+          Produtos
+        </Link>
+        <span className={styles.breadcrumbSep} aria-hidden>
+          /
+        </span>
+        <span className={styles.breadcrumbCurrent}>Lista</span>
+      </nav>
+
+      <header className={`${styles.headerRow} ${isMobileLayout ? styles.mobileHeader : ""}`}>
+        <div className={styles.headerMain}>
+          <span className={styles.headerIcon} aria-hidden>
+            <PackageIcon />
+          </span>
+          <div>
+            <h1 className={styles.headerTitle}>Produtos</h1>
+            <p className={styles.headerSubtitle}>Gerencie equipamentos, peças, materiais e estoque da sua empresa.</p>
+          </div>
         </div>
         {canEdit && !isMobileLayout ? (
           <CatalogListHeaderActions

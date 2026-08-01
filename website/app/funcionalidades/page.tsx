@@ -3,7 +3,7 @@ import { FeatureCard } from "@/components/FeatureCard";
 import { SiteShell } from "@/components/SiteShell";
 import { featureHighlights, featuresByCategory, productFeatures } from "@/lib/features";
 import { buildPageMetadata } from "@/lib/metadata";
-import { cta } from "@/lib/site-config";
+import { publicCtaLabel } from "@/lib/site-config";
 
 export const metadata = buildPageMetadata({
   title: "Funcionalidades — Agenda, PMOC e Gestão Preventiva",
@@ -118,11 +118,11 @@ export default function FeaturesPage() {
       <section className="section-container py-16 text-center">
         <h2 className="mb-3 text-2xl font-bold text-text">Quer ver na prática?</h2>
         <p className="mx-auto mb-6 max-w-xl text-text-muted">
-          Agende uma demonstração e veja agenda, gestão preventiva e geração de PMOC funcionando no
+          Fale com nossa equipe e veja agenda, gestão preventiva e geração de PMOC funcionando no
           fluxo da sua operação.
         </p>
         <Link href="/contato" className="btn-outline">
-          {cta.primary}
+          {publicCtaLabel()}
         </Link>
       </section>
     </SiteShell>

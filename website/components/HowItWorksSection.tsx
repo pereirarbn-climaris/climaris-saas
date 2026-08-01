@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { cta, howItWorks } from "@/lib/site-config";
+import { demoSchedulingEnabled, howItWorks, publicCtaLabel } from "@/lib/site-config";
 
 export function HowItWorksSection() {
   return (
@@ -9,7 +9,9 @@ export function HowItWorksSection() {
           Como funciona
         </p>
         <h2 id="como-funciona-title" className="mb-3 text-3xl font-bold tracking-tight text-text">
-          Da demonstração à operação unificada
+          {demoSchedulingEnabled
+            ? "Da demonstração à operação unificada"
+            : "Do contato à operação unificada"}
         </h2>
         <p className="text-text-muted">
           Processo consultivo para implantar o Climaris no ritmo da sua empresa de climatização.
@@ -33,7 +35,7 @@ export function HowItWorksSection() {
 
       <div className="mt-10 text-center">
         <Link href="/contato" className="btn-outline">
-          {cta.primary}
+          {publicCtaLabel()}
         </Link>
       </div>
     </section>

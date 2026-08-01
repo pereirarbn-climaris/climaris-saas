@@ -234,6 +234,7 @@ export async function patchServiceOrderStatus(
     schedule_notes?: string | null;
     cancel_reason?: string | null;
     force_close?: boolean;
+    data_realizacao?: string | null;
   },
 ) {
 
@@ -245,6 +246,7 @@ export async function patchServiceOrderStatus(
       schedule_notes: opts?.schedule_notes ?? undefined,
       cancel_reason: opts?.cancel_reason?.trim() || undefined,
       force_close: opts?.force_close === true ? true : undefined,
+      data_realizacao: opts?.data_realizacao?.trim() || undefined,
     }),
   });
   const body = await parseBody(response);
@@ -290,7 +292,7 @@ export async function listServiceOrdersAll(params?: { status?: OrderStatus }): P
 
 export async function patchServiceOrderDetails(
   orderId: number,
-  payload: { title?: string; description?: string | null },
+  payload: { title?: string; description?: string | null; client_site_id?: number | null },
 ): Promise<ServiceOrderOut> {
   const response = await fetch(apiUrl(`/api/v1/service-orders/${orderId}/details`), {
     method: "PATCH",

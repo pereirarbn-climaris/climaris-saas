@@ -112,6 +112,8 @@ class EquipmentCatalogExistingManualForm(BaseModel):
     fluid_type: str | None = Field(default=None, max_length=40)
     voltage: str | None = Field(default=None, max_length=40)
     technical_data: str | None = Field(default=None)
+    # Quando true e o modelo já existir: preenche só campos vazios + vincula manual se faltar.
+    merge_if_exists: bool = False
 
     @field_validator("category_id", "manual_id", mode="before")
     @classmethod
@@ -147,6 +149,13 @@ class EquipmentCatalogExistingManualForm(BaseModel):
     def _empty_optional_strings(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("merge_if_exists", mode="before")
+    @classmethod
+    def _parse_bool(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
         return value
 
     def parsed_technical_data(self) -> dict[str, Any] | None:
@@ -271,6 +280,12 @@ async def read_catalog_existing_manual_multipart(
         "capacity": _form_text(form, "capacity"),
         "fluid_type": _form_text(form, "fluid_type"),
         "voltage": _form_text(form, "voltage"),
+        # Sem isso, o JSON de specs enviado pela tela de revisão da IA (capacidade, fluido,
+        # tensão + especificações técnicas extras) era descartado silenciosamente — o form só
+        # lia os campos legados (capacity/fluid_type/voltage) direto do multipart, nunca
+        # populados pelo modal de importação via IA, que manda tudo dentro de `technical_data`.
+        "technical_data": _form_text(form, "technical_data"),
+        "merge_if_exists": _form_text(form, "merge_if_exists") or "false",
     }
 
     try:

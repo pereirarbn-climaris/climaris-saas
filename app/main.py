@@ -45,6 +45,21 @@ from app.routers.api_keys import router as api_keys_router
 from app.routers.platform import router as platform_router
 from app.routers.platform_finance_bank_catalog import router as platform_finance_bank_catalog_router
 from app.routers.platform_branding import router as platform_branding_router
+from app.routers.platform_website import (
+    public_router as platform_website_public_router,
+    router as platform_website_router,
+)
+from app.routers.platform_website_pages import (
+    public_router as platform_website_pages_public_router,
+    router as platform_website_pages_router,
+)
+from app.routers.public_plans import router as public_plans_router
+from app.routers.leads import router as leads_router
+from app.routers.demo_appointments import (
+    platform_router as demo_appointments_platform_router,
+    public_router as demo_appointments_public_router,
+    router as demo_appointments_router,
+)
 from app.routers.public_portal import equipment_token_router, router as public_portal_router
 from app.routers.reports import router as reports_router
 from app.routers.service_orders import router as service_orders_router
@@ -91,6 +106,7 @@ if CORS_ORIGINS or CORS_ORIGIN_REGEX:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Catalog-Action", "X-Catalog-Filled-Fields"],
     )
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(MaxBodySizeMiddleware, max_body_size=MAX_HTTP_BODY_BYTES)
@@ -402,10 +418,19 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 app.include_router(public_portal_router, prefix=API_V1_PREFIX)
+app.include_router(public_plans_router, prefix=API_V1_PREFIX)
+app.include_router(platform_website_public_router, prefix=API_V1_PREFIX)
+app.include_router(platform_website_pages_public_router, prefix=API_V1_PREFIX)
+app.include_router(demo_appointments_public_router, prefix=API_V1_PREFIX)
+app.include_router(leads_router, prefix=API_V1_PREFIX)
+app.include_router(demo_appointments_router, prefix=API_V1_PREFIX)
 app.include_router(auth_router, prefix=API_V1_PREFIX)
 app.include_router(platform_router, prefix=API_V1_PREFIX)
 app.include_router(platform_finance_bank_catalog_router, prefix=API_V1_PREFIX)
 app.include_router(platform_branding_router, prefix=API_V1_PREFIX)
+app.include_router(platform_website_router, prefix=API_V1_PREFIX)
+app.include_router(platform_website_pages_router, prefix=API_V1_PREFIX)
+app.include_router(demo_appointments_platform_router, prefix=API_V1_PREFIX)
 app.include_router(api_keys_router, prefix=API_V1_PREFIX)
 app.include_router(cep_router, prefix=API_V1_PREFIX)
 app.include_router(cnpj_router, prefix=API_V1_PREFIX)

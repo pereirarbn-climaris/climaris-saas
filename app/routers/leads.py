@@ -47,7 +47,7 @@ def create_website_lead(
 
     message = (payload.message or "").strip()
     if len(message) < 10:
-        parts = ["Solicitação de demonstração via site institucional."]
+        parts = ["Solicitação de contato via site institucional."]
         if payload.company:
             parts.append(f"Empresa: {payload.company.strip()}.")
         if payload.job_title:

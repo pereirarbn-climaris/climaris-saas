@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -210,10 +210,8 @@ def public_equipment_page(
         .join(Service, Service.id == ServiceOrderServiceItem.service_id)
         .where(
             ServiceOrder.tenant_id == tenant_id,
-            or_(
-                ServiceOrderServiceItemEquipmentAudit.previous_equipment_id == eq_id,
-                ServiceOrderServiceItemEquipmentAudit.new_equipment_id == eq_id,
-            ),
+            ServiceOrderServiceItemEquipmentAudit.new_equipment_id == eq_id,
+            ServiceOrderServiceItemEquipmentAudit.source != "manual_correction_inversion",
         )
         .order_by(ServiceOrderServiceItemEquipmentAudit.changed_at.desc())
     ).all()

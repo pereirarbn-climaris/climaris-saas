@@ -47,7 +47,7 @@ import viewStyles from './client-form-view.module.css';
 // ============================================================================
 
 export type ClientType = 'pf' | 'pj';
-export type ClientRegime = 'regular' | 'mei' | 'simples' | 'lucro_presumido' | 'lucro_real';
+export type ClientRegime = 'regular' | 'mei' | 'simples' | 'lucro_presumido' | 'lucro_real' | 'isento';
 export type TabId = 'cadastro' | 'historico' | 'equipamentos' | 'pmoc' | 'orcamentos' | 'preventiva';
 
 export interface ClientData {
@@ -65,6 +65,10 @@ export interface ClientData {
   stateRegistration?: string;
   ieIndicator?: string;
   municipalRegistration?: string;
+  /** RG (Pessoa Física). */
+  rg?: string;
+  /** Data de nascimento (Pessoa Física), YYYY-MM-DD. */
+  birthDate?: string;
   addressIbgeCode?: string;
   preventiveCampaignOptOut?: boolean;
   isActive?: boolean;
@@ -82,6 +86,12 @@ export interface ClientData {
   registrationStatus?: string;
   /** Data de abertura (YYYY-MM-DD). */
   foundedAt?: string;
+  /** Observações livres sobre o cliente. */
+  notes?: string;
+  /** Tags/categorias livres (ex.: "Cliente recorrente", "Preferencial"). */
+  tags?: string[];
+  /** ISO datetime de criação do cadastro (somente leitura). */
+  createdAt?: string | null;
   endereco?: {
     cep?: string;
     logradouro?: string;
@@ -748,6 +758,7 @@ const regimeConfig: Record<ClientRegime, string> = {
   simples: 'Simples Nacional',
   lucro_presumido: 'Lucro Presumido',
   lucro_real: 'Lucro Real',
+  isento: 'Isento',
 };
 
 // ============================================================================

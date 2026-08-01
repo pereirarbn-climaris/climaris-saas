@@ -276,7 +276,9 @@ export function serializeTechnicalDataForApi(
   values: Record<string, string>,
 ): Record<string, string | number> {
   const out: Record<string, string | number> = {};
-  for (const def of activeFieldDefinitions(definitions)) {
+  const active = activeFieldDefinitions(definitions);
+  const known = new Set(active.map((d) => d.key));
+  for (const def of active) {
     const raw = values[def.key];
     if (raw === undefined || raw === null) continue;
     const trimmed = String(raw).trim();
@@ -287,6 +289,12 @@ export function serializeTechnicalDataForApi(
     } else {
       out[def.key] = trimmed;
     }
+  }
+  // Preserva especificações livres extraídas do manual (fora das definições da categoria).
+  for (const [key, raw] of Object.entries(values)) {
+    if (known.has(key)) continue;
+    const trimmed = String(raw ?? "").trim();
+    if (trimmed) out[key] = trimmed;
   }
   return out;
 }

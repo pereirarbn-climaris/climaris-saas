@@ -1,0 +1,146 @@
+.card {
+  margin: 20px;
+  padding: 18px;
+  border-radius: 24px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.searchRow {
+  display: flex;
+  gap: 12px;
+}
+
+.searchField {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  border-radius: 16px;
+  border: 1px solid #dce7f5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+}
+
+.searchIcon {
+  width: 16px;
+  height: 16px;
+  color: #64748b;
+}
+
+.searchIcon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.searchField input {
+  border: none;
+  outline: none;
+  width: 100%;
+  font: inherit;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.searchField input::placeholder {
+  color: #94a3b8;
+}
+
+.filtersButton {
+  width: 120px;
+  min-width: 120px;
+  height: 54px;
+  border-radius: 16px;
+  border: 1px solid #dce7f5;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.filtersButton span {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+}
+
+.filtersButton svg {
+  width: 100%;
+  height: 100%;
+}
+
+.quickFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.quickFilters p {
+  margin: 0;
+  width: 100%;
+  font-size: 15px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.chip {
+  height: 46px;
+  padding: 0 22px;
+  border-radius: 16px;
+  border: 1px solid #dce7f5;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chipActive {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+.sortField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.sortField select {
+  width: 100%;
+  height: 56px;
+  border-radius: 16px;
+  border: 1px solid #dce7f5;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 16px;
+  padding: 0 14px;
+}
+
+@media (max-width: 420px) {
+  .searchRow {
+    gap: 10px;
+  }
+
+  .filtersButton {
+    width: 108px;
+    min-width: 108px;
+  }
+}

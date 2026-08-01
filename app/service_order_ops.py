@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.equipment_pending_identification import is_pending_identification_equipment
 from models import (
     OrderStatus,
     ScheduleStatus,
@@ -153,6 +154,7 @@ def build_equipment_cards(order: "ServiceOrder") -> list[dict[str, Any]]:
                 "equipment_identificacao": equipment.identificacao if equipment is not None else None,
                 "equipment_tipo": equipment.tipo if equipment is not None else None,
                 "equipment_modelo": equipment.modelo if equipment is not None else None,
+                "equipment_pending_identification": is_pending_identification_equipment(equipment),
                 "services": services_out,
                 "total_duration_minutes": card_duration,
             }

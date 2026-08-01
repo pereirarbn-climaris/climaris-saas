@@ -102,8 +102,21 @@ export function DashboardPage() {
   const isPlanosRoute = location.pathname.startsWith("/app/planos");
   const isAdminRoute = location.pathname.startsWith("/app/admin");
   const isClientsRoute = location.pathname.startsWith("/app/clients");
+  const MODERN_SHELL_LIST_ROUTES = [
+    "/app/clients",
+    "/app/products",
+    "/app/services",
+    "/app/pmoc",
+    "/app/service-orders",
+    "/app/budgets",
+  ];
   const isProductsRoute = location.pathname.startsWith("/app/products");
   const isServicesRoute = location.pathname.startsWith("/app/services");
+  const isClientsListRoute =
+    isClientsRoute ||
+    isProductsRoute ||
+    isServicesRoute ||
+    MODERN_SHELL_LIST_ROUTES.some((route) => location.pathname === route || location.pathname === `${route}/`);
   const isServiceOrdersRoute = location.pathname.startsWith("/app/service-orders");
   const isBudgetsRoute = location.pathname.startsWith("/app/budgets");
   const isFinanceRoute = location.pathname.startsWith("/app/finance");
@@ -502,9 +515,33 @@ export function DashboardPage() {
 
         <div className={styles.mainColumn}>
         <header
-          className={`${styles.header} ${isMobileLayout ? styles.headerMobile : ""} ${isDashboardHomeRoute && isMobileLayout ? styles.headerMobileHome : ""}`}
+          className={`${styles.header} ${isMobileLayout ? styles.headerMobile : ""} ${isDashboardHomeRoute && isMobileLayout ? styles.headerMobileHome : ""} ${isClientsListRoute && !isMobileLayout ? styles.headerClientsModern : ""}`}
         >
           {!isMobileLayout ? <Sidebar.Toggle className={styles.headerSidebarToggle} /> : null}
+          {isClientsListRoute && !isMobileLayout ? (
+            <form
+              className={styles.headerGlobalSearch}
+              onSubmit={(e) => {
+                e.preventDefault();
+                openGlobalSearchPanel();
+              }}
+            >
+              <span className={styles.headerGlobalSearchIcon} aria-hidden>
+                <svg viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" />
+                </svg>
+              </span>
+              <input
+                className={styles.headerGlobalSearchInput}
+                value={globalSearchText}
+                onChange={(e) => setGlobalSearchText(e.target.value)}
+                onFocus={openGlobalSearchPanel}
+                placeholder="Buscar no sistema..."
+                aria-label="Buscar no sistema"
+              />
+            </form>
+          ) : (
           <div className={styles.headerLeft}>
             {useCompactMobileHeader ? (
               <Link to="/app" className={styles.headerCompactBrandLink}>
@@ -519,6 +556,7 @@ export function DashboardPage() {
               </div>
             )}
           </div>
+          )}
 
           <div className={styles.headerRight}>
             {user?.must_change_password ? (
@@ -547,6 +585,7 @@ export function DashboardPage() {
             ) : (
               <>
                 <div className={styles.headerTools} aria-label="Atalhos rápidos">
+                  {!isClientsListRoute ? (
                   <button
                     type="button"
                     className={`${styles.headerToolBtn} ${globalSearchOpen ? styles.headerToolBtnActive : ""}`}
@@ -558,6 +597,7 @@ export function DashboardPage() {
                       <path d="m20 20-3.5-3.5" />
                     </svg>
                   </button>
+                  ) : null}
                   <button
                     type="button"
                     className={`${styles.headerToolBtn} ${notificationsOpen ? styles.headerToolBtnActive : ""}`}
@@ -588,6 +628,7 @@ export function DashboardPage() {
                     isAdmin={user.role === "admin"}
                     onLogout={() => void logout()}
                     onOpenWorkspace={openWorkspaceDrawer}
+                    subtitleMode={isClientsListRoute ? "role" : "email"}
                   />
                 ) : null}
               </>
@@ -595,7 +636,7 @@ export function DashboardPage() {
           </div>
         </header>
 
-        <main ref={mainScrollRef} className={`${styles.main} ${isMobileLayout ? styles.mainMobile : ""}`} id="conteudo-principal">
+        <main ref={mainScrollRef} className={`${styles.main} ${isMobileLayout ? styles.mainMobile : ""} ${isClientsListRoute ? styles.mainClientsModern : ""}`} id="conteudo-principal">
           {isMobileLayout ? (
             <div className={styles.mobileScreenIntro}>
               <Link to="/app" className={styles.mobileScreenBrandLink}>

@@ -2,14 +2,16 @@
 
 @theme inline {
   --color-text: #0f172a;
-  --color-text-muted: #64748b;
-  --color-text-subtle: #94a3b8;
+  /* Contraste AA: muted/subtle mais escuros (PageSpeed acessibilidade) */
+  --color-text-muted: #475569;
+  --color-text-subtle: #64748b;
   --color-surface: #e2eef8;
   --color-surface-elevated: #ffffff;
   --color-border: #e2e8f0;
-  --color-primary: #0284c7;
-  --color-primary-hover: #0369a1;
-  --color-primary-light: #0ea5e9;
+  /* Primary mais escuro para contraste com texto branco e labels small */
+  --color-primary: #0369a1;
+  --color-primary-hover: #075985;
+  --color-primary-light: #0284c7;
   --color-success: #15803d;
   --color-error: #b91c1c;
   --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -79,7 +81,7 @@ dialog[open] {
   }
 
   .btn-outline {
-    @apply inline-flex min-h-11 items-center justify-center rounded-btn border border-primary/20 bg-surface-elevated px-6 py-3 text-sm font-semibold text-primary shadow-card transition hover:border-primary/40 hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30;
+    @apply inline-flex min-h-11 items-center justify-center rounded-btn border border-primary/40 bg-surface-elevated px-6 py-3 text-sm font-semibold text-primary shadow-card transition hover:border-primary/60 hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30;
   }
 
   .input-field {

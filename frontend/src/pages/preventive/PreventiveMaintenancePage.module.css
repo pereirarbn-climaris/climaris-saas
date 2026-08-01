@@ -74,6 +74,32 @@
   color: var(--color-text-muted, #64748b);
 }
 
+.autoControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.autoModeField {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.autoModeField select {
+  min-width: 14rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 0.5rem;
+  background: #fff;
+  color: var(--color-text, #0f172a);
+  font: inherit;
+}
+
 .autoDaysField {
   display: flex;
   align-items: center;

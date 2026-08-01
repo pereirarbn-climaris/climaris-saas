@@ -10,9 +10,15 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.preventive_maintenance import add_calendar_months, client_whatsapp_destination, tenant_local_date
+from app.preventive_maintenance import (
+    add_calendar_months,
+    client_site_header_label,
+    preventive_whatsapp_destination,
+    tenant_local_date,
+)
 from models import (
     Client,
+    ClientSite,
     Equipment,
     EquipmentPreventiveRule,
     OrderStatus,
@@ -183,9 +189,10 @@ def list_equipment_preventive_due(
     deadline = today + timedelta(days=max(0, window_days))
 
     rows = db.execute(
-        select(EquipmentPreventiveRule, Equipment, Client)
+        select(EquipmentPreventiveRule, Equipment, Client, ClientSite)
         .join(Equipment, Equipment.id == EquipmentPreventiveRule.equipment_id)
         .join(Client, Client.id == Equipment.client_id)
+        .outerjoin(ClientSite, ClientSite.id == Equipment.client_site_id)
         .where(
             Client.tenant_id == tenant_id,
             EquipmentPreventiveRule.is_active.is_(True),
@@ -198,7 +205,7 @@ def list_equipment_preventive_due(
 
     items: list[dict[str, Any]] = []
     rules_dirty = False
-    for rule, equipment, client in rows:
+    for rule, equipment, client, site in rows:
         if sync_rule_dates_from_service_orders(db, tenant_id=tenant_id, rule=rule):
             db.add(rule)
             rules_dirty = True
@@ -211,7 +218,7 @@ def list_equipment_preventive_due(
         if due_date > deadline:
             continue
         dias = (due_date - today).days
-        ok_wa, dest = client_whatsapp_destination(client)
+        ok_wa, dest = preventive_whatsapp_destination(client, site)
         last_date: date | None = None
         if rule.last_performed_date is not None:
             last_date = tenant_local_date(rule.last_performed_date, tenant.timezone)
@@ -220,6 +227,9 @@ def list_equipment_preventive_due(
             if isinstance(rule.interval_type, PreventiveIntervalType)
             else str(rule.interval_type)
         )
+        site_id = int(site.id) if site is not None else (int(equipment.client_site_id) if equipment.client_site_id else None)
+        site_name = (site.name or "").strip() if site is not None else None
+        site_type = (site.site_type or "").strip().lower() if site is not None else None
         items.append(
             {
                 "rule_id": rule.id,
@@ -233,6 +243,10 @@ def list_equipment_preventive_due(
                 "equipment_local": (equipment.ambiente_nome or equipment.local_instalacao or "").strip() or None,
                 "client_id": client.id,
                 "client_name": client.name,
+                "client_site_id": site_id,
+                "client_site_name": site_name or None,
+                "client_site_type": site_type or None,
+                "client_site_label": client_site_header_label(site),
                 "interval_value": rule.interval_value,
                 "interval_type": interval_type,
                 "last_performed_date": last_date,
@@ -257,6 +271,10 @@ def equipment_due_row_to_preventive_item(row: dict[str, Any]) -> dict[str, Any]:
         "rule_id": row["rule_id"],
         "client_id": row["client_id"],
         "client_name": row["client_name"],
+        "client_site_id": row.get("client_site_id"),
+        "client_site_name": row.get("client_site_name"),
+        "client_site_type": row.get("client_site_type"),
+        "client_site_label": row.get("client_site_label"),
         "service_id": 0,
         "service_name": f"Preventiva — {row['equipment_identificacao']}",
         "equipment_id": row["equipment_id"],

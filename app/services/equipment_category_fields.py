@@ -19,17 +19,32 @@ CATALOG_EXTRA_TECHNICAL_KEYS = frozenset({
 
 def extract_extra_technical_fields(
     raw: dict[str, Any] | None,
+    known_field_keys: frozenset[str] | set[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Separa chaves reservadas do payload validado pelos field_definitions da categoria."""
+    """Separa chaves reservadas/livres do payload validado pelos field_definitions da categoria.
+
+    Chaves presentes em `known_field_keys` (definições ativas da categoria) seguem para
+    validação estrita (`validate_technical_data`). Todas as demais — reservadas (UI AC) ou
+    especificações livres extraídas de manuais via IA — são mantidas como estão no JSONB,
+    sem gerar erro de "campo desconhecido". O objetivo é não perder nenhum dado técnico
+    encontrado no manual, mesmo que a categoria não tenha um campo formal para ele.
+    """
     if not raw:
         return {}, {}
+    known = known_field_keys or frozenset()
     payload = dict(raw)
     extra: dict[str, Any] = {}
     for key in list(payload.keys()):
-        if key not in CATALOG_EXTRA_TECHNICAL_KEYS:
+        if key in known:
             continue
         val = payload.pop(key)
         if val is None:
+            continue
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            extra[key] = val
+            continue
+        if isinstance(val, bool):
+            extra[key] = val
             continue
         text = str(val).strip()
         if text:

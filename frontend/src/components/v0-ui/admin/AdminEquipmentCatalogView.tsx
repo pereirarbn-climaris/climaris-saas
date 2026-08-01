@@ -17,6 +17,7 @@ import {
   mapAiExtractionToFormFields,
   mapAiExtractionToTechnicalData,
   mergeAcFieldDefinitions,
+  normalizeAcTechnicalData,
 } from '../../../lib/acEquipmentFields';
 import {
   isClimatizadorCategory,
@@ -33,9 +34,11 @@ import {
 import { EquipmentLabelPhotoButtons } from '../../equipment/EquipmentLabelPhotoButtons';
 import {
   emptyGlobalEquipmentManualsValue,
+  globalManualsFromLinkedCatalog,
   GlobalEquipmentManualsPanel,
   type GlobalEquipmentManualsValue,
 } from '../../equipment/GlobalEquipmentManualsPanel';
+import { EquipmentCatalogAiImportModal } from './EquipmentCatalogAiImportModal';
 
 const iconSize = (token: 'xs' | 'sm' | 'md' | 'lg' | 'xl'): React.CSSProperties => ({
   width: `var(--icon-size-${token})`,
@@ -127,6 +130,8 @@ export interface AdminEquipmentCatalogViewProps {
   onDelete: (id: string) => void;
   /** Dispara quando filtros mudam (debounce no container para chamadas à API). */
   onFiltersChange?: (filters: CatalogFiltersState) => void;
+  /** Dispara após o cadastro via manual (IA) criar ao menos um modelo — recarregue a lista/manuais. */
+  onImportedFromManual?: () => void;
 }
 
 // ============================================================
@@ -230,6 +235,19 @@ const IconUpload = ({ style }: { style?: React.CSSProperties }) => (
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
     <polyline points="17 8 12 3 7 8" />
     <line x1="12" y1="3" x2="12" y2="15" />
+  </svg>
+);
+
+const IconSparkles = ({ style }: { style?: React.CSSProperties }) => (
+  <svg style={{ ...iconSize('md'), ...style }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" />
+  </svg>
+);
+
+const IconTag = ({ style }: { style?: React.CSSProperties }) => (
+  <svg style={{ ...iconSize('md'), ...style }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L3.24 9.59A2 2 0 0 0 3.83 11l9.58 9.59a2 2 0 0 0 2.83 0l4.35-4.35a2 2 0 0 0 0-2.83z" />
+    <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none" />
   </svg>
 );
 
@@ -544,10 +562,13 @@ interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
+  subtitle?: string;
+  icon?: React.ReactNode;
+  iconColor?: string;
   children: React.ReactNode;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, subtitle, icon, iconColor, children }) => {
   if (!isOpen) return null;
 
   return (
@@ -556,7 +577,27 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
       <div className={styles.modalPanelWrap}>
         <div className={styles.modalPanel}>
           <div className={styles.modalHeader}>
-            <h2 className={styles.modalTitle}>{title}</h2>
+            <div className={styles.modalHeaderInfo}>
+              {icon ? (
+                <span
+                  className={styles.modalHeaderIcon}
+                  style={
+                    iconColor
+                      ? ({
+                          color: iconColor,
+                          background: `color-mix(in srgb, ${iconColor} 14%, transparent)`,
+                        } as React.CSSProperties)
+                      : undefined
+                  }
+                >
+                  {icon}
+                </span>
+              ) : null}
+              <div className={styles.modalHeaderTextWrap}>
+                <h2 className={styles.modalTitle}>{title}</h2>
+                {subtitle ? <p className={styles.modalSubtitle}>{subtitle}</p> : null}
+              </div>
+            </div>
             <button type="button" onClick={onClose} className={styles.modalCloseBtn} aria-label="Fechar">
               <IconX />
             </button>
@@ -567,6 +608,33 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
     </div>
   );
 };
+
+// Section card — agrupa campos relacionados no formulário com um cabeçalho visual consistente
+interface SectionCardProps {
+  icon: React.ReactNode;
+  title: string;
+  hint?: string;
+  /** Cor de destaque do ícone — ajuda a diferenciar visualmente cada bloco do formulário. */
+  accent?: 'blue' | 'emerald' | 'violet';
+  children: React.ReactNode;
+}
+
+const SectionCard: React.FC<SectionCardProps> = ({ icon, title, hint, accent = 'blue', children }) => (
+  <div className={styles.formSection}>
+    <div className={styles.formSectionHeader}>
+      <span
+        className={`${styles.formSectionIcon} ${accent === 'emerald' ? styles.formSectionIconEmerald : accent === 'violet' ? styles.formSectionIconViolet : ''}`}
+      >
+        {icon}
+      </span>
+      <div className={styles.formSectionHeaderText}>
+        <h3 className={styles.formSectionTitle}>{title}</h3>
+        {hint ? <p className={styles.formSectionHint}>{hint}</p> : null}
+      </div>
+    </div>
+    <div className={styles.formSectionBody}>{children}</div>
+  </div>
+);
 
 // Table Skeleton
 const TableSkeleton: React.FC = () => (
@@ -782,7 +850,9 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
     modelo: initialData?.modelo || '',
     modelEvaporator: initialData?.modelEvaporator || '',
     modelCondenser: initialData?.modelCondenser || '',
-    technicalData: initialData?.technicalData ? { ...initialData.technicalData } : {},
+    technicalData: initialData?.technicalData
+      ? normalizeAcTechnicalData({ ...initialData.technicalData })
+      : {},
     fieldDefinitions: [],
     manualMode: initialData?.manualId
       ? 'existing'
@@ -793,7 +863,11 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
     manualId: initialData?.manualId || '',
     manualPdf: null,
     removeManual: false,
-    acManuals: emptyGlobalEquipmentManualsValue(),
+    acManuals: globalManualsFromLinkedCatalog({
+      manualId: initialData?.manualId,
+      manualTitle: initialData?.manualTitle,
+      technicalData: initialData?.technicalData,
+    }),
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof NewCatalogEquipmentData, string>>>({});
@@ -1088,207 +1162,212 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
           {duplicateHint}
         </p>
       ) : null}
-      {/* Categoria */}
-      <div>
-        <label className={styles.fieldLabel}>Categoria *</label>
-        <div className={styles.categoryRow}>
-          <Select
-            value={formData.categoryId}
-            onChange={(value) => setFormData((prev) => ({ ...prev, categoryId: value }))}
-            options={[
-              {
-                value: '',
-                label: formCategoryOptions.length ? 'Selecione a categoria...' : 'Nenhuma categoria cadastrada',
-              },
-              ...formCategoryOptions.map((c) => ({ value: c.id, label: c.name })),
-            ]}
-            className={styles.categorySelect}
-          />
-          {onCreateCategory ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              icon={<IconPlus />}
-              className={styles.newCategoryBtn}
-              onClick={() => {
-                setCategoryError('');
-                setCategoryModalOpen(true);
-              }}
-            >
-              Nova categoria
-            </Button>
-          ) : null}
-        </div>
-        {errors.categoryId ? <p className={styles.formError}>{errors.categoryId}</p> : null}
-      </div>
-
-      <CreateCategoryModal
-        isOpen={categoryModalOpen}
-        saving={categorySaving}
-        error={categoryError}
-        onClose={() => setCategoryModalOpen(false)}
-        onSubmit={(payload) => void handleCreateCategory(payload)}
-      />
-
-      {isAcCategory ? (
-        <EquipmentLabelPhotoButtons variant="split_ac" onExtracted={handleAiExtracted} />
-      ) : null}
-      {isClimaCategory ? (
-        <EquipmentLabelPhotoButtons variant="climatizador" onExtracted={handleAiExtracted} />
-      ) : null}
-
-      {isProductizedCategory ? (
-        <div className={styles.formSection}>
-          <h3 className={styles.formSectionTitle}>Identificação Básica</h3>
-          <div>
-            <label className={styles.fieldLabel}>Marca *</label>
-            <Input
-              type="text"
-              value={formData.marca}
-              onChange={(e) => handleChange("marca", e.target.value)}
-              placeholder="Ex: LG, Daikin, Carrier..."
+      <SectionCard
+        icon={<IconTag />}
+        title="Identificação do Equipamento"
+        hint="Categoria, marca e modelo(s) do aparelho no catálogo."
+      >
+        <div>
+          <label className={styles.fieldLabel}>Categoria *</label>
+          <div className={styles.categoryRow}>
+            <Select
+              value={formData.categoryId}
+              onChange={(value) => setFormData((prev) => ({ ...prev, categoryId: value }))}
+              options={[
+                {
+                  value: '',
+                  label: formCategoryOptions.length ? 'Selecione a categoria...' : 'Nenhuma categoria cadastrada',
+                },
+                ...formCategoryOptions.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+              className={styles.categorySelect}
             />
-            {errors.marca ? <p className={styles.formError}>{errors.marca}</p> : null}
+            {onCreateCategory ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon={<IconPlus />}
+                className={styles.newCategoryBtn}
+                onClick={() => {
+                  setCategoryError('');
+                  setCategoryModalOpen(true);
+                }}
+              >
+                Nova categoria
+              </Button>
+            ) : null}
           </div>
-          {isAcCategory ? (
-            <div className={styles.modelSplitRow}>
-              <div className={styles.modelSplitField}>
-                <label className={styles.fieldLabel}>Modelo (Evaporadora)</label>
-                <Input
-                  type="text"
-                  value={formData.modelEvaporator}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
-                  placeholder="Ex: ASYG09LFCA"
-                />
-              </div>
-              <div className={styles.modelSplitField}>
-                <label className={styles.fieldLabel}>Modelo (Condensadora)</label>
-                <Input
-                  type="text"
-                  value={formData.modelCondenser}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, modelCondenser: e.target.value }))}
-                  placeholder="Ex: AOYG09LFCA"
-                />
-              </div>
-            </div>
-          ) : (
+          {errors.categoryId ? <p className={styles.formError}>{errors.categoryId}</p> : null}
+        </div>
+
+        <CreateCategoryModal
+          isOpen={categoryModalOpen}
+          saving={categorySaving}
+          error={categoryError}
+          onClose={() => setCategoryModalOpen(false)}
+          onSubmit={(payload) => void handleCreateCategory(payload)}
+        />
+
+        {/* Foto da etiqueta só no cadastro inicial — em edição o modelo já está identificado. */}
+        {!initialData?.id && isAcCategory ? (
+          <EquipmentLabelPhotoButtons variant="split_ac" onExtracted={handleAiExtracted} />
+        ) : null}
+        {!initialData?.id && isClimaCategory ? (
+          <EquipmentLabelPhotoButtons variant="climatizador" onExtracted={handleAiExtracted} />
+        ) : null}
+
+        {isProductizedCategory ? (
+          <>
             <div>
-              <label className={styles.fieldLabel}>Modelo *</label>
+              <label className={styles.fieldLabel}>Marca *</label>
               <Input
                 type="text"
-                value={formData.modelEvaporator}
-                onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
-                placeholder="Ex: MV80, CL80, EcoBreeze 12000..."
+                value={formData.marca}
+                onChange={(e) => handleChange("marca", e.target.value)}
+                placeholder="Ex: LG, Daikin, Carrier..."
               />
+              {errors.marca ? <p className={styles.formError}>{errors.marca}</p> : null}
             </div>
-          )}
-          {errors.modelEvaporator ? <p className={styles.formError}>{errors.modelEvaporator}</p> : null}
-        </div>
-      ) : (
-        <>
-          <div>
-            <label className="block text-[var(--font-size-sm)] font-[var(--font-weight-medium)] text-[var(--color-text)] mb-2">
-              Marca *
-            </label>
-            <Input
-              type="text"
-              value={formData.marca}
-              onChange={(e) => handleChange("marca", e.target.value)}
-              placeholder="Ex: LG, Samsung, Carrier..."
-            />
-            {errors.marca && (
-              <p className="mt-1 text-[var(--font-size-sm)] text-[var(--color-error)]">{errors.marca}</p>
-            )}
-          </div>
-
-          <div className={styles.modelSplitBlock}>
-            <div className={styles.modelSplitRow}>
-              <div className={styles.modelSplitField}>
-                <label className={styles.fieldLabel}>Modelo (Evaporadora)</label>
+            {isAcCategory ? (
+              <div className={styles.modelSplitRow}>
+                <div className={styles.modelSplitField}>
+                  <label className={styles.fieldLabel}>Modelo (Evaporadora)</label>
+                  <Input
+                    type="text"
+                    value={formData.modelEvaporator}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
+                    placeholder="Ex: ASYG09LFCA"
+                  />
+                </div>
+                <div className={styles.modelSplitField}>
+                  <label className={styles.fieldLabel}>Modelo (Condensadora)</label>
+                  <Input
+                    type="text"
+                    value={formData.modelCondenser}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, modelCondenser: e.target.value }))}
+                    placeholder="Ex: AOYG09LFCA"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className={styles.fieldLabel}>Modelo *</label>
                 <Input
                   type="text"
                   value={formData.modelEvaporator}
                   onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
-                  placeholder="Ex: GWC09QB"
+                  placeholder="Ex: MV80, CL80, EcoBreeze 12000..."
                 />
               </div>
-              <div className={styles.modelSplitField}>
-                <label className={styles.fieldLabel}>Modelo (Condensadora)</label>
-                <Input
-                  type="text"
-                  value={formData.modelCondenser}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, modelCondenser: e.target.value }))}
-                  placeholder="Ex: D3NNB4B"
-                />
-              </div>
-            </div>
-            {selectedCategory && !isSplitCategoryName(selectedCategory.name) ? (
-              <p className={styles.formHint}>
-                Para equipamentos unitarios, preencha apenas o campo da evaporadora (modelo do aparelho).
-              </p>
-            ) : null}
+            )}
             {errors.modelEvaporator ? <p className={styles.formError}>{errors.modelEvaporator}</p> : null}
-          </div>
-        </>
-      )}
+          </>
+        ) : (
+          <>
+            <div>
+              <label className={styles.fieldLabel}>Marca *</label>
+              <Input
+                type="text"
+                value={formData.marca}
+                onChange={(e) => handleChange("marca", e.target.value)}
+                placeholder="Ex: LG, Samsung, Carrier..."
+              />
+              {errors.marca ? <p className={styles.formError}>{errors.marca}</p> : null}
+            </div>
+
+            <div className={styles.modelSplitBlock}>
+              <div className={styles.modelSplitRow}>
+                <div className={styles.modelSplitField}>
+                  <label className={styles.fieldLabel}>Modelo (Evaporadora)</label>
+                  <Input
+                    type="text"
+                    value={formData.modelEvaporator}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, modelEvaporator: e.target.value }))}
+                    placeholder="Ex: GWC09QB"
+                  />
+                </div>
+                <div className={styles.modelSplitField}>
+                  <label className={styles.fieldLabel}>Modelo (Condensadora)</label>
+                  <Input
+                    type="text"
+                    value={formData.modelCondenser}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, modelCondenser: e.target.value }))}
+                    placeholder="Ex: D3NNB4B"
+                  />
+                </div>
+              </div>
+              {selectedCategory && !isSplitCategoryName(selectedCategory.name) ? (
+                <p className={styles.formHint}>
+                  Para equipamentos unitarios, preencha apenas o campo da evaporadora (modelo do aparelho).
+                </p>
+              ) : null}
+              {errors.modelEvaporator ? <p className={styles.formError}>{errors.modelEvaporator}</p> : null}
+            </div>
+          </>
+        )}
+      </SectionCard>
 
       {selectedCategory ? (
-        isProductizedCategory ? (
-          <div className={styles.formSection}>
-            <h3 className={styles.formSectionTitle}>Especificações Técnicas</h3>
-            <DynamicTechnicalFields
-              definitions={productizedFieldDefinitions}
-              values={formData.technicalData}
-              errors={technicalErrors}
-              categoryName={selectedCategory.name}
-              onChange={(key, value) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  technicalData: { ...prev.technicalData, [key]: value },
-                }));
-                if (technicalErrors[key]) {
-                  setTechnicalErrors((prev) => {
-                    const next = { ...prev };
-                    delete next[key];
-                    return next;
-                  });
-                }
-              }}
-            />
-          </div>
-        ) : (
-          <DynamicTechnicalFields
-            definitions={selectedCategory.fieldDefinitions}
-            values={formData.technicalData}
-            errors={technicalErrors}
-            categoryName={selectedCategory.name}
-            onChange={(key, value) => {
-              setFormData((prev) => ({
-                ...prev,
-                technicalData: { ...prev.technicalData, [key]: value },
-              }));
-              if (technicalErrors[key]) {
-                setTechnicalErrors((prev) => {
-                  const next = { ...prev };
-                  delete next[key];
-                  return next;
-                });
-              }
-            }}
-          />
-        )
+        <DynamicTechnicalFields
+          definitions={isProductizedCategory ? productizedFieldDefinitions : selectedCategory.fieldDefinitions}
+          values={formData.technicalData}
+          errors={technicalErrors}
+          categoryName={selectedCategory.name}
+          grouped={isAcCategory}
+          onChange={(key, value) => {
+            setFormData((prev) => ({
+              ...prev,
+              technicalData: { ...prev.technicalData, [key]: value },
+            }));
+            if (technicalErrors[key]) {
+              setTechnicalErrors((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                return next;
+              });
+            }
+          }}
+          onRemoveField={(key) => {
+            setFormData((prev) => {
+              const next = { ...prev.technicalData };
+              delete next[key];
+              return { ...prev, technicalData: next };
+            });
+          }}
+          onAddField={(key, value) => {
+            setFormData((prev) => ({
+              ...prev,
+              technicalData: { ...prev.technicalData, [key]: value },
+            }));
+          }}
+        />
       ) : null}
 
       {isProductizedCategory ? (
         <GlobalEquipmentManualsPanel
           value={formData.acManuals ?? emptyGlobalEquipmentManualsValue()}
-          existingManuals={existingManuals}
+          existingManuals={
+            initialData?.manualId &&
+            initialData.manualTitle &&
+            !existingManuals.some((m) => m.id === initialData.manualId)
+              ? [{ id: initialData.manualId, title: initialData.manualTitle }, ...existingManuals]
+              : existingManuals
+          }
+          linkedManual={
+            initialData?.manualId
+              ? {
+                  id: initialData.manualId,
+                  title: initialData.manualTitle || 'Manual vinculado',
+                  url: initialData.manualUrl,
+                }
+              : null
+          }
           onChange={(acManuals) => setFormData((prev) => ({ ...prev, acManuals }))}
         />
       ) : (
+      <SectionCard icon={<IconFileText />} title="Manual Técnico" hint="Opcional — vincule um manual já cadastrado ou envie um novo PDF.">
       <div className={styles.manualSection}>
-        <label className={styles.fieldLabel}>Manual tecnico (opcional)</label>
         <div className={styles.manualModeRow} role="radiogroup" aria-label="Origem do manual tecnico">
           <label className={styles.manualModeOption}>
             <input
@@ -1394,6 +1473,7 @@ const EquipmentForm: React.FC<EquipmentFormProps> = ({
           </div>
         ) : null}
       </div>
+      </SectionCard>
       )}
 
       {/* Actions */}
@@ -1433,6 +1513,7 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
   onSave,
   onDelete,
   onFiltersChange,
+  onImportedFromManual,
 }) => {
   // State
   const [searchTerm, setSearchTerm] = useState('');
@@ -1442,6 +1523,7 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEquipment, setEditingEquipment] = useState<CatalogEquipment | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [aiImportOpen, setAiImportOpen] = useState(false);
 
   const itemsPerPage = 10;
 
@@ -1605,9 +1687,21 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
               className={styles.searchFlex}
             />
           </div>
-          <Button variant="primary" icon={<IconPlus />} onClick={() => handleOpenModal()}>
-            Novo Modelo
-          </Button>
+          <div style={{ display: 'flex', gap: '0.6rem' }}>
+            <Button
+              variant="secondary"
+              icon={<IconSparkles />}
+              onClick={() => {
+                onRefreshCategories?.();
+                setAiImportOpen(true);
+              }}
+            >
+              Cadastrar via manual (IA)
+            </Button>
+            <Button variant="primary" icon={<IconPlus />} onClick={() => handleOpenModal()}>
+              Novo Modelo
+            </Button>
+          </div>
         </div>
 
         <div className={styles.tablePanel}>
@@ -1722,8 +1816,28 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
         isOpen={isModalOpen}
         onClose={handleCloseModal}
         title={editingEquipment ? 'Editar Modelo' : 'Novo Modelo no Catalogo'}
+        subtitle={
+          editingEquipment
+            ? [editingEquipment.marca, editingEquipment.modelo].filter(Boolean).join(' · ')
+            : undefined
+        }
+        icon={
+          editingEquipment ? (
+            (() => {
+              const visual = getCategoryVisual(editingEquipment.categoryIconKey, editingEquipment.categoryName);
+              const VisualIcon = visual.Icon;
+              return <VisualIcon size={20} />;
+            })()
+          ) : (
+            <IconPlus style={iconSize('md')} />
+          )
+        }
+        iconColor={
+          editingEquipment ? getCategoryVisual(editingEquipment.categoryIconKey, editingEquipment.categoryName).accentColor : undefined
+        }
       >
         <EquipmentForm
+          key={editingEquipment?.id ?? 'new-catalog-equipment'}
           initialData={editingEquipment}
           catalogItems={equipments}
           existingManuals={existingManuals}
@@ -1733,6 +1847,13 @@ export const AdminEquipmentCatalogView: React.FC<AdminEquipmentCatalogViewProps>
           onCancel={handleCloseModal}
         />
       </Modal>
+
+      <EquipmentCatalogAiImportModal
+        isOpen={aiImportOpen}
+        categoryOptions={categoryOptions}
+        onClose={() => setAiImportOpen(false)}
+        onImported={() => onImportedFromManual?.()}
+      />
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirm && (

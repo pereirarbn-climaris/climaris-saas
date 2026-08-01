@@ -10,9 +10,10 @@ type UserMenuProps = {
   isAdmin: boolean;
   onLogout: () => void;
   onOpenWorkspace: () => void;
+  subtitleMode?: "email" | "role";
 };
 
-export function UserMenu({ user, isAdmin, onLogout, onOpenWorkspace }: UserMenuProps) {
+export function UserMenu({ user, isAdmin, onLogout, onOpenWorkspace, subtitleMode = "email" }: UserMenuProps) {
   const navigate = useNavigate();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -68,7 +69,9 @@ export function UserMenu({ user, isAdmin, onLogout, onOpenWorkspace }: UserMenuP
         </span>
         <span className={styles.meta}>
           <span className={styles.name}>{user.full_name}</span>
-          <span className={styles.email}>{user.email}</span>
+          <span className={styles.email}>
+            {subtitleMode === "role" ? roleLabel(user.role) : user.email}
+          </span>
         </span>
         <span className={`${styles.chevron} ${open ? styles.chevronOpen : ""}`} aria-hidden>
           <svg viewBox="0 0 24 24">

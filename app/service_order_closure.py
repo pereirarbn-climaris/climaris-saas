@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,11 +11,45 @@ from sqlalchemy.orm import Session
 from app.domains.compliance.exceptions import ComplianceValidationError
 from app.domains.work_orders.digital_os_service import DigitalWorkOrderService
 from app.equipment_preventive_rules import sync_preventive_rules_on_order_closure
-from app.equipment_service_preventive import sync_service_preventive_schedules_on_order_closure
-from models import CustomerBillingAutomation, ServiceOrder, User, UserRole
+from app.equipment_service_preventive import (
+    _performed_date_to_utc,
+    sync_service_preventive_schedules_on_order_closure,
+)
+from models import CustomerBillingAutomation, ScheduleStatus, ServiceOrder, User, UserRole
 
 logger = logging.getLogger("erp.service_order_closure")
 audit_logger = logging.getLogger("erp.audit.service_order_closure")
+
+
+def resolve_os_performed_at(
+    order: ServiceOrder,
+    *,
+    data_realizacao: date | None = None,
+    fallback: datetime | None = None,
+) -> datetime:
+    """
+    Data/hora usada como última realização preventiva ao concluir a OS.
+
+    Prioridade: data informada no fechamento → dia do agendamento → agora (fallback).
+    """
+    now = fallback or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    if data_realizacao is not None:
+        return _performed_date_to_utc(data_realizacao)
+
+    for schedule in order.schedules or []:
+        if schedule.status == ScheduleStatus.CANCELLED:
+            continue
+        starts = schedule.starts_at
+        if starts is None:
+            continue
+        if starts.tzinfo is None:
+            starts = starts.replace(tzinfo=timezone.utc)
+        return starts
+
+    return now
 
 
 def resolve_technician_id_for_compliance(order: ServiceOrder, user: User) -> int | None:
@@ -134,14 +168,18 @@ def on_service_order_closed(
     order: ServiceOrder,
     closed_at: datetime | None = None,
     tenant_id: int,
+    performed_at: datetime | None = None,
 ) -> None:
     """Dispara sincronização de preventiva por equipamento e automações pós-fechamento."""
     when = closed_at or datetime.now(timezone.utc)
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
+    performance = performed_at or when
+    if performance.tzinfo is None:
+        performance = performance.replace(tzinfo=timezone.utc)
 
-    sync_preventive_rules_on_order_closure(db, order=order, closed_at=when)
-    sync_service_preventive_schedules_on_order_closure(db, order=order, closed_at=when)
+    sync_preventive_rules_on_order_closure(db, order=order, closed_at=performance)
+    sync_service_preventive_schedules_on_order_closure(db, order=order, closed_at=performance)
 
     try:
         execute_post_closure_automations(

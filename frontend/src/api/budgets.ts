@@ -7,6 +7,7 @@ export type BudgetOut = {
   id: number;
   tenant_id: number;
   client_id: number;
+  client_site_id?: number | null;
   scope_text: string | null;
   observation: string | null;
   status: BudgetStatus;
@@ -38,6 +39,7 @@ export type BudgetOut = {
 
 export type BudgetCreatePayload = {
   client_id: number;
+  client_site_id?: number | null;
   scope_text?: string | null;
   observation?: string | null;
   payment_method?: string | null;

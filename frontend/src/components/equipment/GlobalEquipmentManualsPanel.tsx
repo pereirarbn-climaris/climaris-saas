@@ -1,6 +1,12 @@
 import { useRef } from "react";
 import styles from "./GlobalEquipmentManualsPanel.module.css";
 
+const IconFolder = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 4h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+  </svg>
+);
+
 export type ManualDocumentKind = "usuario" | "instalacao" | "servico";
 
 export type ManualDocumentSlot = {
@@ -25,6 +31,8 @@ type Props = {
   errors?: Partial<Record<keyof GlobalEquipmentManualsValue | "existingManualId", string>>;
   onChange: (next: GlobalEquipmentManualsValue) => void;
   disabled?: boolean;
+  /** Manual já vinculado ao modelo (exibição + link de download). */
+  linkedManual?: { id: string; title: string; url?: string | null } | null;
 };
 
 const MANUAL_META: Record<
@@ -130,6 +138,7 @@ export function GlobalEquipmentManualsPanel({
   errors,
   onChange,
   disabled,
+  linkedManual,
 }: Props) {
   const updateSlot = (kind: ManualDocumentKind, patch: Partial<ManualDocumentSlot>) => {
     onChange({
@@ -138,12 +147,50 @@ export function GlobalEquipmentManualsPanel({
     });
   };
 
+  const selectedExisting =
+    existingManuals.find((m) => m.id === value.existingManualId) ??
+    (linkedManual && linkedManual.id === value.existingManualId
+      ? { id: linkedManual.id, title: linkedManual.title }
+      : null);
+
+  const showLinkedBanner =
+    Boolean(value.existingManualId) &&
+    Boolean(selectedExisting || linkedManual);
+
   return (
     <section className={styles.section} aria-label="Manuais e suporte técnico">
-      <h3 className={styles.sectionTitle}>Manuais e Suporte Técnico</h3>
-      <p className={styles.sectionHint}>
-        Organize a documentação que o técnico consulta em campo. Todos os campos são opcionais.
-      </p>
+      <div className={styles.sectionHeader}>
+        <span className={styles.sectionIcon}>
+          <IconFolder />
+        </span>
+        <div className={styles.sectionHeaderText}>
+          <h3 className={styles.sectionTitle}>Manuais e Suporte Técnico</h3>
+          <p className={styles.sectionHint}>
+            Organize a documentação que o técnico consulta em campo. Todos os campos são opcionais.
+          </p>
+        </div>
+      </div>
+
+      {showLinkedBanner ? (
+        <div className={styles.linkedBanner} role="status">
+          <div className={styles.linkedBannerText}>
+            <span className={styles.linkedBannerLabel}>Manual vinculado a este modelo</span>
+            <strong className={styles.linkedBannerTitle}>
+              {selectedExisting?.title || linkedManual?.title || "Manual cadastrado"}
+            </strong>
+          </div>
+          {linkedManual?.url ? (
+            <a
+              href={linkedManual.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.linkedBannerLink}
+            >
+              Abrir PDF
+            </a>
+          ) : null}
+        </div>
+      ) : null}
 
       <label className={styles.combinedToggle}>
         <input
@@ -230,4 +277,37 @@ export function emptyGlobalEquipmentManualsValue(): GlobalEquipmentManualsValue 
     combinedUsuarioInstalacao: false,
     existingManualId: "",
   };
+}
+
+/** Prefenche o painel a partir do manual já vinculado ao modelo no catálogo. */
+export function globalManualsFromLinkedCatalog(opts: {
+  manualId?: string | null;
+  manualTitle?: string | null;
+  technicalData?: Record<string, string | number | boolean | null | undefined> | null;
+}): GlobalEquipmentManualsValue {
+  const base = emptyGlobalEquipmentManualsValue();
+  const td = opts.technicalData ?? {};
+  const usuarioId = String(td.manual_usuario_id ?? "").trim();
+  const instalacaoId = String(td.manual_instalacao_id ?? "").trim();
+  const servicoId = String(td.manual_servico_id ?? "").trim();
+  const primaryId = (opts.manualId ?? "").trim();
+
+  // Prioridade: IDs específicos em technical_data; senão o manual_id principal do catálogo.
+  if (usuarioId || instalacaoId || servicoId) {
+    // Se usuário+instalação apontam para o mesmo PDF, trata como combinado.
+    if (usuarioId && instalacaoId && usuarioId === instalacaoId) {
+      base.combinedUsuarioInstalacao = true;
+      base.existingManualId = usuarioId;
+    } else {
+      base.existingManualId = primaryId || usuarioId || instalacaoId || servicoId;
+    }
+  } else if (primaryId) {
+    base.existingManualId = primaryId;
+    // Manuais gerais de instalação+operação costumam ser um PDF único.
+    const title = (opts.manualTitle ?? "").toLowerCase();
+    if (title.includes("instal") && (title.includes("opera") || title.includes("usu"))) {
+      base.combinedUsuarioInstalacao = true;
+    }
+  }
+  return base;
 }

@@ -21,6 +21,8 @@ export type ClientOut = {
   state_registration: string | null;
   ie_indicator: string | null;
   municipal_registration: string | null;
+  rg?: string | null;
+  birth_date?: string | null;
   address_street: string | null;
   address_number: string | null;
   address_complement: string | null;
@@ -39,14 +41,29 @@ export type ClientOut = {
   legal_nature?: string | null;
   registration_status?: string | null;
   founded_at?: string | null;
+  notes?: string | null;
+  tags?: string[];
+  created_at: string;
 };
+
+export type ClientSiteType = "matriz" | "filial" | "unidade_operacional" | "local_instalacao" | "sem_cnpj";
 
 export type ClientSiteOut = {
   id: number;
   client_id: number;
   name: string;
+  site_type: ClientSiteType;
+  nickname: string | null;
   contact_name: string | null;
+  responsible_role: string | null;
   phone: string | null;
+  email: string | null;
+  has_own_document: boolean;
+  document: string | null;
+  legal_name: string | null;
+  trade_name: string | null;
+  state_registration: string | null;
+  municipal_registration: string | null;
   street: string | null;
   number: string | null;
   complement: string | null;
@@ -54,13 +71,30 @@ export type ClientSiteOut = {
   city: string | null;
   state: string | null;
   cep: string | null;
+  reference_point: string | null;
+  has_equipment: boolean;
+  participates_pmoc: boolean;
+  use_main_contacts: boolean;
+  use_main_billing_address: boolean;
+  is_active: boolean;
+  notes: string | null;
   created_at: string;
 };
 
 export type ClientSitePayload = {
   name: string;
+  site_type?: ClientSiteType;
+  nickname?: string;
   contact_name?: string;
+  responsible_role?: string;
   phone?: string;
+  email?: string;
+  has_own_document?: boolean;
+  document?: string;
+  legal_name?: string;
+  trade_name?: string;
+  state_registration?: string;
+  municipal_registration?: string;
   street?: string;
   number?: string;
   complement?: string;
@@ -68,6 +102,13 @@ export type ClientSitePayload = {
   city?: string;
   state?: string;
   cep?: string;
+  reference_point?: string;
+  has_equipment?: boolean;
+  participates_pmoc?: boolean;
+  use_main_contacts?: boolean;
+  use_main_billing_address?: boolean;
+  is_active?: boolean;
+  notes?: string;
 };
 
 export type ClientCnpjCommercialRefreshResult = {
@@ -88,6 +129,8 @@ export type ClientCreatePayload = {
   state_registration?: string;
   ie_indicator?: ClientIeIndicator;
   municipal_registration?: string;
+  rg?: string;
+  birth_date?: string;
   address_street?: string;
   address_number?: string;
   address_complement?: string;
@@ -105,6 +148,8 @@ export type ClientCreatePayload = {
   legal_nature?: string;
   registration_status?: string;
   founded_at?: string;
+  notes?: string;
+  tags?: string[];
 };
 
 export type EquipmentOut = {
@@ -287,6 +332,8 @@ export type ClientUpdatePayload = {
   state_registration?: string | null;
   ie_indicator?: ClientIeIndicator | null;
   municipal_registration?: string | null;
+  rg?: string | null;
+  birth_date?: string | null;
   address_street?: string | null;
   address_number?: string | null;
   address_complement?: string | null;
@@ -304,6 +351,8 @@ export type ClientUpdatePayload = {
   legal_nature?: string | null;
   registration_status?: string | null;
   founded_at?: string | null;
+  notes?: string | null;
+  tags?: string[];
 };
 
 async function parseBody(response: Response): Promise<unknown> {
@@ -913,6 +962,21 @@ export async function createClientSite(clientId: number, payload: ClientSitePayl
   return body as ClientSiteOut;
 }
 
+export async function updateClientSite(
+  clientId: number,
+  siteId: number,
+  payload: Partial<ClientSitePayload>,
+): Promise<ClientSiteOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/sites/${siteId}`), {
+    method: "PUT",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível atualizar a unidade/filial.", response.status));
+  return body as ClientSiteOut;
+}
+
 export async function deleteClientSite(clientId: number, siteId: number): Promise<void> {
   const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/sites/${siteId}`), {
     method: "DELETE",
@@ -921,4 +985,415 @@ export async function deleteClientSite(clientId: number, siteId: number): Promis
   if (response.status === 204) return;
   const body = await parseBody(response);
   throw new Error(errorMessage(body, "Não foi possível excluir filial/obra.", response.status));
+}
+
+/** Endereço cadastrado do cliente (múltiplos endereços por tipo, vinculáveis a uma unidade/filial). */
+export type ClientAddressType = "principal" | "cobranca" | "instalacao" | "correspondencia" | "outros";
+
+export type ClientAddressOut = {
+  id: number;
+  client_id: number;
+  client_site_id: number | null;
+  address_type: ClientAddressType;
+  street: string | null;
+  number: string | null;
+  complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+  cep: string | null;
+  reference_point: string | null;
+  is_principal: boolean;
+  use_for_billing: boolean;
+  use_for_pmoc: boolean;
+  use_for_service_orders: boolean;
+  use_for_correspondence: boolean;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type ClientAddressPayload = {
+  address_type?: ClientAddressType;
+  client_site_id?: number | null;
+  street: string;
+  number: string;
+  complement?: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+  cep: string;
+  reference_point?: string;
+  is_principal?: boolean;
+  use_for_billing?: boolean;
+  use_for_pmoc?: boolean;
+  use_for_service_orders?: boolean;
+  use_for_correspondence?: boolean;
+  is_active?: boolean;
+};
+
+export async function listClientAddresses(clientId: number): Promise<ClientAddressOut[]> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/addresses`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar endereços.", response.status));
+  return body as ClientAddressOut[];
+}
+
+export async function createClientAddress(
+  clientId: number,
+  payload: ClientAddressPayload,
+): Promise<ClientAddressOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/addresses`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível cadastrar endereço.", response.status));
+  return body as ClientAddressOut;
+}
+
+export async function updateClientAddress(
+  clientId: number,
+  addressId: number,
+  payload: Partial<ClientAddressPayload>,
+): Promise<ClientAddressOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/addresses/${addressId}`), {
+    method: "PUT",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível atualizar o endereço.", response.status));
+  return body as ClientAddressOut;
+}
+
+export async function deleteClientAddress(clientId: number, addressId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/addresses/${addressId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  throw new Error(errorMessage(body, "Não foi possível excluir o endereço.", response.status));
+}
+
+export async function duplicateClientAddress(
+  clientId: number,
+  addressId: number,
+): Promise<ClientAddressOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/addresses/${addressId}/duplicate`), {
+    method: "POST",
+    headers: jsonHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível duplicar o endereço.", response.status));
+  return body as ClientAddressOut;
+}
+
+/** Contato adicional do cliente (múltiplos contatos, cada um com preferências de notificação). */
+export type ClientContactCategory =
+  | "responsavel"
+  | "tecnico"
+  | "financeiro"
+  | "administrativo"
+  | "comercial"
+  | "outros";
+
+export type ClientContactOut = {
+  id: number;
+  client_id: number;
+  client_site_id: number | null;
+  name: string;
+  category: ClientContactCategory;
+  role: string | null;
+  department: string | null;
+  whatsapp: string | null;
+  phone: string | null;
+  email: string | null;
+  receives_service_orders: boolean;
+  receives_pmoc: boolean;
+  receives_financial: boolean;
+  receives_contracts: boolean;
+  receives_whatsapp_notifications: boolean;
+  receives_automatic_emails: boolean;
+  is_principal: boolean;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClientContactPayload = {
+  name: string;
+  category?: ClientContactCategory;
+  role?: string;
+  department?: string;
+  client_site_id?: number | null;
+  whatsapp: string;
+  phone?: string;
+  email: string;
+  receives_service_orders?: boolean;
+  receives_pmoc?: boolean;
+  receives_financial?: boolean;
+  receives_contracts?: boolean;
+  receives_whatsapp_notifications?: boolean;
+  receives_automatic_emails?: boolean;
+  is_principal?: boolean;
+  is_active?: boolean;
+  notes?: string;
+};
+
+export async function listClientContacts(clientId: number): Promise<ClientContactOut[]> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contacts`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar contatos.", response.status));
+  return body as ClientContactOut[];
+}
+
+export async function createClientContact(
+  clientId: number,
+  payload: ClientContactPayload,
+): Promise<ClientContactOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contacts`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível cadastrar contato.", response.status));
+  return body as ClientContactOut;
+}
+
+export async function updateClientContact(
+  clientId: number,
+  contactId: number,
+  payload: Partial<ClientContactPayload>,
+): Promise<ClientContactOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contacts/${contactId}`), {
+    method: "PUT",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível atualizar contato.", response.status));
+  return body as ClientContactOut;
+}
+
+export async function deleteClientContact(clientId: number, contactId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contacts/${contactId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  throw new Error(errorMessage(body, "Não foi possível excluir contato.", response.status));
+}
+
+export async function duplicateClientContact(clientId: number, contactId: number): Promise<ClientContactOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contacts/${contactId}/duplicate`), {
+    method: "POST",
+    headers: jsonHeaders(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível duplicar o contato.", response.status));
+  return body as ClientContactOut;
+}
+
+/** Contrato comercial do cliente (PMOC, manutenção, avulso etc.). */
+export type ClientContractStatus = "draft" | "active" | "suspended" | "expired" | "cancelled";
+
+export type ClientContractAttachmentOut = {
+  id: number;
+  client_contract_id: number;
+  file_type: string;
+  file_name: string | null;
+  file_url: string | null;
+  size_bytes: number | null;
+  uploaded_by_user_id: number | null;
+  created_at: string;
+};
+
+export type ClientContractOut = {
+  id: number;
+  client_id: number;
+  contract_number: string;
+  contract_type: string;
+  title: string;
+  status: ClientContractStatus;
+  recurrence: string;
+  start_date: string;
+  end_date: string;
+  value: number;
+  payment_method: string | null;
+  due_day: number | null;
+  notes: string | null;
+  client_site_id?: number | null;
+  responsible_user_id?: number | null;
+  category?: string | null;
+  form_category_label?: string | null;
+  next_due_date?: string | null;
+  adjustment_index?: string | null;
+  adjustment_period?: string | null;
+  late_fee_percent?: number | null;
+  interest_percent?: number | null;
+  auto_renewal?: boolean;
+  expiry_notice_days?: number | null;
+  coverage_location?: string | null;
+  billing_notes?: string | null;
+  display_number?: string | null;
+  contract_year?: number | null;
+  equipment_ids?: string[];
+  services?: string[];
+  attachments_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClientContractNextNumberOut = {
+  contract_number: string;
+  contract_year: number;
+  sequence: number;
+  preview: boolean;
+};
+
+export type ClientContractPayload = {
+  contract_number?: string | null;
+  contract_type: string;
+  title: string;
+  status?: ClientContractStatus;
+  recurrence?: string;
+  start_date: string;
+  end_date: string;
+  value: number;
+  payment_method?: string;
+  due_day?: number;
+  notes?: string;
+  client_site_id?: number | null;
+  responsible_user_id?: number | null;
+  category?: string;
+  form_category_label?: string | null;
+  next_due_date?: string | null;
+  adjustment_index?: string | null;
+  adjustment_period?: string | null;
+  late_fee_percent?: number | null;
+  interest_percent?: number | null;
+  auto_renewal?: boolean;
+  expiry_notice_days?: number | null;
+  coverage_location?: string | null;
+  billing_notes?: string | null;
+  display_number?: string | null;
+  contract_year?: number | null;
+  equipment_ids?: string[];
+  services?: string[];
+};
+
+export async function listClientContracts(clientId: number): Promise<ClientContractOut[]> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts`), { headers: bearer() });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar contratos.", response.status));
+  return body as ClientContractOut[];
+}
+
+export async function fetchClientContractNextNumber(
+  clientId: number,
+  year?: number,
+): Promise<ClientContractNextNumberOut> {
+  const sp = new URLSearchParams();
+  if (year != null) sp.set("year", String(year));
+  const suffix = sp.toString() ? `?${sp.toString()}` : "";
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts/next-number${suffix}`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, "Não foi possível gerar a prévia do número do contrato.", response.status));
+  }
+  return body as ClientContractNextNumberOut;
+}
+
+export async function createClientContract(
+  clientId: number,
+  payload: ClientContractPayload,
+): Promise<ClientContractOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts`), {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível cadastrar contrato.", response.status));
+  return body as ClientContractOut;
+}
+
+export async function updateClientContract(
+  clientId: number,
+  contractId: number,
+  payload: Partial<ClientContractPayload>,
+): Promise<ClientContractOut> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts/${contractId}`), {
+    method: "PUT",
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível atualizar contrato.", response.status));
+  return body as ClientContractOut;
+}
+
+export async function deleteClientContract(clientId: number, contractId: number): Promise<void> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts/${contractId}`), {
+    method: "DELETE",
+    headers: bearer(),
+  });
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  throw new Error(errorMessage(body, "Não foi possível excluir contrato.", response.status));
+}
+
+export async function listClientContractAttachments(
+  clientId: number,
+  contractId: number,
+): Promise<ClientContractAttachmentOut[]> {
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts/${contractId}/attachments`), {
+    headers: bearer(),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível listar anexos do contrato.", response.status));
+  return body as ClientContractAttachmentOut[];
+}
+
+export async function uploadClientContractAttachment(
+  clientId: number,
+  contractId: number,
+  file: File,
+): Promise<ClientContractAttachmentOut> {
+  const token = getAccessToken();
+  if (!token) throw new Error("Sessão expirada.");
+  const fd = new FormData();
+  fd.append("file", file);
+  const response = await fetch(apiUrl(`/api/v1/clients/${clientId}/contracts/${contractId}/attachments`), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  const body = await parseBody(response);
+  if (!response.ok) throw new Error(errorMessage(body, "Não foi possível enviar anexo do contrato.", response.status));
+  return body as ClientContractAttachmentOut;
+}
+
+export async function deleteClientContractAttachment(
+  clientId: number,
+  contractId: number,
+  attachmentId: number,
+): Promise<void> {
+  const response = await fetch(
+    apiUrl(`/api/v1/clients/${clientId}/contracts/${contractId}/attachments/${attachmentId}`),
+    {
+      method: "DELETE",
+      headers: bearer(),
+    },
+  );
+  if (response.status === 204) return;
+  const body = await parseBody(response);
+  throw new Error(errorMessage(body, "Não foi possível remover anexo do contrato.", response.status));
 }

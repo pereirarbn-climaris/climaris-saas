@@ -1,8 +1,10 @@
 """Rotas exclusivas de operadores da plataforma (não clientes do ERP)."""
 
 import json
+import os
 from datetime import date, datetime, timezone
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -58,6 +60,75 @@ def platform_session(current_user: Annotated[User, Depends(require_platform_oper
         full_name=current_user.full_name,
         tenant_id=current_user.tenant_id,
     )
+
+
+# Publicado pelo host (fora do container) em .../var/system-backup/status.json,
+# via /usr/local/lib/system-backup/{01-backup,02-verify-restore,03-deep-check,notify-failure}.sh
+# (ver scripts/system-backup/README-RESTAURACAO.md). Como ./ é montado em /app,
+# o caminho padrão aqui é o mesmo ficheiro que o host escreve em $PROJECT_ROOT/var/....
+SYSTEM_BACKUP_STATUS_FILE = os.getenv("SYSTEM_BACKUP_STATUS_FILE", "/app/var/system-backup/status.json")
+
+# Prazos (em horas) considerados "atrasado" para cada componente, dado o cronograma:
+# backup diário 03:00 UTC, verify no mesmo pipeline, deep-check semanal (domingos 04:00 UTC).
+_BACKUP_STALE_AFTER_HOURS = 30.0
+_VERIFY_STALE_AFTER_HOURS = 30.0
+_DEEP_CHECK_STALE_AFTER_HOURS = 24.0 * 9
+
+
+def _parse_iso(ts: str | None) -> datetime | None:
+    if not ts or not isinstance(ts, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _component_with_staleness(raw: dict[str, Any] | None, *, stale_after_hours: float) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    component = dict(raw)
+    last_success = _parse_iso(component.get("last_success_at"))
+    if last_success is None:
+        component["stale"] = True
+    else:
+        age_hours = (datetime.now(timezone.utc) - last_success).total_seconds() / 3600.0
+        component["stale"] = age_hours > stale_after_hours
+    return component
+
+
+@router.get("/backup-status")
+def platform_backup_status(
+    current_user: Annotated[User, Depends(require_platform_operator)],
+) -> dict[str, Any]:
+    """Situação do backup do sistema (restic -> S3), lida do status.json publicado pelo host.
+
+    Não consulta o host/systemd diretamente (o container não tem acesso a isso) — apenas
+    reflete o que os scripts em /usr/local/lib/system-backup/ gravaram best-effort.
+    """
+    path = Path(SYSTEM_BACKUP_STATUS_FILE)
+    if not path.is_file():
+        return {
+            "available": False,
+            "message": "Status do backup ainda não publicado pelo host (aguarde a próxima execução às 03:00 UTC).",
+        }
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"available": False, "message": "Falha ao ler o arquivo de status do backup."}
+    if not isinstance(raw, dict):
+        return {"available": False, "message": "Formato inesperado no status do backup."}
+
+    return {
+        "available": True,
+        "updated_at": raw.get("updated_at"),
+        "backup": _component_with_staleness(raw.get("backup"), stale_after_hours=_BACKUP_STALE_AFTER_HOURS),
+        "verify": _component_with_staleness(raw.get("verify"), stale_after_hours=_VERIFY_STALE_AFTER_HOURS),
+        "deep_check": _component_with_staleness(raw.get("deep_check"), stale_after_hours=_DEEP_CHECK_STALE_AFTER_HOURS),
+    }
 
 
 def _normalize_provider_slug(provider_slug: str) -> str:
@@ -206,11 +277,8 @@ def _to_tenant_detail_out(db: Session, tenant: Tenant) -> PlatformTenantDetailOu
         business_days=tenant.business_days,
         workday_start=tenant.workday_start,
         workday_end=tenant.workday_end,
-        phone=tenant.phone,
         email=tenant.email,
         website=tenant.website,
-        address_city=tenant.address_city,
-        address_state=tenant.address_state,
         plan_change_logs=[
             PlatformTenantPlanChangeLogOut(
                 id=log.id,

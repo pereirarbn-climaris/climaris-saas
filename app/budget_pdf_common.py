@@ -151,6 +151,21 @@ def mask_cep(raw: str | None) -> str:
 
 
 def client_full_address(budget: Budget) -> str:
+    site = getattr(budget, "client_site", None)
+    if site is not None:
+        parts = [
+            getattr(site, "street", None),
+            getattr(site, "number", None),
+            getattr(site, "complement", None),
+            getattr(site, "neighborhood", None),
+            getattr(site, "city", None),
+            getattr(site, "state", None),
+            mask_cep(getattr(site, "cep", None)),
+        ]
+        filtered = [str(p).strip() for p in parts if p and str(p).strip()]
+        if filtered:
+            return " - ".join(filtered)
+
     client = budget.client
     parts = [
         getattr(client, "address_street", None),

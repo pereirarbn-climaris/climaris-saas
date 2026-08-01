@@ -5,6 +5,7 @@ import { Check, ClipboardCopy, Printer, RotateCcw, Save } from "lucide-react";
 import {
   listEquipmentServicePreventiveSchedules,
   resetEquipmentServicePreventiveScheduleOverride,
+  setEquipmentServicePreventiveActive,
   upsertEquipmentServicePreventiveSchedule,
   type EquipmentServicePreventiveScheduleOut,
 } from "../../api/preventiveMaintenance";
@@ -12,6 +13,7 @@ import { patchServiceOrderStatus } from "../../api/serviceOrders";
 import { buildTechnicalSpecRows } from "../../lib/categoryFieldDefinitions";
 import { computePreventiveNextDue, formatFriendlyDatePt } from "../../lib/preventiveLastService";
 import { ToastHost } from "../ToastHost";
+import { FormSwitch } from "../ui/form-switch";
 import { toast } from "../../lib/toast";
 import type { EquipmentItem } from "../v0-ui/clients/ClientEquipmentManager";
 import type { MaintenanceEvent } from "../v0-ui/clients/PublicEquipmentProfileView v2";
@@ -32,7 +34,13 @@ type Props = {
   middleSlot?: React.ReactNode;
   readOnly?: boolean;
   isEditing?: boolean;
+  /** Quando true, o cabeçalho interno fica oculto (o modal pai já renderiza o título). */
+  hideHeader?: boolean;
   editForm?: React.ReactNode;
+  /** Substitui o painel QR padrão (ex.: fluxo de alterar/cadastrar etiqueta). */
+  qrPanelSlot?: React.ReactNode;
+  /** Ações extras no painel QR (ex.: botão Alterar QR na edição). */
+  qrExtraActions?: React.ReactNode;
   onClose?: () => void;
   onPrintLabel?: () => void;
 };
@@ -96,7 +104,10 @@ export function EquipmentSheetEmbeddedView({
   middleSlot,
   readOnly = false,
   isEditing = false,
+  hideHeader = false,
   editForm,
+  qrPanelSlot,
+  qrExtraActions,
   onClose,
   onPrintLabel,
 }: Props) {
@@ -189,6 +200,20 @@ export function EquipmentSheetEmbeddedView({
     }
   }
 
+  async function handleToggleScheduleActive(serviceId: number, isActive: boolean) {
+    if (!legacyId || readOnly) return;
+    setSavingServiceId(serviceId);
+    try {
+      const saved = await setEquipmentServicePreventiveActive(legacyId, serviceId, isActive);
+      setSchedules((prev) => prev.map((row) => (row.service_id === serviceId ? saved : row)));
+      toast.success(isActive ? "Manutenção preventiva ativada." : "Manutenção preventiva desativada.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao atualizar a manutenção preventiva.");
+    } finally {
+      setSavingServiceId(null);
+    }
+  }
+
   async function handleCompletePendingOs(orderId: number) {
     if (readOnly) return;
     const confirmed = window.confirm(
@@ -215,56 +240,80 @@ export function EquipmentSheetEmbeddedView({
   return (
     <div className={styles.sheet}>
       <ToastHost />
-      <header className={styles.header}>
-        <div>
-          <h2 className={styles.headerTitle}>{equipment.tag || "Equipamento"}</h2>
-          <p className={styles.headerSub}>
-            {[equipment.brandName, equipment.modelName].filter(Boolean).join(" · ") || "Ficha interna"}
-          </p>
-        </div>
-        {onClose ? (
-          <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Fechar ficha">
-            ×
-          </button>
-        ) : null}
-      </header>
+      {!hideHeader ? (
+        <header className={styles.header}>
+          <div>
+            <h2 className={styles.headerTitle}>{equipment.tag || "Equipamento"}</h2>
+            <p className={styles.headerSub}>
+              {[equipment.brandName, equipment.modelName].filter(Boolean).join(" · ") || "Ficha interna"}
+            </p>
+          </div>
+          {onClose ? (
+            <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Fechar ficha">
+              ×
+            </button>
+          ) : null}
+        </header>
+      ) : null}
 
       <div className={styles.body}>
-        {publicUrl ? (
+        {qrPanelSlot ? (
+          qrPanelSlot
+        ) : (
           <section className={styles.qrPanel} aria-label="QR Code e link público">
             <div className={styles.qrImageWrap}>
-              {qrSrc ? (
+              {publicUrl && qrSrc ? (
                 <img src={qrSrc} alt="" className={styles.qrImage} aria-hidden />
               ) : (
-                <div className={styles.qrImage}>{qrError ? "—" : "…"}</div>
+                <div className={styles.qrImageEmpty}>{publicUrl ? (qrError ? "—" : "…") : "QR"}</div>
               )}
             </div>
-            <div className={styles.qrActions}>
-              <button type="button" className={styles.btnSecondary} onClick={() => void handleCopyLink()}>
-                {copied ? <Check size={15} aria-hidden /> : <ClipboardCopy size={15} aria-hidden />}
-                {copied ? "Copiado" : "Copiar link"}
-              </button>
-              {onPrintLabel ? (
-                <button type="button" className={styles.btnPrimary} onClick={onPrintLabel}>
-                  <Printer size={15} aria-hidden />
-                  Imprimir etiqueta
-                </button>
-              ) : null}
-            </div>
-            <div className={styles.linkField}>
-              <label className={styles.linkLabel} htmlFor="equipment-public-link">
-                Link da ficha web
-              </label>
-              <input
-                id="equipment-public-link"
-                className={styles.linkInput}
-                readOnly
-                value={publicUrl}
-                onFocus={(e) => e.currentTarget.select()}
-              />
+            <div className={styles.qrMeta}>
+              <p className={styles.qrTitle}>QR Code do equipamento</p>
+              <p className={styles.qrHint}>
+                {publicUrl
+                  ? "Escaneie ou compartilhe o link da ficha pública do aparelho."
+                  : "Nenhuma etiqueta QR vinculada a este equipamento ainda."}
+              </p>
+              {publicUrl ? (
+                <>
+                  <div className={styles.qrActions}>
+                    <button type="button" className={styles.btnSecondary} onClick={() => void handleCopyLink()}>
+                      {copied ? <Check size={15} aria-hidden /> : <ClipboardCopy size={15} aria-hidden />}
+                      {copied ? "Copiado" : "Copiar link"}
+                    </button>
+                    {onPrintLabel ? (
+                      <button type="button" className={styles.btnPrimary} onClick={onPrintLabel}>
+                        <Printer size={15} aria-hidden />
+                        Imprimir etiqueta
+                      </button>
+                    ) : null}
+                    {qrExtraActions}
+                  </div>
+                  <div className={styles.linkField}>
+                    <label className={styles.linkLabel} htmlFor="equipment-public-link">
+                      Link da ficha web
+                    </label>
+                    <input
+                      id="equipment-public-link"
+                      className={styles.linkInput}
+                      readOnly
+                      value={publicUrl}
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className={styles.qrActions}>
+                  {equipment.qrcodeCodeId ? (
+                    <p className={styles.qrCodeId}>Código: {equipment.qrcodeCodeId}</p>
+                  ) : null}
+                  {qrExtraActions}
+                </div>
+              )}
             </div>
           </section>
-        ) : null}
+        )}
 
         <div className={`${formLayout.formCard} ${styles.tabsCard}`}>
           <div className={`${formLayout.formCardTabs} ${styles.tabsBar}`} role="tablist" aria-label="Seções da ficha">
@@ -281,7 +330,6 @@ export function EquipmentSheetEmbeddedView({
               type="button"
               role="tab"
               aria-selected={activeTab === "preventiva"}
-              disabled={isEditing}
               className={`${formLayout.formCardTab} ${styles.tabBtn} ${activeTab === "preventiva" ? formLayout.formCardTabActive : ""} ${activeTab === "preventiva" ? styles.tabBtnActive : ""}`}
               onClick={() => setActiveTab("preventiva")}
             >
@@ -291,7 +339,6 @@ export function EquipmentSheetEmbeddedView({
               type="button"
               role="tab"
               aria-selected={activeTab === "historico"}
-              disabled={isEditing}
               className={`${formLayout.formCardTab} ${styles.tabBtn} ${activeTab === "historico" ? formLayout.formCardTabActive : ""} ${activeTab === "historico" ? styles.tabBtnActive : ""}`}
               onClick={() => setActiveTab("historico")}
             >
@@ -301,7 +348,6 @@ export function EquipmentSheetEmbeddedView({
               type="button"
               role="tab"
               aria-selected={activeTab === "manuais"}
-              disabled={isEditing}
               className={`${formLayout.formCardTab} ${styles.tabBtn} ${activeTab === "manuais" ? formLayout.formCardTabActive : ""} ${activeTab === "manuais" ? styles.tabBtnActive : ""}`}
               onClick={() => setActiveTab("manuais")}
             >
@@ -311,7 +357,6 @@ export function EquipmentSheetEmbeddedView({
               type="button"
               role="tab"
               aria-selected={activeTab === "assistente"}
-              disabled={isEditing}
               className={`${formLayout.formCardTab} ${styles.tabBtn} ${activeTab === "assistente" ? formLayout.formCardTabActive : ""} ${activeTab === "assistente" ? styles.tabBtnActive : ""}`}
               onClick={() => setActiveTab("assistente")}
             >
@@ -326,48 +371,80 @@ export function EquipmentSheetEmbeddedView({
                   editForm
                 ) : (
                   <>
-                    <p className={styles.identityTitle}>{equipment.tag}</p>
-                    <p className={styles.identitySub}>
-                      {[equipment.brandName, equipment.modelName].filter(Boolean).join(" · ") || "—"}
-                    </p>
-                    <div className={styles.badges}>
-                      <span className={equipment.status === "ativo" ? styles.badgeOk : styles.badgeMuted}>
-                        {equipment.status === "ativo" ? "Ativo" : "Inativo"}
-                      </span>
-                      {equipment.categoryName ? (
-                        <span className={styles.badgeCategory}>{equipment.categoryName}</span>
-                      ) : null}
-                      {equipment.siteName ? (
-                        <span className={styles.badgeCategory}>{equipment.siteName}</span>
-                      ) : null}
-                    </div>
-                    <div className={styles.metaList}>
-                      {equipment.qrcodeCodeId ? (
-                        <p>
-                          <strong>Etiqueta QR:</strong> {equipment.qrcodeCodeId}
-                        </p>
-                      ) : null}
-                      {equipment.serialNumber ? (
-                        <p>
-                          <strong>Nº de série:</strong> {equipment.serialNumber}
-                        </p>
-                      ) : null}
-                      {equipment.location ? (
-                        <p>
-                          <strong>Local:</strong> {equipment.location}
-                        </p>
-                      ) : null}
-                      {equipment.installationDate ? (
-                        <p>
-                          <strong>Instalado em:</strong>{" "}
-                          {new Date(equipment.installationDate + "T12:00:00").toLocaleDateString("pt-BR")}
-                        </p>
-                      ) : null}
-                      {equipment.installationReference ? (
-                        <p>
-                          <strong>Referência:</strong> {equipment.installationReference}
-                        </p>
-                      ) : null}
+                    <div className={styles.viewCard}>
+                      <div className={styles.viewCardHead}>
+                        <div>
+                          <p className={styles.identityTitle}>{equipment.tag}</p>
+                          <p className={styles.identitySub}>
+                            {[equipment.brandName, equipment.modelName].filter(Boolean).join(" · ") || "—"}
+                          </p>
+                        </div>
+                        <div className={styles.badges}>
+                          <span className={equipment.status === "ativo" ? styles.badgeOk : styles.badgeMuted}>
+                            {equipment.status === "ativo" ? "Ativo" : "Inativo"}
+                          </span>
+                          {equipment.categoryName ? (
+                            <span className={styles.badgeCategory}>{equipment.categoryName}</span>
+                          ) : null}
+                          {equipment.siteName ? (
+                            <span className={styles.badgeCategory}>{equipment.siteName}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className={styles.metaGrid}>
+                        {equipment.qrcodeCodeId ? (
+                          <div className={styles.metaItem}>
+                            <span className={styles.metaLabel}>Etiqueta QR</span>
+                            <span className={styles.metaValue}>{equipment.qrcodeCodeId}</span>
+                          </div>
+                        ) : null}
+                        {equipment.serialNumber ? (
+                          <div className={styles.metaItem}>
+                            <span className={styles.metaLabel}>Nº de série</span>
+                            <span className={styles.metaValue}>{equipment.serialNumber}</span>
+                          </div>
+                        ) : null}
+                        {equipment.location ? (
+                          <div className={styles.metaItem}>
+                            <span className={styles.metaLabel}>Local</span>
+                            <span className={styles.metaValue}>{equipment.location}</span>
+                          </div>
+                        ) : null}
+                        {equipment.installationDate ? (
+                          <div className={styles.metaItem}>
+                            <span className={styles.metaLabel}>Instalado em</span>
+                            <span className={styles.metaValue}>
+                              {new Date(equipment.installationDate + "T12:00:00").toLocaleDateString("pt-BR")}
+                            </span>
+                          </div>
+                        ) : null}
+                        {equipment.installationReference ? (
+                          <div className={`${styles.metaItem} ${styles.metaItemWide}`}>
+                            <span className={styles.metaLabel}>Referência</span>
+                            <span className={styles.metaValue}>{equipment.installationReference}</span>
+                          </div>
+                        ) : null}
+                        {equipment.manufactureYear ? (
+                          <div className={styles.metaItem}>
+                            <span className={styles.metaLabel}>Ano de fabricação</span>
+                            <span className={styles.metaValue}>{equipment.manufactureYear}</span>
+                          </div>
+                        ) : null}
+                        {equipment.gasChargeKg ? (
+                          <div className={styles.metaItem}>
+                            <span className={styles.metaLabel}>Carga de gás</span>
+                            <span className={styles.metaValue}>
+                              {new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 }).format(equipment.gasChargeKg)} kg
+                            </span>
+                          </div>
+                        ) : null}
+                        {equipment.notes ? (
+                          <div className={`${styles.metaItem} ${styles.metaItemWide}`}>
+                            <span className={styles.metaLabel}>Observações</span>
+                            <span className={styles.metaValue}>{equipment.notes}</span>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                     {specs.length > 0 ? (
                       <div className={styles.specGrid}>
@@ -408,12 +485,37 @@ export function EquipmentSheetEmbeddedView({
                       draft.interval_type,
                     );
                     const awaiting = row.awaiting_completion === true;
+                    const isActive = row.is_active !== false;
                     return (
-                      <article key={row.service_id} className={styles.preventiveCard}>
-                        <h4 className={styles.preventiveName}>{row.service_name}</h4>
-                        {row.service_description ? (
-                          <p className={styles.preventiveDesc}>{row.service_description}</p>
-                        ) : null}
+                      <article
+                        key={row.service_id}
+                        className={`${styles.preventiveCard}${isActive ? "" : ` ${styles.preventiveCardInactive}`}`}
+                      >
+                        <div className={styles.preventiveCardHead}>
+                          <div>
+                            <h4 className={styles.preventiveName}>{row.service_name}</h4>
+                            {row.service_description ? (
+                              <p className={styles.preventiveDesc}>{row.service_description}</p>
+                            ) : null}
+                          </div>
+                          {!awaiting ? (
+                            <label
+                              htmlFor={`prev-active-${row.service_id}`}
+                              className={styles.preventiveToggle}
+                            >
+                              <span className={styles.preventiveToggleLabel}>
+                                {isActive ? "Preventiva ativa" : "Preventiva inativa"}
+                              </span>
+                              <FormSwitch
+                                id={`prev-active-${row.service_id}`}
+                                checked={isActive}
+                                disabled={readOnly || savingServiceId === row.service_id}
+                                onChange={(value) => void handleToggleScheduleActive(row.service_id, value)}
+                                ariaLabel="Ativar ou desativar manutenção preventiva"
+                              />
+                            </label>
+                          ) : null}
+                        </div>
                         {awaiting ? (
                           <>
                             <p className={styles.preventivePending}>
@@ -477,7 +579,7 @@ export function EquipmentSheetEmbeddedView({
                                 min={1}
                                 max={draft.interval_type === "days" ? 3650 : 12}
                                 value={draft.interval_value}
-                                disabled={readOnly || savingServiceId === row.service_id}
+                                disabled={readOnly || !isActive || savingServiceId === row.service_id}
                                 onChange={(e) => {
                                   const val = Number(e.target.value);
                                   if (!Number.isFinite(val) || val < 1) return;
@@ -490,7 +592,7 @@ export function EquipmentSheetEmbeddedView({
                               <select
                                 className={styles.select}
                                 value={draft.interval_type}
-                                disabled={readOnly || savingServiceId === row.service_id}
+                                disabled={readOnly || !isActive || savingServiceId === row.service_id}
                                 onChange={(e) =>
                                   setDrafts((prev) => ({
                                     ...prev,
@@ -507,7 +609,7 @@ export function EquipmentSheetEmbeddedView({
                               </select>
                             </div>
                           </div>
-                          {!readOnly ? (
+                          {!readOnly && isActive ? (
                             <div className={styles.preventiveActions}>
                               <button
                                 type="button"

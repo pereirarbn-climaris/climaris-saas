@@ -139,7 +139,12 @@ def get_platform_logo_file(db: Annotated[Session, Depends(get_db)]) -> Response:
         data, content_type = fetch_platform_asset_bytes(row.logo_s3_key, db=db)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=300"})
+    # Cache longo: busting via ?v= no URL do branding
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
 
 
 @router.post("/favicon", response_model=PlatformBrandingOut)
@@ -207,4 +212,9 @@ def get_platform_favicon_file(db: Annotated[Session, Depends(get_db)]) -> Respon
         data, content_type = fetch_platform_asset_bytes(row.favicon_s3_key, db=db)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=300"})
+    # Cache longo: busting via ?v= no URL do branding
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=604800"},
+    )

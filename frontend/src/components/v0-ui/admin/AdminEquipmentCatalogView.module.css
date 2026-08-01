@@ -726,7 +726,7 @@
 .modalPanel {
   pointer-events: auto;
   width: 100%;
-  max-width: 32rem;
+  max-width: 38rem;
   height: 100%;
   background: var(--color-surface-elevated);
   box-shadow: var(--card-shadow-hover);
@@ -741,6 +741,35 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-elevated) 100%);
+}
+
+.modalHeaderInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.modalHeaderIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.modalHeaderIcon svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+}
+
+.modalHeaderTextWrap {
+  min-width: 0;
 }
 
 .modalTitle {
@@ -750,10 +779,20 @@
   margin: 0;
 }
 
+.modalSubtitle {
+  margin: 2px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .modalBody {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-6);
+  background: var(--color-surface);
 }
 
 .modalCloseBtn {
@@ -789,19 +828,70 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5);
   border-radius: var(--card-radius);
   border: 1px solid var(--color-border);
   background: var(--color-surface-elevated);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.formSectionHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.formSectionIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.formSectionIconEmerald {
+  background: color-mix(in srgb, #059669 14%, transparent);
+  color: #059669;
+}
+
+.formSectionIconViolet {
+  background: color-mix(in srgb, #7c3aed 14%, transparent);
+  color: #7c3aed;
+}
+
+.formSectionIcon svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+}
+
+.formSectionHeaderText {
+  min-width: 0;
 }
 
 .formSectionTitle {
   margin: 0;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--color-text);
+}
+
+.formSectionHint {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+  line-height: var(--line-height-normal);
+}
+
+.formSectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .formField label {

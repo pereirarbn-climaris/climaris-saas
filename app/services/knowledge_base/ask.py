@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.config import CLAUDE_MODEL, KB_ENABLED, KB_MAX_CONTEXT_CHARS, KB_TOP_MANUALS
 from app.platform_credentials import resolve_claude_api_key, resolve_claude_model
-from app.services.knowledge_base.retrieval import RetrievedChunk, retrieve_relevant_chunks
+from app.services.knowledge_base.retrieval import (
+    RetrievedChunk,
+    find_matching_error_codes,
+    retrieve_relevant_chunks,
+)
+from models import EquipmentManualErrorCode
 
 logger = logging.getLogger("erp.knowledge_base.ask")
 
@@ -22,6 +27,24 @@ _SYSTEM_PROMPT = (
     "Responda apenas com base nos manuais técnicos fornecidos. "
     "Se não souber, diga que não há informações no manual."
 )
+
+
+def _build_error_codes_block(error_codes: list[EquipmentManualErrorCode]) -> str:
+    if not error_codes:
+        return ""
+    lines = ["### Códigos de erro/falha (tabela oficial do manual)"]
+    for ec in error_codes:
+        parts = [f"Código {ec.code}: {ec.title or '—'}"]
+        if ec.description:
+            parts.append(f"Descrição: {ec.description}")
+        if ec.probable_cause:
+            parts.append(f"Causa provável: {ec.probable_cause}")
+        if ec.recommended_action:
+            parts.append(f"Ação recomendada: {ec.recommended_action}")
+        if ec.pagina_origem:
+            parts.append(f"(página {ec.pagina_origem})")
+        lines.append(" · ".join(parts))
+    return "\n".join(lines)
 
 
 def _build_context(chunks: list[RetrievedChunk]) -> str:
@@ -108,6 +131,7 @@ def ask_knowledge_base(
     if not q:
         raise ValueError("Pergunta é obrigatória.")
 
+    error_codes = find_matching_error_codes(db, tenant_id=tenant_id, question=q, brand=brand, model=model)
     chunks = retrieve_relevant_chunks(
         db,
         tenant_id=tenant_id,
@@ -117,14 +141,20 @@ def ask_knowledge_base(
         top_manuals=KB_TOP_MANUALS,
     )
     context = _build_context(chunks)
+    error_codes_block = _build_error_codes_block(error_codes)
 
     equipment_label = " · ".join(p for p in [(brand or "").strip(), (model or "").strip()] if p)
     user_parts = [f"Pergunta do técnico: {q}"]
     if equipment_label:
         user_parts.append(f"Equipamento em manutenção: {equipment_label}")
+    if error_codes_block:
+        user_parts.append(
+            f"{error_codes_block}\n\nUse esta tabela como fonte prioritária e confiável para "
+            "responder sobre o(s) código(s) de erro citado(s)."
+        )
     if context:
         user_parts.append(f"Trechos dos manuais técnicos:\n\n{context}")
-    else:
+    elif not error_codes_block:
         user_parts.append("Nenhum trecho relevante foi encontrado nos manuais indexados.")
 
     api_key = resolve_claude_api_key(db)
@@ -139,6 +169,12 @@ def ask_knowledge_base(
 
     manuals_used = []
     seen: set[str] = set()
+    for ec in error_codes:
+        mid = str(ec.manual_id)
+        if mid in seen:
+            continue
+        seen.add(mid)
+        manuals_used.append({"manual_id": mid, "title": f"Código {ec.code}", "brand": brand, "model": model})
     for chunk in chunks:
         mid = str(chunk.manual_id)
         if mid in seen:
@@ -157,5 +193,5 @@ def ask_knowledge_base(
         "answer": answer,
         "manuals_used": manuals_used[:KB_TOP_MANUALS],
         "chunks_found": len(chunks),
-        "has_context": bool(context),
+        "has_context": bool(context) or bool(error_codes_block),
     }

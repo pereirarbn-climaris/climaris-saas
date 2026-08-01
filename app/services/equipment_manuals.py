@@ -21,6 +21,11 @@ def build_catalog_display_model(
     evap = (model_evaporator or "").strip()
     cond = (model_condenser or "").strip()
     if evap and cond:
+        # Mesmo código nos dois campos = unidade única (ex: high-wall) descrita como "split" na
+        # extração, não um par evaporadora/condensadora com códigos comerciais distintos — exibir
+        # duplicado ("X + X") só confundiria o cadastro.
+        if evap.lower() == cond.lower():
+            return evap
         return f"{evap} + {cond}"
     if evap:
         return evap

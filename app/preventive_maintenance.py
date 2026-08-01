@@ -20,6 +20,7 @@ from app.preventive_message_ai import polish_preventive_whatsapp_message
 from app.schemas_preventive import PreventivePreviewOut, PreventiveQuickClientCreate, PreventiveSettingsPatch
 from app.tenant_business_calendar import (
     effective_preventive_reminder_day,
+    first_business_day_of_month,
     is_within_tenant_work_hours,
     load_tenant_holiday_dates,
 )
@@ -34,6 +35,7 @@ from app.whatsapp import (
 )
 from models import (
     Client,
+    ClientSite,
     HistoricoServico,
     LembretePreventivo,
     OrderStatus,
@@ -171,6 +173,10 @@ PREVENTIVE_CUSTOM_PREFIX = "climaris:preventive:custom:"
 REMINDER_KIND_MANUAL = "preventive_whatsapp_manual"
 REMINDER_KIND_AUTO_DUE = "preventive_auto_due_day"
 REMINDER_KIND_AUTO_ADVANCE = "preventive_auto_advance"
+REMINDER_KIND_AUTO_MONTH = "preventive_auto_month_start"
+
+PREVENTIVE_AUTO_MODE_DAYS_BEFORE = "days_before"
+PREVENTIVE_AUTO_MODE_MONTH_FIRST_BD = "month_first_business_day"
 
 DEFAULT_TECHNICAL_PROBLEM = (
     "perdas de eficiência energética, falhas no sistema e riscos ao cumprimento do PMOC e à qualidade do ar"
@@ -464,6 +470,50 @@ def client_whatsapp_destination(client: Client | None) -> tuple[bool, str | None
         return False, None
 
 
+_CLIENT_SITE_TYPE_LABELS: dict[str, str] = {
+    "filial": "Filial",
+    "matriz": "Matriz",
+    "unidade_operacional": "Unidade operacional",
+    "local_instalacao": "Local de instalação",
+    "sem_cnpj": "Unidade",
+}
+
+
+def client_site_type_label(site_type: str | None) -> str:
+    key = (site_type or "").strip().lower()
+    return _CLIENT_SITE_TYPE_LABELS.get(key, "Unidade")
+
+
+def client_site_header_label(site: ClientSite | None) -> str | None:
+    """Texto exibido sob o nome do cliente para identificar a unidade/filial do grupo."""
+    if site is None:
+        return None
+    site_type = (site.site_type or "").strip().lower()
+    name = (site.name or "").strip()
+    label = client_site_type_label(site_type)
+    if not name:
+        return label
+    return f"{label}: {name}"
+
+
+def preventive_whatsapp_destination(
+    client: Client | None,
+    site: ClientSite | None = None,
+) -> tuple[bool, str | None]:
+    """Destino WhatsApp da preventiva: telefone da filial quando existir; senão cliente."""
+    if site is not None:
+        site_type = (site.site_type or "").strip().lower()
+        site_phone = (site.phone or "").strip()
+        use_main = bool(getattr(site, "use_main_contacts", True))
+        prefer_site = bool(site_phone) and (site_type != "matriz" or not use_main)
+        if prefer_site:
+            try:
+                return True, normalize_whatsapp_number(site_phone)
+            except HTTPException:
+                pass
+    return client_whatsapp_destination(client)
+
+
 def _finalize_preventive_whatsapp_body(
     db: Session,
     *,
@@ -566,6 +616,9 @@ def get_preventive_settings(db: Session, tenant_id: int) -> dict[str, Any]:
         ),
         "preventive_auto_remind_days_before": int(t.preventive_auto_remind_days_before or 0),
         "preventive_auto_whatsapp_enabled": bool(getattr(t, "preventive_auto_whatsapp_enabled", False)),
+        "preventive_auto_whatsapp_mode": (
+            getattr(t, "preventive_auto_whatsapp_mode", None) or PREVENTIVE_AUTO_MODE_DAYS_BEFORE
+        ),
         "preventive_auto_schedule_enabled": bool(getattr(t, "preventive_auto_schedule_enabled", False)),
         "preventive_action_buttons_enabled": bool(getattr(t, "preventive_action_buttons_enabled", False)),
         "preventive_button_schedule_enabled": bool(getattr(t, "preventive_button_schedule_enabled", True)),
@@ -1157,15 +1210,30 @@ def _list_preventive_items_from_historico(db: Session, *, tenant_id: int, window
     return out
 
 
-def _preventive_item_due_month_key(item: dict[str, Any]) -> tuple[int, int, int]:
-    """Chave de agrupamento: (client_id, ano, mês) do próximo vencimento."""
+def _normalize_client_site_id(raw: Any) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _preventive_item_due_month_key(item: dict[str, Any]) -> tuple[int, int | None, int, int]:
+    """Chave de agrupamento: (client_id, client_site_id, ano, mês) do próximo vencimento."""
     due = item["data_proximo_vencimento"]
     if isinstance(due, datetime):
         due = due.date()
-    return (int(item["client_id"]), int(due.year), int(due.month))
+    return (
+        int(item["client_id"]),
+        _normalize_client_site_id(item.get("client_site_id")),
+        int(due.year),
+        int(due.month),
+    )
 
 
-def _parse_due_month_key_from_item_payload(item: dict[str, Any]) -> tuple[int, int, int] | None:
+def _parse_due_month_key_from_item_payload(item: dict[str, Any]) -> tuple[int, int | None, int, int] | None:
     try:
         cid = int(item.get("client_id") or 0)
     except (TypeError, ValueError):
@@ -1184,7 +1252,7 @@ def _parse_due_month_key_from_item_payload(item: dict[str, Any]) -> tuple[int, i
         due = due.date()
     if not isinstance(due, date):
         return None
-    return (cid, int(due.year), int(due.month))
+    return (cid, _normalize_client_site_id(item.get("client_site_id")), int(due.year), int(due.month))
 
 
 def _preventive_sent_context_by_due_month(
@@ -1193,8 +1261,11 @@ def _preventive_sent_context_by_due_month(
     tenant_id: int,
     client_ids: list[int],
     lookback_days: int = 400,
-) -> tuple[set[tuple[int, int, int]], dict[tuple[int, int, int], WhatsappMessageJob]]:
-    """Mensagens preventivas enviadas por (cliente, mês de vencimento), via snapshot do grupo."""
+) -> tuple[
+    set[tuple[int, int | None, int, int]],
+    dict[tuple[int, int | None, int, int], WhatsappMessageJob],
+]:
+    """Mensagens preventivas enviadas por (cliente, filial, mês de vencimento), via snapshot do grupo."""
     if not client_ids:
         return set(), {}
     from app.preventive_schedule_whatsapp import _deserialize_items
@@ -1211,8 +1282,8 @@ def _preventive_sent_context_by_due_month(
         .order_by(PreventiveReminderContext.id.desc())
     ).all()
 
-    keys: set[tuple[int, int, int]] = set()
-    jobs_by_key: dict[tuple[int, int, int], WhatsappMessageJob] = {}
+    keys: set[tuple[int, int | None, int, int]] = set()
+    jobs_by_key: dict[tuple[int, int | None, int, int], WhatsappMessageJob] = {}
     for ctx, job in rows:
         if job is None or not _whatsapp_job_is_sent(job):
             continue
@@ -1220,7 +1291,7 @@ def _preventive_sent_context_by_due_month(
             payload_items = _deserialize_items(ctx.group_items_json)
         except (json.JSONDecodeError, TypeError):
             payload_items = []
-        item_keys: set[tuple[int, int, int]] = set()
+        item_keys: set[tuple[int, int | None, int, int]] = set()
         for it in payload_items:
             key = _parse_due_month_key_from_item_payload(it)
             if key:
@@ -1315,8 +1386,8 @@ def _preventive_equipment_display_name(item: dict[str, Any]) -> str:
 
 
 def group_preventive_items_by_client_and_due_month(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Agrupa preventivas por cliente e mês de vencimento (uma mensagem WhatsApp por grupo)."""
-    groups: dict[tuple[int, int, int], dict[str, Any]] = {}
+    """Agrupa preventivas por cliente, filial e mês de vencimento (uma mensagem WhatsApp por grupo)."""
+    groups: dict[tuple[int, int | None, int, int], dict[str, Any]] = {}
     for row in items:
         key = _preventive_item_due_month_key(row)
         if key not in groups:
@@ -1326,6 +1397,10 @@ def group_preventive_items_by_client_and_due_month(items: list[dict[str, Any]]) 
             groups[key] = {
                 "client_id": int(row["client_id"]),
                 "client_name": str(row["client_name"]),
+                "client_site_id": _normalize_client_site_id(row.get("client_site_id")),
+                "client_site_name": row.get("client_site_name"),
+                "client_site_type": row.get("client_site_type"),
+                "client_site_label": row.get("client_site_label"),
                 "due_year": int(due.year),
                 "due_month": int(due.month),
                 "whatsapp_valido": bool(row.get("whatsapp_valido")),
@@ -1338,6 +1413,7 @@ def group_preventive_items_by_client_and_due_month(items: list[dict[str, Any]]) 
         key=lambda g: (
             min(int(i.get("dias_ate_vencimento") or 999) for i in g["items"]),
             g["client_name"],
+            str(g.get("client_site_name") or ""),
             g["due_year"],
             g["due_month"],
         )
@@ -1477,6 +1553,10 @@ def find_preventive_group_for_item(
     return {
         "client_id": int(target["client_id"]),
         "client_name": str(target["client_name"]),
+        "client_site_id": _normalize_client_site_id(target.get("client_site_id")),
+        "client_site_name": target.get("client_site_name"),
+        "client_site_type": target.get("client_site_type"),
+        "client_site_label": target.get("client_site_label"),
         "due_year": int(due.year),
         "due_month": int(due.month),
         "whatsapp_valido": True,
@@ -1486,23 +1566,34 @@ def find_preventive_group_for_item(
 
 
 def list_preventive_items_grouped(db: Session, *, tenant_id: int, window_days: int) -> dict[str, Any]:
-    """Retorno agrupado por cliente (regras por equipamento + fallback histórico)."""
+    """Retorno agrupado por cliente e filial (regras por equipamento + fallback histórico)."""
     flat = list_preventive_items(db, tenant_id=tenant_id, window_days=window_days)
-    legacy_by_client: dict[int, dict[str, Any]] = {}
+    legacy_by_client: dict[tuple[int, int | None], dict[str, Any]] = {}
     for row in flat:
         cid = int(row["client_id"])
-        if cid not in legacy_by_client:
-            legacy_by_client[cid] = {
+        site_id = _normalize_client_site_id(row.get("client_site_id"))
+        key = (cid, site_id)
+        if key not in legacy_by_client:
+            legacy_by_client[key] = {
                 "client_id": cid,
                 "client_name": row["client_name"],
+                "client_site_id": site_id,
+                "client_site_name": row.get("client_site_name"),
+                "client_site_type": row.get("client_site_type"),
+                "client_site_label": row.get("client_site_label"),
                 "whatsapp_valido": row["whatsapp_valido"],
                 "whatsapp_destino": row.get("whatsapp_destino"),
                 "equipments": [],
             }
-        legacy_by_client[cid]["equipments"].append(row)
+        legacy_by_client[key]["equipments"].append(row)
     clients = sorted(
         legacy_by_client.values(),
-        key=lambda g: (g["equipments"][0]["dias_ate_vencimento"] if g["equipments"] else 999, g["client_name"]),
+        key=lambda g: (
+            g["client_name"].lower() if isinstance(g.get("client_name"), str) else g["client_name"],
+            0 if (g.get("client_site_type") or "").lower() == "matriz" else (1 if g.get("client_site_id") else 2),
+            str(g.get("client_site_name") or "").lower(),
+            g["equipments"][0]["dias_ate_vencimento"] if g["equipments"] else 999,
+        ),
     )
 
     return {
@@ -2027,7 +2118,7 @@ def build_preventive_grouped_send_bundle(
     if len(keys) != 1:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Itens devem ser do mesmo cliente e mês de vencimento.",
+            detail="Itens devem ser do mesmo cliente, filial e mês de vencimento.",
         )
     cli = db.execute(select(Client).where(Client.id == client_id, Client.tenant_id == tenant_id)).scalar_one_or_none()
     if cli is None:
@@ -2037,11 +2128,25 @@ def build_preventive_grouped_send_bundle(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Cliente optou por não receber campanhas de manutenção preventiva.",
         )
-    ok_wa, dest = client_whatsapp_destination(cli)
+    site_id = _normalize_client_site_id(items[0].get("client_site_id"))
+    site: ClientSite | None = None
+    if site_id is not None:
+        site = db.execute(
+            select(ClientSite).where(
+                ClientSite.id == site_id,
+                ClientSite.client_id == client_id,
+                ClientSite.tenant_id == tenant_id,
+            )
+        ).scalar_one_or_none()
+    ok_wa, dest = preventive_whatsapp_destination(cli, site)
     if not ok_wa or not dest:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Cliente sem WhatsApp válido cadastrado.",
+            detail=(
+                "Filial sem telefone válido cadastrado."
+                if site is not None and (site.site_type or "").strip().lower() != "matriz"
+                else "Cliente sem WhatsApp válido cadastrado."
+            ),
         )
     tenant = load_tenant_settings_row(db, tenant_id)
     template_variant = resolve_preventive_template_variant_for_send(
@@ -2576,7 +2681,7 @@ def _collect_auto_reminder_groups_for_tenant(
     advance_days: int,
     holidays: set[date],
 ) -> list[dict[str, Any]]:
-    """Grupos (cliente + mês) cujo lembrete automático cai no dia civil local (ajustado a dias úteis)."""
+    """Grupos (cliente + filial + mês) cujo lembrete automático cai no dia civil local (ajustado a dias úteis)."""
     window_days = max(advance_days, 1)
     rows = list_preventive_items(db, tenant_id=tenant.id, window_days=window_days)
     eligible = [r for r in rows if r.get("whatsapp_valido")]
@@ -2591,16 +2696,42 @@ def _collect_auto_reminder_groups_for_tenant(
     return group_preventive_items_by_client_and_due_month(matching)
 
 
+def _collect_month_start_auto_groups_for_tenant(
+    db: Session,
+    *,
+    tenant: Tenant,
+    local_today: date,
+    holidays: set[date],
+) -> list[dict[str, Any]]:
+    """No primeiro dia útil do mês, todos os vencimentos daquele mês (um WhatsApp por cliente/filial)."""
+    first_bd = first_business_day_of_month(tenant, local_today.year, local_today.month, holidays)
+    if local_today != first_bd:
+        return []
+
+    last_day = calendar.monthrange(local_today.year, local_today.month)[1]
+    window_days = max(last_day - local_today.day, 0)
+    rows = list_preventive_items(db, tenant_id=tenant.id, window_days=window_days)
+    matching = []
+    for row in rows:
+        if not row.get("whatsapp_valido"):
+            continue
+        due = _preventive_item_due_date(row)
+        if due.year == local_today.year and due.month == local_today.month:
+            matching.append(row)
+    return group_preventive_items_by_client_and_due_month(matching)
+
+
 def dispatch_preventive_due_today(
     *,
     now_utc: datetime | None = None,
 ) -> dict[str, int]:
-    """Automático: um lembrete por cliente — no dia do vencimento (0 dias) ou N dias antes, em dias úteis e no expediente."""
+    """Automático: dias antes do vencimento, ou todos do mês no primeiro dia útil."""
     now = now_utc or datetime.now(timezone.utc)
     now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
     checked = 0
     sent_due = 0
     sent_advance = 0
+    sent_month = 0
     from app.database import SessionLocal
 
     with SessionLocal() as db:
@@ -2615,19 +2746,34 @@ def dispatch_preventive_due_today(
             if not is_within_tenant_work_hours(tenant, now, holidays):
                 continue
             local_today = tenant_local_date(now, tz_name)
-            advance_days = max(0, int(tenant.preventive_auto_remind_days_before or 0))
-
-            window_days = max(advance_days, 1)
-            checked += len(list_preventive_items(db, tenant_id=tenant.id, window_days=window_days))
-
-            auto_groups = _collect_auto_reminder_groups_for_tenant(
-                db,
-                tenant=tenant,
-                local_today=local_today,
-                advance_days=advance_days,
-                holidays=holidays,
+            mode = (
+                getattr(tenant, "preventive_auto_whatsapp_mode", None) or PREVENTIVE_AUTO_MODE_DAYS_BEFORE
             )
-            auto_kind = REMINDER_KIND_AUTO_ADVANCE if advance_days > 0 else REMINDER_KIND_AUTO_DUE
+            mode = str(mode).strip().lower()
+
+            if mode == PREVENTIVE_AUTO_MODE_MONTH_FIRST_BD:
+                last_day = calendar.monthrange(local_today.year, local_today.month)[1]
+                window_days = max(last_day - local_today.day, 0)
+                checked += len(list_preventive_items(db, tenant_id=tenant.id, window_days=window_days))
+                auto_groups = _collect_month_start_auto_groups_for_tenant(
+                    db,
+                    tenant=tenant,
+                    local_today=local_today,
+                    holidays=holidays,
+                )
+                auto_kind = REMINDER_KIND_AUTO_MONTH
+            else:
+                advance_days = max(0, int(tenant.preventive_auto_remind_days_before or 0))
+                window_days = max(advance_days, 1)
+                checked += len(list_preventive_items(db, tenant_id=tenant.id, window_days=window_days))
+                auto_groups = _collect_auto_reminder_groups_for_tenant(
+                    db,
+                    tenant=tenant,
+                    local_today=local_today,
+                    advance_days=advance_days,
+                    holidays=holidays,
+                )
+                auto_kind = REMINDER_KIND_AUTO_ADVANCE if advance_days > 0 else REMINDER_KIND_AUTO_DUE
 
             for group in auto_groups:
                 if _group_already_sent_auto_reminder_today(
@@ -2647,7 +2793,9 @@ def dispatch_preventive_due_today(
                         items=group["items"],
                         reminder_kind=auto_kind,
                     )
-                    if advance_days > 0:
+                    if auto_kind == REMINDER_KIND_AUTO_MONTH:
+                        sent_month += 1
+                    elif auto_kind == REMINDER_KIND_AUTO_ADVANCE:
                         sent_advance += 1
                     else:
                         sent_due += 1
@@ -2665,9 +2813,10 @@ def dispatch_preventive_due_today(
 
     return {
         "checked": checked,
-        "sent": sent_due + sent_advance,
+        "sent": sent_due + sent_advance + sent_month,
         "sent_due": sent_due,
         "sent_advance": sent_advance,
+        "sent_month": sent_month,
     }
 
 
@@ -2751,16 +2900,18 @@ def run_preventive_reminder_send_background(
     year: int | None = None,
     month: int | None = None,
     message_template_kind: str | None = None,
+    client_site_id: int | None = None,
 ) -> None:
-    """Envio unitário (agrupado por cliente+mês) fora do ciclo ASGI."""
+    """Envio unitário (agrupado por cliente+filial+mês) fora do ciclo ASGI."""
     from app.database import SessionLocal
 
     logger.info(
-        "preventive single background iniciado tenant_id=%s historico=%s rule_id=%s client=%s user_id=%s",
+        "preventive single background iniciado tenant_id=%s historico=%s rule_id=%s client=%s site=%s user_id=%s",
         tenant_id,
         historico_servico_id,
         rule_id,
         client_id,
+        client_site_id,
         user_id,
     )
     group: dict[str, Any] | None = None
@@ -2783,6 +2934,7 @@ def run_preventive_reminder_send_background(
                     client_id=client_id,
                     year=year,
                     month=month,
+                    client_site_id=client_site_id,
                 )
             else:
                 group = find_preventive_group_for_item(
@@ -2794,11 +2946,12 @@ def run_preventive_reminder_send_background(
                 )
             if group is None:
                 logger.warning(
-                    "preventive single background: grupo não encontrado tenant_id=%s historico=%s rule_id=%s client=%s",
+                    "preventive single background: grupo não encontrado tenant_id=%s historico=%s rule_id=%s client=%s site=%s",
                     tenant_id,
                     historico_servico_id,
                     rule_id,
                     client_id,
+                    client_site_id,
                 )
                 return
             dispatch_preventive_grouped_reminder(
@@ -2888,6 +3041,7 @@ def spawn_preventive_reminder_send_thread(
     year: int | None = None,
     month: int | None = None,
     message_template_kind: str | None = None,
+    client_site_id: int | None = None,
 ) -> None:
     """Dispara envio unitário agrupado em thread."""
     ref = historico_servico_id or rule_id or client_id or 0
@@ -2907,6 +3061,7 @@ def spawn_preventive_reminder_send_thread(
             year,
             month,
             message_template_kind,
+            client_site_id,
         ),
         daemon=True,
         name=f"preventive-send-{ref}",

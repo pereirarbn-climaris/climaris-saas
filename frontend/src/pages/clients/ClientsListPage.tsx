@@ -21,10 +21,10 @@ import tableStyles from "../listTableCommon.module.css";
 import listStyles from "../../components/v0-ui/clients/clients-list.module.css";
 import { toast } from "../../lib/toast";
 
-const CLIENTS_PAGE_SIZE = 20;
 const CLIENT_IMPORT_CSV_TEMPLATE = "/modelos/importacao-clientes-modelo.csv";
 const CLIENT_IMPORT_XLSX_TEMPLATE = "/modelos/importacao-clientes-modelo.xlsx";
 const ACCEPTED_IMPORT_EXTENSIONS = [".csv", ".xlsx"];
+const CLIENT_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
 export function ClientsListPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -41,6 +41,7 @@ export function ClientsListPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState({ total: 0, empresas: 0, pessoas: 0, ativos: 0 });
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importSource, setImportSource] = useState<"climaris" | "minha_agenda" | null>(null);
   const [importing, setImporting] = useState(false);
@@ -65,9 +66,9 @@ export function ClientsListPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [q, statusFilter, sortKey, sortDir]);
+  }, [q, statusFilter, sortKey, sortDir, pageSize]);
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTS_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -77,14 +78,14 @@ export function ClientsListPage() {
     setIsLoading(true);
     setError(null);
     const safePage = Math.max(1, page);
-    const skip = (safePage - 1) * CLIENTS_PAGE_SIZE;
+    const skip = (safePage - 1) * pageSize;
     try {
       const [list, counts] = await Promise.all([
         listClients({
           q: q || undefined,
           status: statusFilter,
           skip,
-          limit: CLIENTS_PAGE_SIZE,
+          limit: pageSize,
           sortKey,
           sortDir,
         }),
@@ -106,7 +107,7 @@ export function ClientsListPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [q, statusFilter, sortKey, sortDir, page]);
+  }, [q, statusFilter, sortKey, sortDir, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -126,10 +127,10 @@ export function ClientsListPage() {
       currentPage: page,
       totalPages,
       totalItems: totalCount,
-      itemsPerPage: CLIENTS_PAGE_SIZE,
+      itemsPerPage: pageSize,
       onPageChange: setPage,
     }),
-    [page, totalPages, totalCount],
+    [page, totalPages, totalCount, pageSize],
   );
 
   function closeImportModal() {
@@ -223,7 +224,7 @@ export function ClientsListPage() {
             className={tableStyles.listToolbarSearchInput}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Buscar nome, documento, e-mail, telefone ou WhatsApp"
+            placeholder="Buscar nome, documento, e-mail, telefone ou WhatsApp..."
             autoComplete="off"
           />
         </div>
@@ -324,7 +325,7 @@ export function ClientsListPage() {
       <header className={listStyles.pageHeader}>
         <div>
           <h1 className={listStyles.pageTitle}>Clientes</h1>
-          <p className={listStyles.pageSubtitle}>Gerencie todos os clientes da sua empresa</p>
+          <p className={listStyles.pageSubtitle}>Gerencie os clientes cadastrados na sua empresa</p>
         </div>
         {canImport || canEdit ? (
           <CatalogListHeaderActions
@@ -353,9 +354,16 @@ export function ClientsListPage() {
         sortDir={sortDir}
         onSortHeader={onSortHeader}
         onRowClick={(id) => navigate(`/app/clients/${id}`)}
+        onEditClient={canEdit ? (id) => navigate(`/app/clients/${id}`) : undefined}
         toolbar={toolbar}
         footerExtra={importModal}
         pagination={pagination}
+        pageSize={pageSize}
+        onPageSizeChange={(size) => {
+          if ((CLIENT_PAGE_SIZE_OPTIONS as readonly number[]).includes(size)) {
+            setPageSize(size);
+          }
+        }}
       />
     </div>
   );

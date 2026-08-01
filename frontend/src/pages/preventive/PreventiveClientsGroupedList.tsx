@@ -12,11 +12,15 @@ type Props = {
   monthLabel: string;
   loading?: boolean;
   canEdit?: boolean;
-  sendingClientId?: number | null;
-  onSendClient?: (clientId: number) => void;
+  sendingGroupKey?: string | null;
+  onSendClient?: (group: PreventiveClientGroup) => void;
   onEditManualReminder?: (row: PreventiveItem) => void;
   onDeleteManualReminder?: (row: PreventiveItem) => void;
 };
+
+function groupKey(group: PreventiveClientGroup): string {
+  return `${group.client_id}:${group.client_site_id ?? "main"}`;
+}
 
 function formatConfiguredInterval(row: PreventiveItem): string {
   const value = row.interval_value ?? row.periodicidade_meses ?? 0;
@@ -48,27 +52,61 @@ function dueTone(dias: number): "overdue" | "warning" | "ok" {
   return "ok";
 }
 
+function siteLabelForGroup(
+  group: PreventiveClientGroup,
+  multiSiteClientIds: Set<number>,
+): string | null {
+  const explicit = group.client_site_label?.trim();
+  if (explicit) return explicit;
+
+  const name = group.client_site_name?.trim();
+  const type = group.client_site_type?.trim().toLowerCase();
+  if (name) {
+    if (type === "matriz") return `Matriz: ${name}`;
+    if (type === "filial") return `Filial: ${name}`;
+    if (type === "unidade_operacional") return `Unidade operacional: ${name}`;
+    if (type === "local_instalacao") return `Local de instalação: ${name}`;
+    return `Unidade: ${name}`;
+  }
+
+  // Cliente com várias unidades: deixa claro o card sem vínculo de filial.
+  if (multiSiteClientIds.has(group.client_id) && group.client_site_id == null) {
+    return "Cadastro principal (sem filial)";
+  }
+  return null;
+}
+
 export function PreventiveClientsGroupedList({
   clients,
   monthLabel,
   loading = false,
   canEdit = false,
-  sendingClientId = null,
+  sendingGroupKey = null,
   onSendClient,
   onEditManualReminder,
   onDeleteManualReminder,
 }: Props) {
+  const multiSiteClientIds = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const group of clients) {
+      counts.set(group.client_id, (counts.get(group.client_id) ?? 0) + 1);
+    }
+    return new Set(
+      [...counts.entries()].filter(([, count]) => count > 1).map(([clientId]) => clientId),
+    );
+  }, [clients]);
+
   const defaultOpen = useMemo(
-    () => new Set(clients.slice(0, 5).map((c) => c.client_id)),
+    () => new Set(clients.slice(0, 5).map((c) => groupKey(c))),
     [clients],
   );
-  const [openIds, setOpenIds] = useState<Set<number>>(() => defaultOpen);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => defaultOpen);
 
-  const toggleClient = (clientId: number) => {
+  const toggleClient = (key: string) => {
     setOpenIds((prev) => {
       const next = new Set(prev);
-      if (next.has(clientId)) next.delete(clientId);
-      else next.add(clientId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -90,25 +128,29 @@ export function PreventiveClientsGroupedList({
   return (
     <div className={styles.list}>
       {clients.map((group) => {
-        const isOpen = openIds.has(group.client_id);
+        const key = groupKey(group);
+        const isOpen = openIds.has(key);
         const alertCount = group.equipments.length;
         const overdueCount = group.equipments.filter((e) => e.dias_ate_vencimento < 0).length;
         const groupBadges = groupCampaignBadges(group.equipments);
         const groupWhatsappError = groupPreventiveWhatsappFailureMessage(group.equipments);
+        const siteLabel = siteLabelForGroup(group, multiSiteClientIds);
+        const isSending = sendingGroupKey === key;
 
         return (
-          <article key={group.client_id} className={styles.card}>
+          <article key={key} className={styles.card}>
             <button
               type="button"
               className={styles.cardHeader}
               aria-expanded={isOpen}
-              onClick={() => toggleClient(group.client_id)}
+              onClick={() => toggleClient(key)}
             >
               <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ""}`} aria-hidden>
                 <ChevronDown size={18} strokeWidth={2} />
               </span>
               <span className={styles.clientMain}>
                 <span className={styles.clientName}>{group.client_name}</span>
+                {siteLabel ? <span className={styles.clientSite}>{siteLabel}</span> : null}
                 <span className={styles.clientMeta}>
                   {alertCount} equipamento{alertCount === 1 ? "" : "s"} vencendo em {monthLabel}
                   {overdueCount > 0 ? ` · ${overdueCount} vencido${overdueCount === 1 ? "" : "s"}` : ""}
@@ -143,19 +185,23 @@ export function PreventiveClientsGroupedList({
                 <button
                   type="button"
                   className={styles.waSendBtn}
-                  disabled={!group.whatsapp_valido || sendingClientId === group.client_id}
+                  disabled={!group.whatsapp_valido || isSending}
                   title={
                     group.whatsapp_valido
-                      ? "Enviar lembrete preventivo por WhatsApp"
-                      : "Cliente sem WhatsApp válido"
+                      ? group.whatsapp_destino
+                        ? `Enviar para ${group.whatsapp_destino}`
+                        : "Enviar lembrete preventivo por WhatsApp"
+                      : siteLabel
+                        ? "Filial sem telefone/WhatsApp válido"
+                        : "Cliente sem WhatsApp válido"
                   }
                   onClick={(e) => {
                     e.stopPropagation();
-                    onSendClient(group.client_id);
+                    onSendClient(group);
                   }}
                 >
                   <MessageCircle size={14} strokeWidth={2} aria-hidden />
-                  {sendingClientId === group.client_id ? "Enviando…" : "Enviar WhatsApp"}
+                  {isSending ? "Enviando…" : "Enviar WhatsApp"}
                 </button>
               ) : null}
               {canEdit ? (

@@ -1,5 +1,6 @@
 /**
- * PreventiveMaintenancePage — vencimentos por equipamento, filtrados por mês e agrupados por cliente.
+ * PreventiveMaintenancePage — vencimentos por equipamento, filtrados por mês
+ * e agrupados por cliente + filial (um card e um WhatsApp por unidade).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
@@ -71,13 +72,16 @@ export function PreventiveMaintenancePage() {
   const [searchQ, setSearchQ] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editScheduleId, setEditScheduleId] = useState<number | null>(null);
-  const [sendingClientId, setSendingClientId] = useState<number | null>(null);
+  const [sendingGroupKey, setSendingGroupKey] = useState<string | null>(null);
   const [deleteReminderTarget, setDeleteReminderTarget] = useState<PreventiveItem | null>(null);
   const [deletingReminder, setDeletingReminder] = useState(false);
   const [savingAutoSetting, setSavingAutoSetting] = useState(false);
   const [sendConfirmClient, setSendConfirmClient] = useState<{
     clientId: number;
+    clientSiteId: number | null;
+    groupKey: string;
     clientName: string;
+    siteLabel: string | null;
     alreadySent: boolean;
     templateKind: PreventiveTemplateKind;
   } | null>(null);
@@ -89,6 +93,10 @@ export function PreventiveMaintenancePage() {
 
   const autoWhatsappEnabled = settings?.preventive_auto_whatsapp_enabled === true;
   const autoWhatsappDays = settings?.preventive_auto_remind_days_before ?? 0;
+  const autoWhatsappMode =
+    settings?.preventive_auto_whatsapp_mode === "month_first_business_day"
+      ? "month_first_business_day"
+      : "days_before";
 
   useEffect(() => {
     const t = window.setTimeout(() => setSearchQ(searchInput.trim()), 350);
@@ -129,7 +137,10 @@ export function PreventiveMaintenancePage() {
     const q = searchQ.toLowerCase();
     return clients
       .map((group) => {
-        const clientMatch = group.client_name.toLowerCase().includes(q);
+        const siteMatch =
+          (group.client_site_name?.toLowerCase().includes(q) ?? false) ||
+          (group.client_site_label?.toLowerCase().includes(q) ?? false);
+        const clientMatch = group.client_name.toLowerCase().includes(q) || siteMatch;
         const equipments = clientMatch
           ? group.equipments
           : group.equipments.filter((row) => {
@@ -164,15 +175,22 @@ export function PreventiveMaintenancePage() {
       const enabling = !autoWhatsappEnabled;
       const updated = await patchPreventiveSettings({
         preventive_auto_whatsapp_enabled: enabling,
-        ...(enabling && autoWhatsappDays <= 0 ? { preventive_auto_remind_days_before: 7 } : {}),
+        ...(enabling &&
+        autoWhatsappMode === "days_before" &&
+        autoWhatsappDays <= 0
+          ? { preventive_auto_remind_days_before: 7 }
+          : {}),
       });
       setSettings(updated);
+      const mode = updated.preventive_auto_whatsapp_mode ?? "days_before";
       const days = updated.preventive_auto_remind_days_before;
       toast.success(
         enabling
-          ? days > 0
-            ? `Envio automático ativado (${days} dias antes do vencimento).`
-            : "Envio automático ativado (no dia do vencimento)."
+          ? mode === "month_first_business_day"
+            ? "Envio automático ativado (primeiro dia útil do mês)."
+            : days > 0
+              ? `Envio automático ativado (${days} dias antes do vencimento).`
+              : "Envio automático ativado (no dia do vencimento)."
           : "Envio automático desativado.",
       );
     } catch (e) {
@@ -180,7 +198,28 @@ export function PreventiveMaintenancePage() {
     } finally {
       setSavingAutoSetting(false);
     }
-  }, [canEdit, autoWhatsappEnabled, autoWhatsappDays]);
+  }, [canEdit, autoWhatsappEnabled, autoWhatsappDays, autoWhatsappMode]);
+
+  const handleAutoModeChange = useCallback(
+    async (mode: "days_before" | "month_first_business_day") => {
+      if (!canEdit || !autoWhatsappEnabled) return;
+      setSavingAutoSetting(true);
+      try {
+        const updated = await patchPreventiveSettings({
+          preventive_auto_whatsapp_mode: mode,
+          ...(mode === "days_before" && autoWhatsappDays <= 0
+            ? { preventive_auto_remind_days_before: 7 }
+            : {}),
+        });
+        setSettings(updated);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
+      } finally {
+        setSavingAutoSetting(false);
+      }
+    },
+    [canEdit, autoWhatsappEnabled, autoWhatsappDays],
+  );
 
   const handleAutoDaysChange = useCallback(
     async (days: number) => {
@@ -190,6 +229,7 @@ export function PreventiveMaintenancePage() {
       try {
         const updated = await patchPreventiveSettings({
           preventive_auto_remind_days_before: safeDays,
+          preventive_auto_whatsapp_mode: "days_before",
         });
         setSettings(updated);
       } catch (e) {
@@ -202,12 +242,18 @@ export function PreventiveMaintenancePage() {
   );
 
   const executeSendClientReminder = useCallback(
-    async (clientId: number, templateKind: PreventiveTemplateKind) => {
+    async (
+      clientId: number,
+      clientSiteId: number | null,
+      groupKey: string,
+      templateKind: PreventiveTemplateKind,
+    ) => {
       if (!canEdit || !parsedMonth) return;
-      setSendingClientId(clientId);
+      setSendingGroupKey(groupKey);
       try {
         const result = await sendPreventiveReminder({
           client_id: clientId,
+          client_site_id: clientSiteId ?? undefined,
           year: parsedMonth.year,
           month: parsedMonth.month,
           promo_image_url: settings?.preventive_promo_image_url ?? null,
@@ -224,7 +270,11 @@ export function PreventiveMaintenancePage() {
             }
             const grouped = await listPreventiveItemsGrouped(parsedMonth);
             setClients(grouped.clients);
-            const group = grouped.clients.find((c) => c.client_id === clientId);
+            const group = grouped.clients.find(
+              (c) =>
+                c.client_id === clientId &&
+                (c.client_site_id ?? null) === (clientSiteId ?? null),
+            );
             const rows = group?.equipments ?? [];
             const sent = rows.some((row) => row.status_mensagem_enviada);
             if (sent) {
@@ -253,31 +303,34 @@ export function PreventiveMaintenancePage() {
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Não foi possível enviar o lembrete.");
       } finally {
-        setSendingClientId(null);
+        setSendingGroupKey(null);
       }
     },
     [canEdit, parsedMonth, settings, refreshList],
   );
 
   const handleRequestSendClientReminder = useCallback(
-    (clientId: number) => {
+    (group: PreventiveClientGroup) => {
       if (!canEdit || !parsedMonth) return;
-      const group = clients.find((c) => c.client_id === clientId);
-      if (!group) return;
+      const siteLabel = group.client_site_label?.trim() || null;
+      const displayName = siteLabel ? `${group.client_name} (${siteLabel})` : group.client_name;
       setSendConfirmClient({
-        clientId,
-        clientName: group.client_name,
+        clientId: group.client_id,
+        clientSiteId: group.client_site_id ?? null,
+        groupKey: `${group.client_id}:${group.client_site_id ?? "main"}`,
+        clientName: displayName,
+        siteLabel,
         alreadySent: groupHasMessageSent(group.equipments),
         templateKind: resolveTemplateKindForClientGroup(group, settings),
       });
     },
-    [canEdit, parsedMonth, clients, settings],
+    [canEdit, parsedMonth, settings],
   );
 
   const handleConfirmSendClientReminder = useCallback(async () => {
     if (!sendConfirmClient) return;
-    const { clientId, templateKind } = sendConfirmClient;
-    await executeSendClientReminder(clientId, templateKind);
+    const { clientId, clientSiteId, groupKey, templateKind } = sendConfirmClient;
+    await executeSendClientReminder(clientId, clientSiteId, groupKey, templateKind);
     setSendConfirmClient(null);
   }, [sendConfirmClient, executeSendClientReminder]);
 
@@ -353,27 +406,51 @@ export function PreventiveMaintenancePage() {
               <strong>Envio automático WhatsApp</strong>
               <span className={styles.autoToggleHint}>
                 {autoWhatsappEnabled
-                  ? autoWhatsappDays > 0
-                    ? `Um lembrete automático por cliente, ${autoWhatsappDays} dias antes do vencimento (dias úteis, no horário do expediente).`
-                    : "Um lembrete automático por cliente, no dia do vencimento (dias úteis, no horário do expediente)."
+                  ? autoWhatsappMode === "month_first_business_day"
+                    ? "No primeiro dia útil do mês, envia um lembrete por cliente/filial com todos os vencimentos daquele mês (no horário do expediente)."
+                    : autoWhatsappDays > 0
+                      ? `Um lembrete automático por cliente/filial, ${autoWhatsappDays} dias antes do vencimento (dias úteis, no horário do expediente).`
+                      : "Um lembrete automático por cliente/filial, no dia do vencimento (dias úteis, no horário do expediente)."
                   : "Desligado — use o botão em cada cliente para enviar manualmente."}
               </span>
             </span>
           </label>
           {autoWhatsappEnabled ? (
-            <div className={styles.autoDaysField}>
-              <label htmlFor="prev-auto-days" title="0 = no dia do vencimento">
-                Dias antes
-              </label>
-              <input
-                id="prev-auto-days"
-                type="number"
-                min={0}
-                max={90}
-                value={autoWhatsappDays}
-                disabled={savingAutoSetting}
-                onChange={(e) => void handleAutoDaysChange(Number(e.target.value))}
-              />
+            <div className={styles.autoControls}>
+              <div className={styles.autoModeField}>
+                <label htmlFor="prev-auto-mode">Quando enviar</label>
+                <select
+                  id="prev-auto-mode"
+                  value={autoWhatsappMode}
+                  disabled={savingAutoSetting}
+                  onChange={(e) =>
+                    void handleAutoModeChange(
+                      e.target.value === "month_first_business_day"
+                        ? "month_first_business_day"
+                        : "days_before",
+                    )
+                  }
+                >
+                  <option value="days_before">X dias antes do vencimento</option>
+                  <option value="month_first_business_day">Primeiro dia útil do mês</option>
+                </select>
+              </div>
+              {autoWhatsappMode === "days_before" ? (
+                <div className={styles.autoDaysField}>
+                  <label htmlFor="prev-auto-days" title="0 = no dia do vencimento">
+                    Dias antes
+                  </label>
+                  <input
+                    id="prev-auto-days"
+                    type="number"
+                    min={0}
+                    max={90}
+                    value={autoWhatsappDays}
+                    disabled={savingAutoSetting}
+                    onChange={(e) => void handleAutoDaysChange(Number(e.target.value))}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -496,8 +573,8 @@ export function PreventiveMaintenancePage() {
         monthLabel={monthLabel}
         loading={loading}
         canEdit={canEdit}
-        sendingClientId={sendingClientId}
-        onSendClient={(clientId) => handleRequestSendClientReminder(clientId)}
+        sendingGroupKey={sendingGroupKey}
+        onSendClient={handleRequestSendClientReminder}
         onEditManualReminder={(row) => {
           if (!row.preventive_schedule_id) return;
           setEditScheduleId(row.preventive_schedule_id);
@@ -509,7 +586,7 @@ export function PreventiveMaintenancePage() {
       <AlertDialog
         open={sendConfirmClient !== null}
         onOpenChange={(open) => {
-          if (!open && sendingClientId === null) setSendConfirmClient(null);
+          if (!open && sendingGroupKey === null) setSendConfirmClient(null);
         }}
       >
         <AlertDialogContent>
@@ -552,17 +629,17 @@ export function PreventiveMaintenancePage() {
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel
-              disabled={sendingClientId === sendConfirmClient?.clientId}
+              disabled={sendingGroupKey === sendConfirmClient?.groupKey}
               onClick={() => setSendConfirmClient(null)}
             >
               Cancelar
             </AlertDialogCancel>
             <Button
               type="button"
-              disabled={sendingClientId === sendConfirmClient?.clientId}
+              disabled={sendingGroupKey === sendConfirmClient?.groupKey}
               onClick={() => void handleConfirmSendClientReminder()}
             >
-              {sendingClientId === sendConfirmClient?.clientId ? "Enviando…" : "Enviar"}
+              {sendingGroupKey === sendConfirmClient?.groupKey ? "Enviando…" : "Enviar"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -10,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.config import KB_TOP_MANUALS
 from app.services.knowledge_base.embeddings import embed_query
-from models import EquipmentCatalog, ManualChunk
+from models import EquipmentCatalog, EquipmentManualErrorCode, ManualChunk
+
+_ERROR_CODE_PATTERN = re.compile(r"\b[A-Za-z]{1,3}\d{1,3}[A-Za-z]?\b")
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,7 @@ def retrieve_relevant_chunks(
     top_manuals: int | None = None,
 ) -> list[RetrievedChunk]:
     limit_manuals = top_manuals or KB_TOP_MANUALS
-    query_embedding = embed_query(question.strip())
+    query_embedding = embed_query(question.strip(), db=db)
     distance = ManualChunk.embedding.cosine_distance(query_embedding)
 
     stmt = (
@@ -145,3 +148,33 @@ def retrieve_relevant_chunks(
                 )
             )
     return results
+
+
+def find_matching_error_codes(
+    db: Session,
+    *,
+    tenant_id: int,
+    question: str,
+    brand: str | None = None,
+    model: str | None = None,
+    limit: int = 5,
+) -> list[EquipmentManualErrorCode]:
+    """
+    Busca exata/estruturada por código de erro citado na pergunta do técnico (ex: "erro E5",
+    "código F2"), priorizada sobre o RAG por chunks — tabelas de código costumam ficar
+    fragmentadas entre trechos e a busca semântica erra o valor exato do código.
+    """
+    candidates = {m.group(0).upper() for m in _ERROR_CODE_PATTERN.finditer(question)}
+    if not candidates:
+        return []
+
+    manual_ids = _manual_ids_for_brand_model(db, tenant_id=tenant_id, brand=brand, model=model)
+
+    stmt = select(EquipmentManualErrorCode).where(
+        EquipmentManualErrorCode.tenant_id == tenant_id,
+        func.upper(EquipmentManualErrorCode.code).in_(candidates),
+    )
+    if manual_ids:
+        stmt = stmt.where(EquipmentManualErrorCode.manual_id.in_(manual_ids))
+    rows = db.execute(stmt.limit(limit)).scalars().all()
+    return list(rows)

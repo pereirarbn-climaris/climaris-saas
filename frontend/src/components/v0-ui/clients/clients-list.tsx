@@ -4,8 +4,9 @@
  */
 
 import type { ReactNode } from "react";
-import { formatPhoneBrDisplay, whatsappMeUrl } from "../../../lib/brMask";
+import { formatPhoneBrDisplay, formatTaxDocumentInput, whatsappMeUrl } from "../../../lib/brMask";
 import { ListPaginationBar, type ListPaginationConfig } from "../../ui/list-pagination";
+import { RowActionsMenu, RowActionsMenuItem } from "../../ui/RowActionsMenu";
 import tableStyles from "../../../pages/listTableCommon.module.css";
 import styles from "./clients-list.module.css";
 
@@ -20,6 +21,7 @@ export type ClientListItem = {
   whatsapp: string | null;
   is_active: boolean;
   tax_id_kind?: string;
+  document?: string | null;
   contact_person_name?: string | null;
   trade_name?: string | null;
 };
@@ -79,6 +81,31 @@ export interface ClientsStatsGridProps {
   stats: ClientsStats;
 }
 
+function documentLabel(kind: string | undefined): string {
+  return (kind || "").toLowerCase() === "cnpj" ? "CNPJ" : "CPF";
+}
+
+function formatClientDocument(c: ClientListItem): string {
+  const raw = c.document?.trim();
+  if (!raw) return "—";
+  const kind = (c.tax_id_kind || "").toLowerCase() === "cnpj" ? "cnpj" : "cpf";
+  return formatTaxDocumentInput(raw, kind);
+}
+
+function StatSparkline({ variant }: { variant: 0 | 1 | 2 | 3 }) {
+  const paths = [
+    "M0 18 L8 14 L16 16 L24 8 L36 12",
+    "M0 14 L10 16 L18 10 L28 14 L36 8",
+    "M0 16 L6 12 L14 14 L22 6 L36 10",
+    "M0 12 L12 16 L20 8 L28 12 L36 6",
+  ];
+  return (
+    <svg className={styles.statSparkline} viewBox="0 0 36 20" aria-hidden>
+      <path d={paths[variant]} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function ClientsStatsGrid({ stats }: ClientsStatsGridProps) {
   return (
     <div className={`${styles.heroStats} ${styles.heroStatsDesktop}`}>
@@ -97,6 +124,7 @@ export function ClientsStatsGrid({ stats }: ClientsStatsGridProps) {
           </span>
         </div>
         <p className={styles.statHint}>{stats.total > 0 ? "Cadastrados no sistema" : "Sem registros"}</p>
+        <StatSparkline variant={0} />
       </article>
       <article className={styles.statCard}>
         <div className={styles.statHead}>
@@ -115,11 +143,12 @@ export function ClientsStatsGrid({ stats }: ClientsStatsGridProps) {
         <p className={styles.statHint}>
           {stats.total ? `${Math.round((stats.empresas / stats.total) * 100)}% do total` : "0% do total"}
         </p>
+        <StatSparkline variant={1} />
       </article>
       <article className={styles.statCard}>
         <div className={styles.statHead}>
           <div>
-            <p className={styles.statLabel}>Pessoas fisicas</p>
+            <p className={styles.statLabel}>Pessoas físicas</p>
             <p className={styles.statValue}>{stats.pessoas}</p>
           </div>
           <span className={styles.statIconWrap} aria-hidden>
@@ -132,6 +161,7 @@ export function ClientsStatsGrid({ stats }: ClientsStatsGridProps) {
         <p className={styles.statHint}>
           {stats.total ? `${Math.round((stats.pessoas / stats.total) * 100)}% do total` : "0% do total"}
         </p>
+        <StatSparkline variant={2} />
       </article>
       <article className={styles.statCard}>
         <div className={styles.statHead}>
@@ -149,6 +179,7 @@ export function ClientsStatsGrid({ stats }: ClientsStatsGridProps) {
         <p className={styles.statHint}>
           {stats.total ? `${Math.round((stats.ativos / stats.total) * 100)}% ativos` : "0% ativos"}
         </p>
+        <StatSparkline variant={3} />
       </article>
     </div>
   );
@@ -199,6 +230,7 @@ export interface ClientsListTableProps {
   sortDir: ClientListSortDir;
   onSortHeader: (key: ClientListSortKey) => void;
   onRowClick: (clientId: number) => void;
+  onEditClient?: (clientId: number) => void;
 }
 
 export function ClientsListTable({
@@ -208,6 +240,7 @@ export function ClientsListTable({
   sortDir,
   onSortHeader,
   onRowClick,
+  onEditClient,
 }: ClientsListTableProps) {
   function sortAriaSort(key: ClientListSortKey): "ascending" | "descending" | "none" {
     if (sortKey !== key) return "none";
@@ -230,7 +263,7 @@ export function ClientsListTable({
             <tr>
               <th className={styles.sortableTh} aria-sort={sortAriaSort("name")}>
                 <button type="button" className={styles.sortableThBtn} onClick={() => onSortHeader("name")}>
-                  Nome
+                  Cliente
                   <span className={styles.sortIcon} aria-hidden>
                     <svg viewBox="0 0 24 24">
                       <path d="m8 9 4-4 4 4" />
@@ -239,6 +272,7 @@ export function ClientsListTable({
                   </span>
                 </button>
               </th>
+              <th className={styles.colDesktopOnly}>Documento</th>
               <th className={`${styles.sortableTh} ${styles.colDesktopOnly}`} aria-sort={sortAriaSort("email")}>
                 <button type="button" className={styles.sortableThBtn} onClick={() => onSortHeader("email")}>
                   E-mail
@@ -260,7 +294,7 @@ export function ClientsListTable({
               </th>
               <th className={styles.colMobileOnly}>Contato</th>
               <th className={styles.colDesktopOnly}>Status</th>
-              <th className={`${tableStyles.tailCol} ${styles.colDesktopOnly}`} aria-hidden="true" />
+              <th className={`${styles.colDesktopOnly} ${styles.actionsCell}`}>Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -275,6 +309,7 @@ export function ClientsListTable({
               ).trim();
               const displayName = clientDisplayName(c);
               const contactLabel = clientContactLabel(c);
+              const legalName = c.name.trim() || displayName;
               return (
                 <tr
                   key={c.id}
@@ -294,9 +329,15 @@ export function ClientsListTable({
                     <div className={styles.clientCell}>
                       <span className={`${styles.avatar} ${avatarClass(c.id)}`}>{initials(displayName)}</span>
                       <div className={styles.clientInfo}>
-                        <span className={styles.clientName}>{displayName}</span>
+                        <span className={styles.clientName}>{legalName}</span>
                         {subline ? <span className={`${styles.clientTrade} ${styles.clientTradeDesktop}`}>{subline}</span> : null}
                       </div>
+                    </div>
+                  </td>
+                  <td className={styles.colDesktopOnly}>
+                    <div className={styles.documentCell}>
+                      <span className={styles.documentValue}>{formatClientDocument(c)}</span>
+                      <span className={styles.documentKind}>{documentLabel(c.tax_id_kind)}</span>
                     </div>
                   </td>
                   <td className={styles.colDesktopOnly}>{c.email?.trim() ? c.email : "—"}</td>
@@ -347,18 +388,17 @@ export function ClientsListTable({
                       {cadastroAtivo ? "Ativo" : "Inativo"}
                     </span>
                   </td>
-                  <td className={`${tableStyles.tailCol} ${tableStyles.rowHint} ${styles.colDesktopOnly}`} aria-hidden="true">
-                    <span className={tableStyles.rowHintIcon}>
-                      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
-                        <path
-                          d="M7 4L13 10L7 16"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
+                  <td
+                    className={`${styles.colDesktopOnly} ${styles.actionsCell}`}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <RowActionsMenu ariaLabel={`Ações para ${displayName}`}>
+                      <RowActionsMenuItem onSelect={() => onRowClick(c.id)}>Ver detalhes</RowActionsMenuItem>
+                      {onEditClient ? (
+                        <RowActionsMenuItem onSelect={() => onEditClient(c.id)}>Editar cliente</RowActionsMenuItem>
+                      ) : null}
+                    </RowActionsMenu>
                   </td>
                 </tr>
               );
@@ -372,6 +412,85 @@ export function ClientsListTable({
 
 export type ClientsListPagination = ListPaginationConfig;
 
+function ClientsMobileList({
+  clients,
+  onRowClick,
+}: {
+  clients: ClientListItem[];
+  onRowClick: (clientId: number) => void;
+}) {
+  if (clients.length === 0) {
+    return <p className={styles.empty}>Nenhum cliente encontrado.</p>;
+  }
+
+  return (
+    <div className={styles.mobileCardList}>
+      {clients.map((c) => {
+        const wa = whatsappMeUrl(c.whatsapp);
+        const cadastroAtivo = c.is_active !== false;
+        const displayName = clientDisplayName(c);
+        const subline = c.trade_name?.trim() || c.contact_person_name?.trim() || "";
+        return (
+          <article
+            key={c.id}
+            className={styles.mobileCard}
+            onClick={() => onRowClick(c.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onRowClick(c.id);
+              }
+            }}
+            role="link"
+            tabIndex={0}
+            aria-label={`Abrir cliente ${displayName}`}
+          >
+            <div className={styles.mobileCardTop}>
+              <span className={`${styles.avatar} ${avatarClass(c.id)}`}>{initials(displayName)}</span>
+              <div className={styles.clientInfo}>
+                <span className={styles.clientName}>{c.name.trim() || displayName}</span>
+                {subline ? <span className={styles.clientTrade}>{subline}</span> : null}
+                <span className={`${styles.statusPill} ${cadastroAtivo ? styles.statusOk : styles.statusWarn}`}>
+                  {cadastroAtivo ? "Ativo" : "Inativo"}
+                </span>
+              </div>
+            </div>
+            <dl className={styles.mobileCardMeta}>
+              <div>
+                <dt>Documento</dt>
+                <dd>{formatClientDocument(c)}</dd>
+              </div>
+              <div>
+                <dt>E-mail</dt>
+                <dd>{c.email?.trim() || "—"}</dd>
+              </div>
+              <div>
+                <dt>WhatsApp</dt>
+                <dd>
+                  {wa ? (
+                    <a
+                      className={styles.waLink}
+                      href={wa}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <WaMark className={styles.waCellIcon} />
+                      {formatPhoneBrDisplay(c.whatsapp)}
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </dd>
+              </div>
+            </dl>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 export interface ClientsListViewProps {
   clients: ClientListItem[];
   isLoading?: boolean;
@@ -382,9 +501,12 @@ export interface ClientsListViewProps {
   sortDir: ClientListSortDir;
   onSortHeader: (key: ClientListSortKey) => void;
   onRowClick: (clientId: number) => void;
+  onEditClient?: (clientId: number) => void;
   toolbar: ReactNode;
   footerExtra?: ReactNode;
   pagination?: ClientsListPagination;
+  pageSize?: number;
+  onPageSizeChange?: (size: number) => void;
 }
 
 export function ClientsListView({
@@ -397,15 +519,18 @@ export function ClientsListView({
   sortDir,
   onSortHeader,
   onRowClick,
+  onEditClient,
   toolbar,
   footerExtra,
   pagination,
+  pageSize,
+  onPageSizeChange,
 }: ClientsListViewProps) {
   return (
     <>
       <ClientsStatsGrid stats={stats} />
 
-      {toolbar}
+      <div className={styles.filtersCard}>{toolbar}</div>
 
       {error ? (
         <p className={styles.msgErr} role="alert">
@@ -413,19 +538,43 @@ export function ClientsListView({
         </p>
       ) : null}
 
-      <ClientsListTable
-        clients={clients}
-        isLoading={isLoading}
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSortHeader={onSortHeader}
-        onRowClick={onRowClick}
-      />
-
-      {!isLoading && !error && totalCount > 0 && pagination ? (
-        <div className={styles.listFoot}>
-          <ListPaginationBar {...pagination} itemLabel="cliente" />
+      <div className={styles.listDataBlock}>
+        <div className={styles.tablePanel}>
+          <ClientsListTable
+            clients={clients}
+            isLoading={isLoading}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSortHeader={onSortHeader}
+            onRowClick={onRowClick}
+            onEditClient={onEditClient}
+          />
         </div>
+
+        {!isLoading && !error && totalCount > 0 && pagination ? (
+          <div className={styles.paginationFooter}>
+            <ListPaginationBar {...pagination} itemLabel="cliente" />
+            {pageSize != null && onPageSizeChange ? (
+              <label className={styles.pageSizeField}>
+                Itens por página
+                <select
+                  className={styles.pageSizeSelect}
+                  value={pageSize}
+                  onChange={(e) => onPageSizeChange(Number(e.target.value))}
+                  aria-label="Itens por página"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      {!isLoading ? (
+        <ClientsMobileList clients={clients} onRowClick={onRowClick} />
       ) : null}
 
       {footerExtra}

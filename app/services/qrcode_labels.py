@@ -226,11 +226,25 @@ def link_qrcode_to_equipment(
     tenant_id: int,
     equipment_id: int,
     public_token: str | None = None,
+    allow_replace: bool = False,
 ) -> QrCode:
-    row = validate_available_qrcode(db, code_id, tenant_id=tenant_id)
+    row = get_qrcode_by_code_id(db, code_id, tenant_id=tenant_id)
+    if row is None:
+        raise ValueError("Código QR não encontrado.")
+
+    # Já vinculado a este mesmo equipamento — idempotente.
+    if row.linked_to_equipment_id == equipment_id and row.status == QrCodeStatus.LINKED:
+        if public_token and row.public_token != public_token:
+            row.public_token = public_token
+        return row
+
+    if row.status != QrCodeStatus.AVAILABLE or row.linked_to_equipment_id is not None:
+        raise ValueError("Este código QR já está vinculado a um equipamento.")
+
     equipment = db.get(Equipment, equipment_id)
     if equipment is None:
         raise ValueError("Equipamento não encontrado.")
+
     existing = db.execute(
         select(QrCode).where(
             QrCode.tenant_id == tenant_id,
@@ -239,7 +253,12 @@ def link_qrcode_to_equipment(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        raise ValueError(f"Equipamento já possui etiqueta {existing.code_id}.")
+        if not allow_replace:
+            raise ValueError(f"Equipamento já possui etiqueta {existing.code_id}.")
+        existing.status = QrCodeStatus.AVAILABLE
+        existing.linked_to_equipment_id = None
+        existing.public_token = None
+        existing.tracking_url = None
 
     row.status = QrCodeStatus.LINKED
     row.linked_to_equipment_id = equipment_id

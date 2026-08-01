@@ -8,6 +8,9 @@ export function buildPreventiveServiceOrderUrl(group: PreventiveClientGroup): st
   const params = new URLSearchParams();
   params.set("client_id", String(group.client_id));
   params.set("tipo", "preventiva");
+  if (group.client_site_id != null && group.client_site_id > 0) {
+    params.set("client_site_id", String(group.client_site_id));
+  }
 
   const equipmentIds = new Set<number>();
   const lines: string[] = [];

@@ -3,7 +3,7 @@
 import { ArrowRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { useLeadModal } from "@/context/LeadModalContext";
-import { cta, loginUrl, registerUrl } from "@/lib/site-config";
+import { cta, demoSchedulingEnabled, loginUrl, registerUrl } from "@/lib/site-config";
 
 export function HeroCta() {
   const { openLeadModal } = useLeadModal();
@@ -18,9 +18,11 @@ export function HeroCta() {
         <a href={loginUrl()} className="btn-secondary">
           {cta.login}
         </a>
-        <button type="button" className="btn-secondary" onClick={() => openLeadModal({ intent: "demo" })}>
-          {cta.primary}
-        </button>
+        {demoSchedulingEnabled ? (
+          <button type="button" className="btn-secondary" onClick={() => openLeadModal({ intent: "demo" })}>
+            {cta.primary}
+          </button>
+        ) : null}
         <Link href="/contato" className="btn-secondary sm:ml-0">
           <MessageCircle className="mr-2 h-4 w-4" aria-hidden />
           {cta.secondary}

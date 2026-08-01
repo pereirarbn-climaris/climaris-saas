@@ -64,6 +64,7 @@ def _reset_tenant_integration_fields(tenant: Tenant) -> None:
     tenant.whatsapp_automation_enabled = False
     tenant.preventive_promo_image_enabled = False
     tenant.preventive_auto_whatsapp_enabled = False
+    tenant.preventive_auto_whatsapp_mode = "days_before"
     tenant.preventive_auto_schedule_enabled = False
     tenant.preventive_action_buttons_enabled = False
     tenant.preventive_button_schedule_enabled = True

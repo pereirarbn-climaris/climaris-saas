@@ -3,7 +3,7 @@ import { PricingSection } from "@/components/PricingSection";
 import { SiteShell } from "@/components/SiteShell";
 import { WhyClimarisSection } from "@/components/WhyClimarisSection";
 import { buildPageMetadata } from "@/lib/metadata";
-import { cta } from "@/lib/site-config";
+import { cta, publicCtaLabel } from "@/lib/site-config";
 
 export const metadata = buildPageMetadata({
   title: "Planos e Preços — ERP Climatização",
@@ -37,10 +37,10 @@ export default function PlanosPage() {
 
       <section className="section-container py-12 text-center">
         <p className="mb-4 text-text-muted">
-          Ainda em dúvida? Agende uma demonstração sem compromisso.
+          Ainda em dúvida? Fale com um consultor sem compromisso.
         </p>
         <Link href="/contato" className="btn-solid">
-          {cta.primary}
+          {publicCtaLabel()}
         </Link>
       </section>
     </SiteShell>

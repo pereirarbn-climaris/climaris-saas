@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type SVGProps } from "react";
 import {
   Link,
   Navigate,
@@ -14,9 +14,11 @@ import {
   createClient,
   deleteClient,
   getClient,
+  listClientAudit,
   listClientSites,
   refreshClientCnpjCommercial,
   updateClient,
+  type ClientAuditEntryOut,
   type ClientSiteOut,
 } from "../../api/clients";
 import {
@@ -27,16 +29,11 @@ import {
   listCatalogCategories,
   updateClientCatalogEquipmentStatus,
 } from "../../api/equipmentCatalog";
-import { cepLookupHasUsefulData, cepLookupSuccessMessage, fetchCepLookup } from "../../api/cep";
 import { fetchCnpjCommercial, fetchCnpjOpen } from "../../api/cnpj";
 import { listBudgets } from "../../api/budgets";
-import { listPmocPlans } from "../../api/pmoc";
+import { listPmocPlans, type PmocPlanOut } from "../../api/pmoc";
 import { listServiceOrders } from "../../api/serviceOrders";
-import { ClientPreventiveTab } from "../../components/clients/ClientPreventiveTab";
-import { ClientSitesPanel } from "../../components/v0-ui/clients/ClientSitesPanel";
 import {
-  ClientEquipmentManager,
-  ClientFormView,
   type Budget,
   type ClientData,
   type EquipmentCatalog,
@@ -44,19 +41,18 @@ import {
   type EquipmentItem,
   type NewEquipmentData,
   type ServiceOrder,
-  type TabId,
 } from "../../components/v0-ui/clients";
 import {
   buildEquipmentCatalogView,
-  firstManualUrlFromInstallation,
   mapClientEquipmentToView,
   newEquipmentDataToCreatePayload,
 } from "../../lib/clientEquipmentAdapter";
 import { mapApiCategoryToOption } from "../../lib/equipmentCatalogAdminAdapter";
-import { digitsOnly, formatCepInput } from "../../lib/brMask";
+import { digitsOnly } from "../../lib/brMask";
 import {
   clientOutToViewData,
   emptyViewData,
+  mapAuditToHistory,
   mapBudgetsToView,
   mapOrdersToView,
   mapPmocPlansToView,
@@ -70,7 +66,30 @@ import { DeactivateEquipmentConfirmModal } from "../../components/equipment/Deac
 import { DeleteEquipmentConfirmModal } from "../../components/equipment/DeleteEquipmentConfirmModal";
 import { toast } from "../../lib/toast";
 import type { DashboardOutletContext } from "../dashboardContext";
-import styles from "./ClientFormPage.module.css";
+import { ClientRegistrationTab, type RegistrationSummary } from "../../components/clients/detail/ClientRegistrationTab";
+import { ClientAddressesTab } from "../../components/clients/detail/ClientAddressesTab";
+import { ClientUnitsTab } from "../../components/clients/detail/ClientUnitsTab";
+import { ClientContactsTab } from "../../components/clients/detail/ClientContactsTab";
+import { ClientEquipmentTab } from "../../components/clients/detail/ClientEquipmentTab";
+import { ClientPMOCTab } from "../../components/clients/detail/ClientPMOCTab";
+import { ClientContractsTab } from "../../components/clients/detail/ClientContractsTab";
+import { ClientOrdersTab } from "../../components/clients/detail/ClientOrdersTab";
+import { ClientFinanceTab } from "../../components/clients/detail/ClientFinanceTab";
+import { ClientHistoryTab } from "../../components/clients/detail/ClientHistoryTab";
+import {
+  IconBuilding,
+  IconClipboardList,
+  IconFileText,
+  IconHistory,
+  IconMapPin,
+  IconShield,
+  IconTool,
+  IconUser,
+  IconUsers,
+  IconWallet,
+} from "../../components/clients/detail/icons";
+import type { DetailTabId } from "../../components/clients/detail/types";
+import styles from "./ClientDetail.module.css";
 
 function fiscalLookupErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) {
@@ -83,6 +102,19 @@ function fiscalLookupErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+const TAB_DEFS: { id: DetailTabId; label: string; Icon: ComponentType<SVGProps<SVGSVGElement>> }[] = [
+  { id: "cadastro", label: "Dados cadastrais", Icon: IconUser },
+  { id: "unidades", label: "Unidades / Filiais", Icon: IconBuilding },
+  { id: "enderecos", label: "Endereços", Icon: IconMapPin },
+  { id: "contatos", label: "Contatos", Icon: IconUsers },
+  { id: "equipamentos", label: "Equipamentos", Icon: IconTool },
+  { id: "pmoc", label: "PMOC", Icon: IconShield },
+  { id: "contratos", label: "Contratos", Icon: IconFileText },
+  { id: "ordens", label: "Ordens de serviço", Icon: IconClipboardList },
+  { id: "financeiro", label: "Financeiro", Icon: IconWallet },
+  { id: "historico", label: "Histórico", Icon: IconHistory },
+];
 
 export function ClientFormPage() {
   const ctx = useOutletContext<DashboardOutletContext | undefined>();
@@ -103,13 +135,11 @@ export function ClientFormPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [cepLoading, setCepLoading] = useState(false);
-  const [cepErr, setCepErr] = useState("");
   const [cnpjLookupLoading, setCnpjLookupLoading] = useState(false);
   const [cnpjCommercialLoading, setCnpjCommercialLoading] = useState(false);
   const [cnpjCommercialRefreshLoading, setCnpjCommercialRefreshLoading] = useState(false);
   const [cnpjLookupErr, setCnpjLookupErr] = useState("");
-  const [activeTab, setActiveTab] = useState<TabId>("cadastro");
+  const [activeTab, setActiveTab] = useState<DetailTabId>("cadastro");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const [clientSites, setClientSites] = useState<ClientSiteOut[]>([]);
@@ -120,25 +150,29 @@ export function ClientFormPage() {
   );
   const [catalogEquipmentsLoading, setCatalogEquipmentsLoading] = useState(false);
   const [catalogSaving, setCatalogSaving] = useState(false);
-  const [manualUrlByEquipmentId, setManualUrlByEquipmentId] = useState<Record<string, string>>({});
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [pmocData, setPmocData] = useState<ReturnType<typeof mapPmocPlansToView>>(undefined);
+  const [pmocPlansRaw, setPmocPlansRaw] = useState<PmocPlanOut[]>([]);
+  const [pmocLoading, setPmocLoading] = useState(false);
+  const [auditEntries, setAuditEntries] = useState<ClientAuditEntryOut[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [addressesCount, setAddressesCount] = useState(0);
+  const [contactsCount, setContactsCount] = useState(0);
+  const [contractsCount, setContractsCount] = useState(0);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedErr, setRelatedErr] = useState("");
   const [equipmentModalRequest, setEquipmentModalRequest] = useState<{ clientSiteId: number } | null>(
     null,
   );
+  const [unitDrawerRequest, setUnitDrawerRequest] = useState<"new" | { site: ClientSiteOut } | null>(null);
+  const [pmocSiteFilter, setPmocSiteFilter] = useState<number | null>(null);
   const [deactivateEquipmentTarget, setDeactivateEquipmentTarget] = useState<EquipmentItem | null>(null);
   const [deleteEquipmentTarget, setDeleteEquipmentTarget] = useState<EquipmentItem | null>(null);
   const [duplicateErrors, setDuplicateErrors] = useState<{ documento?: string; whatsapp?: string }>({});
 
   const docDigits = useMemo(() => digitsOnly(clientData.documento).slice(0, 14), [clientData.documento]);
   const whatsappDigits = useMemo(() => digitsOnly(clientData.whatsapp ?? "").slice(0, 11), [clientData.whatsapp]);
-  const cepDigits = useMemo(
-    () => digitsOnly(clientData.endereco?.cep ?? "").slice(0, 8),
-    [clientData.endereco?.cep],
-  );
   const docDigitsRef = useRef(docDigits);
   const whatsappDigitsRef = useRef(whatsappDigits);
 
@@ -157,10 +191,9 @@ export function ClientFormPage() {
     return serializeClientFormSnapshot(clientData) !== savedClientSnapshotRef.current;
   }, [clientData, isNew]);
 
-  const showPmocTab = !isNew && clientData.type === "pj";
+  const isPj = clientData.type === "pj";
   const canConsultCnpjCommercial = ctx?.user.role === "admin";
-  const fiscalFieldsLocked =
-    !readOnly && clientData.type === "pj" && Boolean(clientData.isVerifiedCnpj);
+  const fiscalFieldsLocked = !readOnly && isPj && Boolean(clientData.isVerifiedCnpj);
   const cnpjCommercialCooldownDays = useMemo(
     () => cnpjCommercialCooldownDaysRemaining(clientData.lastCnpjCommercialUpdate),
     [clientData.lastCnpjCommercialUpdate],
@@ -173,10 +206,6 @@ export function ClientFormPage() {
   }, [msg]);
 
   useEffect(() => {
-    if (cepErr) toast.error(cepErr);
-  }, [cepErr]);
-
-  useEffect(() => {
     if (cnpjLookupErr) toast.error(cnpjLookupErr);
   }, [cnpjLookupErr]);
 
@@ -187,12 +216,6 @@ export function ClientFormPage() {
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
-
-  useEffect(() => {
-    if (clientData.type !== "pj" && activeTab === "pmoc") {
-      setActiveTab("cadastro");
-    }
-  }, [clientData.type, activeTab]);
 
   useEffect(() => {
     if (isNew) {
@@ -229,12 +252,21 @@ export function ClientFormPage() {
   useEffect(() => {
     if (isNew || !Number.isFinite(idNum) || idNum < 1 || isLoading) return;
     const tab = searchParams.get("tab");
-    if (tab === "pmoc" && showPmocTab) {
-      setActiveTab("pmoc");
-    } else if (tab === "preventiva") {
-      setActiveTab("preventiva");
-    } else if (tab === "historico") {
-      setActiveTab("cadastro");
+    const tabMap: Record<string, DetailTabId> = {
+      pmoc: "pmoc",
+      preventiva: "equipamentos",
+      historico: "historico",
+      contatos: "contatos",
+      contratos: "contratos",
+      enderecos: "enderecos",
+      financeiro: "financeiro",
+      ordens: "ordens",
+      equipamentos: "equipamentos",
+      cadastro: "cadastro",
+      unidades: "unidades",
+    };
+    if (tab && tabMap[tab]) {
+      setActiveTab(tabMap[tab]);
     }
     setSearchParams(
       (prev) => {
@@ -244,7 +276,7 @@ export function ClientFormPage() {
       },
       { replace: true },
     );
-  }, [isNew, idNum, isLoading, searchParams, showPmocTab, setSearchParams]);
+  }, [isNew, idNum, isLoading, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (isNew || !Number.isFinite(idNum) || idNum < 1) return;
@@ -252,23 +284,29 @@ export function ClientFormPage() {
     let cancelled = false;
     void (async () => {
       setRelatedLoading(true);
+      setAuditLoading(true);
       setRelatedErr("");
       try {
-        const [budgetRows, orderRows] = await Promise.all([
+        const [budgetRows, orderRows, auditRows] = await Promise.all([
           listBudgets({ limit: 100 }),
           listServiceOrders({ limit: 100 }),
+          listClientAudit(idNum, 100).catch(() => [] as ClientAuditEntryOut[]),
         ]);
         if (cancelled) return;
-        const budgets = Array.isArray(budgetRows) ? budgetRows : [];
-        const orders = Array.isArray(orderRows) ? orderRows : [];
-        setBudgets(mapBudgetsToView(budgets.filter((b) => b.client_id === idNum)));
-        setOrders(mapOrdersToView(orders.filter((o) => o.client_id === idNum)));
+        const budgetsArr = Array.isArray(budgetRows) ? budgetRows : [];
+        const ordersArr = Array.isArray(orderRows) ? orderRows : [];
+        setBudgets(mapBudgetsToView(budgetsArr.filter((b) => b.client_id === idNum)));
+        setOrders(mapOrdersToView(ordersArr.filter((o) => o.client_id === idNum)));
+        setAuditEntries(auditRows);
       } catch (e) {
         if (!cancelled) {
           setRelatedErr(e instanceof Error ? e.message : "Não foi possível carregar dados relacionados.");
         }
       } finally {
-        if (!cancelled) setRelatedLoading(false);
+        if (!cancelled) {
+          setRelatedLoading(false);
+          setAuditLoading(false);
+        }
       }
     })();
     return () => {
@@ -285,16 +323,8 @@ export function ClientFormPage() {
         listClientSites(idNum).catch(() => [] as ClientSiteOut[]),
       ]);
       setClientSites(sites);
-      const manuals: Record<string, string> = {};
-      const items = rows.map((row) => {
-        const manualUrl = firstManualUrlFromInstallation(row);
-        if (manualUrl) {
-          manuals[row.id] = manualUrl;
-        }
-        return mapClientEquipmentToView(row, sites);
-      });
+      const items = rows.map((row) => mapClientEquipmentToView(row, sites));
       setCatalogEquipments(items);
-      setManualUrlByEquipmentId(manuals);
     } catch (e) {
       setRelatedErr(e instanceof Error ? e.message : "Não foi possível carregar equipamentos do cliente.");
     } finally {
@@ -354,28 +384,31 @@ export function ClientFormPage() {
   }, [isNew, idNum, reloadCatalogEquipments]);
 
   useEffect(() => {
-    if (
-      isNew ||
-      !Number.isFinite(idNum) ||
-      idNum < 1 ||
-      activeTab !== "pmoc" ||
-      clientData.type !== "pj"
-    ) {
+    if (isNew || !Number.isFinite(idNum) || idNum < 1 || activeTab !== "pmoc" || !isPj) {
       return;
     }
     let cancelled = false;
+    setPmocLoading(true);
     void (async () => {
       try {
         const plans = await listPmocPlans({ client_id: idNum, limit: 100 });
-        if (!cancelled) setPmocData(mapPmocPlansToView(plans));
+        if (!cancelled) {
+          setPmocData(mapPmocPlansToView(plans));
+          setPmocPlansRaw(plans);
+        }
       } catch {
-        if (!cancelled) setPmocData({ status: "sem_contrato" });
+        if (!cancelled) {
+          setPmocData({ status: "sem_contrato" });
+          setPmocPlansRaw([]);
+        }
+      } finally {
+        if (!cancelled) setPmocLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [activeTab, idNum, isNew, clientData.type]);
+  }, [activeTab, idNum, isNew, isPj]);
 
   const handleClientChange = useCallback((patch: Partial<ClientData>) => {
     if (Object.prototype.hasOwnProperty.call(patch, "documento")) {
@@ -445,51 +478,6 @@ export function ClientFormPage() {
   const onWhatsappBlur = useCallback(async () => {
     await validateDuplicateFields({ checkDocument: false, checkWhatsapp: true });
   }, [validateDuplicateFields]);
-
-  const onBuscarCep = useCallback(async () => {
-    if (readOnly) return;
-    if (cepDigits.length !== 8) {
-      setCepErr("Informe um CEP com 8 dígitos.");
-      return;
-    }
-    setCepLoading(true);
-    setCepErr("");
-    setMsg(null);
-    try {
-      const data = await fetchCepLookup(cepDigits);
-      if (!cepLookupHasUsefulData(data)) {
-        setCepErr("CEP não encontrado ou sem dados de endereço.");
-        return;
-      }
-      setClientData((prev) => {
-        const cur = digitsOnly(prev.endereco?.cep ?? "").slice(0, 8);
-        if (cur !== cepDigits) return prev;
-        const uf = (data.address_state ?? "").trim();
-        const ibgeFromCep = digitsOnly(data.address_ibge_code ?? "").slice(0, 7);
-        return mergeViewData(prev, {
-          endereco: {
-            logradouro: (data.address_street ?? "").trim(),
-            complemento: (data.address_complement ?? "").trim(),
-            bairro: (data.address_district ?? "").trim(),
-            cidade: (data.address_city ?? "").trim(),
-            estado: uf ? uf.toUpperCase().slice(0, 2) : "",
-            cep: data.address_postal_code
-              ? formatCepInput(data.address_postal_code)
-              : formatCepInput(cepDigits),
-          },
-          addressIbgeCode: ibgeFromCep.length === 7 ? ibgeFromCep : prev.addressIbgeCode,
-        });
-      });
-      setMsg({
-        kind: "ok",
-        text: cepLookupSuccessMessage(data),
-      });
-    } catch (e) {
-      setCepErr(e instanceof Error ? e.message : "Não foi possível buscar o CEP.");
-    } finally {
-      setCepLoading(false);
-    }
-  }, [cepDigits, readOnly]);
 
   const applyCnpjLookupResult = useCallback(
     (lu: Awaited<ReturnType<typeof fetchCnpjOpen>>) => {
@@ -596,11 +584,7 @@ export function ClientFormPage() {
       setCatalogSaving(true);
       setMsg(null);
       try {
-        const created = await createClientCatalogEquipment(idNum, newEquipmentDataToCreatePayload(data));
-        const manualUrl = firstManualUrlFromInstallation(created);
-        if (manualUrl) {
-          setManualUrlByEquipmentId((prev) => ({ ...prev, [created.id]: manualUrl }));
-        }
+        await createClientCatalogEquipment(idNum, newEquipmentDataToCreatePayload(data));
         await reloadCatalogEquipments();
         await reloadEquipmentCatalog();
         const n = data.components?.length ?? 1;
@@ -682,18 +666,6 @@ export function ClientFormPage() {
     }
   }, [canEdit, deleteEquipmentTarget, readOnly, reloadCatalogEquipments]);
 
-  const onDownloadEquipmentManual = useCallback(
-    (equipmentId: string, directUrl?: string | null) => {
-      const url = directUrl ?? manualUrlByEquipmentId[equipmentId];
-      if (!url) {
-        setMsg({ kind: "err", text: "Manual não disponível para este equipamento." });
-        return;
-      }
-      window.open(url, "_blank", "noopener,noreferrer");
-    },
-    [manualUrlByEquipmentId],
-  );
-
   const onOrderAction = useCallback(
     (action: "view" | "edit", order: ServiceOrder) => {
       const path = `/app/service-orders/${order.id}`;
@@ -768,6 +740,52 @@ export function ClientFormPage() {
     }
   }
 
+  const history = useMemo(() => mapAuditToHistory(auditEntries), [auditEntries]);
+
+  const equipmentCountBySiteId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const item of catalogEquipments) {
+      if (item.clientSiteId == null) continue;
+      map.set(item.clientSiteId, (map.get(item.clientSiteId) ?? 0) + 1);
+    }
+    return map;
+  }, [catalogEquipments]);
+
+  const matrizSite = useMemo(() => clientSites.find((s) => s.site_type === "matriz"), [clientSites]);
+  const activeBranchesCount = useMemo(
+    () => clientSites.filter((s) => s.site_type !== "matriz" && s.is_active).length,
+    [clientSites],
+  );
+
+  const registrationSummary: RegistrationSummary = useMemo(
+    () => ({
+      addresses: addressesCount,
+      contacts: contactsCount,
+      equipments: catalogEquipments.length,
+      pmocLabel: !isPj ? "Não aplicável" : pmocData && pmocData.status !== "sem_contrato" ? "Ativo" : "Sem contrato ativo",
+      contracts: contractsCount,
+      ordersCount: orders.length,
+      financeLabel: orders.length ? `${orders.length} lançamento(s)` : "Sem lançamentos",
+      historyLabel: auditEntries.length ? `${auditEntries.length} evento(s)` : "Sem eventos",
+      unitsCount: clientSites.length,
+      activeBranches: activeBranchesCount,
+      matrizName: matrizSite?.name,
+    }),
+    [
+      clientSites.length,
+      addressesCount,
+      contactsCount,
+      catalogEquipments.length,
+      isPj,
+      pmocData,
+      contractsCount,
+      orders.length,
+      auditEntries.length,
+      activeBranchesCount,
+      matrizSite,
+    ],
+  );
+
   if (!ctx) {
     return <Navigate to="/login" replace />;
   }
@@ -786,7 +804,7 @@ export function ClientFormPage() {
 
   if (!isNew && isLoading) {
     return (
-      <div className={styles.wrap}>
+      <div className={styles.page}>
         <p className={styles.loading}>Carregando cliente…</p>
       </div>
     );
@@ -794,8 +812,8 @@ export function ClientFormPage() {
 
   if (!isNew && error) {
     return (
-      <div className={styles.wrap}>
-        <Link className={styles.btnBackLink} to="/app/clients">
+      <div className={styles.page}>
+        <Link className={`${styles.btn} ${styles.btnSecondary}`} to="/app/clients">
           ← Voltar à lista
         </Link>
         <p className={styles.loading}>Não foi possível carregar este cliente.</p>
@@ -803,45 +821,28 @@ export function ClientFormPage() {
     );
   }
 
+  const displayName = clientData.nomeFantasia?.trim() || clientData.razaoSocial?.trim() || "Editar cliente";
+
   return (
-    <div className={styles.wrap}>
-      <header className={styles.pageHeader}>
-        <nav className={styles.breadcrumb} aria-label="Navegação">
-          <Link className={styles.breadcrumbLink} to="/app/clients">
-            Clientes
-          </Link>
-          <span className={styles.breadcrumbSep} aria-hidden>
-            /
+    <div className={styles.page}>
+      <nav className={styles.breadcrumb} aria-label="Navegação">
+        <Link className={styles.breadcrumbLink} to="/app/clients">
+          Clientes
+        </Link>
+        <span className={styles.breadcrumbSep} aria-hidden>
+          /
+        </span>
+        <span className={styles.breadcrumbCurrent}>{isNew ? "Novo cliente" : displayName}</span>
+      </nav>
+
+      <header className={styles.headerRow}>
+        <div className={styles.headerMain}>
+          <span className={styles.headerIcon} aria-hidden>
+            {clientData.type === "pj" ? <IconBuilding /> : <IconUser />}
           </span>
-          <span className={styles.breadcrumbCurrent}>
-            {isNew ? "Novo cadastro" : clientData.nomeFantasia?.trim() || clientData.razaoSocial?.trim() || "Editar cliente"}
-          </span>
-        </nav>
-        <div className={styles.pageHeaderMain}>
-          <span className={styles.pageHeaderIcon} aria-hidden>
-            {clientData.type === "pj" ? (
-              <svg viewBox="0 0 24 24">
-                <path d="M3 21h18" />
-                <path d="M5 21V7l8-4v18" />
-                <path d="M19 21V11l-6-4" />
-                <path d="M9 9h1" />
-                <path d="M9 13h1" />
-                <path d="M9 17h1" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                <circle cx="12" cy="7" r="4" />
-              </svg>
-            )}
-          </span>
-          <div className={styles.pageHeaderText}>
-            <h1 className={styles.title}>{isNew ? "Novo cliente" : "Editar cliente"}</h1>
-            <p className={styles.lead}>
-              {isNew
-                ? "Cadastre pessoa física ou jurídica com dados fiscais, endereço e vínculos operacionais."
-                : "Atualize cadastro, fiscal, endereço, equipamentos e configurações preventivas."}
-            </p>
+          <div>
+            <h1 className={styles.headerTitle}>{isNew ? "Novo cliente" : "Editar cliente"}</h1>
+            <p className={styles.headerSubtitle}>Gerencie cadastro, contatos, endereços e configurações do cliente.</p>
           </div>
         </div>
       </header>
@@ -868,123 +869,206 @@ export function ClientFormPage() {
         onConfirm={() => void onConfirmDeleteCatalogEquipment()}
       />
 
-      <form id="client-form-main" className={styles.form} onSubmit={onSubmit}>
-        <ClientFormView
-          client={clientData}
-          equipments={[]}
-          equipamentosCount={isNew ? 0 : catalogEquipments.filter((e) => e.status === "ativo").length}
-          equipamentosPanel={
-            isNew ? (
-              <p className={styles.readOnlyHint}>Salve o cliente para cadastrar equipamentos.</p>
-            ) : (
-              <ClientEquipmentManager
-                clientId={idNum}
-                clientSites={clientSites}
-                equipments={catalogEquipments}
-                catalog={equipmentCatalog}
-                categoryOptions={equipmentCategoryOptions}
-                isLoading={catalogEquipmentsLoading || catalogSaving}
-                readOnly={readOnly}
-                modalOpenRequest={equipmentModalRequest}
-                onModalOpenRequestHandled={() => setEquipmentModalRequest(null)}
-                onEquipmentsChanged={() => void reloadCatalogEquipments()}
-                onAddEquipment={readOnly ? undefined : onAddCatalogEquipment}
-                onDeactivate={readOnly ? undefined : onDeactivateCatalogEquipment}
-                onDelete={readOnly ? undefined : onDeleteCatalogEquipment}
-                onDownloadManual={(id) => onDownloadEquipmentManual(id)}
-              />
-            )
-          }
-          orders={isNew ? [] : orders}
-          budgets={isNew ? [] : budgets}
-          pmocData={showPmocTab ? pmocData : { status: "sem_contrato" }}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          onClientChange={handleClientChange}
-          onDocumentoBlur={() => void onDocumentoBlur()}
-          onWhatsappBlur={() => void onWhatsappBlur()}
-          documentoDuplicateMessage={duplicateErrors.documento}
-          whatsappDuplicateMessage={duplicateErrors.whatsapp}
-          onConsultCNPJ={onConsultCNPJ}
-          onConsultCNPJCommercial={canConsultCnpjCommercial ? onConsultCNPJCommercial : undefined}
-          onRefreshCnpjCommercial={
-            !isNew && fiscalFieldsLocked && canConsultCnpjCommercial ? () => void onRefreshCnpjCommercial() : undefined
-          }
-          onBuscarCep={() => void onBuscarCep()}
-          loadingCNPJ={cnpjLookupLoading}
-          loadingCNPJCommercial={cnpjCommercialLoading}
-          loadingCnpjCommercialRefresh={cnpjCommercialRefreshLoading}
-          cnpjCommercialCooldownDays={cnpjCommercialCooldownDays}
-          fiscalFieldsLocked={fiscalFieldsLocked}
-          showPmocTab={showPmocTab}
-          sitesPanel={
-            !isNew && Number.isFinite(idNum) ? (
-              <ClientSitesPanel
-                clientId={idNum}
-                readOnly={readOnly}
-                nearCity={clientData.endereco?.cidade}
-                nearState={clientData.endereco?.estado}
-                onSitesChanged={() => void reloadCatalogEquipments()}
-                onAddEquipmentForSite={
-                  readOnly
-                    ? undefined
-                    : (siteId) => {
-                        setActiveTab("equipamentos");
-                        setEquipmentModalRequest({ clientSiteId: siteId });
-                      }
-                }
-              />
-            ) : undefined
-          }
-          cepLoading={cepLoading}
-          readOnly={readOnly}
-          onOrderAction={onOrderAction}
-          onBudgetAction={onBudgetAction}
-          preventivaPanel={
-            isNew ? undefined : (
-              <ClientPreventiveTab
-                clientId={idNum}
-                equipments={catalogEquipments}
-                readOnly={readOnly}
-                preventiveCampaignOptOut={Boolean(clientData.preventiveCampaignOptOut)}
-                onPreventiveCampaignOptOutChange={(value) =>
-                  handleClientChange({ preventiveCampaignOptOut: value })
-                }
-              />
-            )
-          }
-        />
+      <div className={styles.tabsScroll} role="tablist" aria-label="Seções do cadastro do cliente">
+        {TAB_DEFS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={`${styles.tabBtn} ${activeTab === tab.id ? styles.tabBtnActive : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            <tab.Icon /> {tab.label}
+          </button>
+        ))}
+      </div>
 
+      <form id="client-form-main" onSubmit={onSubmit}>
+        {activeTab === "cadastro" ? (
+          <ClientRegistrationTab
+            client={clientData}
+            onClientChange={handleClientChange}
+            onDocumentoBlur={() => void onDocumentoBlur()}
+            onWhatsappBlur={() => void onWhatsappBlur()}
+            documentoDuplicateMessage={duplicateErrors.documento}
+            whatsappDuplicateMessage={duplicateErrors.whatsapp}
+            onConsultCNPJ={onConsultCNPJ}
+            onConsultCNPJCommercial={canConsultCnpjCommercial ? onConsultCNPJCommercial : undefined}
+            onRefreshCnpjCommercial={
+              !isNew && fiscalFieldsLocked && canConsultCnpjCommercial ? () => void onRefreshCnpjCommercial() : undefined
+            }
+            loadingCNPJ={cnpjLookupLoading}
+            loadingCNPJCommercial={cnpjCommercialLoading}
+            loadingCnpjCommercialRefresh={cnpjCommercialRefreshLoading}
+            cnpjCommercialCooldownDays={cnpjCommercialCooldownDays}
+            fiscalFieldsLocked={fiscalFieldsLocked}
+            readOnly={readOnly}
+            isNew={isNew}
+            summary={registrationSummary}
+            onNavigateTab={setActiveTab}
+            sites={clientSites}
+            onAddUnit={() => {
+              setActiveTab("unidades");
+              setUnitDrawerRequest("new");
+            }}
+            onEditUnit={(site) => {
+              setActiveTab("unidades");
+              setUnitDrawerRequest({ site });
+            }}
+          />
+        ) : null}
+
+        {activeTab === "unidades" ? (
+          <ClientUnitsTab
+            clientId={idNum}
+            isNew={isNew}
+            readOnly={readOnly}
+            loading={catalogEquipmentsLoading}
+            sites={clientSites}
+            equipmentCountBySiteId={equipmentCountBySiteId}
+            mainClientDocument={clientData.documento}
+            nearCity={clientData.endereco?.cidade}
+            nearState={clientData.endereco?.estado}
+            onSitesChanged={() => void reloadCatalogEquipments()}
+            onOpenEquipmentsForSite={() => setActiveTab("equipamentos")}
+            onOpenPmocForSite={(siteId) => {
+              setPmocSiteFilter(siteId);
+              setActiveTab("pmoc");
+            }}
+            openRequest={unitDrawerRequest}
+            onOpenRequestHandled={() => setUnitDrawerRequest(null)}
+          />
+        ) : null}
+
+        {activeTab === "enderecos" ? (
+          <ClientAddressesTab
+            clientId={idNum}
+            isNew={isNew}
+            readOnly={readOnly}
+            sites={clientSites}
+            onAddressesChanged={setAddressesCount}
+          />
+        ) : null}
+
+        {activeTab === "contatos" ? (
+          <ClientContactsTab
+            clientId={idNum}
+            isNew={isNew}
+            readOnly={readOnly}
+            sites={clientSites}
+            onContactsChanged={setContactsCount}
+          />
+        ) : null}
+
+        {activeTab === "equipamentos" ? (
+          <ClientEquipmentTab
+            isNew={isNew}
+            readOnly={readOnly}
+            clientId={idNum}
+            clientSites={clientSites}
+            equipments={catalogEquipments}
+            catalog={equipmentCatalog}
+            categoryOptions={equipmentCategoryOptions}
+            isLoading={catalogEquipmentsLoading || catalogSaving}
+            pmocPlans={pmocPlansRaw}
+            modalOpenRequest={equipmentModalRequest}
+            onModalOpenRequestHandled={() => setEquipmentModalRequest(null)}
+            onAddEquipment={readOnly ? undefined : onAddCatalogEquipment}
+            onDeactivate={readOnly ? undefined : onDeactivateCatalogEquipment}
+            onDelete={readOnly ? undefined : onDeleteCatalogEquipment}
+            onEquipmentsChanged={() => void reloadCatalogEquipments()}
+            onGoToPmoc={(siteId) => {
+              setPmocSiteFilter(siteId);
+              setActiveTab("pmoc");
+            }}
+          />
+        ) : null}
+
+        {activeTab === "pmoc" ? (
+          <ClientPMOCTab
+            pmocData={pmocData}
+            plans={pmocPlansRaw}
+            isNew={isNew}
+            isPj={isPj}
+            loading={pmocLoading}
+            clientSites={clientSites}
+            initialSiteFilter={pmocSiteFilter}
+            onGenerateNew={!isNew ? () => navigate(`/app/pmoc/new?from_client=${idNum}`) : undefined}
+            onOpenPlan={(plan) => navigate(`/app/pmoc/${plan.id}`)}
+          />
+        ) : null}
+
+        {activeTab === "contratos" ? (
+          isNew ? (
+            <div className={styles.tabPanel}>
+              <section className={styles.card}>
+                <p className={styles.cardHint}>Salve o cliente para cadastrar contratos.</p>
+              </section>
+            </div>
+          ) : (
+            <ClientContractsTab
+              clientId={idNum}
+              readOnly={readOnly}
+              sites={clientSites}
+              onContractsChanged={setContractsCount}
+            />
+          )
+        ) : null}
+
+        {activeTab === "ordens" ? (
+          <ClientOrdersTab
+            orders={orders}
+            budgets={budgets}
+            isNew={isNew}
+            loading={relatedLoading}
+            onNewOrder={() => navigate(`/app/service-orders/new?client_id=${idNum}`)}
+            onNewBudget={() => navigate(`/app/budgets/new?client_id=${idNum}`)}
+            onOrderAction={onOrderAction}
+            onBudgetAction={onBudgetAction}
+          />
+        ) : null}
+
+        {activeTab === "financeiro" ? <ClientFinanceTab orders={orders} budgets={budgets} isNew={isNew} /> : null}
+
+        {activeTab === "historico" ? <ClientHistoryTab history={history} loading={auditLoading} isNew={isNew} /> : null}
       </form>
 
-      <div className={styles.actionBar} role="toolbar" aria-label="Ações do cadastro">
-        <div className={styles.actionBarInner}>
-          <Link className={styles.btnBackLink} to="/app/clients">
-            Voltar
-          </Link>
-          {canDelete && !isNew ? (
-            <button
-              type="button"
-              className={styles.btnDanger}
-              onClick={() => setShowDeleteModal(true)}
-              disabled={saving || deleting}
-            >
-              {deleting ? "Excluindo…" : "Excluir cliente"}
-            </button>
-          ) : null}
-          {canEdit && isDirty ? (
-            <button
-              type="submit"
-              form="client-form-main"
-              className={styles.btnPrimary}
-              disabled={saving || deleting}
-            >
-              {saving ? "Salvando…" : isNew ? "Cadastrar cliente" : "Salvar alterações"}
-            </button>
-          ) : null}
-          {!canEdit ? <p className={styles.readOnlyHint}>Visualização somente leitura.</p> : null}
+      <footer className={styles.footerBar} role="toolbar" aria-label="Ações do cadastro">
+        <div className={styles.footerBarInner}>
+          <div className={styles.footerBarLeft}>
+            <Link className={`${styles.btn} ${styles.btnSecondary}`} to="/app/clients">
+              Cancelar
+            </Link>
+          </div>
+          <div className={styles.footerBarRight}>
+            {canDelete && !isNew ? (
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnDangerSolid}`}
+                onClick={() => setShowDeleteModal(true)}
+                disabled={saving || deleting}
+              >
+                Excluir cliente
+              </button>
+            ) : null}
+            {canEdit ? (
+              <button
+                type="submit"
+                form="client-form-main"
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={saving || deleting || (!isNew && !isDirty)}
+              >
+                {saving ? "Salvando…" : isNew ? "Cadastrar cliente" : "Salvar alterações"}
+              </button>
+            ) : (
+              <p className={styles.cardHint} style={{ margin: 0 }}>
+                Visualização somente leitura.
+              </p>
+            )}
+          </div>
         </div>
-      </div>
+      </footer>
 
       {showDeleteModal ? (
         <div className={styles.modalRoot} role="presentation">
@@ -993,15 +1077,15 @@ export function ClientFormPage() {
             <h3 id="delete-client-title" className={styles.modalTitle}>
               Excluir cliente
             </h3>
-            <p className={styles.modalText}>
-              Prefira desmarcar &quot;Cadastro ativo&quot; para inativar. A exclusão permanente só deve ser usada quando não
-              houver ordens, orçamentos ou NFS-e vinculados.
+            <p className={styles.cardHint}>
+              Prefira desativar o &quot;Status do cadastro&quot; para inativar. A exclusão permanente só deve ser usada quando
+              não houver ordens, orçamentos ou NFS-e vinculados.
             </p>
             <div className={styles.modalActions}>
-              <button type="button" className={styles.btnDanger} onClick={() => void onDelete()} disabled={deleting}>
+              <button type="button" className={`${styles.btn} ${styles.btnDangerSolid}`} onClick={() => void onDelete()} disabled={deleting}>
                 {deleting ? "Excluindo…" : "Confirmar exclusão"}
               </button>
-              <button type="button" className={styles.btnSecondary} onClick={() => setShowDeleteModal(false)} disabled={deleting}>
+              <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => setShowDeleteModal(false)} disabled={deleting}>
                 Cancelar
               </button>
             </div>

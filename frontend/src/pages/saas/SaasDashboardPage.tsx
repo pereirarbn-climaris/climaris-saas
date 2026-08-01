@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import type { TenantStatus } from "../../api/auth";
+import { fetchPlatformBackupStatus, type PlatformBackupStatus } from "../../api/platformBackupStatus";
 import { listPlatformMarketplaceEntitlements } from "../../api/platformMarketplace";
 import { listPlatformSaasPlans } from "../../api/platformSaasPlans";
 import { PLATFORM_ADMIN_EMAIL } from "../../lib/platformAdmin";
 import type { PlatformAdminOutletContext } from "../platformAdminContext";
 import styles from "./SaasDashboardPage.module.css";
+
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
 
 function statusLabel(status: TenantStatus): string {
   switch (status) {
@@ -40,6 +48,26 @@ export function SaasDashboardPage() {
     Array<{ plan_key: string; display_name: string; description: string; footnote: string }>
   >([]);
   const [matrixLoading, setMatrixLoading] = useState(true);
+  const [backupStatus, setBackupStatus] = useState<PlatformBackupStatus | null>(null);
+  const [backupStatusError, setBackupStatusError] = useState<string | null>(null);
+  const [backupStatusLoading, setBackupStatusLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPlatformBackupStatus()
+      .then((data) => {
+        if (!cancelled) setBackupStatus(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setBackupStatusError(err instanceof Error ? err.message : "Erro ao carregar status.");
+      })
+      .finally(() => {
+        if (!cancelled) setBackupStatusLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +112,30 @@ export function SaasDashboardPage() {
   if (!ctx) {
     return null;
   }
+
+  const backup = backupStatus?.backup ?? null;
+  const verify = backupStatus?.verify ?? null;
+  const deepCheck = backupStatus?.deep_check ?? null;
+  const backupHasProblem = Boolean(backup && (!backup.ok || backup.stale));
+  const backupHasWarning = Boolean(
+    backup?.ok &&
+      !backup.stale &&
+      (backup.prune_warning || backup.storage_class_warning || (verify && !verify.ok) || (verify?.stale ?? false)),
+  );
+  const backupBadgeClass = !backupStatus?.available
+    ? styles.badgeSuspended
+    : backupHasProblem
+      ? styles.badgeCancelled
+      : backupHasWarning
+        ? styles.badgeSuspended
+        : styles.badgeActive;
+  const backupBadgeLabel = !backupStatus?.available
+    ? "Sem dados"
+    : backupHasProblem
+      ? "Falha"
+      : backupHasWarning
+        ? "Atenção"
+        : "OK";
 
   const { user, tenant } = ctx;
   const st = tenant ? (tenant.status as TenantStatus) : null;
@@ -191,6 +243,51 @@ export function SaasDashboardPage() {
             O app para empresas (clientes, OS, agenda, etc.) permanece em <code className={styles.inlineCode}>/app</code>{" "}
             e exige usuário de workspace de cliente — não use esta conta de operação lá.
           </p>
+        </section>
+
+        <section className={styles.card} aria-labelledby="backup-status-title">
+          <div className={styles.integrationHeader}>
+            <h2 id="backup-status-title" className={styles.cardTitle} style={{ margin: 0 }}>
+              Backup do sistema (S3)
+            </h2>
+            {backupStatusLoading ? null : <span className={`${styles.badge} ${backupBadgeClass}`}>{backupBadgeLabel}</span>}
+          </div>
+          {backupStatusLoading ? (
+            <p className={styles.note}>Carregando status…</p>
+          ) : backupStatusError ? (
+            <p className={styles.note}>{backupStatusError}</p>
+          ) : !backupStatus?.available ? (
+            <p className={styles.note}>{backupStatus?.message || "Status ainda não publicado pelo host."}</p>
+          ) : (
+            <>
+              <ul className={styles.metaList}>
+                <li className={styles.metaRow}>
+                  <span className={styles.metaKey}>Último backup</span>
+                  <span className={styles.metaVal}>{formatDateTime(backup?.last_success_at)}</span>
+                </li>
+                <li className={styles.metaRow}>
+                  <span className={styles.metaKey}>Snapshots retidos</span>
+                  <span className={styles.metaVal}>{backup?.snapshot_count ?? "—"}</span>
+                </li>
+                <li className={styles.metaRow}>
+                  <span className={styles.metaKey}>Verificação pós-backup</span>
+                  <span className={styles.metaVal}>{verify?.ok ? "OK" : verify ? "Falhou" : "—"}</span>
+                </li>
+                <li className={styles.metaRow}>
+                  <span className={styles.metaKey}>Verificação profunda (semanal)</span>
+                  <span className={styles.metaVal}>{formatDateTime(deepCheck?.last_success_at)}</span>
+                </li>
+              </ul>
+              {backup?.message ? <p className={styles.note} style={{ marginTop: "0.6rem" }}>{backup.message}</p> : null}
+              {backup?.storage_class_warning ? (
+                <p className={styles.formAlertWarn} style={{ marginTop: "0.6rem" }}>
+                  {backup.storage_class_info?.non_standard_pct ?? 0}% dos objetos do repositório estão fora de STANDARD
+                  (provável Glacier via lifecycle do bucket) — isso pode quebrar a retenção (prune) e atrasar restaurações
+                  em caso de desastre. Ajuste o lifecycle do bucket de backup.
+                </p>
+              ) : null}
+            </>
+          )}
         </section>
       </div>
 

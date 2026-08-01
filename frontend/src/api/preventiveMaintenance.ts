@@ -66,6 +66,7 @@ export type PreventiveSettings = {
   preventive_ai_message_fidelity?: "faithful" | "balanced";
   preventive_auto_remind_days_before: number;
   preventive_auto_whatsapp_enabled?: boolean;
+  preventive_auto_whatsapp_mode?: "days_before" | "month_first_business_day";
   preventive_auto_schedule_enabled?: boolean;
   preventive_action_buttons_enabled?: boolean;
   preventive_button_schedule_enabled?: boolean;
@@ -101,6 +102,10 @@ export type PreventiveItem = {
   is_manual_reminder?: boolean;
   client_id: number;
   client_name: string;
+  client_site_id?: number | null;
+  client_site_name?: string | null;
+  client_site_type?: string | null;
+  client_site_label?: string | null;
   service_id: number;
   service_name: string;
   equipment_id?: number | null;
@@ -130,6 +135,10 @@ export type PreventiveItem = {
 export type PreventiveClientGroup = {
   client_id: number;
   client_name: string;
+  client_site_id?: number | null;
+  client_site_name?: string | null;
+  client_site_type?: string | null;
+  client_site_label?: string | null;
   whatsapp_valido: boolean;
   whatsapp_destino: string | null;
   equipments: PreventiveItem[];
@@ -528,6 +537,7 @@ export async function sendPreventiveReminder(payload: {
   historico_servico_id?: number;
   rule_id?: number;
   client_id?: number;
+  client_site_id?: number | null;
   year?: number;
   month?: number;
   window_days?: number;
@@ -697,6 +707,34 @@ export async function resetEquipmentServicePreventiveScheduleOverride(
   if (!response.ok) {
     throw new Error(
       apiFailureMessage(body, response.status, "Não foi possível restaurar o padrão do serviço."),
+    );
+  }
+  return body as EquipmentServicePreventiveScheduleOut;
+}
+
+export async function setEquipmentServicePreventiveActive(
+  equipmentId: number,
+  serviceId: number,
+  isActive: boolean,
+): Promise<EquipmentServicePreventiveScheduleOut> {
+  const response = await fetch(
+    apiUrl(
+      `/api/v1/preventive-maintenance/equipment/${equipmentId}/service-schedules/${serviceId}/active`,
+    ),
+    {
+      method: "PATCH",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ is_active: isActive }),
+    },
+  );
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(
+      apiFailureMessage(
+        body,
+        response.status,
+        "Não foi possível atualizar a manutenção preventiva.",
+      ),
     );
   }
   return body as EquipmentServicePreventiveScheduleOut;

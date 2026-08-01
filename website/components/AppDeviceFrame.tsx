@@ -17,14 +17,15 @@ export function AppDeviceFrame({ src, alt, priority = false, className = "" }: P
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/90" />
           <span className="ml-2 truncate text-[10px] text-white/50">app.climaris.com.br</span>
         </div>
-        <div className="overflow-hidden rounded-[1.25rem] bg-surface-elevated">
+        <div className="aspect-[16/10] overflow-hidden rounded-[1.25rem] bg-surface-elevated">
           <Image
             src={src}
             alt={alt}
             width={1280}
             height={800}
             priority={priority}
-            className="h-auto w-full object-cover object-top"
+            fetchPriority={priority ? "high" : "auto"}
+            className="h-full w-full object-cover object-top"
             unoptimized
           />
         </div>

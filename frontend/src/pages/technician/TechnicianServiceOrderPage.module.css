@@ -228,6 +228,23 @@
   color: var(--color-primary);
 }
 
+.pendingIdentificationBanner {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 0.6rem;
+}
+
+.pendingIdentificationLink {
+  font-weight: 600;
+  color: #92400e;
+  text-decoration: underline;
+}
+
 .serviceList {
   list-style: none;
   margin: 0;

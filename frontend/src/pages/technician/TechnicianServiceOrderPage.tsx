@@ -56,7 +56,7 @@ export function TechnicianServiceOrderPage() {
         const [row, products, services] = await Promise.all([
           getServiceOrder(idNum, { bustCache: true }),
           listProducts({ limit: API_MAX_PAGE_LIMIT }),
-          listServices({ limit: API_MAX_PAGE_LIMIT }),
+          listServices({ limit: API_MAX_PAGE_LIMIT, context: "service_order" }),
         ]);
         if (cancelled) return;
         setOrder(row);

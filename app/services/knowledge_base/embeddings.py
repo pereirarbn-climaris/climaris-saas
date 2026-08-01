@@ -8,28 +8,35 @@ import ssl
 import urllib.error
 import urllib.request
 
-from app.config import KB_EMBEDDING_MODEL, OPENAI_API_KEY
+from sqlalchemy.orm import Session
+
+from app.config import KB_EMBEDDING_MODEL
+from app.platform_credentials import resolve_openai_api_key
 
 logger = logging.getLogger("erp.knowledge_base.embeddings")
 
 _BATCH_SIZE = 96
+_MISSING_KEY_MSG = (
+    "Chave da API OpenAI não configurada para embeddings da Knowledge Base. "
+    "Configure em Operação → Chaves APIs (OpenAI) ou defina OPENAI_API_KEY no servidor."
+)
 
 
-def _require_api_key() -> str:
-    key = OPENAI_API_KEY.strip()
+def _require_api_key(db: Session | None) -> str:
+    key = (resolve_openai_api_key(db) or "").strip()
     if not key:
-        raise RuntimeError("OPENAI_API_KEY não configurada para embeddings da Knowledge Base.")
+        raise RuntimeError(_MISSING_KEY_MSG)
     return key
 
 
-def _openai_embeddings_request(texts: list[str]) -> list[list[float]]:
+def _openai_embeddings_request(texts: list[str], *, db: Session | None) -> list[list[float]]:
     payload = {"model": KB_EMBEDDING_MODEL, "input": texts}
     req = urllib.request.Request(
         "https://api.openai.com/v1/embeddings",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {_require_api_key()}",
+            "Authorization": f"Bearer {_require_api_key(db)}",
         },
         method="POST",
     )
@@ -50,15 +57,15 @@ def _openai_embeddings_request(texts: list[str]) -> list[list[float]]:
     return [list(row["embedding"]) for row in rows]
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def embed_texts(texts: list[str], *, db: Session | None = None) -> list[list[float]]:
     if not texts:
         return []
     vectors: list[list[float]] = []
     for start in range(0, len(texts), _BATCH_SIZE):
         batch = texts[start : start + _BATCH_SIZE]
-        vectors.extend(_openai_embeddings_request(batch))
+        vectors.extend(_openai_embeddings_request(batch, db=db))
     return vectors
 
 
-def embed_query(text: str) -> list[float]:
-    return _openai_embeddings_request([text.strip()])[0]
+def embed_query(text: str, *, db: Session | None = None) -> list[float]:
+    return _openai_embeddings_request([text.strip()], db=db)[0]

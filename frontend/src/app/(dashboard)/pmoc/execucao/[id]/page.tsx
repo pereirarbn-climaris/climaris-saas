@@ -303,7 +303,7 @@ export default function PmocExecucaoPage() {
         });
       }
       toast.success("Vistoria finalizada com sucesso!");
-      navigate(`/app/pmoc/${pmocId}`);
+      navigate("/app/pmoc?aba=gestao");
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro ao salvar a vistoria. Tente novamente.";
       setSubmitError(message);
@@ -331,11 +331,11 @@ export default function PmocExecucaoPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-2">
             <Link
-              to={`/app/pmoc/${pmocId}`}
+              to="/app/pmoc?aba=gestao"
               className="inline-flex items-center gap-1 text-sm font-medium text-[#64748b] transition-colors hover:text-[#006FEE]"
             >
               <ChevronLeft className="h-4 w-4" aria-hidden />
-              Voltar ao PMOC
+              Voltar para Gestão PMOC
             </Link>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-[#006FEE]">Checklist de Campo</p>
@@ -374,7 +374,7 @@ export default function PmocExecucaoPage() {
               variant="outline"
               style={{ padding: "12px 16px", fontWeight: 600 }}
               disabled={isSubmitting}
-              onClick={() => navigate(`/app/pmoc/${pmocId}`)}
+              onClick={() => navigate("/app/pmoc?aba=gestao")}
             >
               Voltar
             </Button>
@@ -640,7 +640,7 @@ export default function PmocExecucaoPage() {
             variant="outline"
             style={{ padding: "12px 16px", fontWeight: 600 }}
             disabled={isSubmitting}
-            onClick={() => navigate(`/app/pmoc/${pmocId}`)}
+            onClick={() => navigate("/app/pmoc?aba=gestao")}
           >
             Voltar
           </Button>

@@ -65,7 +65,7 @@ def ingest_manual(
         total_saved = 0
         for context in contexts:
             contents = [chunk.content for chunk in text_chunks]
-            embeddings = embed_texts(contents)
+            embeddings = embed_texts(contents, db=db)
             for chunk, embedding in zip(text_chunks, embeddings, strict=True):
                 db.add(
                     ManualChunk(

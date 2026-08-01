@@ -21,6 +21,11 @@ from app.limiter import limiter
 from app.dependencies import get_current_user, require_roles
 from app.spreadsheet_rows import header_index, normalize_header_label, normalize_rows_shape, parse_csv_rows, parse_xlsx_rows
 from app.services.service_preventive_config import apply_preventive_config_to_service
+from app.services.client_sites import (
+    resolve_schedule_client_address,
+    validate_equipment_client_site,
+)
+from app.services.equipment_pending_identification import is_pending_identification_equipment
 from app.schemas import (
     EquipmentUsageReportRowOut,
     RescheduleOptionOut,
@@ -78,6 +83,7 @@ from app.stock_reservation import (
     effective_reservation_demand,
     sync_order_reservation,
 )
+from app.domains.compliance.exceptions import ComplianceValidationError
 
 from models import (
     Client,
@@ -181,6 +187,7 @@ def _validate_equipment_ids_for_client(
     *,
     client_id: int,
     equipment_ids: list[int],
+    client_site_id: int | None = None,
 ) -> None:
     for equipment_id in equipment_ids:
         equipment = db.execute(
@@ -195,6 +202,30 @@ def _validate_equipment_ids_for_client(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Equipamento inválido para este cliente ou inativo.",
             )
+        _validate_equipment_for_order_site(equipment, client_site_id=client_site_id)
+
+
+def _validate_equipment_for_order_site(equipment: Equipment, *, client_site_id: int | None) -> None:
+    equipment_site_id = equipment.client_site_id
+    if client_site_id is None:
+        if equipment_site_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Equipamento pertence a uma filial. Selecione a filial correta na OS.",
+            )
+        return
+    if equipment_site_id != client_site_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Equipamento não pertence à filial selecionada na OS.",
+        )
+
+
+def _validate_order_equipment_matches_site(order: ServiceOrder) -> None:
+    for item in order.service_items:
+        if item.equipment is None:
+            continue
+        _validate_equipment_for_order_site(item.equipment, client_site_id=order.client_site_id)
 
 
 def _reconcile_service_item_equipments(
@@ -242,7 +273,9 @@ def _reconcile_service_item_equipments(
             total_qty = len(unique_eq)
         unique_eq = unique_eq[:total_qty]
 
-        _validate_equipment_ids_for_client(db, client_id=order.client_id, equipment_ids=unique_eq)
+        _validate_equipment_ids_for_client(
+            db, client_id=order.client_id, equipment_ids=unique_eq, client_site_id=order.client_site_id
+        )
 
         total_on_order = int(
             db.execute(
@@ -1148,6 +1181,14 @@ def create_service(
         btu_min=payload.btu_min,
         btu_max=payload.btu_max,
         service_category=(payload.service_category.strip().lower() if payload.service_category else None),
+        code=(payload.code.strip() if payload.code else None),
+        service_type=(payload.service_type.strip().lower() if payload.service_type else None),
+        require_photo=bool(payload.require_photo),
+        icon_key=(payload.icon_key.strip().lower() if payload.icon_key else None),
+        notes=(payload.notes.strip() if payload.notes else None),
+        visible_in_service_order=bool(payload.visible_in_service_order),
+        visible_in_pmoc=bool(payload.visible_in_pmoc),
+        visible_in_contract=bool(payload.visible_in_contract),
         applies_residential=bool(payload.applies_residential),
         applies_commercial=bool(payload.applies_commercial),
         is_active=payload.is_active,
@@ -1346,6 +1387,10 @@ def list_services(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     q: Annotated[str | None, Query(description="Filter by service name or description")] = None,
+    context: Annotated[
+        str | None,
+        Query(description="Filtra por visibilidade: service_order, pmoc ou contract"),
+    ] = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1)] = 20,
 ) -> list[Service]:
@@ -1354,6 +1399,13 @@ def list_services(
     if q:
         term = f"%{q}%"
         query = query.where(or_(Service.name.ilike(term), Service.description.ilike(term)))
+    ctx = (context or "").strip().lower()
+    if ctx == "service_order":
+        query = query.where(Service.visible_in_service_order.is_(True), Service.is_active.is_(True))
+    elif ctx == "pmoc":
+        query = query.where(Service.visible_in_pmoc.is_(True), Service.is_active.is_(True))
+    elif ctx == "contract":
+        query = query.where(Service.visible_in_contract.is_(True), Service.is_active.is_(True))
     return db.execute(query.order_by(Service.name.asc()).offset(skip).limit(limit)).scalars().all()
 
 
@@ -1431,6 +1483,22 @@ def update_service(
         service.btu_max = payload.btu_max
     if "service_category" in payload.model_fields_set:
         service.service_category = (payload.service_category or "").strip().lower() or None
+    if "code" in payload.model_fields_set:
+        service.code = (payload.code or "").strip() or None
+    if "service_type" in payload.model_fields_set:
+        service.service_type = (payload.service_type or "").strip().lower() or None
+    if payload.require_photo is not None:
+        service.require_photo = bool(payload.require_photo)
+    if "icon_key" in payload.model_fields_set:
+        service.icon_key = (payload.icon_key or "").strip().lower() or None
+    if "notes" in payload.model_fields_set:
+        service.notes = (payload.notes or "").strip() or None
+    if payload.visible_in_service_order is not None:
+        service.visible_in_service_order = bool(payload.visible_in_service_order)
+    if payload.visible_in_pmoc is not None:
+        service.visible_in_pmoc = bool(payload.visible_in_pmoc)
+    if payload.visible_in_contract is not None:
+        service.visible_in_contract = bool(payload.visible_in_contract)
     if payload.applies_residential is not None:
         service.applies_residential = bool(payload.applies_residential)
     if payload.applies_commercial is not None:
@@ -1504,6 +1572,8 @@ def _service_order_detail_options(*, for_stock: bool = False):
     order_techs = selectinload(ServiceOrder.technicians).selectinload(ServiceOrderTechnician.technician)
     if for_stock:
         return (
+            selectinload(ServiceOrder.client),
+            selectinload(ServiceOrder.client_site),
             selectinload(ServiceOrder.service_items)
             .selectinload(ServiceOrderServiceItem.service)
             .selectinload(Service.product_inputs)
@@ -1514,6 +1584,8 @@ def _service_order_detail_options(*, for_stock: bool = False):
             order_techs,
         )
     return (
+        selectinload(ServiceOrder.client),
+        selectinload(ServiceOrder.client_site),
         selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.service),
         selectinload(ServiceOrder.service_items).selectinload(ServiceOrderServiceItem.equipment),
         selectinload(ServiceOrder.product_items),
@@ -1998,10 +2070,29 @@ def patch_service_order_status(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Não é possível concluir a OS com serviços sem equipamento vinculado.",
                 )
+
+        # Equipamentos cadastrados sem marca/modelo conhecidos ("a identificar")
+        # precisam ser identificados pelo técnico em campo antes de concluir a
+        # OS — admin pode contornar com force_close, como no compliance digital.
+        pending_tags = sorted(
+            {
+                item.equipment.identificacao or item.equipment.local_instalacao or f"#{item.equipment_id}"
+                for item in order.service_items
+                if is_pending_identification_equipment(item.equipment)
+            }
+        )
+        if pending_tags and not (payload.force_close and current_user.role == UserRole.ADMIN):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Identifique a marca/modelo do(s) equipamento(s) antes de concluir esta OS: "
+                    + ", ".join(pending_tags)
+                ),
+            )
+
         _apply_schedule_notes_to_open_schedules(order, payload.schedule_notes)
         try:
             from app.service_order_closure import assert_can_close_service_order
-            from app.domains.compliance.exceptions import ComplianceValidationError
 
             assert_can_close_service_order(
                 db,
@@ -2037,13 +2128,19 @@ def patch_service_order_status(
         order.actual_duration_minutes = compute_actual_duration_minutes(order, closed_at)
         if order.closed_at is None:
             order.closed_at = closed_at
-        from app.service_order_closure import on_service_order_closed
+        from app.service_order_closure import on_service_order_closed, resolve_os_performed_at
 
+        performed_at = resolve_os_performed_at(
+            order,
+            data_realizacao=payload.data_realizacao,
+            fallback=closed_at,
+        )
         on_service_order_closed(
             db,
             order=order,
             closed_at=closed_at,
             tenant_id=current_user.tenant_id,
+            performed_at=performed_at,
         )
         db.commit()
         try:
@@ -2186,9 +2283,17 @@ def create_service_order(
     ).scalar_one_or_none() is not None
 
     disc = max(0.0, min(float(payload.discount_amount or 0), 9_999_999.0))
+    client_site_id = payload.client_site_id
+    validate_equipment_client_site(
+        db,
+        client_site_id=client_site_id,
+        client_id=payload.client_id,
+        tenant_id=current_user.tenant_id,
+    )
     order = ServiceOrder(
         tenant_id=current_user.tenant_id,
         client_id=payload.client_id,
+        client_site_id=client_site_id,
         title=payload.title,
         description=payload.description,
         discount_amount=disc,
@@ -2217,6 +2322,7 @@ def create_service_order(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Equipamento inválido para este cliente ou inativo.",
                 )
+            _validate_equipment_for_order_site(equipment, client_site_id=client_site_id)
         if ENFORCE_EQUIPMENT_ON_SERVICE_ORDER and client_has_active_equipments and equipment_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -2361,6 +2467,7 @@ def update_service_item_equipment(
                     db,
                     client_id=order.client_id,
                     equipment_ids=[next_equipment_id],
+                    client_site_id=order.client_site_id,
                 )
             if next_equipment_id != service_item.equipment_id:
                 assert_unique_equipment_service(
@@ -2536,6 +2643,15 @@ def patch_service_order_details(
             order.title = title
         if payload.description is not None:
             order.description = payload.description
+        if "client_site_id" in payload.model_fields_set:
+            validate_equipment_client_site(
+                db,
+                client_site_id=payload.client_site_id,
+                client_id=order.client_id,
+                tenant_id=current_user.tenant_id,
+            )
+            order.client_site_id = payload.client_site_id
+            _validate_order_equipment_matches_site(order)
         db.commit()
     except HTTPException:
         db.rollback()
@@ -3115,7 +3231,10 @@ def list_schedules(
     query = (
         select(Schedule)
         .where(Schedule.tenant_id == current_user.tenant_id)
-        .options(selectinload(Schedule.client))
+        .options(
+            selectinload(Schedule.client),
+            selectinload(Schedule.service_order).selectinload(ServiceOrder.client_site),
+        )
         .outerjoin(ServiceOrder, ServiceOrder.id == Schedule.service_order_id)
     )
     if status_filter is not None:
@@ -3142,11 +3261,7 @@ def list_schedules(
         client_name = client.name if client is not None else None
         client_phone = client.phone if client is not None else None
         client_whatsapp = client.whatsapp if client is not None else None
-        if client is not None:
-            parts = [client.address_street, client.address_number, client.address_district, client.address_city]
-            client_address = ", ".join([str(p).strip() for p in parts if p and str(p).strip()])
-        else:
-            client_address = None
+        client_address = resolve_schedule_client_address(client, service_order=row.service_order)
         out.append(
             ScheduleOut.model_validate(
                 {

@@ -22,6 +22,10 @@ function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function isTouchDevice(): boolean {
+  return window.matchMedia("(pointer: coarse)").matches;
+}
+
 export function ChatDrawer({ open, onClose }: Props) {
   const { equipmentId, brand, model, label, source } = useKnowledgeChatContext();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -30,6 +34,7 @@ export function ChatDrawer({ open, onClose }: Props) {
   const [bootstrapped, setBootstrapped] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const contextLabel = [brand, model].filter(Boolean).join(" · ");
   const equipmentLabel = label?.trim() || null;
@@ -47,6 +52,7 @@ export function ChatDrawer({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    if (isTouchDevice()) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
@@ -56,6 +62,35 @@ export function ChatDrawer({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const applyViewport = () => {
+      const root = rootRef.current;
+      if (!root || window.innerWidth > 768) return;
+      root.style.setProperty("--iris-vv-top", `${vv.offsetTop}px`);
+      root.style.setProperty("--iris-vv-height", `${vv.height}px`);
+      if (document.activeElement === inputRef.current) {
+        scrollToBottom();
+      }
+    };
+
+    applyViewport();
+    vv.addEventListener("resize", applyViewport);
+    vv.addEventListener("scroll", applyViewport);
+    return () => {
+      vv.removeEventListener("resize", applyViewport);
+      vv.removeEventListener("scroll", applyViewport);
+      const root = rootRef.current;
+      if (root) {
+        root.style.removeProperty("--iris-vv-top");
+        root.style.removeProperty("--iris-vv-height");
+      }
+    };
+  }, [open, scrollToBottom]);
+
+  useEffect(() => {
+    if (!open || isTouchDevice()) return;
     window.setTimeout(() => inputRef.current?.focus(), 200);
   }, [open]);
 
@@ -130,15 +165,20 @@ export function ChatDrawer({ open, onClose }: Props) {
     }
   }
 
+  function handleInputFocus() {
+    scrollToBottom();
+    window.setTimeout(scrollToBottom, 280);
+  }
+
   if (!open) return null;
 
   return (
-    <div className={styles.root} role="presentation">
+    <div ref={rootRef} className={styles.root} role="presentation">
       <button type="button" className={styles.backdrop} aria-label="Fechar Iris" onClick={onClose} />
       <section className={styles.drawer} role="dialog" aria-modal="true" aria-label="Iris">
         <header className={styles.header}>
           <div className={styles.headerBrand}>
-            <IrisAvatar size="md" />
+            <IrisAvatar size="md" className={styles.headerAvatar} />
             <div className={styles.headerText}>
               <h2 className={styles.title}>Iris</h2>
               <p className={styles.tagline}>{IRIS_TAGLINE}</p>
@@ -203,6 +243,7 @@ export function ChatDrawer({ open, onClose }: Props) {
             disabled={loading}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={handleInputFocus}
             aria-label="Pergunta para a Iris"
           />
           <button

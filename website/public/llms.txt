@@ -1,0 +1,25 @@
+# Climaris
+
+> Software B2B de gestão para empresas de climatização e refrigeração (HVAC): ordens de serviço, agenda, preventiva, PMOC, orçamentos e financeiro.
+
+Climaris é um ERP SaaS focado no setor de climatização. O site institucional descreve o produto; o aplicativo opera em app.climaris.com.br.
+
+## Páginas principais
+
+- [Início](https://climaris.com.br/): visão geral do produto e proposta de valor
+- [Funcionalidades](https://climaris.com.br/funcionalidades): módulos (agenda, preventiva, PMOC, OS, financeiro)
+- [Agenda comercial](https://climaris.com.br/funcionalidades/agenda-comercial): detalhe do módulo de agenda
+- [Gestão empresarial](https://climaris.com.br/funcionalidades/gestao-empresarial): detalhe do módulo de gestão
+- [Planos e preços](https://climaris.com.br/planos): planos SaaS e teste grátis
+- [Contato comercial](https://climaris.com.br/contato): fale com a equipe Climaris
+- [Privacidade e LGPD](https://climaris.com.br/privacidade): política de privacidade
+
+## Produto
+
+- [Criar conta grátis](https://app.climaris.com.br/register?plan=free_30d): registro com trial de 30 dias
+- [Entrar no app](https://app.climaris.com.br/login): acesso ao sistema
+
+## Contato
+
+- E-mail: contato@climaris.com.br
+- Site: https://climaris.com.br

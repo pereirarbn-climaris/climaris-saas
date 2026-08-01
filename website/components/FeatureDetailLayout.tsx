@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import type { FeaturePageContent } from "@/lib/feature-pages";
 import { pageImageUrl } from "@/lib/website-pages";
 import { SiteShell } from "./SiteShell";
-import { cta, registerUrl } from "@/lib/site-config";
+import { cta, publicCtaLabel, registerUrl } from "@/lib/site-config";
 
 type Props = {
   page: FeaturePageContent;
@@ -128,7 +128,7 @@ export function FeatureDetailLayout({ page, images = {} }: Props) {
       <section className="section-container py-16 text-center">
         <h2 className="mb-3 text-2xl font-bold text-text">Pronto para estruturar sua gestão?</h2>
         <p className="mx-auto mb-8 max-w-xl text-text-muted">
-          Teste o Climaris grátis por 30 dias ou agende uma demonstração com nossa equipe.
+          Teste o Climaris grátis por 30 dias ou fale com nossa equipe comercial.
         </p>
         <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link href={registerUrl()} className="btn-solid">
@@ -136,7 +136,7 @@ export function FeatureDetailLayout({ page, images = {} }: Props) {
             <ArrowRight className="ml-2 h-4 w-4" aria-hidden />
           </Link>
           <Link href="/contato" className="btn-outline">
-            {cta.primary}
+            {publicCtaLabel()}
           </Link>
         </div>
       </section>

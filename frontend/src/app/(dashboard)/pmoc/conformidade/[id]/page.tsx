@@ -457,7 +457,7 @@ export default function PmocConformidadePage() {
                 color: "#006FEE",
                 borderColor: "#006FEE",
               }}
-              onClick={() => navigate(`/app/pmoc/${pmocId}`)}
+              onClick={() => navigate("/app/pmoc?aba=gestao")}
             >
               <History className="h-4 w-4" aria-hidden />
               Histórico de Ocorrências

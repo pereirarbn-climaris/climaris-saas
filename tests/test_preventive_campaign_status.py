@@ -18,7 +18,7 @@ def test_parse_due_month_key_from_iso_string():
     key = _parse_due_month_key_from_item_payload(
         {"client_id": 5, "data_proximo_vencimento": "2026-09-15"}
     )
-    assert key == (5, 2026, 9)
+    assert key == (5, None, 2026, 9)
 
 
 def test_enrich_does_not_mark_other_due_month_as_sent(monkeypatch):
@@ -51,7 +51,7 @@ def test_enrich_does_not_mark_other_due_month_as_sent(monkeypatch):
     )
 
     def fake_sent_context(db, *, tenant_id, client_ids, lookback_days=400):
-        return {(42, 2026, 6)}, {(42, 2026, 6): sent_job}
+        return {(42, None, 2026, 6)}, {(42, None, 2026, 6): sent_job}
 
     monkeypatch.setattr(
         "app.preventive_maintenance._preventive_sent_context_by_due_month",
@@ -82,4 +82,4 @@ def test_enrich_does_not_mark_other_due_month_as_sent(monkeypatch):
     assert items[0]["campaign_status"] == "mensagem_enviada"
     assert items[1]["status_mensagem_enviada"] is False
     assert items[1]["campaign_status"] is None
-    assert _preventive_item_due_month_key(september_item) == (42, 2026, 9)
+    assert _preventive_item_due_month_key(september_item) == (42, None, 2026, 9)

@@ -25,6 +25,9 @@ export type ServiceOrderEquipmentCardOut = {
   equipment_identificacao: string | null;
   equipment_tipo: string | null;
   equipment_modelo: string | null;
+  /** true quando o equipamento foi cadastrado sem marca/modelo conhecidos
+   * ("a identificar") — precisa ser identificado antes de concluir a OS. */
+  equipment_pending_identification?: boolean;
   services: ServiceOrderEquipmentServiceOut[];
   total_duration_minutes: number;
 };
@@ -51,10 +54,14 @@ export type ServiceOrderOut = {
   id: number;
   tenant_id: number;
   client_id: number;
+  client_site_id?: number | null;
+  client_site_name?: string | null;
+  service_address?: string | null;
   title: string;
   description: string | null;
   discount_amount?: number;
   status: OrderStatus;
+  opened_at?: string;
   started_at?: string | null;
   finished_at?: string | null;
   completed_at?: string | null;
@@ -79,6 +86,7 @@ export type ServiceOrderEquipmentServiceInput = {
 
 export type ServiceOrderCreatePayload = {
   client_id: number;
+  client_site_id?: number | null;
   title: string;
   description?: string | null;
   technician_ids?: number[];

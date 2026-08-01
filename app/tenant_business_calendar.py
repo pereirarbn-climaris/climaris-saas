@@ -99,6 +99,16 @@ def next_business_day(tenant: Tenant, target_date: date, tenant_holidays: set[da
     return target_date
 
 
+def first_business_day_of_month(
+    tenant: Tenant,
+    year: int,
+    month: int,
+    tenant_holidays: set[date],
+) -> date:
+    """Primeiro dia útil do mês civil (respeita expediente e feriados do tenant)."""
+    return next_business_day(tenant, date(year, month, 1), tenant_holidays)
+
+
 def effective_preventive_reminder_day(
     tenant: Tenant,
     due: date,

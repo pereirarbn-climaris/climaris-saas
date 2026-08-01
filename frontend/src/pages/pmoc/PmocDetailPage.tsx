@@ -348,7 +348,7 @@ export function PmocDetailPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const rows = await listServices({ limit: 200 });
+        const rows = await listServices({ limit: 200, context: "pmoc" });
         if (!cancelled) {
           setCatalogServices(rows.filter((s) => s.is_active));
         }

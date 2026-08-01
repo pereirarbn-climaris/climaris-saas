@@ -117,6 +117,7 @@ export function WhatsappIntegrationPage() {
   const [preventiveLeads, setPreventiveLeads] = useState<PreventiveLead[]>([]);
   const [preventiveSettingsDraft, setPreventiveSettingsDraft] = useState({
     preventive_auto_remind_days_before: 0,
+    preventive_auto_whatsapp_mode: "days_before" as "days_before" | "month_first_business_day",
     preventive_default_template_model_id: "returning",
   });
   const [showHistory, setShowHistory] = useState(false);
@@ -154,6 +155,10 @@ export function WhatsappIntegrationPage() {
         setPreventiveLeads(prevLeads);
         setPreventiveSettingsDraft({
           preventive_auto_remind_days_before: prevSt.preventive_auto_remind_days_before ?? 0,
+          preventive_auto_whatsapp_mode:
+            prevSt.preventive_auto_whatsapp_mode === "month_first_business_day"
+              ? "month_first_business_day"
+              : "days_before",
           preventive_default_template_model_id: tenantDefaultTemplateKind(prevSt),
         });
         setJobs(jb);
@@ -712,6 +717,10 @@ export function WhatsappIntegrationPage() {
                 setPreventiveSettings(next);
                 setPreventiveSettingsDraft({
                   preventive_auto_remind_days_before: next.preventive_auto_remind_days_before ?? 0,
+                  preventive_auto_whatsapp_mode:
+                    next.preventive_auto_whatsapp_mode === "month_first_business_day"
+                      ? "month_first_business_day"
+                      : "days_before",
                   preventive_default_template_model_id: tenantDefaultTemplateKind(next),
                 });
               }}

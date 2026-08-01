@@ -6,7 +6,7 @@ import { Menu, X } from "lucide-react";
 import { useState } from "react";
 import { BrandMark } from "./BrandMark";
 import { useLeadModal } from "@/context/LeadModalContext";
-import { cta, loginUrl, registerUrl, routes } from "@/lib/site-config";
+import { cta, demoSchedulingEnabled, loginUrl, registerUrl, routes } from "@/lib/site-config";
 
 const extraRoutes = [{ path: "/planos", label: "Planos" }] as const;
 
@@ -51,13 +51,19 @@ export function Header() {
           <Link href={registerUrl()} className="btn-outline !min-h-10 !px-4">
             {cta.freeTrial}
           </Link>
-          <button
-            type="button"
-            className="btn-solid !min-h-10 !px-4"
-            onClick={() => openLeadModal({ intent: "demo" })}
-          >
-            {cta.primary}
-          </button>
+          {demoSchedulingEnabled ? (
+            <button
+              type="button"
+              className="btn-solid !min-h-10 !px-4"
+              onClick={() => openLeadModal({ intent: "demo" })}
+            >
+              {cta.primary}
+            </button>
+          ) : (
+            <Link href="/contato" className="btn-solid !min-h-10 !px-4">
+              {cta.contact}
+            </Link>
+          )}
         </div>
 
         <button
@@ -97,16 +103,26 @@ export function Header() {
             >
               {cta.freeTrial}
             </Link>
-            <button
-              type="button"
-              className="btn-solid mt-2 w-full"
-              onClick={() => {
-                setOpen(false);
-                openLeadModal({ intent: "demo" });
-              }}
-            >
-              {cta.primary}
-            </button>
+            {demoSchedulingEnabled ? (
+              <button
+                type="button"
+                className="btn-solid mt-2 w-full"
+                onClick={() => {
+                  setOpen(false);
+                  openLeadModal({ intent: "demo" });
+                }}
+              >
+                {cta.primary}
+              </button>
+            ) : (
+              <Link
+                href="/contato"
+                className="btn-solid mt-2 w-full"
+                onClick={() => setOpen(false)}
+              >
+                {cta.contact}
+              </Link>
+            )}
           </nav>
         </div>
       ) : null}

@@ -11,7 +11,7 @@ export function ServiceOrderForceCloseAdmin({ checked, onChange }: ServiceOrderF
     <div className={styles.wrap}>
       <label className={styles.label}>
         <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-        Forçar encerramento sem compliance
+        Forçar encerramento (equipamento a identificar ou compliance pendente)
       </label>
       {checked ? (
         <p className={styles.warning}>Atenção: esta ação será registrada no log de auditoria.</p>

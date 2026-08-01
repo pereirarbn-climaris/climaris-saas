@@ -20,9 +20,14 @@ export {
 
 export {
   ClientEquipmentManager,
+  AddEquipmentModal,
   type ClientEquipmentManagerProps,
+  type AddEquipmentModalProps,
+  type CatalogBrand,
+  type CatalogModel,
   type EquipmentCatalog,
   type EquipmentItem,
+  type EquipmentStatus,
   type NewEquipmentData,
   type EquipmentCategoryPickerOption,
 } from "./ClientEquipmentManager";

@@ -326,6 +326,17 @@
   border: 1px solid #fecaca;
 }
 
+.formAlertWarn {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
 .section {
   display: flex;
   flex-direction: column;

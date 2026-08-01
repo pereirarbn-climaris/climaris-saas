@@ -18,6 +18,8 @@ Pillow>=10.0.0
 langchain-text-splitters>=0.3.0
 pymupdf>=1.24.0
 pgvector>=0.3.0
+# OCR de manuais escaneados (requer binário tesseract-ocr + tesseract-ocr-por no SO)
+pytesseract>=0.3.10
 
 # Billing / marketplace (Stripe)
 stripe>=15.0.0

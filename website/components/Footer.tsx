@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Building2, MapPin, Mail, Phone } from "lucide-react";
 import { BrandMark } from "./BrandMark";
 import { useSiteSettings } from "./SiteSettingsProvider";
-import { cta, loginUrl, registerUrl, siteConfig } from "@/lib/site-config";
+import { cta, loginUrl, publicCtaLabel, registerUrl, siteConfig } from "@/lib/site-config";
 
 function formatCnpj(cnpj: string): string {
   const digits = cnpj.replace(/\D/g, "");
@@ -55,7 +55,7 @@ export function Footer() {
             </li>
             <li>
               <Link href="/contato" className="hover:text-primary">
-                {cta.primary}
+                {publicCtaLabel()}
               </Link>
             </li>
             <li>

@@ -41,11 +41,12 @@ def _worker_loop() -> None:
             try:
                 prev = dispatch_preventive_due_today()
                 logger.info(
-                    "preventive maintenance cycle: checked=%s sent=%s (due=%s advance=%s)",
+                    "preventive maintenance cycle: checked=%s sent=%s (due=%s advance=%s month=%s)",
                     prev.get("checked"),
                     prev.get("sent"),
                     prev.get("sent_due"),
                     prev.get("sent_advance"),
+                    prev.get("sent_month"),
                 )
             except Exception:
                 logger.exception("preventive maintenance worker failed")

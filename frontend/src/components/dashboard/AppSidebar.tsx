@@ -11,12 +11,15 @@ import {
   NavIconContact,
   NavIconFileQuote,
   NavIconHome,
+  NavIconLayoutDashboard,
   NavIconLogOut,
   NavIconPackage,
   NavIconShoppingBag,
+  NavIconStore,
   NavIconPmoc,
   NavIconPuzzle,
   NavIconSettings,
+  NavIconUsers,
   NavIconWallet,
   NavIconWrench,
 } from "./NavIcons";
@@ -139,6 +142,9 @@ export function AppSidebar({
           <Sidebar.Item to="/app" end title="Início" icon={<NavIconHome />}>
             Início
           </Sidebar.Item>
+          <Sidebar.Item to="/app" title="Dashboard" icon={<NavIconLayoutDashboard />}>
+            Dashboard
+          </Sidebar.Item>
         </Sidebar.Group>
 
         <Sidebar.Group label="Operação">
@@ -155,21 +161,18 @@ export function AppSidebar({
               Compras
             </Sidebar.Item>
           ) : null}
-          <Sidebar.Item to="/app/services" title="Serviços" icon={<NavIconWrench />}>
-            Serviços
-          </Sidebar.Item>
-          <Sidebar.Item to="/app/service-orders" title="Ordens de serviço" icon={<NavIconClipboard />}>
-            Ordens de serviço
-          </Sidebar.Item>
-          <Sidebar.Item to="/app/agenda" title="Agenda dos tecnicos" icon={<NavIconCalendar />}>
-            Agenda
+          <Sidebar.Item to="/app/catalogo" title="Equipamentos" icon={<NavIconStore />}>
+            Equipamentos
           </Sidebar.Item>
           <Sidebar.Item
             to="/app/preventive-maintenance"
-            title="Gestão preventiva — manutenções a vencer"
+            title="Atividades — Gestão preventiva, manutenções a vencer"
             icon={<NavIconAirCompliance />}
           >
-            Gestão preventiva
+            Atividades
+          </Sidebar.Item>
+          <Sidebar.Item to="/app/services" title="Serviços" icon={<NavIconWrench />}>
+            Serviços
           </Sidebar.Item>
           <Sidebar.Item
             to="/app/pmoc"
@@ -178,13 +181,19 @@ export function AppSidebar({
           >
             PMOC
           </Sidebar.Item>
+          <Sidebar.Item to="/app/service-orders" title="Ordens de serviço" icon={<NavIconClipboard />}>
+            Ordens de serviço
+          </Sidebar.Item>
+          <Sidebar.Item to="/app/agenda" title="Agenda dos técnicos" icon={<NavIconCalendar />}>
+            Agenda
+          </Sidebar.Item>
           <Sidebar.Item to="/app/qrcodes" title="Gestão de etiquetas QR" icon={<NavIconClipboard />}>
             Etiquetas QR
           </Sidebar.Item>
         </Sidebar.Group>
 
         <Sidebar.Group label="Comercial">
-          <Sidebar.Item to="/app/budgets" title="Orcamentos" icon={<NavIconFileQuote />}>
+          <Sidebar.Item to="/app/budgets" title="Orçamentos" icon={<NavIconFileQuote />}>
             Orçamentos
           </Sidebar.Item>
           <Sidebar.Item
@@ -235,6 +244,28 @@ export function AppSidebar({
             </Sidebar.Item>
           ) : null}
         </Sidebar.Group>
+
+        <Sidebar.Group label="Configurações">
+          <Sidebar.Item to="/app/conta" title="Configurações" icon={<NavIconSettings />}>
+            Configurações
+          </Sidebar.Item>
+          {user?.role === "admin" ? (
+            <Sidebar.Item to="/app/admin" title="Usuários" icon={<NavIconUsers />}>
+              Usuários
+            </Sidebar.Item>
+          ) : null}
+        </Sidebar.Group>
+
+        <Sidebar.Footer>
+          <a
+            href="https://climaris.com.br/contato"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.sidebarHelpBtn}
+          >
+            Central de ajuda
+          </a>
+        </Sidebar.Footer>
 
         <div className={styles.sidebarMobileOnly} role="region" aria-label="Conta e sessão">
           {user?.must_change_password ? (

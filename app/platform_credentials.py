@@ -12,6 +12,7 @@ from models import PlatformApiCredential
 
 CNPJA_PROVIDER_SLUG = "cnpja"
 CLAUDE_PROVIDER_SLUG = "claude"
+OPENAI_PROVIDER_SLUG = "openai"
 GOOGLE_OAUTH_PROVIDER_SLUG = "google-oauth"
 WHATSAPP_OFFICIAL_PROVIDER_SLUG = "whatsapp-official"
 
@@ -52,6 +53,19 @@ def resolve_claude_api_key(db: Session | None = None) -> str | None:
         return None
     row = db.execute(
         select(PlatformApiCredential).where(PlatformApiCredential.provider_slug == CLAUDE_PROVIDER_SLUG)
+    ).scalar_one_or_none()
+    return _decrypt_credential_secret(row)
+
+
+def resolve_openai_api_key(db: Session | None = None) -> str | None:
+    """OPENAI_API_KEY no ambiente tem prioridade; senão usa credencial `openai` da plataforma."""
+    env_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    if db is None:
+        return None
+    row = db.execute(
+        select(PlatformApiCredential).where(PlatformApiCredential.provider_slug == OPENAI_PROVIDER_SLUG)
     ).scalar_one_or_none()
     return _decrypt_credential_secret(row)
 

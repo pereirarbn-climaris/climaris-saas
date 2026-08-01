@@ -47,4 +47,5 @@ export type EquipmentServicePreventiveScheduleOut = {
   pending_service_order_id?: number | null;
   awaiting_completion?: boolean;
   has_override: boolean;
+  is_active?: boolean;
 };

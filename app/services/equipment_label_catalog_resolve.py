@@ -42,9 +42,10 @@ def _apply_catalog_fields(
     model_fallback: str | None = None,
 ) -> None:
     definitions = parse_field_definitions(getattr(category, "field_definitions", None) or [])
+    known_field_keys = {d.key for d in active_field_definitions(definitions)}
     merged_technical: dict = {}
     if technical_data is not None:
-        payload_for_validation, extra_technical = extract_extra_technical_fields(technical_data)
+        payload_for_validation, extra_technical = extract_extra_technical_fields(technical_data, known_field_keys)
         try:
             merged_technical = validate_technical_data(definitions, payload_for_validation)
         except ValueError as exc:

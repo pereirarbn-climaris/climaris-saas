@@ -326,6 +326,8 @@ class Tenant(Base):
     # 0 = só lembrete no dia do vencimento; N>0 = também envia quando faltam N dias (calendário do tenant.timezone).
     preventive_auto_remind_days_before: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     preventive_auto_whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # days_before | month_first_business_day
+    preventive_auto_whatsapp_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="days_before")
     stripe_customer_id: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True, index=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True, index=True)
     subscription_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -1202,6 +1204,9 @@ class Client(Base):
     trade_name: Mapped[str | None] = mapped_column(String(150))
     # Pessoa de contato na empresa (PJ); exibido na lista de clientes.
     contact_person_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    # Documentos complementares de Pessoa Física.
+    rg: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Inscrição estadual do destinatário; pode ser "ISENTO" quando aplicável.
     state_registration: Mapped[str | None] = mapped_column(String(20))
     # NFe: indicador_inscricao_estadual_destinatario — 1 contribuinte, 2 isento, 9 não contribuinte.
@@ -1232,6 +1237,9 @@ class Client(Base):
     legal_nature: Mapped[str | None] = mapped_column(String(150), nullable=True)
     registration_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
     founded_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Observações livres e tags/categorias (ex.: "Contrato PMOC", "Cliente recorrente").
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     logo_s3_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     logo_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -1264,10 +1272,19 @@ class Client(Base):
     sites: Mapped[list["ClientSite"]] = relationship(
         back_populates="client", cascade="all, delete-orphan", order_by="ClientSite.name.asc()"
     )
+    addresses: Mapped[list["ClientAddress"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan", order_by="ClientAddress.created_at.asc()"
+    )
+    contacts: Mapped[list["ClientContact"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan", order_by="ClientContact.id.asc()"
+    )
+    contracts: Mapped[list["ClientContract"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan", order_by="ClientContract.created_at.desc()"
+    )
 
 
 class ClientSite(Base):
-    """Filial, obra ou unidade do cliente (endereço de instalação distinto da matriz)."""
+    """Unidade / filial / matriz / local de instalação do cliente (Unidades e Filiais)."""
 
     __tablename__ = "client_sites"
 
@@ -1275,8 +1292,20 @@ class ClientSite(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    # matriz | filial | unidade_operacional | local_instalacao | sem_cnpj
+    site_type: Mapped[str] = mapped_column(String(30), nullable=False, server_default="filial")
+    nickname: Mapped[str | None] = mapped_column(String(150), nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    responsible_role: Mapped[str | None] = mapped_column(String(100), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # CNPJ/CPF próprio da unidade (quando `has_own_document` é verdadeiro).
+    has_own_document: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    document: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    trade_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    state_registration: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    municipal_registration: Mapped[str | None] = mapped_column(String(20), nullable=True)
     street: Mapped[str | None] = mapped_column(String(255), nullable=True)
     number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     complement: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -1284,6 +1313,13 @@ class ClientSite(Base):
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(2), nullable=True)
     cep: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    reference_point: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    has_equipment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    participates_pmoc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    use_main_contacts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    use_main_billing_address: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -1292,6 +1328,39 @@ class ClientSite(Base):
     client: Mapped["Client"] = relationship(back_populates="sites")
     equipments: Mapped[list["Equipment"]] = relationship(back_populates="client_site")
     catalog_equipments: Mapped[list["ClientEquipment"]] = relationship(back_populates="client_site")
+
+
+class ClientAddress(Base):
+    __tablename__ = "client_addresses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    address_type: Mapped[str] = mapped_column(String(20), nullable=False, default="outros")
+    street: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    complement: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    neighborhood: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    cep: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    reference_point: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_principal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    use_for_billing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    use_for_pmoc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    use_for_service_orders: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    use_for_correspondence: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship()
+    client: Mapped["Client"] = relationship(back_populates="addresses")
+    client_site: Mapped["ClientSite | None"] = relationship()
 
 
 class ClientAuditLog(Base):
@@ -1309,6 +1378,177 @@ class ClientAuditLog(Base):
 
     client: Mapped["Client"] = relationship(back_populates="audit_logs")
     user: Mapped["User | None"] = relationship()
+
+
+class ClientContact(Base):
+    """Contato adicional do cliente (multi-contato: nome, cargo, preferências de notificação)."""
+
+    __tablename__ = "client_contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False, default="outros")
+    role: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    receives_service_orders: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    receives_pmoc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    receives_financial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    receives_contracts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    receives_whatsapp_notifications: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    receives_automatic_emails: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_principal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship()
+    client: Mapped["Client"] = relationship(back_populates="contacts")
+    client_site: Mapped["ClientSite | None"] = relationship()
+
+
+class ClientContract(Base):
+    """Contrato comercial do cliente (tabela criada em 20260708_0145; modelo adicionado depois)."""
+
+    __tablename__ = "client_contracts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "contract_number", name="uq_client_contracts_tenant_number"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_sites.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    budget_id: Mapped[int | None] = mapped_column(
+        ForeignKey("budgets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    pmoc_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pmoc_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    responsible_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    contract_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    display_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    contract_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    contract_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False, default="sob_demanda")
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    recurrence: Mapped[str] = mapped_column(String(20), nullable=False, default="annual")
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    value_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    due_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    adjustment_index: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    adjustment_period: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    late_fee_percent: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
+    interest_percent: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
+    auto_renewal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expiry_notice_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    coverage_location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    billing_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    form_category_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped["Tenant"] = relationship()
+    client: Mapped["Client"] = relationship(back_populates="contracts")
+    contract_equipments: Mapped[list["ClientContractEquipment"]] = relationship(
+        back_populates="client_contract",
+        cascade="all, delete-orphan",
+        order_by="ClientContractEquipment.sort_order",
+    )
+    contract_services: Mapped[list["ClientContractService"]] = relationship(
+        back_populates="client_contract",
+        cascade="all, delete-orphan",
+        order_by="ClientContractService.sort_order",
+    )
+    attachments: Mapped[list["ClientContractAttachment"]] = relationship(
+        back_populates="client_contract",
+        cascade="all, delete-orphan",
+        order_by="ClientContractAttachment.created_at",
+    )
+
+
+class ClientContractEquipment(Base):
+    """Equipamentos do catálogo do cliente vinculados ao contrato comercial."""
+
+    __tablename__ = "client_contract_equipments"
+    __table_args__ = (
+        UniqueConstraint("client_contract_id", "client_equipment_id", name="uq_client_contract_equipment"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_contract_id: Mapped[int] = mapped_column(
+        ForeignKey("client_contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    client_equipment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("client_equipments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    client_contract: Mapped["ClientContract"] = relationship(back_populates="contract_equipments")
+    client_equipment: Mapped["ClientEquipment"] = relationship()
+
+
+class ClientContractService(Base):
+    """Serviços cobertos pelo contrato (lista livre / catálogo de opções do formulário)."""
+
+    __tablename__ = "client_contract_services"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_contract_id: Mapped[int] = mapped_column(
+        ForeignKey("client_contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    client_contract: Mapped["ClientContract"] = relationship(back_populates="contract_services")
+
+
+class ClientContractAttachment(Base):
+    """Documento anexo do contrato (PDF/JPG/PNG) armazenado no S3."""
+
+    __tablename__ = "client_contract_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_contract_id: Mapped[int] = mapped_column(
+        ForeignKey("client_contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    file_url: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    client_contract: Mapped["ClientContract"] = relationship(back_populates="attachments")
 
 
 class Equipment(Base):
@@ -1552,6 +1792,13 @@ class ManualIngestionStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ManualExtractionStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class EquipmentManual(Base):
     """Manual técnico em PDF no S3 — pode ser compartilhado por vários modelos do catálogo."""
 
@@ -1566,6 +1813,14 @@ class EquipmentManual(Base):
     )
     ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Extração estruturada via IA: identificação de equipamento(s) + specs, para
+    # pré-preencher o cadastro no catálogo (revisão humana antes de salvar).
+    extraction_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ManualExtractionStatus.PENDING.value
+    )
+    extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_result: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1576,6 +1831,31 @@ class EquipmentManual(Base):
     manual_chunks: Mapped[list["ManualChunk"]] = relationship(
         back_populates="manual", cascade="all, delete-orphan"
     )
+    error_codes: Mapped[list["EquipmentManualErrorCode"]] = relationship(
+        back_populates="manual", cascade="all, delete-orphan"
+    )
+
+
+class EquipmentManualErrorCode(Base):
+    """Código de erro/falha extraído do manual (tabela de diagnóstico) — consulta rápida da Iris em campo."""
+
+    __tablename__ = "equipment_manual_error_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    manual_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_manuals.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    code: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    probable_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommended_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pagina_origem: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship()
+    manual: Mapped["EquipmentManual"] = relationship(back_populates="error_codes")
 
 
 class ManualChunk(Base):
@@ -1665,6 +1945,11 @@ class ClientEquipment(Base):
     tag: Mapped[str] = mapped_column(String(120), nullable=False)
     installation_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
     installation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Ano de fabricação do aparelho (não confundir com installation_date, que é quando foi instalado).
+    manufacture_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Carga de refrigerante em kg — usada em relatórios de PMOC/NR quando o técnico mede/confirma em campo.
+    gas_charge_kg: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     legacy_equipment_id: Mapped[int | None] = mapped_column(
         ForeignKey("equipments.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2191,6 +2476,14 @@ class Product(Base):
         reserved = float(self.quantity_reserved)
         return max(0.0, physical - reserved)
 
+    @property
+    def primary_image_url(self) -> str | None:
+        for image in self.images:
+            url = (image.public_url or "").strip()
+            if url:
+                return url
+        return None
+
 
 class ProductImage(Base):
     """Imagens do produto (URLs públicas S3 para exibição e envio ao Mercado Livre)."""
@@ -2304,6 +2597,14 @@ class Service(Base):
     preventive_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     preventive_interval_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     preventive_interval_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    service_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    require_photo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    icon_key: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    visible_in_service_order: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    visible_in_pmoc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    visible_in_contract: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -2502,6 +2803,9 @@ class ServiceOrder(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    client_site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     source_budget_id: Mapped[int | None] = mapped_column(
         ForeignKey("budgets.id", ondelete="SET NULL"), nullable=True, unique=True, index=True
     )
@@ -2523,6 +2827,7 @@ class ServiceOrder(Base):
 
     tenant: Mapped["Tenant"] = relationship(back_populates="service_orders")
     client: Mapped["Client"] = relationship(back_populates="service_orders")
+    client_site: Mapped["ClientSite | None"] = relationship()
     technicians: Mapped[list["ServiceOrderTechnician"]] = relationship(
         back_populates="service_order", cascade="all, delete-orphan"
     )
@@ -2684,6 +2989,9 @@ class Budget(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    client_site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[BudgetStatus] = mapped_column(
@@ -2705,6 +3013,7 @@ class Budget(Base):
 
     tenant: Mapped["Tenant"] = relationship(back_populates="budgets")
     client: Mapped["Client"] = relationship(back_populates="budgets")
+    client_site: Mapped["ClientSite | None"] = relationship()
     service_items: Mapped[list["BudgetServiceItem"]] = relationship(
         back_populates="budget", cascade="all, delete-orphan"
     )
@@ -3779,3 +4088,441 @@ class TechnicianUnavailability(Base):
     reason: Mapped[str | None] = mapped_column(String(255))
 
     technician: Mapped["User"] = relationship(back_populates="unavailable_blocks")
+
+
+# --- Integration Hub (migrations 20260627_0131–0133) ---
+
+
+class ManufacturerPartnerStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class EquipmentAssetWarrantyStatus(str, enum.Enum):
+    UNKNOWN = "unknown"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    VOID = "void"
+
+
+class DigitalWorkOrderValidationStatus(str, enum.Enum):
+    DRAFT = "draft"
+    INCOMPLETE = "incomplete"
+    BLOCKED = "blocked"
+    READY = "ready"
+
+
+class DigitalWorkOrderSyncStatus(str, enum.Enum):
+    PENDING = "pending"
+    SYNCED = "synced"
+
+
+class DigitalWorkOrderEvidenceType(str, enum.Enum):
+    PHOTO = "photo"
+    VIDEO = "video"
+    DOCUMENT = "document"
+
+
+class TechnicianCertificationStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class IntegrationProtocol(str, enum.Enum):
+    JSON_REST = "json_rest"
+    XML_EDI = "xml_edi"
+
+
+class IntegrationAuthMode(str, enum.Enum):
+    NONE = "none"
+    API_KEY = "api_key"
+    MTLS = "mtls"
+    OAUTH2 = "oauth2"
+
+
+class ManufacturerPartner(Base):
+    __tablename__ = "manufacturer_partners"
+    __table_args__ = (UniqueConstraint("tenant_id", "code", name="uq_manufacturer_partner_tenant_code"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[ManufacturerPartnerStatus] = mapped_column(
+        Enum(
+            ManufacturerPartnerStatus,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=ManufacturerPartnerStatus.PENDING,
+    )
+    contact_email: Mapped[str | None] = mapped_column(String(254))
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class EquipmentAsset(Base):
+    __tablename__ = "equipment_assets"
+    __table_args__ = (UniqueConstraint("tenant_id", "serial_number", name="uq_equipment_asset_tenant_serial"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    manufacturer_partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("manufacturer_partners.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    legacy_equipment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("equipments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    client_equipment_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("client_equipments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    equipment_catalog_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_catalog.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    serial_number: Mapped[str] = mapped_column(String(120), nullable=False)
+    model_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    brand: Mapped[str | None] = mapped_column(String(120))
+    installation_date: Mapped[date | None] = mapped_column(Date)
+    warranty_status: Mapped[EquipmentAssetWarrantyStatus] = mapped_column(
+        Enum(
+            EquipmentAssetWarrantyStatus,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=24,
+        ),
+        nullable=False,
+        default=EquipmentAssetWarrantyStatus.UNKNOWN,
+    )
+    manufacturer_reference: Mapped[str | None] = mapped_column(String(120))
+    technical_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    warranty_records: Mapped[list["EquipmentWarrantyRecord"]] = relationship(
+        back_populates="equipment_asset", cascade="all, delete-orphan"
+    )
+
+
+class EquipmentWarrantyRecord(Base):
+    __tablename__ = "equipment_warranty_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    equipment_asset_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    warranty_type: Mapped[str] = mapped_column(String(64), nullable=False, default="factory")
+    starts_at: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_at: Mapped[date | None] = mapped_column(Date)
+    manufacturer_reference: Mapped[str | None] = mapped_column(String(120))
+    notes: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    equipment_asset: Mapped["EquipmentAsset"] = relationship(back_populates="warranty_records")
+
+
+class DigitalWorkOrder(Base):
+    __tablename__ = "digital_work_orders"
+    __table_args__ = (UniqueConstraint("service_order_id", name="uq_digital_work_order_service_order"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_order_id: Mapped[int] = mapped_column(
+        ForeignKey("service_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    equipment_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    compliance_schema_version: Mapped[str] = mapped_column(String(32), nullable=False, default="1.0")
+    validation_status: Mapped[DigitalWorkOrderValidationStatus] = mapped_column(
+        Enum(
+            DigitalWorkOrderValidationStatus,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=DigitalWorkOrderValidationStatus.DRAFT,
+    )
+    required_fields_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    validation_errors: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    offline_client_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    service_order: Mapped["ServiceOrder"] = relationship()
+    measurements: Mapped[list["DigitalWorkOrderMeasurement"]] = relationship(
+        back_populates="digital_work_order", cascade="all, delete-orphan"
+    )
+    evidences: Mapped[list["DigitalWorkOrderEvidence"]] = relationship(
+        back_populates="digital_work_order", cascade="all, delete-orphan"
+    )
+
+
+class DigitalWorkOrderMeasurement(Base):
+    __tablename__ = "digital_work_order_measurements"
+    __table_args__ = (
+        UniqueConstraint(
+            "digital_work_order_id",
+            "metric_key",
+            name="uq_digital_work_order_measurement_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    digital_work_order_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("digital_work_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    metric_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    value_numeric: Mapped[float | None] = mapped_column(Numeric(14, 4))
+    value_text: Mapped[str | None] = mapped_column(String(120))
+    unit: Mapped[str | None] = mapped_column(String(24))
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    recorded_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    recorded_offline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sync_status: Mapped[DigitalWorkOrderSyncStatus] = mapped_column(
+        Enum(
+            DigitalWorkOrderSyncStatus,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=DigitalWorkOrderSyncStatus.SYNCED,
+    )
+
+    digital_work_order: Mapped["DigitalWorkOrder"] = relationship(back_populates="measurements")
+
+
+class DigitalWorkOrderEvidence(Base):
+    __tablename__ = "digital_work_order_evidences"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    digital_work_order_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("digital_work_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    evidence_type: Mapped[DigitalWorkOrderEvidenceType] = mapped_column(
+        Enum(
+            DigitalWorkOrderEvidenceType,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=DigitalWorkOrderEvidenceType.PHOTO,
+    )
+    evidence_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(512))
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    latitude: Mapped[float | None] = mapped_column(Numeric(10, 7))
+    longitude: Mapped[float | None] = mapped_column(Numeric(10, 7))
+    accuracy_meters: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    captured_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    captured_offline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sync_status: Mapped[DigitalWorkOrderSyncStatus] = mapped_column(
+        Enum(
+            DigitalWorkOrderSyncStatus,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=DigitalWorkOrderSyncStatus.SYNCED,
+    )
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+
+    digital_work_order: Mapped["DigitalWorkOrder"] = relationship(back_populates="evidences")
+
+
+class SyncAuditLog(Base):
+    __tablename__ = "sync_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    digital_work_order_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("digital_work_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    client_last_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    server_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    sync_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    resolution: Mapped[str] = mapped_column(String(32), nullable=False, default="field_priority")
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PartsCatalogEntry(Base):
+    __tablename__ = "parts_catalog_entries"
+    __table_args__ = (UniqueConstraint("tenant_id", "sku", name="uq_parts_catalog_entry_tenant_sku"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    manufacturer_partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("manufacturer_partners.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    sku: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    unit: Mapped[str | None] = mapped_column(String(16))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    compatibilities: Mapped[list["PartsCatalogCompatibility"]] = relationship(
+        back_populates="parts_catalog_entry", cascade="all, delete-orphan"
+    )
+
+
+class PartsCatalogCompatibility(Base):
+    __tablename__ = "parts_catalog_compatibilities"
+    __table_args__ = (
+        UniqueConstraint(
+            "parts_catalog_entry_id",
+            "equipment_catalog_id",
+            "model_code",
+            name="uq_parts_catalog_compat_entry_catalog_model",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    parts_catalog_entry_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("parts_catalog_entries.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    equipment_catalog_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_catalog.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    brand: Mapped[str | None] = mapped_column(String(120))
+    model_code: Mapped[str | None] = mapped_column(String(120))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    parts_catalog_entry: Mapped["PartsCatalogEntry"] = relationship(back_populates="compatibilities")
+
+
+class TechnicianCertification(Base):
+    __tablename__ = "technician_certifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    technician_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    manufacturer_partner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("manufacturer_partners.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    certification_code: Mapped[str | None] = mapped_column(String(80))
+    status: Mapped[TechnicianCertificationStatus] = mapped_column(
+        Enum(
+            TechnicianCertificationStatus,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=TechnicianCertificationStatus.PENDING,
+    )
+    issued_at: Mapped[date | None] = mapped_column(Date)
+    expires_at: Mapped[date | None] = mapped_column(Date, index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    homologated_models: Mapped[list["TechnicianCertificationModel"]] = relationship(
+        back_populates="certification", cascade="all, delete-orphan"
+    )
+
+
+class TechnicianCertificationModel(Base):
+    __tablename__ = "technician_certification_models"
+    __table_args__ = (
+        UniqueConstraint(
+            "certification_id",
+            "equipment_catalog_id",
+            "model_code",
+            name="uq_technician_cert_model_cert_catalog_model",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    certification_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("technician_certifications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    equipment_catalog_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("equipment_catalog.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    brand: Mapped[str | None] = mapped_column(String(120))
+    model_code: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    certification: Mapped["TechnicianCertification"] = relationship(back_populates="homologated_models")
+
+
+class ManufacturerIntegrationProfile(Base):
+    __tablename__ = "manufacturer_integration_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "manufacturer_partner_id",
+            "profile_code",
+            name="uq_manufacturer_integration_profile_partner_code",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    manufacturer_partner_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("manufacturer_partners.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    profile_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    protocol: Mapped[IntegrationProtocol] = mapped_column(
+        Enum(
+            IntegrationProtocol,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=IntegrationProtocol.JSON_REST,
+    )
+    auth_mode: Mapped[IntegrationAuthMode] = mapped_column(
+        Enum(
+            IntegrationAuthMode,
+            values_callable=lambda items: [item.value for item in items],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=IntegrationAuthMode.NONE,
+    )
+    base_url: Mapped[str | None] = mapped_column(String(500))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    config_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    secrets_ref: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

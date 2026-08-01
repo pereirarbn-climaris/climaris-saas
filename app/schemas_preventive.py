@@ -61,6 +61,7 @@ class PreventiveSettingsOut(BaseModel):
     preventive_ai_message_fidelity: Literal["faithful", "balanced"] = "faithful"
     preventive_auto_remind_days_before: int = Field(default=0, ge=0, le=90)
     preventive_auto_whatsapp_enabled: bool = False
+    preventive_auto_whatsapp_mode: Literal["days_before", "month_first_business_day"] = "days_before"
     preventive_auto_schedule_enabled: bool = False
     preventive_action_buttons_enabled: bool = False
     preventive_button_schedule_enabled: bool = True
@@ -90,6 +91,7 @@ class PreventiveSettingsPatch(BaseModel):
     preventive_ai_message_fidelity: Literal["faithful", "balanced"] | None = None
     preventive_auto_remind_days_before: int | None = Field(default=None, ge=0, le=90)
     preventive_auto_whatsapp_enabled: bool | None = None
+    preventive_auto_whatsapp_mode: Literal["days_before", "month_first_business_day"] | None = None
     preventive_auto_schedule_enabled: bool | None = None
     preventive_action_buttons_enabled: bool | None = None
     preventive_button_schedule_enabled: bool | None = None
@@ -134,6 +136,10 @@ class PreventiveItemOut(BaseModel):
     is_manual_reminder: bool = False
     client_id: int
     client_name: str
+    client_site_id: int | None = None
+    client_site_name: str | None = None
+    client_site_type: str | None = None
+    client_site_label: str | None = None
     service_id: int = 0
     service_name: str
     equipment_id: int | None = None
@@ -164,6 +170,10 @@ class PreventiveItemOut(BaseModel):
 class PreventiveClientGroupOut(BaseModel):
     client_id: int
     client_name: str
+    client_site_id: int | None = None
+    client_site_name: str | None = None
+    client_site_type: str | None = None
+    client_site_label: str | None = None
     whatsapp_valido: bool = False
     whatsapp_destino: str | None = None
     equipments: list[PreventiveItemOut] = Field(default_factory=list)
@@ -222,6 +232,7 @@ class EquipmentServicePreventiveScheduleOut(BaseModel):
     pending_service_order_id: int | None = None
     awaiting_completion: bool = False
     has_override: bool = False
+    is_active: bool = True
 
 
 class EquipmentServicePreventiveScheduleListOut(BaseModel):
@@ -231,6 +242,10 @@ class EquipmentServicePreventiveScheduleListOut(BaseModel):
 class EquipmentServicePreventiveOverrideUpsert(BaseModel):
     interval_value: int = Field(ge=1, le=3650)
     interval_type: Literal["days", "months", "years"]
+
+
+class EquipmentServicePreventiveActiveUpdate(BaseModel):
+    is_active: bool
 
 
 class PreventivePreviewOut(BaseModel):
@@ -247,6 +262,7 @@ class PreventiveSendRequest(BaseModel):
     historico_servico_id: int | None = Field(default=None, ge=1)
     rule_id: int | None = Field(default=None, ge=1)
     client_id: int | None = Field(default=None, ge=1)
+    client_site_id: int | None = Field(default=None, ge=1)
     year: int | None = Field(default=None, ge=2000, le=2100)
     month: int | None = Field(default=None, ge=1, le=12)
     window_days: int | None = Field(default=None, ge=1, le=400)

@@ -4,24 +4,13 @@ export type IrisAvatarSize = "xs" | "sm" | "md" | "lg";
 
 type Props = {
   size?: IrisAvatarSize;
-  variant?: "full" | "face";
   className?: string;
 };
 
-export function IrisAvatar({ size = "md", variant = "face", className }: Props) {
+export function IrisAvatar({ size = "md", className }: Props) {
   return (
-    <span
-      className={[
-        styles.wrap,
-        styles[`size_${size}`],
-        variant === "face" ? styles.faceCrop : styles.full,
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      aria-hidden
-    >
-      <img src="/iris/iris-mascot.png" alt="" className={styles.img} draggable={false} />
+    <span className={[styles.wrap, styles[`size_${size}`], className].filter(Boolean).join(" ")} aria-hidden>
+      <img src="/iris/iris-avatar.png" alt="" className={styles.img} draggable={false} />
     </span>
   );
 }

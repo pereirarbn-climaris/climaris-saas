@@ -4,6 +4,13 @@ import os
 
 # E-mail reservado à operação Climaris (painel /operacao). Deve coincidir com o usuário marcado em `is_platform_operator`.
 PLATFORM_OPERATOR_EMAIL: str = os.getenv("PLATFORM_OPERATOR_EMAIL", "contato@climaris.com.br").strip().lower()
+# WhatsApp da operação (fallback antes do telefone do site institucional).
+PLATFORM_OPERATOR_WHATSAPP: str = os.getenv("PLATFORM_OPERATOR_WHATSAPP", "").strip()
+# evolution | official — provider padrão da operação Climaris.
+PLATFORM_WHATSAPP_PROVIDER: str = os.getenv("PLATFORM_WHATSAPP_PROVIDER", "evolution").strip().lower()
+WHATSAPP_OFFICIAL_ACCESS_TOKEN: str = os.getenv("WHATSAPP_OFFICIAL_ACCESS_TOKEN", "").strip()
+WHATSAPP_OFFICIAL_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_OFFICIAL_PHONE_NUMBER_ID", "").strip()
+WHATSAPP_OFFICIAL_API_VERSION: str = os.getenv("WHATSAPP_OFFICIAL_API_VERSION", "v20.0").strip()
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -189,6 +196,38 @@ KB_CHUNK_SIZE: int = max(200, int(os.getenv("KB_CHUNK_SIZE", "1000")))
 KB_CHUNK_OVERLAP: int = max(0, int(os.getenv("KB_CHUNK_OVERLAP", "200")))
 KB_TOP_MANUALS: int = max(1, min(10, int(os.getenv("KB_TOP_MANUALS", "3"))))
 KB_MAX_CONTEXT_CHARS: int = max(500, int(os.getenv("KB_MAX_CONTEXT_CHARS", "12000")))
+
+# Extração estruturada de manuais via IA (specs de equipamento + códigos de erro para o catálogo/Iris).
+MANUAL_EXTRACTION_MODEL: str = (os.getenv("MANUAL_EXTRACTION_MODEL", "").strip() or CLAUDE_MODEL)
+# Tamanho máximo (chars) do texto do manual enviado por chamada à IA — mantém a resposta dentro
+# da janela de contexto e do orçamento de max_tokens de saída.
+MANUAL_EXTRACTION_CHARS_PER_BATCH: int = max(
+    20_000, int(os.getenv("MANUAL_EXTRACTION_CHARS_PER_BATCH", "90000"))
+)
+# Limite de lotes processados por manual (protege custo/latência em manuais muito extensos).
+MANUAL_EXTRACTION_MAX_BATCHES: int = max(1, int(os.getenv("MANUAL_EXTRACTION_MAX_BATCHES", "6")))
+MANUAL_EXTRACTION_MAX_OUTPUT_TOKENS: int = max(
+    1024, int(os.getenv("MANUAL_EXTRACTION_MAX_OUTPUT_TOKENS", "16000"))
+)
+# Enriquecimento via busca web (site oficial do fabricante) quando o manual só traz o código
+# curto do modelo (ex: "09TSEA") em vez da nomenclatura comercial completa (ex: "AR09TSEABWKXAZ")
+# ou quando faltam specs básicas (capacidade, fluido, tensão). Roda só por equipamento que
+# precisar — não substitui a extração do manual, só completa lacunas.
+MANUAL_EXTRACTION_WEB_ENRICHMENT_ENABLED: bool = _env_bool("MANUAL_EXTRACTION_WEB_ENRICHMENT_ENABLED", True)
+MANUAL_EXTRACTION_WEB_ENRICHMENT_MAX_ITEMS: int = max(
+    0, int(os.getenv("MANUAL_EXTRACTION_WEB_ENRICHMENT_MAX_ITEMS", "12"))
+)
+MANUAL_EXTRACTION_WEB_ENRICHMENT_MAX_SEARCHES_PER_ITEM: int = max(
+    1, int(os.getenv("MANUAL_EXTRACTION_WEB_ENRICHMENT_MAX_SEARCHES_PER_ITEM", "3"))
+)
+
+# OCR para manuais escaneados (PDF só com imagens, sem texto selecionável).
+PDF_OCR_ENABLED: bool = _env_bool("PDF_OCR_ENABLED", True)
+PDF_OCR_LANG: str = (os.getenv("PDF_OCR_LANG", "").strip() or "por")
+PDF_OCR_DPI_SCALE: float = max(1.0, float(os.getenv("PDF_OCR_DPI_SCALE", "1.75")))
+PDF_OCR_MAX_PAGES: int = max(1, int(os.getenv("PDF_OCR_MAX_PAGES", "80")))
+PDF_OCR_MAX_WORKERS: int = max(1, min(8, int(os.getenv("PDF_OCR_MAX_WORKERS", "4"))))
+PDF_OCR_MIN_CHARS: int = max(1, int(os.getenv("PDF_OCR_MIN_CHARS", "40")))
 
 # 2FA por e-mail no login de administradores. Só é aplicado se houver SMTP configurado (.env ou credencial `smtp` no painel com SMTP_ALLOW_DB_OVERRIDE).
 LOGIN_ADMIN_TWO_FACTOR_ENABLED: bool = _env_bool("LOGIN_ADMIN_TWO_FACTOR_ENABLED", True)

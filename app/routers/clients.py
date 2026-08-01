@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import re
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 from uuid import uuid4
@@ -9,12 +10,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.pagination import clamp_limit
 from app.dependencies import get_current_user, require_roles
 from app.campaign_processor import list_segmented_clients
+from app.contract_attachments_media import (
+    delete_client_contract_attachment_if_exists,
+    upload_client_contract_attachment,
+)
 from app.routers.equipment_documents import serialize_equipment_document_out
 from app.client_cnpj import (
     CNPJ_COMMERCIAL_COOLDOWN_DAYS,
@@ -26,8 +31,19 @@ from app.platform_credentials import resolve_cnpja_api_key
 from app.spreadsheet_rows import normalize_rows_shape, parse_csv_rows, parse_xlsx_rows, rows_to_dict_records
 from app.routers.cnpj import _http_error_from_cnpja
 from app.schemas import (
+    ClientAddressCreate,
+    ClientAddressOut,
+    ClientAddressUpdate,
     ClientAuditEntryOut,
     ClientCnpjCommercialRefreshOut,
+    ClientContactCreate,
+    ClientContactOut,
+    ClientContactUpdate,
+    ClientContractAttachmentOut,
+    ClientContractCreate,
+    ClientContractNextNumberOut,
+    ClientContractOut,
+    ClientContractUpdate,
     ClientCountOut,
     ClientCreate,
     ClientDuplicateCheckOut,
@@ -55,7 +71,13 @@ from app.tax_id import digits_only, normalize_and_validate_tax_document
 from models import (
     Budget,
     Client,
+    ClientAddress,
     ClientAuditLog,
+    ClientContact,
+    ClientContract,
+    ClientContractAttachment,
+    ClientContractEquipment,
+    ClientContractService,
     ClientEquipment,
     ClientSite,
     Equipment,
@@ -86,6 +108,8 @@ _CLIENT_SNAPSHOT_KEYS: tuple[str, ...] = (
     "state_registration",
     "ie_indicator",
     "municipal_registration",
+    "rg",
+    "birth_date",
     "address_street",
     "address_number",
     "address_complement",
@@ -102,6 +126,8 @@ _CLIENT_SNAPSHOT_KEYS: tuple[str, ...] = (
     "legal_nature",
     "registration_status",
     "founded_at",
+    "notes",
+    "tags",
 )
 
 
@@ -119,6 +145,8 @@ def _client_snapshot(client: Client) -> dict[str, Any]:
         "state_registration": client.state_registration,
         "ie_indicator": client.ie_indicator,
         "municipal_registration": client.municipal_registration,
+        "rg": client.rg,
+        "birth_date": client.birth_date.isoformat() if client.birth_date else None,
         "address_street": client.address_street,
         "address_number": client.address_number,
         "address_complement": client.address_complement,
@@ -136,6 +164,8 @@ def _client_snapshot(client: Client) -> dict[str, Any]:
         "legal_nature": client.legal_nature,
         "registration_status": client.registration_status,
         "founded_at": client.founded_at.isoformat() if client.founded_at else None,
+        "notes": client.notes,
+        "tags": list(client.tags or []),
     }
 
 
@@ -163,6 +193,112 @@ def _append_client_audit(
             user_id=user_id,
             action=action,
             changes_json=json.dumps(changes, default=str),
+        )
+    )
+
+
+def _ensure_matriz_and_principal_address(db: Session, client: Client) -> None:
+    """Cria automaticamente o endereço "Principal" (e, no caso de Pessoa
+    Jurídica, também a unidade "Matriz") a partir dos dados já preenchidos
+    no cadastro do cliente (inclusive os trazidos pela consulta de CNPJ),
+    na primeira vez que o cliente é salvo. Só atua quando ainda não existe
+    Matriz/Principal — depois de criados, esses registros passam a ser
+    independentes e editáveis nas abas Unidades/Filiais e Endereços, sem
+    re-sincronização automática.
+
+    - Pessoa Jurídica (CNPJ): cria Matriz + Endereço Principal vinculado a ela.
+    - Pessoa Física (CPF): não existe conceito de Matriz/filial; cria apenas
+      o Endereço Principal (sem vínculo com unidade), se houver dados de
+      endereço no cadastro.
+    """
+    is_pj = client.tax_id_kind == "cnpj" and bool((client.document or "").strip())
+
+    matriz: ClientSite | None = None
+    if is_pj:
+        matriz = (
+            db.execute(
+                select(ClientSite).where(ClientSite.client_id == client.id, ClientSite.site_type == "matriz")
+            )
+            .scalars()
+            .first()
+        )
+
+        if matriz is None:
+            site_name = (
+                f"Matriz - {client.address_city}"
+                if (client.address_city or "").strip()
+                else (client.trade_name or client.name or "Matriz")
+            )
+            matriz = ClientSite(
+                tenant_id=client.tenant_id,
+                client_id=client.id,
+                name=site_name,
+                site_type="matriz",
+                nickname=client.trade_name,
+                contact_name=client.contact_person_name,
+                phone=client.whatsapp or client.phone,
+                email=client.email,
+                has_own_document=True,
+                document=client.document,
+                legal_name=client.name,
+                trade_name=client.trade_name,
+                state_registration=client.state_registration,
+                municipal_registration=client.municipal_registration,
+                street=client.address_street,
+                number=client.address_number,
+                complement=client.address_complement,
+                neighborhood=client.address_district,
+                city=client.address_city,
+                state=client.address_state,
+                cep=client.address_postal_code,
+                has_equipment=True,
+                participates_pmoc=False,
+                use_main_contacts=True,
+                use_main_billing_address=True,
+                is_active=True,
+            )
+            db.add(matriz)
+            db.flush()
+
+    has_address_data = bool(
+        (client.address_street or "").strip()
+        or (client.address_city or "").strip()
+        or (client.address_postal_code or "").strip()
+    )
+    if not has_address_data:
+        return
+
+    has_principal_address = (
+        db.execute(
+            select(ClientAddress).where(
+                ClientAddress.client_id == client.id, ClientAddress.address_type == "principal"
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if has_principal_address is not None:
+        return
+
+    db.add(
+        ClientAddress(
+            tenant_id=client.tenant_id,
+            client_id=client.id,
+            client_site_id=matriz.id if matriz is not None else None,
+            address_type="principal",
+            street=client.address_street,
+            number=client.address_number,
+            complement=client.address_complement,
+            neighborhood=client.address_district,
+            city=client.address_city,
+            state=client.address_state,
+            cep=client.address_postal_code,
+            is_principal=True,
+            use_for_billing=True,
+            use_for_pmoc=True,
+            use_for_service_orders=True,
+            use_for_correspondence=True,
+            is_active=True,
         )
     )
 
@@ -745,6 +881,8 @@ def create_client(
         state_registration=payload.state_registration,
         ie_indicator=payload.ie_indicator,
         municipal_registration=payload.municipal_registration,
+        rg=(payload.rg or "").strip() or None,
+        birth_date=payload.birth_date,
         address_street=payload.address_street,
         address_number=payload.address_number,
         address_complement=payload.address_complement,
@@ -762,6 +900,8 @@ def create_client(
         legal_nature=(payload.legal_nature or "").strip() or None,
         registration_status=(payload.registration_status or "").strip() or None,
         founded_at=payload.founded_at,
+        notes=(payload.notes or "").strip() or None,
+        tags=list(payload.tags or []),
     )
     db.add(client)
     try:
@@ -780,6 +920,7 @@ def create_client(
         action="created",
         changes={"record": _client_snapshot(client)},
     )
+    _ensure_matriz_and_principal_address(db, client)
     db.commit()
     db.refresh(client)
     return client
@@ -925,6 +1066,12 @@ def update_client(
     if "municipal_registration" in fields_set:
         client.municipal_registration = _strip_opt(payload.municipal_registration)
 
+    if "rg" in fields_set:
+        client.rg = _strip_opt(payload.rg)
+
+    if "birth_date" in fields_set:
+        client.birth_date = payload.birth_date
+
     if "address_street" in fields_set:
         client.address_street = _strip_opt(payload.address_street)
 
@@ -976,6 +1123,12 @@ def update_client(
     if "founded_at" in fields_set:
         client.founded_at = payload.founded_at
 
+    if "notes" in fields_set:
+        client.notes = _strip_opt(payload.notes)
+
+    if "tags" in fields_set and payload.tags is not None:
+        client.tags = list(payload.tags)
+
     after = _client_snapshot(client)
     diff = _audit_field_diff(before, after)
     if diff:
@@ -987,6 +1140,8 @@ def update_client(
             action="updated",
             changes=diff,
         )
+
+    _ensure_matriz_and_principal_address(db, client)
 
     try:
         db.commit()
@@ -1365,10 +1520,10 @@ def equipment_history(
         .outerjoin(User, User.id == ServiceOrderServiceItemEquipmentAudit.changed_by_user_id)
         .where(
             ServiceOrder.tenant_id == current_user.tenant_id,
-            or_(
-                ServiceOrderServiceItemEquipmentAudit.previous_equipment_id == equipment_id,
-                ServiceOrderServiceItemEquipmentAudit.new_equipment_id == equipment_id,
-            ),
+            # Só vínculos *para* este equipamento. Incluir previous_equipment_id
+            # fazia trocas/correções aparecerem como REGISTRO nos dois aparelhos.
+            ServiceOrderServiceItemEquipmentAudit.new_equipment_id == equipment_id,
+            ServiceOrderServiceItemEquipmentAudit.source != "manual_correction_inversion",
         )
         .order_by(ServiceOrderServiceItemEquipmentAudit.changed_at.desc())
     ).all()
@@ -1582,8 +1737,18 @@ def create_client_site(
         tenant_id=client.tenant_id,
         client_id=client.id,
         name=payload.name.strip(),
+        site_type=payload.site_type,
+        nickname=(payload.nickname or "").strip() or None,
         contact_name=(payload.contact_name or "").strip() or None,
+        responsible_role=(payload.responsible_role or "").strip() or None,
         phone=(payload.phone or "").strip() or None,
+        email=(payload.email or "").strip().lower() or None if payload.email else None,
+        has_own_document=bool(payload.has_own_document),
+        document=payload.document if payload.has_own_document else None,
+        legal_name=(payload.legal_name or "").strip() or None,
+        trade_name=(payload.trade_name or "").strip() or None,
+        state_registration=(payload.state_registration or "").strip() or None,
+        municipal_registration=(payload.municipal_registration or "").strip() or None,
         street=(payload.street or "").strip() or None,
         number=(payload.number or "").strip() or None,
         complement=(payload.complement or "").strip() or None,
@@ -1591,6 +1756,13 @@ def create_client_site(
         city=(payload.city or "").strip() or None,
         state=payload.state,
         cep=payload.cep,
+        reference_point=(payload.reference_point or "").strip() or None,
+        has_equipment=bool(payload.has_equipment),
+        participates_pmoc=bool(payload.participates_pmoc),
+        use_main_contacts=bool(payload.use_main_contacts),
+        use_main_billing_address=bool(payload.use_main_billing_address),
+        is_active=bool(payload.is_active),
+        notes=(payload.notes or "").strip() or None,
     )
     db.add(site)
     db.commit()
@@ -1621,12 +1793,35 @@ def update_client_site(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> ClientSite:
     site = _get_client_site_for_client(db, site_id=site_id, client_id=client_id, tenant_id=current_user.tenant_id)
+    fields_set = payload.model_fields_set
     if payload.name is not None:
         site.name = payload.name.strip()
+    if "site_type" in fields_set and payload.site_type is not None:
+        site.site_type = payload.site_type
+    if "nickname" in fields_set:
+        site.nickname = (payload.nickname or "").strip() or None
     if payload.contact_name is not None:
         site.contact_name = payload.contact_name.strip() or None
+    if "responsible_role" in fields_set:
+        site.responsible_role = (payload.responsible_role or "").strip() or None
     if payload.phone is not None:
         site.phone = payload.phone.strip() or None
+    if "email" in fields_set:
+        site.email = (payload.email or "").strip().lower() or None if payload.email else None
+    if "has_own_document" in fields_set and payload.has_own_document is not None:
+        site.has_own_document = bool(payload.has_own_document)
+        if not site.has_own_document:
+            site.document = None
+    if "document" in fields_set and site.has_own_document:
+        site.document = payload.document
+    if "legal_name" in fields_set:
+        site.legal_name = (payload.legal_name or "").strip() or None
+    if "trade_name" in fields_set:
+        site.trade_name = (payload.trade_name or "").strip() or None
+    if "state_registration" in fields_set:
+        site.state_registration = (payload.state_registration or "").strip() or None
+    if "municipal_registration" in fields_set:
+        site.municipal_registration = (payload.municipal_registration or "").strip() or None
     if payload.street is not None:
         site.street = payload.street.strip() or None
     if payload.number is not None:
@@ -1641,6 +1836,20 @@ def update_client_site(
         site.state = payload.state
     if payload.cep is not None:
         site.cep = payload.cep
+    if "reference_point" in fields_set:
+        site.reference_point = (payload.reference_point or "").strip() or None
+    if "has_equipment" in fields_set and payload.has_equipment is not None:
+        site.has_equipment = bool(payload.has_equipment)
+    if "participates_pmoc" in fields_set and payload.participates_pmoc is not None:
+        site.participates_pmoc = bool(payload.participates_pmoc)
+    if "use_main_contacts" in fields_set and payload.use_main_contacts is not None:
+        site.use_main_contacts = bool(payload.use_main_contacts)
+    if "use_main_billing_address" in fields_set and payload.use_main_billing_address is not None:
+        site.use_main_billing_address = bool(payload.use_main_billing_address)
+    if "is_active" in fields_set and payload.is_active is not None:
+        site.is_active = bool(payload.is_active)
+    if "notes" in fields_set:
+        site.notes = (payload.notes or "").strip() or None
     db.commit()
     db.refresh(site)
     return site
@@ -1659,4 +1868,908 @@ def delete_client_site(
 ) -> None:
     site = _get_client_site_for_client(db, site_id=site_id, client_id=client_id, tenant_id=current_user.tenant_id)
     db.delete(site)
+    db.commit()
+
+
+def _get_client_address_for_client(db: Session, *, address_id: int, client_id: int, tenant_id: int) -> ClientAddress:
+    address = db.execute(
+        select(ClientAddress).where(
+            ClientAddress.id == address_id,
+            ClientAddress.client_id == client_id,
+            ClientAddress.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if address is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endereço não encontrado.")
+    return address
+
+
+def _unset_other_principal_addresses(db: Session, *, client_id: int, tenant_id: int, keep_id: int | None) -> None:
+    rows = db.execute(
+        select(ClientAddress).where(
+            ClientAddress.client_id == client_id,
+            ClientAddress.tenant_id == tenant_id,
+            ClientAddress.is_principal.is_(True),
+        )
+    ).scalars().all()
+    for row in rows:
+        if row.id != keep_id:
+            row.is_principal = False
+
+
+@router.get("/{client_id}/addresses", response_model=list[ClientAddressOut])
+def list_client_addresses(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ClientAddress]:
+    _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    return list(
+        db.execute(
+            select(ClientAddress)
+            .where(ClientAddress.client_id == client_id, ClientAddress.tenant_id == current_user.tenant_id)
+            .order_by(ClientAddress.created_at.asc())
+        ).scalars().all()
+    )
+
+
+@router.post(
+    "/{client_id}/addresses",
+    response_model=ClientAddressOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_client_address(
+    client_id: int,
+    payload: ClientAddressCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientAddress:
+    client = _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    if payload.client_site_id is not None:
+        _get_client_site_for_client(
+            db, site_id=payload.client_site_id, client_id=client.id, tenant_id=current_user.tenant_id
+        )
+    address = ClientAddress(
+        tenant_id=client.tenant_id,
+        client_id=client.id,
+        client_site_id=payload.client_site_id,
+        address_type=payload.address_type,
+        street=payload.street.strip(),
+        number=payload.number.strip(),
+        complement=(payload.complement or "").strip() or None,
+        neighborhood=payload.neighborhood.strip(),
+        city=payload.city.strip(),
+        state=payload.state,
+        cep=payload.cep,
+        reference_point=(payload.reference_point or "").strip() or None,
+        is_principal=bool(payload.is_principal),
+        use_for_billing=bool(payload.use_for_billing),
+        use_for_pmoc=bool(payload.use_for_pmoc),
+        use_for_service_orders=bool(payload.use_for_service_orders),
+        use_for_correspondence=bool(payload.use_for_correspondence),
+        is_active=bool(payload.is_active),
+    )
+    db.add(address)
+    db.flush()
+    if address.is_principal:
+        _unset_other_principal_addresses(
+            db, client_id=client.id, tenant_id=current_user.tenant_id, keep_id=address.id
+        )
+    db.commit()
+    db.refresh(address)
+    return address
+
+
+@router.get("/{client_id}/addresses/{address_id}", response_model=ClientAddressOut)
+def get_client_address(
+    client_id: int,
+    address_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientAddress:
+    return _get_client_address_for_client(
+        db, address_id=address_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+
+
+@router.put(
+    "/{client_id}/addresses/{address_id}",
+    response_model=ClientAddressOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_client_address(
+    client_id: int,
+    address_id: int,
+    payload: ClientAddressUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientAddress:
+    address = _get_client_address_for_client(
+        db, address_id=address_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    fields_set = payload.model_fields_set
+    if "client_site_id" in fields_set:
+        if payload.client_site_id is not None:
+            _get_client_site_for_client(
+                db, site_id=payload.client_site_id, client_id=client_id, tenant_id=current_user.tenant_id
+            )
+        address.client_site_id = payload.client_site_id
+    if "address_type" in fields_set and payload.address_type is not None:
+        address.address_type = payload.address_type
+    if payload.street is not None:
+        address.street = payload.street.strip()
+    if payload.number is not None:
+        address.number = payload.number.strip()
+    if "complement" in fields_set:
+        address.complement = (payload.complement or "").strip() or None
+    if payload.neighborhood is not None:
+        address.neighborhood = payload.neighborhood.strip()
+    if payload.city is not None:
+        address.city = payload.city.strip()
+    if payload.state is not None:
+        address.state = payload.state
+    if payload.cep is not None:
+        address.cep = payload.cep
+    if "reference_point" in fields_set:
+        address.reference_point = (payload.reference_point or "").strip() or None
+    if "use_for_billing" in fields_set and payload.use_for_billing is not None:
+        address.use_for_billing = bool(payload.use_for_billing)
+    if "use_for_pmoc" in fields_set and payload.use_for_pmoc is not None:
+        address.use_for_pmoc = bool(payload.use_for_pmoc)
+    if "use_for_service_orders" in fields_set and payload.use_for_service_orders is not None:
+        address.use_for_service_orders = bool(payload.use_for_service_orders)
+    if "use_for_correspondence" in fields_set and payload.use_for_correspondence is not None:
+        address.use_for_correspondence = bool(payload.use_for_correspondence)
+    if "is_active" in fields_set and payload.is_active is not None:
+        address.is_active = bool(payload.is_active)
+    if "is_principal" in fields_set and payload.is_principal is not None:
+        address.is_principal = bool(payload.is_principal)
+        if address.is_principal:
+            db.flush()
+            _unset_other_principal_addresses(
+                db, client_id=client_id, tenant_id=current_user.tenant_id, keep_id=address.id
+            )
+    db.commit()
+    db.refresh(address)
+    return address
+
+
+@router.delete(
+    "/{client_id}/addresses/{address_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_client_address(
+    client_id: int,
+    address_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    address = _get_client_address_for_client(
+        db, address_id=address_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    db.delete(address)
+    db.commit()
+
+
+@router.post(
+    "/{client_id}/addresses/{address_id}/duplicate",
+    response_model=ClientAddressOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def duplicate_client_address(
+    client_id: int,
+    address_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientAddress:
+    source = _get_client_address_for_client(
+        db, address_id=address_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    copy = ClientAddress(
+        tenant_id=source.tenant_id,
+        client_id=source.client_id,
+        client_site_id=source.client_site_id,
+        address_type=source.address_type,
+        street=source.street,
+        number=source.number,
+        complement=source.complement,
+        neighborhood=source.neighborhood,
+        city=source.city,
+        state=source.state,
+        cep=source.cep,
+        reference_point=source.reference_point,
+        is_principal=False,
+        use_for_billing=source.use_for_billing,
+        use_for_pmoc=source.use_for_pmoc,
+        use_for_service_orders=source.use_for_service_orders,
+        use_for_correspondence=source.use_for_correspondence,
+        is_active=source.is_active,
+    )
+    db.add(copy)
+    db.commit()
+    db.refresh(copy)
+    return copy
+
+
+def _get_client_contact_for_client(db: Session, *, contact_id: int, client_id: int, tenant_id: int) -> ClientContact:
+    contact = db.execute(
+        select(ClientContact).where(
+            ClientContact.id == contact_id,
+            ClientContact.client_id == client_id,
+            ClientContact.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if contact is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contato não encontrado.")
+    return contact
+
+
+def _unset_other_principal_contacts(db: Session, *, client_id: int, tenant_id: int, keep_id: int | None) -> None:
+    rows = db.execute(
+        select(ClientContact).where(
+            ClientContact.client_id == client_id,
+            ClientContact.tenant_id == tenant_id,
+            ClientContact.is_principal.is_(True),
+        )
+    ).scalars().all()
+    for row in rows:
+        if row.id != keep_id:
+            row.is_principal = False
+
+
+@router.get("/{client_id}/contacts", response_model=list[ClientContactOut])
+def list_client_contacts(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ClientContact]:
+    _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    return list(
+        db.execute(
+            select(ClientContact)
+            .where(ClientContact.client_id == client_id, ClientContact.tenant_id == current_user.tenant_id)
+            .order_by(ClientContact.id.asc())
+        ).scalars().all()
+    )
+
+
+@router.post(
+    "/{client_id}/contacts",
+    response_model=ClientContactOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_client_contact(
+    client_id: int,
+    payload: ClientContactCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientContact:
+    client = _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    if payload.client_site_id is not None:
+        _get_client_site_for_client(
+            db, site_id=payload.client_site_id, client_id=client.id, tenant_id=current_user.tenant_id
+        )
+    contact = ClientContact(
+        tenant_id=client.tenant_id,
+        client_id=client.id,
+        client_site_id=payload.client_site_id,
+        name=payload.name.strip(),
+        category=payload.category,
+        role=(payload.role or "").strip() or None,
+        department=(payload.department or "").strip() or None,
+        whatsapp=(payload.whatsapp or "").strip() or None,
+        phone=(payload.phone or "").strip() or None,
+        email=(payload.email or "").strip() or None,
+        receives_service_orders=payload.receives_service_orders,
+        receives_pmoc=payload.receives_pmoc,
+        receives_financial=payload.receives_financial,
+        receives_contracts=payload.receives_contracts,
+        receives_whatsapp_notifications=payload.receives_whatsapp_notifications,
+        receives_automatic_emails=payload.receives_automatic_emails,
+        is_principal=bool(payload.is_principal),
+        is_active=bool(payload.is_active),
+        notes=(payload.notes or "").strip() or None,
+    )
+    db.add(contact)
+    db.flush()
+    if contact.is_principal:
+        _unset_other_principal_contacts(db, client_id=client.id, tenant_id=current_user.tenant_id, keep_id=contact.id)
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+@router.put(
+    "/{client_id}/contacts/{contact_id}",
+    response_model=ClientContactOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_client_contact(
+    client_id: int,
+    contact_id: int,
+    payload: ClientContactUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientContact:
+    contact = _get_client_contact_for_client(db, contact_id=contact_id, client_id=client_id, tenant_id=current_user.tenant_id)
+    fields_set = payload.model_fields_set
+    if payload.name is not None:
+        contact.name = payload.name.strip()
+    if "category" in fields_set and payload.category is not None:
+        contact.category = payload.category
+    if payload.role is not None:
+        contact.role = payload.role.strip() or None
+    if payload.department is not None:
+        contact.department = payload.department.strip() or None
+    if "client_site_id" in fields_set:
+        if payload.client_site_id is not None:
+            _get_client_site_for_client(
+                db, site_id=payload.client_site_id, client_id=client_id, tenant_id=current_user.tenant_id
+            )
+        contact.client_site_id = payload.client_site_id
+    if payload.whatsapp is not None:
+        contact.whatsapp = payload.whatsapp.strip() or None
+    if payload.phone is not None:
+        contact.phone = payload.phone.strip() or None
+    if payload.email is not None:
+        contact.email = payload.email.strip() or None
+    if payload.receives_service_orders is not None:
+        contact.receives_service_orders = payload.receives_service_orders
+    if payload.receives_pmoc is not None:
+        contact.receives_pmoc = payload.receives_pmoc
+    if payload.receives_financial is not None:
+        contact.receives_financial = payload.receives_financial
+    if "receives_contracts" in fields_set and payload.receives_contracts is not None:
+        contact.receives_contracts = payload.receives_contracts
+    if "receives_whatsapp_notifications" in fields_set and payload.receives_whatsapp_notifications is not None:
+        contact.receives_whatsapp_notifications = payload.receives_whatsapp_notifications
+    if "receives_automatic_emails" in fields_set and payload.receives_automatic_emails is not None:
+        contact.receives_automatic_emails = payload.receives_automatic_emails
+    if "is_active" in fields_set and payload.is_active is not None:
+        contact.is_active = bool(payload.is_active)
+    if "notes" in fields_set:
+        contact.notes = (payload.notes or "").strip() or None
+    if "is_principal" in fields_set and payload.is_principal is not None:
+        contact.is_principal = bool(payload.is_principal)
+        if contact.is_principal:
+            db.flush()
+            _unset_other_principal_contacts(
+                db, client_id=client_id, tenant_id=current_user.tenant_id, keep_id=contact.id
+            )
+    db.commit()
+    db.refresh(contact)
+    return contact
+
+
+@router.delete(
+    "/{client_id}/contacts/{contact_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_client_contact(
+    client_id: int,
+    contact_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    contact = _get_client_contact_for_client(db, contact_id=contact_id, client_id=client_id, tenant_id=current_user.tenant_id)
+    db.delete(contact)
+    db.commit()
+
+
+@router.post(
+    "/{client_id}/contacts/{contact_id}/duplicate",
+    response_model=ClientContactOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def duplicate_client_contact(
+    client_id: int,
+    contact_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientContact:
+    source = _get_client_contact_for_client(db, contact_id=contact_id, client_id=client_id, tenant_id=current_user.tenant_id)
+    copy = ClientContact(
+        tenant_id=source.tenant_id,
+        client_id=source.client_id,
+        client_site_id=source.client_site_id,
+        name=f"{source.name} (cópia)",
+        category=source.category,
+        role=source.role,
+        department=source.department,
+        whatsapp=source.whatsapp,
+        phone=source.phone,
+        email=source.email,
+        receives_service_orders=source.receives_service_orders,
+        receives_pmoc=source.receives_pmoc,
+        receives_financial=source.receives_financial,
+        receives_contracts=source.receives_contracts,
+        receives_whatsapp_notifications=source.receives_whatsapp_notifications,
+        receives_automatic_emails=source.receives_automatic_emails,
+        is_principal=False,
+        is_active=source.is_active,
+        notes=source.notes,
+    )
+    db.add(copy)
+    db.commit()
+    db.refresh(copy)
+    return copy
+
+
+def _client_contract_load_options():
+    return (
+        selectinload(ClientContract.contract_equipments),
+        selectinload(ClientContract.contract_services),
+        selectinload(ClientContract.attachments),
+    )
+
+
+def _get_client_contract_for_client(db: Session, *, contract_id: int, client_id: int, tenant_id: int) -> ClientContract:
+    contract = db.execute(
+        select(ClientContract)
+        .options(*_client_contract_load_options())
+        .where(
+            ClientContract.id == contract_id,
+            ClientContract.client_id == client_id,
+            ClientContract.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if contract is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contrato não encontrado.")
+    return contract
+
+
+def _sync_contract_equipments(
+    db: Session,
+    *,
+    contract: ClientContract,
+    client_id: int,
+    tenant_id: int,
+    equipment_ids: list[Any],
+) -> None:
+    unique_ids: list[Any] = []
+    seen: set[str] = set()
+    for raw in equipment_ids:
+        key = str(raw)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_ids.append(raw)
+    if unique_ids:
+        found = db.execute(
+            select(ClientEquipment.id).where(
+                ClientEquipment.client_id == client_id,
+                ClientEquipment.tenant_id == tenant_id,
+                ClientEquipment.id.in_(unique_ids),
+            )
+        ).scalars().all()
+        found_set = {str(item) for item in found}
+        missing = [str(item) for item in unique_ids if str(item) not in found_set]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Um ou mais equipamentos não pertencem a este cliente.",
+            )
+    contract.contract_equipments.clear()
+    for idx, equipment_id in enumerate(unique_ids):
+        contract.contract_equipments.append(
+            ClientContractEquipment(client_equipment_id=equipment_id, sort_order=idx)
+        )
+
+
+def _sync_contract_services(contract: ClientContract, services: list[str]) -> None:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in services:
+        name = (raw or "").strip()[:200]
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(name)
+    contract.contract_services.clear()
+    for idx, name in enumerate(cleaned):
+        contract.contract_services.append(ClientContractService(service_name=name, sort_order=idx))
+
+
+def _next_client_contract_number(db: Session, *, tenant_id: int, year: int) -> tuple[str, int]:
+    """Gera CTR-YYYY-NNN sequencial por tenant/ano (ex.: CTR-2026-001)."""
+    prefix = f"CTR-{year}-"
+    numbers = db.execute(
+        select(ClientContract.contract_number).where(
+            ClientContract.tenant_id == tenant_id,
+            ClientContract.contract_number.like(f"{prefix}%"),
+        )
+    ).scalars().all()
+    max_seq = 0
+    pattern = re.compile(rf"^CTR-{year}-(\d+)$", re.IGNORECASE)
+    for raw in numbers:
+        match = pattern.match(str(raw or "").strip())
+        if not match:
+            continue
+        max_seq = max(max_seq, int(match.group(1)))
+    sequence = max_seq + 1
+    return f"{prefix}{sequence:03d}", sequence
+
+
+@router.get("/{client_id}/contracts", response_model=list[ClientContractOut])
+def list_client_contracts(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ClientContractOut]:
+    _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    rows = db.execute(
+        select(ClientContract)
+        .options(*_client_contract_load_options())
+        .where(ClientContract.client_id == client_id, ClientContract.tenant_id == current_user.tenant_id)
+        .order_by(ClientContract.created_at.desc())
+    ).scalars().all()
+    return [ClientContractOut.from_model(row) for row in rows]
+
+
+@router.get(
+    "/{client_id}/contracts/next-number",
+    response_model=ClientContractNextNumberOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def get_client_contract_next_number(
+    client_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+) -> ClientContractNextNumberOut:
+    _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    contract_year = year or datetime.now(timezone.utc).year
+    number, sequence = _next_client_contract_number(
+        db, tenant_id=current_user.tenant_id, year=contract_year
+    )
+    return ClientContractNextNumberOut(
+        contract_number=number,
+        contract_year=contract_year,
+        sequence=sequence,
+        preview=True,
+    )
+
+
+@router.post(
+    "/{client_id}/contracts",
+    response_model=ClientContractOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_client_contract(
+    client_id: int,
+    payload: ClientContractCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientContractOut:
+    client = _get_client_for_tenant(db, client_id, current_user.tenant_id)
+    if payload.end_date < payload.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A data de término não pode ser anterior à data de início.",
+        )
+    if payload.status == "active" and payload.value <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contrato ativo precisa ter valor maior que zero.",
+        )
+    site_id = payload.client_site_id
+    if site_id is not None:
+        _get_client_site_for_client(db, site_id=site_id, client_id=client.id, tenant_id=current_user.tenant_id)
+    if payload.responsible_user_id is not None:
+        responsible = db.execute(
+            select(User).where(
+                User.id == payload.responsible_user_id,
+                User.tenant_id == current_user.tenant_id,
+            )
+        ).scalar_one_or_none()
+        if responsible is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Responsável não encontrado.")
+    category = (payload.category or "sob_demanda").strip().lower() or "sob_demanda"
+    contract_year = payload.contract_year or payload.start_date.year
+    last_error: Exception | None = None
+    for _attempt in range(5):
+        contract_number, sequence = _next_client_contract_number(
+            db, tenant_id=client.tenant_id, year=contract_year
+        )
+        display_number = (payload.display_number or "").strip() or f"Nº: {contract_year}.{sequence:03d}.0001"
+        contract = ClientContract(
+            tenant_id=client.tenant_id,
+            client_id=client.id,
+            client_site_id=site_id,
+            responsible_user_id=payload.responsible_user_id,
+            contract_number=contract_number,
+            display_number=display_number,
+            contract_year=contract_year,
+            contract_type=payload.contract_type.strip(),
+            category=category,
+            form_category_label=(payload.form_category_label or "").strip() or None,
+            title=payload.title.strip(),
+            status=payload.status,
+            recurrence=payload.recurrence,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            value_cents=round(payload.value * 100),
+            next_due_date=payload.next_due_date,
+            payment_method=(payload.payment_method or "").strip() or None,
+            due_day=payload.due_day,
+            adjustment_index=(payload.adjustment_index or "").strip() or None,
+            adjustment_period=(payload.adjustment_period or "").strip() or None,
+            late_fee_percent=payload.late_fee_percent,
+            interest_percent=payload.interest_percent,
+            auto_renewal=bool(payload.auto_renewal),
+            expiry_notice_days=payload.expiry_notice_days,
+            coverage_location=(payload.coverage_location or "").strip() or None,
+            billing_notes=(payload.billing_notes or "").strip() or None,
+            notes=(payload.notes or "").strip() or None,
+        )
+        db.add(contract)
+        try:
+            db.flush()
+            _sync_contract_equipments(
+                db,
+                contract=contract,
+                client_id=client.id,
+                tenant_id=current_user.tenant_id,
+                equipment_ids=list(payload.equipment_ids or []),
+            )
+            _sync_contract_services(contract, list(payload.services or []))
+            db.commit()
+            contract = _get_client_contract_for_client(
+                db, contract_id=contract.id, client_id=client.id, tenant_id=current_user.tenant_id
+            )
+            return ClientContractOut.from_model(contract)
+        except HTTPException:
+            db.rollback()
+            raise
+        except IntegrityError as exc:
+            db.rollback()
+            last_error = exc
+            continue
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Não foi possível gerar um número de contrato único. Tente novamente.",
+    ) from last_error
+
+
+@router.put(
+    "/{client_id}/contracts/{contract_id}",
+    response_model=ClientContractOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_client_contract(
+    client_id: int,
+    contract_id: int,
+    payload: ClientContractUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientContractOut:
+    contract = _get_client_contract_for_client(
+        db, contract_id=contract_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    if payload.contract_number is not None:
+        contract.contract_number = payload.contract_number.strip()
+    if payload.contract_type is not None:
+        contract.contract_type = payload.contract_type.strip()
+    if payload.title is not None:
+        contract.title = payload.title.strip()
+    if payload.status is not None:
+        contract.status = payload.status
+    if payload.recurrence is not None:
+        contract.recurrence = payload.recurrence
+    if payload.start_date is not None:
+        contract.start_date = payload.start_date
+    if payload.end_date is not None:
+        contract.end_date = payload.end_date
+    if payload.value is not None:
+        contract.value_cents = round(payload.value * 100)
+    if payload.payment_method is not None:
+        contract.payment_method = payload.payment_method.strip() or None
+    if payload.due_day is not None:
+        contract.due_day = payload.due_day
+    if payload.notes is not None:
+        contract.notes = payload.notes.strip() or None
+    if payload.client_site_id is not None:
+        _get_client_site_for_client(
+            db, site_id=payload.client_site_id, client_id=client_id, tenant_id=current_user.tenant_id
+        )
+        contract.client_site_id = payload.client_site_id
+    if payload.responsible_user_id is not None:
+        responsible = db.execute(
+            select(User).where(
+                User.id == payload.responsible_user_id,
+                User.tenant_id == current_user.tenant_id,
+            )
+        ).scalar_one_or_none()
+        if responsible is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Responsável não encontrado.")
+        contract.responsible_user_id = payload.responsible_user_id
+    if payload.category is not None:
+        contract.category = payload.category.strip().lower() or contract.category
+    if payload.form_category_label is not None:
+        contract.form_category_label = payload.form_category_label.strip() or None
+    if payload.next_due_date is not None:
+        contract.next_due_date = payload.next_due_date
+    if payload.adjustment_index is not None:
+        contract.adjustment_index = payload.adjustment_index.strip() or None
+    if payload.adjustment_period is not None:
+        contract.adjustment_period = payload.adjustment_period.strip() or None
+    if payload.late_fee_percent is not None:
+        contract.late_fee_percent = payload.late_fee_percent
+    if payload.interest_percent is not None:
+        contract.interest_percent = payload.interest_percent
+    if payload.auto_renewal is not None:
+        contract.auto_renewal = payload.auto_renewal
+    if payload.expiry_notice_days is not None:
+        contract.expiry_notice_days = payload.expiry_notice_days
+    if payload.coverage_location is not None:
+        contract.coverage_location = payload.coverage_location.strip() or None
+    if payload.billing_notes is not None:
+        contract.billing_notes = payload.billing_notes.strip() or None
+    if payload.display_number is not None:
+        contract.display_number = payload.display_number.strip() or None
+    if payload.contract_year is not None:
+        contract.contract_year = payload.contract_year
+    if payload.equipment_ids is not None:
+        _sync_contract_equipments(
+            db,
+            contract=contract,
+            client_id=client_id,
+            tenant_id=current_user.tenant_id,
+            equipment_ids=list(payload.equipment_ids),
+        )
+    if payload.services is not None:
+        _sync_contract_services(contract, list(payload.services))
+    start = contract.start_date
+    end = contract.end_date
+    if end < start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A data de término não pode ser anterior à data de início.",
+        )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Já existe um contrato com este número nesta empresa.",
+        )
+    contract = _get_client_contract_for_client(
+        db, contract_id=contract_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    return ClientContractOut.from_model(contract)
+
+
+@router.delete(
+    "/{client_id}/contracts/{contract_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_client_contract(
+    client_id: int,
+    contract_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    contract = _get_client_contract_for_client(
+        db, contract_id=contract_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    for attachment in list(contract.attachments or []):
+        delete_client_contract_attachment_if_exists(
+            attachment.file_s3_key,
+            content_type=attachment.file_type,
+            db=db,
+        )
+    db.delete(contract)
+    db.commit()
+
+
+@router.get(
+    "/{client_id}/contracts/{contract_id}/attachments",
+    response_model=list[ClientContractAttachmentOut],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def list_client_contract_attachments(
+    client_id: int,
+    contract_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ClientContractAttachment]:
+    _get_client_contract_for_client(
+        db, contract_id=contract_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    rows = db.execute(
+        select(ClientContractAttachment)
+        .where(ClientContractAttachment.client_contract_id == contract_id)
+        .order_by(ClientContractAttachment.created_at.desc())
+    ).scalars().all()
+    return list(rows)
+
+
+@router.post(
+    "/{client_id}/contracts/{contract_id}/attachments",
+    response_model=ClientContractAttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+async def upload_client_contract_attachment_route(
+    client_id: int,
+    contract_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: UploadFile = File(...),
+) -> ClientContractAttachment:
+    contract = _get_client_contract_for_client(
+        db, contract_id=contract_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    raw = await file.read()
+    try:
+        uploaded = upload_client_contract_attachment(
+            tenant_id=current_user.tenant_id,
+            client_id=client_id,
+            contract_id=contract.id,
+            file_bytes=raw,
+            source_filename=file.filename,
+            source_content_type=file.content_type,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    attachment = ClientContractAttachment(
+        client_contract_id=contract.id,
+        file_type=uploaded.content_type,
+        file_name=uploaded.file_name,
+        file_s3_key=uploaded.s3_key,
+        file_url=uploaded.public_url,
+        size_bytes=uploaded.size_bytes,
+        uploaded_by_user_id=current_user.id,
+    )
+    db.add(attachment)
+    db.commit()
+    db.refresh(attachment)
+    return attachment
+
+
+@router.delete(
+    "/{client_id}/contracts/{contract_id}/attachments/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_client_contract_attachment_route(
+    client_id: int,
+    contract_id: int,
+    attachment_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    _get_client_contract_for_client(
+        db, contract_id=contract_id, client_id=client_id, tenant_id=current_user.tenant_id
+    )
+    attachment = db.execute(
+        select(ClientContractAttachment).where(
+            ClientContractAttachment.id == attachment_id,
+            ClientContractAttachment.client_contract_id == contract_id,
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Anexo não encontrado.")
+    delete_client_contract_attachment_if_exists(
+        attachment.file_s3_key,
+        content_type=attachment.file_type,
+        db=db,
+    )
+    db.delete(attachment)
     db.commit()

@@ -1,0 +1,6 @@
+[Unit]
+Description=Alerta por e-mail: falha no backup do sistema (restic -> S3)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/system-backup/notify-failure.sh system-backup.service

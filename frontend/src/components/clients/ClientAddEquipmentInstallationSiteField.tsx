@@ -41,7 +41,7 @@ export function InstallationSiteField({ clientSites, value, onChange, highlighte
           color: "var(--color-text)",
         }}
       >
-        Local / Unidade de Instalação
+        Unidade / Filial
       </label>
       <select
         value={value != null ? String(value) : ""}
@@ -51,7 +51,7 @@ export function InstallationSiteField({ clientSites, value, onChange, highlighte
         }}
         style={inputStyle}
       >
-        <option value="">Endereço Principal / Matriz</option>
+        <option value="">Matriz / Endereço principal</option>
         {clientSites.map((site) => (
           <option key={site.id} value={String(site.id)}>
             {site.name}
@@ -60,11 +60,11 @@ export function InstallationSiteField({ clientSites, value, onChange, highlighte
       </select>
       {highlightedSiteName ? (
         <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-primary)" }}>
-          Vinculando à obra: <strong>{highlightedSiteName}</strong>
+          Vinculando à unidade: <strong>{highlightedSiteName}</strong>
         </p>
       ) : clientSites.length === 0 ? (
         <p style={{ margin: "0.35rem 0 0", fontSize: "var(--font-size-xs)", color: "var(--color-text-muted)" }}>
-          Cadastre filiais/obras no cadastro do cliente para vincular equipamentos a outras unidades.
+          Cadastre unidades/filiais na aba «Unidades / Filiais» do cliente para vincular equipamentos a outras unidades.
         </p>
       ) : null}
     </div>

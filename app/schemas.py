@@ -934,9 +934,9 @@ class CnpjCommercialLookupOut(CnpjLookupOut):
 
 
 class CepLookupOut(BaseModel):
-    """Endereço normalizado a partir do ViaCEP (CEP de 8 dígitos)."""
+    """Endereço normalizado a partir do ViaCEP / BrasilAPI (CEP de 8 dígitos)."""
 
-    source: Literal["viacep"] = "viacep"
+    source: Literal["viacep", "brasilapi"] = "viacep"
     cep: str = Field(description="CEP formatado (00000-000).")
     address_street: str | None = None
     address_complement: str | None = None
@@ -985,6 +985,8 @@ class ClientCreate(BaseModel):
         description="NFe indicador IE destinatário: 1 contribuinte ICMS, 2 isento, 9 não contribuinte.",
     )
     municipal_registration: str | None = None
+    rg: str | None = Field(default=None, max_length=20, description="RG (Pessoa Física).")
+    birth_date: date | None = Field(default=None, description="Data de nascimento (Pessoa Física).")
     address_street: str | None = None
     address_number: str | None = None
     address_complement: str | None = None
@@ -1002,6 +1004,8 @@ class ClientCreate(BaseModel):
     legal_nature: str | None = Field(default=None, max_length=150)
     registration_status: str | None = Field(default=None, max_length=80)
     founded_at: date | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    tags: list[str] = Field(default_factory=list)
 
     @field_validator("contact_person_name", mode="before")
     @classmethod
@@ -1067,6 +1071,8 @@ class ClientUpdate(BaseModel):
     state_registration: str | None = None
     ie_indicator: Literal["1", "2", "9"] | None = None
     municipal_registration: str | None = None
+    rg: str | None = Field(default=None, max_length=20)
+    birth_date: date | None = None
     address_street: str | None = None
     address_number: str | None = None
     address_complement: str | None = None
@@ -1084,6 +1090,8 @@ class ClientUpdate(BaseModel):
     legal_nature: str | None = Field(default=None, max_length=150)
     registration_status: str | None = Field(default=None, max_length=80)
     founded_at: date | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    tags: list[str] | None = None
 
     @field_validator("contact_person_name", mode="before")
     @classmethod
@@ -1129,6 +1137,8 @@ class ClientOut(BaseModel):
     state_registration: str | None = None
     ie_indicator: str | None = None
     municipal_registration: str | None = None
+    rg: str | None = None
+    birth_date: date | None = None
     address_street: str | None = None
     address_number: str | None = None
     address_complement: str | None = None
@@ -1147,12 +1157,28 @@ class ClientOut(BaseModel):
     legal_nature: str | None = None
     registration_status: str | None = None
     founded_at: date | None = None
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+ClientSiteType = Literal["matriz", "filial", "unidade_operacional", "local_instalacao", "sem_cnpj"]
 
 
 class ClientSiteCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
+    site_type: ClientSiteType = "filial"
+    nickname: str | None = Field(default=None, max_length=150)
     contact_name: str | None = Field(default=None, max_length=150)
+    responsible_role: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=20)
+    email: EmailStr | None = None
+    has_own_document: bool = False
+    document: str | None = Field(default=None, max_length=20)
+    legal_name: str | None = Field(default=None, max_length=200)
+    trade_name: str | None = Field(default=None, max_length=150)
+    state_registration: str | None = Field(default=None, max_length=20)
+    municipal_registration: str | None = Field(default=None, max_length=20)
     street: str | None = Field(default=None, max_length=255)
     number: str | None = Field(default=None, max_length=20)
     complement: str | None = Field(default=None, max_length=120)
@@ -1160,6 +1186,13 @@ class ClientSiteCreate(BaseModel):
     city: str | None = Field(default=None, max_length=100)
     state: str | None = Field(default=None, max_length=2)
     cep: str | None = Field(default=None, max_length=12)
+    reference_point: str | None = Field(default=None, max_length=255)
+    has_equipment: bool = True
+    participates_pmoc: bool = False
+    use_main_contacts: bool = True
+    use_main_billing_address: bool = True
+    is_active: bool = True
+    notes: str | None = Field(default=None, max_length=2000)
 
     @field_validator("state", mode="before")
     @classmethod
@@ -1178,11 +1211,48 @@ class ClientSiteCreate(BaseModel):
         d = digits_only(v)
         return d[:8] if d else None
 
+    @field_validator("document", mode="before")
+    @classmethod
+    def _digits_site_document(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from app.tax_id import digits_only
+
+        d = digits_only(v)
+        return d or None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _empty_email_to_none(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _validate_site_rules(self) -> ClientSiteCreate:
+        if self.has_own_document and not (self.document or "").strip():
+            raise ValueError("CNPJ é obrigatório quando a unidade possui CNPJ próprio.")
+        if self.has_own_document and not (self.legal_name or "").strip():
+            raise ValueError("Razão social é obrigatória quando a unidade possui CNPJ próprio.")
+        if (self.participates_pmoc or self.has_equipment) and not (self.street or self.city):
+            raise ValueError("Endereço é obrigatório quando a unidade possui equipamentos ou participa do PMOC.")
+        return self
+
 
 class ClientSiteUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
+    site_type: ClientSiteType | None = None
+    nickname: str | None = Field(default=None, max_length=150)
     contact_name: str | None = Field(default=None, max_length=150)
+    responsible_role: str | None = Field(default=None, max_length=100)
     phone: str | None = Field(default=None, max_length=20)
+    email: EmailStr | None = None
+    has_own_document: bool | None = None
+    document: str | None = Field(default=None, max_length=20)
+    legal_name: str | None = Field(default=None, max_length=200)
+    trade_name: str | None = Field(default=None, max_length=150)
+    state_registration: str | None = Field(default=None, max_length=20)
+    municipal_registration: str | None = Field(default=None, max_length=20)
     street: str | None = Field(default=None, max_length=255)
     number: str | None = Field(default=None, max_length=20)
     complement: str | None = Field(default=None, max_length=120)
@@ -1190,6 +1260,13 @@ class ClientSiteUpdate(BaseModel):
     city: str | None = Field(default=None, max_length=100)
     state: str | None = Field(default=None, max_length=2)
     cep: str | None = Field(default=None, max_length=12)
+    reference_point: str | None = Field(default=None, max_length=255)
+    has_equipment: bool | None = None
+    participates_pmoc: bool | None = None
+    use_main_contacts: bool | None = None
+    use_main_billing_address: bool | None = None
+    is_active: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
     @field_validator("state", mode="before")
     @classmethod
@@ -1208,6 +1285,23 @@ class ClientSiteUpdate(BaseModel):
         d = digits_only(v)
         return d[:8] if d else None
 
+    @field_validator("document", mode="before")
+    @classmethod
+    def _digits_site_document_update(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from app.tax_id import digits_only
+
+        d = digits_only(v)
+        return d or None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _empty_email_to_none_update(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
 
 class ClientSiteOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -1215,8 +1309,18 @@ class ClientSiteOut(BaseModel):
     id: int
     client_id: int
     name: str
+    site_type: ClientSiteType
+    nickname: str | None = None
     contact_name: str | None = None
+    responsible_role: str | None = None
     phone: str | None = None
+    email: str | None = None
+    has_own_document: bool = False
+    document: str | None = None
+    legal_name: str | None = None
+    trade_name: str | None = None
+    state_registration: str | None = None
+    municipal_registration: str | None = None
     street: str | None = None
     number: str | None = None
     complement: str | None = None
@@ -1224,7 +1328,356 @@ class ClientSiteOut(BaseModel):
     city: str | None = None
     state: str | None = None
     cep: str | None = None
+    reference_point: str | None = None
+    has_equipment: bool = True
+    participates_pmoc: bool = False
+    use_main_contacts: bool = True
+    use_main_billing_address: bool = True
+    is_active: bool = True
+    notes: str | None = None
     created_at: datetime
+
+
+ClientContactCategory = Literal["responsavel", "tecnico", "financeiro", "administrativo", "comercial", "outros"]
+
+
+class ClientContactCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=150)
+    category: ClientContactCategory = "outros"
+    role: str | None = Field(default=None, max_length=100)
+    department: str | None = Field(default=None, max_length=100)
+    client_site_id: int | None = None
+    whatsapp: str = Field(..., min_length=8, max_length=20)
+    phone: str | None = Field(default=None, max_length=20)
+    email: EmailStr
+    receives_service_orders: bool = False
+    receives_pmoc: bool = False
+    receives_financial: bool = False
+    receives_contracts: bool = False
+    receives_whatsapp_notifications: bool = False
+    receives_automatic_emails: bool = False
+    is_principal: bool = False
+    is_active: bool = True
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClientContactUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    category: ClientContactCategory | None = None
+    role: str | None = Field(default=None, max_length=100)
+    department: str | None = Field(default=None, max_length=100)
+    client_site_id: int | None = None
+    whatsapp: str | None = Field(default=None, min_length=8, max_length=20)
+    phone: str | None = Field(default=None, max_length=20)
+    email: EmailStr | None = None
+    receives_service_orders: bool | None = None
+    receives_pmoc: bool | None = None
+    receives_financial: bool | None = None
+    receives_contracts: bool | None = None
+    receives_whatsapp_notifications: bool | None = None
+    receives_automatic_emails: bool | None = None
+    is_principal: bool | None = None
+    is_active: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClientContactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    client_site_id: int | None = None
+    name: str
+    category: ClientContactCategory = "outros"
+    role: str | None = None
+    department: str | None = None
+    whatsapp: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    receives_service_orders: bool
+    receives_pmoc: bool
+    receives_financial: bool
+    receives_contracts: bool = False
+    receives_whatsapp_notifications: bool = False
+    receives_automatic_emails: bool = False
+    is_principal: bool = False
+    is_active: bool = True
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+ClientAddressType = Literal["principal", "cobranca", "instalacao", "correspondencia", "outros"]
+
+
+class ClientAddressCreate(BaseModel):
+    address_type: ClientAddressType = "outros"
+    client_site_id: int | None = None
+    street: str = Field(..., min_length=1, max_length=255)
+    number: str = Field(..., min_length=1, max_length=20)
+    complement: str | None = Field(default=None, max_length=120)
+    neighborhood: str = Field(..., min_length=1, max_length=100)
+    city: str = Field(..., min_length=1, max_length=100)
+    state: str = Field(..., min_length=2, max_length=2)
+    cep: str = Field(..., min_length=1, max_length=12)
+    reference_point: str | None = Field(default=None, max_length=255)
+    is_principal: bool = False
+    use_for_billing: bool = False
+    use_for_pmoc: bool = False
+    use_for_service_orders: bool = False
+    use_for_correspondence: bool = False
+    is_active: bool = True
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _upper_addr_state(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        return v.strip().upper()[:2]
+
+    @field_validator("cep", mode="before")
+    @classmethod
+    def _digits_addr_cep(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from app.tax_id import digits_only
+
+        d = digits_only(v)
+        return d[:8] if d else None
+
+
+class ClientAddressUpdate(BaseModel):
+    address_type: ClientAddressType | None = None
+    client_site_id: int | None = None
+    street: str | None = Field(default=None, min_length=1, max_length=255)
+    number: str | None = Field(default=None, min_length=1, max_length=20)
+    complement: str | None = Field(default=None, max_length=120)
+    neighborhood: str | None = Field(default=None, min_length=1, max_length=100)
+    city: str | None = Field(default=None, min_length=1, max_length=100)
+    state: str | None = Field(default=None, min_length=2, max_length=2)
+    cep: str | None = Field(default=None, min_length=1, max_length=12)
+    reference_point: str | None = Field(default=None, max_length=255)
+    is_principal: bool | None = None
+    use_for_billing: bool | None = None
+    use_for_pmoc: bool | None = None
+    use_for_service_orders: bool | None = None
+    use_for_correspondence: bool | None = None
+    is_active: bool | None = None
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _upper_addr_state_update(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        return v.strip().upper()[:2]
+
+    @field_validator("cep", mode="before")
+    @classmethod
+    def _digits_addr_cep_update(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from app.tax_id import digits_only
+
+        d = digits_only(v)
+        return d[:8] if d else None
+
+
+class ClientAddressOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    client_site_id: int | None = None
+    address_type: ClientAddressType
+    street: str | None = None
+    number: str | None = None
+    complement: str | None = None
+    neighborhood: str | None = None
+    city: str | None = None
+    state: str | None = None
+    cep: str | None = None
+    reference_point: str | None = None
+    is_principal: bool = False
+    use_for_billing: bool = False
+    use_for_pmoc: bool = False
+    use_for_service_orders: bool = False
+    use_for_correspondence: bool = False
+    is_active: bool = True
+    created_at: datetime
+
+
+ClientContractStatus = Literal["draft", "active", "suspended", "expired", "cancelled"]
+
+
+class ClientContractNextNumberOut(BaseModel):
+    contract_number: str
+    contract_year: int
+    sequence: int
+    preview: bool = True
+
+
+class ClientContractAttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_contract_id: int
+    file_type: str
+    file_name: str | None = None
+    file_url: str | None = None
+    size_bytes: int | None = None
+    uploaded_by_user_id: int | None = None
+    created_at: datetime
+
+
+class ClientContractCreate(BaseModel):
+    contract_number: str | None = Field(default=None, max_length=40)
+    contract_type: str = Field(..., min_length=1, max_length=80)
+    title: str = Field(..., min_length=1, max_length=200)
+    status: ClientContractStatus = "draft"
+    recurrence: str = Field(default="annual", max_length=20)
+    start_date: date
+    end_date: date
+    value: float = Field(default=0, ge=0)
+    payment_method: str | None = Field(default=None, max_length=40)
+    due_day: int | None = Field(default=None, ge=1, le=31)
+    notes: str | None = None
+    client_site_id: int | None = Field(default=None, ge=1)
+    responsible_user_id: int | None = Field(default=None, ge=1)
+    category: str = Field(default="sob_demanda", max_length=32)
+    form_category_label: str | None = Field(default=None, max_length=40)
+    next_due_date: date | None = None
+    adjustment_index: str | None = Field(default=None, max_length=40)
+    adjustment_period: str | None = Field(default=None, max_length=20)
+    late_fee_percent: float | None = Field(default=None, ge=0, le=100)
+    interest_percent: float | None = Field(default=None, ge=0, le=100)
+    auto_renewal: bool = False
+    expiry_notice_days: int | None = Field(default=None, ge=1, le=365)
+    coverage_location: str | None = None
+    billing_notes: str | None = None
+    display_number: str | None = Field(default=None, max_length=60)
+    contract_year: int | None = Field(default=None, ge=2000, le=2100)
+    equipment_ids: list[uuid.UUID] = Field(default_factory=list)
+    services: list[str] = Field(default_factory=list)
+
+
+class ClientContractUpdate(BaseModel):
+    contract_number: str | None = Field(default=None, min_length=1, max_length=40)
+    contract_type: str | None = Field(default=None, min_length=1, max_length=80)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    status: ClientContractStatus | None = None
+    recurrence: str | None = Field(default=None, max_length=20)
+    start_date: date | None = None
+    end_date: date | None = None
+    value: float | None = Field(default=None, ge=0)
+    payment_method: str | None = Field(default=None, max_length=40)
+    due_day: int | None = Field(default=None, ge=1, le=31)
+    notes: str | None = None
+    client_site_id: int | None = Field(default=None, ge=1)
+    responsible_user_id: int | None = Field(default=None, ge=1)
+    category: str | None = Field(default=None, max_length=32)
+    form_category_label: str | None = Field(default=None, max_length=40)
+    next_due_date: date | None = None
+    adjustment_index: str | None = Field(default=None, max_length=40)
+    adjustment_period: str | None = Field(default=None, max_length=20)
+    late_fee_percent: float | None = Field(default=None, ge=0, le=100)
+    interest_percent: float | None = Field(default=None, ge=0, le=100)
+    auto_renewal: bool | None = None
+    expiry_notice_days: int | None = Field(default=None, ge=1, le=365)
+    coverage_location: str | None = None
+    billing_notes: str | None = None
+    display_number: str | None = Field(default=None, max_length=60)
+    contract_year: int | None = Field(default=None, ge=2000, le=2100)
+    equipment_ids: list[uuid.UUID] | None = None
+    services: list[str] | None = None
+
+
+class ClientContractOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    contract_number: str
+    contract_type: str
+    title: str
+    status: str
+    recurrence: str
+    start_date: date
+    end_date: date
+    value: float
+    payment_method: str | None = None
+    due_day: int | None = None
+    notes: str | None = None
+    client_site_id: int | None = None
+    responsible_user_id: int | None = None
+    category: str | None = None
+    form_category_label: str | None = None
+    next_due_date: date | None = None
+    adjustment_index: str | None = None
+    adjustment_period: str | None = None
+    late_fee_percent: float | None = None
+    interest_percent: float | None = None
+    auto_renewal: bool = False
+    expiry_notice_days: int | None = None
+    coverage_location: str | None = None
+    billing_notes: str | None = None
+    display_number: str | None = None
+    contract_year: int | None = None
+    equipment_ids: list[uuid.UUID] = Field(default_factory=list)
+    services: list[str] = Field(default_factory=list)
+    attachments_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    @staticmethod
+    def from_model(model: Any) -> "ClientContractOut":
+        equip_rows = getattr(model, "contract_equipments", None) or []
+        service_rows = getattr(model, "contract_services", None) or []
+        attachment_rows = getattr(model, "attachments", None)
+        equipment_ids = [
+            row.client_equipment_id
+            for row in sorted(equip_rows, key=lambda r: getattr(r, "sort_order", 0) or 0)
+        ]
+        services = [
+            row.service_name
+            for row in sorted(service_rows, key=lambda r: getattr(r, "sort_order", 0) or 0)
+            if (row.service_name or "").strip()
+        ]
+        attachments_count = len(attachment_rows) if attachment_rows is not None else 0
+        return ClientContractOut(
+            id=model.id,
+            client_id=model.client_id,
+            contract_number=model.contract_number,
+            contract_type=model.contract_type,
+            title=model.title,
+            status=model.status,
+            recurrence=model.recurrence,
+            start_date=model.start_date,
+            end_date=model.end_date,
+            value=round((model.value_cents or 0) / 100, 2),
+            payment_method=model.payment_method,
+            due_day=model.due_day,
+            notes=model.notes,
+            client_site_id=model.client_site_id,
+            responsible_user_id=model.responsible_user_id,
+            category=getattr(model, "category", None),
+            form_category_label=getattr(model, "form_category_label", None),
+            next_due_date=getattr(model, "next_due_date", None),
+            adjustment_index=getattr(model, "adjustment_index", None),
+            adjustment_period=getattr(model, "adjustment_period", None),
+            late_fee_percent=float(model.late_fee_percent) if getattr(model, "late_fee_percent", None) is not None else None,
+            interest_percent=float(model.interest_percent) if getattr(model, "interest_percent", None) is not None else None,
+            auto_renewal=bool(getattr(model, "auto_renewal", False)),
+            expiry_notice_days=getattr(model, "expiry_notice_days", None),
+            coverage_location=getattr(model, "coverage_location", None),
+            billing_notes=getattr(model, "billing_notes", None),
+            display_number=getattr(model, "display_number", None),
+            contract_year=getattr(model, "contract_year", None),
+            equipment_ids=equipment_ids,
+            services=services,
+            attachments_count=attachments_count,
+            created_at=model.created_at,
+            updated_at=model.updated_at,
+        )
 
 
 class ClientCnpjCommercialRefreshOut(BaseModel):
@@ -2079,6 +2532,7 @@ class ProductOut(BaseModel):
     btu_min: int | None = None
     btu_max: int | None = None
     application_scope: str | None = None
+    primary_image_url: str | None = None
     is_active: bool
 
 
@@ -2294,6 +2748,11 @@ class ServiceOrderStatusUpdate(BaseModel):
     status: Literal["in_progress", "done", "cancelled"]
     schedule_notes: str | None = Field(default=None, max_length=4000)
     cancel_reason: str | None = Field(default=None, max_length=4000)
+    force_close: bool = False
+    data_realizacao: date | None = Field(
+        default=None,
+        description="Data em que o serviço foi realizado (atualiza última realização / próxima validade preventiva).",
+    )
 
 
 class ServiceProductInput(BaseModel):
@@ -2320,6 +2779,14 @@ class ServiceCreate(BaseModel):
     btu_min: int | None = Field(default=None, ge=0)
     btu_max: int | None = Field(default=None, ge=0)
     service_category: str | None = Field(default=None, max_length=40)
+    code: str | None = Field(default=None, max_length=40)
+    service_type: str | None = Field(default=None, max_length=40)
+    require_photo: bool = False
+    icon_key: str | None = Field(default=None, max_length=32)
+    notes: str | None = None
+    visible_in_service_order: bool = True
+    visible_in_pmoc: bool = True
+    visible_in_contract: bool = True
     applies_residential: bool = True
     applies_commercial: bool = True
     is_active: bool = True
@@ -2357,6 +2824,14 @@ class ServiceUpdate(BaseModel):
     btu_min: int | None = Field(default=None, ge=0)
     btu_max: int | None = Field(default=None, ge=0)
     service_category: str | None = Field(default=None, max_length=40)
+    code: str | None = Field(default=None, max_length=40)
+    service_type: str | None = Field(default=None, max_length=40)
+    require_photo: bool | None = None
+    icon_key: str | None = Field(default=None, max_length=32)
+    notes: str | None = None
+    visible_in_service_order: bool | None = None
+    visible_in_pmoc: bool | None = None
+    visible_in_contract: bool | None = None
     applies_residential: bool | None = None
     applies_commercial: bool | None = None
     is_active: bool | None = None
@@ -2382,6 +2857,14 @@ class ServiceOut(BaseModel):
     btu_min: int | None = None
     btu_max: int | None = None
     service_category: str | None = None
+    code: str | None = None
+    service_type: str | None = None
+    require_photo: bool = False
+    icon_key: str | None = None
+    notes: str | None = None
+    visible_in_service_order: bool = True
+    visible_in_pmoc: bool = True
+    visible_in_contract: bool = True
     applies_residential: bool = True
     applies_commercial: bool = True
     is_active: bool
@@ -2435,6 +2918,7 @@ class BudgetProductItemInput(BaseModel):
 
 class BudgetCreate(BaseModel):
     client_id: int
+    client_site_id: int | None = Field(default=None, ge=1)
     scope_text: str | None = None
     observation: str | None = None
     payment_method: str | None = None
@@ -2447,6 +2931,7 @@ class BudgetCreate(BaseModel):
 
 class BudgetUpdate(BaseModel):
     client_id: int
+    client_site_id: int | None = Field(default=None, ge=1)
     scope_text: str | None = None
     observation: str | None = None
     payment_method: str | None = None
@@ -2490,6 +2975,8 @@ class BudgetOut(BaseModel):
     id: int
     tenant_id: int
     client_id: int
+    client_site_id: int | None = None
+    scope_text: str | None = None
     observation: str | None = None
     status: str
     payment_method: str | None = None
@@ -3265,6 +3752,7 @@ class ServiceOrderCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     client_id: int
+    client_site_id: int | None = Field(default=None, ge=1)
     title: str
     description: str | None = None
     technician_ids: list[int] = []
@@ -3345,6 +3833,9 @@ class ServiceOrderEquipmentCardOut(BaseModel):
     equipment_identificacao: str | None = None
     equipment_tipo: str | None = None
     equipment_modelo: str | None = None
+    # true quando o equipamento foi cadastrado sem marca/modelo conhecidos
+    # ("a identificar") — precisa ser identificado antes de concluir a OS.
+    equipment_pending_identification: bool = False
     services: list[ServiceOrderEquipmentServiceOut]
     total_duration_minutes: int = 0
 
@@ -3378,6 +3869,7 @@ class ServiceOrderProductItemQuantityPatch(BaseModel):
 class ServiceOrderDetailsUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
+    client_site_id: int | None = Field(default=None, ge=1)
 
 
 class ServiceOrderLaudoPhotoIn(BaseModel):
@@ -3571,10 +4063,14 @@ class ServiceOrderOut(BaseModel):
     id: int
     tenant_id: int
     client_id: int
+    client_site_id: int | None = None
+    client_site_name: str | None = None
+    service_address: str | None = None
     title: str
     description: str | None = None
     discount_amount: float = 0
     status: str
+    opened_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
     completed_at: datetime | None = None
@@ -3594,16 +4090,23 @@ class ServiceOrderOut(BaseModel):
     def _enrich_technician_view(cls, data: Any) -> Any:
         if not isinstance(data, ServiceOrder):
             return data
+        from app.services.client_sites import resolve_service_order_service_address
+
         items = iter_visible_service_items(data)
         equipment_services = [_equipment_service_item_dict(item) for item in items]
+        site = getattr(data, "client_site", None)
         return {
             "id": data.id,
             "tenant_id": data.tenant_id,
             "client_id": data.client_id,
+            "client_site_id": data.client_site_id,
+            "client_site_name": site.name if site is not None else None,
+            "service_address": resolve_service_order_service_address(data),
             "title": data.title,
             "description": data.description,
             "discount_amount": float(data.discount_amount or 0),
             "status": data.status.value if hasattr(data.status, "value") else data.status,
+            "opened_at": data.opened_at,
             "started_at": data.started_at,
             "finished_at": data.finished_at or data.completed_at,
             "completed_at": data.completed_at,
@@ -4048,6 +4551,80 @@ class EquipmentManualListOut(BaseModel):
     items: list[EquipmentManualOptionOut]
 
 
+class EquipmentManualUploadOut(BaseModel):
+    """Manual recém-enviado ao S3 (sem vínculo de catálogo ainda) — usado no fluxo de cadastro via IA."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    s3_url: str
+    ingestion_status: str
+    extraction_status: str
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class EquipmentManualExtractionCandidateOut(BaseModel):
+    """Um equipamento sugerido pela IA a partir do texto do manual (revisão humana antes de salvar)."""
+
+    marca: str | None = None
+    modelo: str | None = None
+    modelo_evaporadora: str | None = None
+    modelo_condensadora: str | None = None
+    categoria_sugerida: str | None = None
+    component_type_sugerido: str | None = None
+    capacidade: str | None = None
+    fluido_refrigerante: str | None = None
+    tensao: str | None = None
+    tecnologia: str | None = None
+    especificacoes_tecnicas: dict[str, Any] = Field(default_factory=dict)
+    confianca: str | None = None
+    paginas_origem: list[int] = Field(default_factory=list)
+
+
+class EquipmentManualErrorCodeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    codigo: str = Field(validation_alias="code")
+    titulo: str = Field(validation_alias="title")
+    descricao: str = Field(validation_alias="description")
+    causa_provavel: str | None = Field(default=None, validation_alias="probable_cause")
+    acao_recomendada: str | None = Field(default=None, validation_alias="recommended_action")
+    pagina_origem: int | None = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class EquipmentManualExtractionOut(BaseModel):
+    """Status + resultado da extração estruturada via IA de um manual."""
+
+    manual_id: str
+    extraction_status: str
+    extraction_error: str | None = None
+    extracted_at: datetime | None = None
+    documento: dict[str, Any] = Field(default_factory=dict)
+    equipamentos: list[EquipmentManualExtractionCandidateOut] = Field(default_factory=list)
+    avisos: list[str] = Field(default_factory=list)
+    error_codes: list[EquipmentManualErrorCodeOut] = Field(default_factory=list)
+
+    @field_validator("manual_id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, value: object) -> str:
+        return str(value)
+
+
+class EquipmentManualErrorCodeListOut(BaseModel):
+    items: list[EquipmentManualErrorCodeOut] = Field(default_factory=list)
+
+
 class ClientEquipmentManualOut(BaseModel):
     id: str
     title: str
@@ -4185,6 +4762,9 @@ class EquipmentCatalogOut(BaseModel):
     manual_id: str | None = None
     manual: EquipmentManualBriefOut | None = None
     manual_url: str | None = None
+    # Presente em POST create/with-existing-manual quando merge_if_exists=true.
+    catalog_action: Literal["created", "updated", "unchanged"] | None = None
+    catalog_filled_fields: list[str] | None = None
 
     @field_validator("id", "category_id", "manual_id", mode="before")
     @classmethod
@@ -4365,6 +4945,9 @@ class ClientEquipmentOut(BaseModel):
     tag: str
     installation_reference: str | None = None
     installation_date: date | None = None
+    manufacture_year: int | None = None
+    gas_charge_kg: float | None = None
+    notes: str | None = None
     is_active: bool
     legacy_equipment_id: int | None = None
     legacy_fabricante: str | None = None
@@ -4376,6 +4959,10 @@ class ClientEquipmentOut(BaseModel):
     components: list[ClientEquipmentComponentOut] = Field(default_factory=list)
     can_delete: bool = False
     delete_block_reason: str | None = None
+    # true quando o equipamento foi cadastrado sem marca/modelo conhecidos
+    # (placeholder "Marca não identificada") — precisa ser identificado em
+    # campo antes de concluir OS vinculadas a ele.
+    pending_identification: bool = False
 
     @field_validator("id", mode="before")
     @classmethod
@@ -4384,6 +4971,13 @@ class ClientEquipmentOut(BaseModel):
 
 
 class ClientEquipmentComponentCreate(BaseModel):
+    catalog_id: str = Field(..., min_length=36, max_length=36)
+    serial_number: str | None = Field(default=None, max_length=120)
+
+
+class ClientEquipmentIdentify(BaseModel):
+    """Substitui o componente placeholder ('a identificar') pela marca/modelo real."""
+
     catalog_id: str = Field(..., min_length=36, max_length=36)
     serial_number: str | None = Field(default=None, max_length=120)
 
@@ -4418,10 +5012,21 @@ class ClientEquipmentCreate(BaseModel):
     installation_reference: str | None = Field(default=None, max_length=500)
     client_site_id: int | None = Field(default=None, ge=1)
     installation_date: date | None = None
+    manufacture_year: int | None = Field(default=None, ge=1970, le=2100)
+    gas_charge_kg: float | None = Field(default=None, ge=0, le=1000)
+    notes: str | None = Field(default=None, max_length=2000)
     qrcode_code_id: str | None = Field(default=None, max_length=32, description="Cartela QR disponível para vincular")
     components: list[ClientEquipmentComponentCreate] = Field(..., min_length=1)
     catalog_id: str | None = Field(default=None, min_length=36, max_length=36, description="Legado: vira um único componente")
     serial_number: str | None = Field(default=None, max_length=120)
+
+    @field_validator("notes")
+    @classmethod
+    def _strip_notes(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
 
     @model_validator(mode="before")
     @classmethod
@@ -4496,9 +5101,13 @@ class ClientEquipmentUpdate(BaseModel):
     tag: str | None = Field(default=None, min_length=1, max_length=120)
     installation_reference: str | None = Field(default=None, max_length=500)
     installation_date: date | None = None
+    manufacture_year: int | None = Field(default=None, ge=1970, le=2100)
+    gas_charge_kg: float | None = Field(default=None, ge=0, le=1000)
+    notes: str | None = Field(default=None, max_length=2000)
     is_active: bool | None = None
     client_site_id: int | None = None
     components: list[ClientEquipmentComponentSerialUpdate] | None = None
+    qrcode_code_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("tag")
     @classmethod
@@ -4516,16 +5125,37 @@ class ClientEquipmentUpdate(BaseModel):
         s = v.strip()
         return s or None
 
+    @field_validator("notes")
+    @classmethod
+    def _strip_notes_update(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+    @field_validator("qrcode_code_id")
+    @classmethod
+    def _strip_qrcode(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> "ClientEquipmentUpdate":
-        if (
-            self.tag is None
-            and self.installation_reference is None
-            and self.installation_date is None
-            and self.is_active is None
-            and self.client_site_id is None
-            and self.components is None
-        ):
+        allowed_fields = {
+            "tag",
+            "installation_reference",
+            "installation_date",
+            "manufacture_year",
+            "gas_charge_kg",
+            "notes",
+            "is_active",
+            "client_site_id",
+            "components",
+            "qrcode_code_id",
+        }
+        if not (self.model_fields_set & allowed_fields):
             raise ValueError("Informe ao menos um campo para atualizar.")
         return self
 

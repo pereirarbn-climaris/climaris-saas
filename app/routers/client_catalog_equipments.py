@@ -17,6 +17,7 @@ from app.services.client_equipment_deletion import can_delete_client_equipment, 
 from app.services.platform_catalog import catalog_tenant_ids_for_lookup
 from app.schemas import (
     ClientEquipmentCreate,
+    ClientEquipmentIdentify,
     ClientEquipmentInstallationReferenceUpdate,
     ClientEquipmentManualListOut,
     ClientEquipmentManualOut,
@@ -28,6 +29,10 @@ from app.schemas import (
 from app.services.legacy_equipment_import import import_orphan_legacy_equipments_for_client
 from app.services.client_equipment_manuals import list_client_equipment_manuals
 from app.services.client_sites import validate_equipment_client_site
+from app.services.equipment_pending_identification import (
+    is_pending_identification_catalog,
+    is_pending_identification_equipment,
+)
 from app.services.qrcode_labels import link_qrcode_to_equipment, normalize_code_id
 from models import (
     Client,
@@ -95,6 +100,7 @@ def _sync_legacy_equipment(
     installation_reference: str | None,
     installation_date: date | None,
     is_active: bool,
+    gas_charge_kg: float | None = None,
 ) -> Equipment:
     primary = _primary_catalog(catalogs)
     ident = tag.strip() or f"{primary.brand} {primary.model}".strip()
@@ -114,6 +120,7 @@ def _sync_legacy_equipment(
         local_instalacao=tag,
         installation_reference=installation_reference,
         ambiente_nome=tag,
+        massa_gas_kg=gas_charge_kg,
         ativo=is_active,
     )
     return equipment
@@ -197,6 +204,9 @@ def _serialize_client_equipment(row: ClientEquipment, db: Session) -> ClientEqui
     payload = ClientEquipmentOut.model_validate(row)
     payload.can_delete = can_delete
     payload.delete_block_reason = block_reason
+    payload.pending_identification = is_pending_identification_equipment(row.legacy_equipment) or any(
+        is_pending_identification_catalog(comp.catalog) for comp in row.components
+    )
     if row.legacy_equipment is not None:
         payload.public_token = row.legacy_equipment.public_token
         payload.qrcode_code_id = _qrcode_code_for_equipment(db, row.legacy_equipment.id)
@@ -262,6 +272,9 @@ def create_client_catalog_equipment(
         tag=payload.tag.strip(),
         installation_reference=payload.installation_reference,
         installation_date=payload.installation_date,
+        manufacture_year=payload.manufacture_year,
+        gas_charge_kg=payload.gas_charge_kg,
+        notes=payload.notes,
         is_active=True,
     )
     db.add(installation)
@@ -292,6 +305,7 @@ def create_client_catalog_equipment(
         installation_reference=payload.installation_reference,
         installation_date=payload.installation_date,
         is_active=True,
+        gas_charge_kg=payload.gas_charge_kg,
     )
     db.add(legacy)
     db.flush()
@@ -355,6 +369,7 @@ def _sync_legacy_from_installation(
     legacy.ativo = installation.is_active
     legacy.client_site_id = installation.client_site_id
     legacy.serial = _primary_serial(components)
+    legacy.massa_gas_kg = installation.gas_charge_kg
 
 
 @router.patch(
@@ -492,6 +507,79 @@ def update_client_catalog_equipment_site(
 
 
 @router.patch(
+    "/equipments/{equipment_id}/identify",
+    response_model=ClientEquipmentOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN))],
+)
+def identify_client_catalog_equipment(
+    equipment_id: uuid.UUID,
+    payload: ClientEquipmentIdentify,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ClientEquipmentOut:
+    """Substitui o componente placeholder ("Marca não identificada") pela
+    marca/modelo real — usado quando o técnico chega ao cliente e identifica
+    o equipamento que havia sido cadastrado sem catálogo definido."""
+    installation = _fetch_client_equipment(db, equipment_id, tenant_id=current_user.tenant_id)
+    if installation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipamento não encontrado.")
+
+    pending_component = next(
+        (c for c in installation.components if is_pending_identification_catalog(c.catalog)), None
+    )
+    if pending_component is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este equipamento já está identificado.",
+        )
+
+    try:
+        new_catalog_uuid = uuid.UUID(payload.catalog_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"catalog_id inválido: {payload.catalog_id}",
+        ) from exc
+
+    allowed_tenants = catalog_tenant_ids_for_lookup(db, current_user.tenant_id)
+    new_catalog = db.execute(
+        select(EquipmentCatalog)
+        .options(joinedload(EquipmentCatalog.category))
+        .where(EquipmentCatalog.id == new_catalog_uuid, EquipmentCatalog.tenant_id.in_(allowed_tenants))
+    ).scalar_one_or_none()
+    if new_catalog is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item do catálogo não encontrado.")
+    if is_pending_identification_catalog(new_catalog):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selecione uma marca e modelo reais para identificar o equipamento.",
+        )
+
+    pending_component.catalog_id = new_catalog.id
+    pending_component.catalog = new_catalog
+    if payload.serial_number is not None:
+        pending_component.serial_number = payload.serial_number.strip() or None
+
+    legacy = installation.legacy_equipment
+    if legacy is not None:
+        legacy.fabricante = new_catalog.brand
+        legacy.modelo = new_catalog.model
+        legacy.capacidade_btu = (
+            _parse_btu(new_catalog.capacity)
+            if new_catalog.category and new_catalog.category.has_capacity
+            else None
+        )
+        legacy.tipo_gas = new_catalog.fluid_type
+        legacy.serial = _primary_serial(list(installation.components))
+
+    db.commit()
+    installation = _fetch_client_equipment(db, installation.id, tenant_id=current_user.tenant_id)
+    if installation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Equipamento não encontrado.")
+    return _serialize_client_equipment(installation, db)
+
+
+@router.patch(
     "/equipments/{equipment_id}",
     response_model=ClientEquipmentOut,
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
@@ -526,6 +614,15 @@ def update_client_catalog_equipment(
     if "installation_date" in payload.model_fields_set:
         installation.installation_date = payload.installation_date
 
+    if "manufacture_year" in payload.model_fields_set:
+        installation.manufacture_year = payload.manufacture_year
+
+    if "gas_charge_kg" in payload.model_fields_set:
+        installation.gas_charge_kg = payload.gas_charge_kg
+
+    if "notes" in payload.model_fields_set:
+        installation.notes = payload.notes
+
     if payload.is_active is not None:
         deactivate_installation(
             db,
@@ -545,7 +642,7 @@ def update_client_catalog_equipment(
                 )
             row.serial_number = item.serial_number
 
-    if payload.qrcode_code_id and payload.qrcode_code_id.strip():
+    if "qrcode_code_id" in payload.model_fields_set and payload.qrcode_code_id:
         legacy = installation.legacy_equipment
         if legacy is None:
             raise HTTPException(
@@ -559,6 +656,7 @@ def update_client_catalog_equipment(
                 tenant_id=current_user.tenant_id,
                 equipment_id=legacy.id,
                 public_token=legacy.public_token,
+                allow_replace=True,
             )
         except ValueError as exc:
             db.rollback()

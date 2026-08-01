@@ -127,13 +127,19 @@ function serviceIntervalLabel(service: ServiceOut): string {
 }
 
 function addMonthsIso(isoDate: string, months: number): string | null {
-  const d = new Date(`${isoDate}T12:00:00`);
-  if (Number.isNaN(d.getTime()) || months <= 0) return null;
-  d.setMonth(d.getMonth() + months);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return formatFriendlyDatePt(`${y}-${m}-${day}`);
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate.trim());
+  if (!match || months <= 0) return null;
+  const year0 = Number(match[1]);
+  const month0 = Number(match[2]);
+  const day0 = Number(match[3]);
+  if (!Number.isFinite(year0) || !Number.isFinite(month0) || !Number.isFinite(day0)) return null;
+  const monthIndex = month0 - 1 + months;
+  const year = year0 + Math.floor(monthIndex / 12);
+  const month = (monthIndex % 12) + 1;
+  const lastDay = new Date(year, month, 0).getDate();
+  const day = Math.min(day0, lastDay);
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return formatFriendlyDatePt(iso);
 }
 
 function Field({

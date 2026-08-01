@@ -2,12 +2,12 @@ import { Mail, MapPin, MessageSquare } from "lucide-react";
 import { LeadForm } from "@/components/LeadForm";
 import { SiteShell } from "@/components/SiteShell";
 import { buildPageMetadata } from "@/lib/metadata";
-import { cta, siteConfig } from "@/lib/site-config";
+import { cta, publicCtaLabel, siteConfig } from "@/lib/site-config";
 
 export const metadata = buildPageMetadata({
-  title: "Agendar Demonstração do Climaris",
+  title: "Contato comercial — Climaris",
   description:
-    "Fale com um consultor ou agende uma demonstração do software de gestão para empresas de climatização. Gestão de manutenção PMOC, OS e contratos.",
+    "Fale com um consultor do Climaris. Software de gestão para empresas de climatização: manutenção PMOC, OS e contratos.",
   path: "/contato",
 });
 
@@ -23,8 +23,8 @@ export default function ContactPage() {
             {cta.secondary}
           </h1>
           <p className="max-w-2xl text-lg text-text-muted">
-            Preencha o formulário para agendar uma demonstração personalizada do Climaris — o sistema
-            completo para gestão de contratos, orçamentos e conformidade técnica (PMOC).
+            Preencha o formulário para falar com nossa equipe sobre o Climaris — o sistema completo
+            para gestão de contratos, orçamentos e conformidade técnica (PMOC).
           </p>
         </div>
       </section>
@@ -69,7 +69,7 @@ export default function ContactPage() {
           </aside>
 
           <div className="rounded-card border border-border bg-surface-elevated p-6 shadow-card sm:p-8">
-            <LeadForm submitLabel={cta.primary} />
+            <LeadForm submitLabel={publicCtaLabel()} />
           </div>
         </div>
       </section>

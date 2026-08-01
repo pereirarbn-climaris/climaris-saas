@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -20,9 +20,15 @@ from app.schemas import (
     EquipmentCategoryOut,
     EquipmentLabelExtractionOut,
     EquipmentLabelResolveOut,
+    EquipmentManualErrorCodeListOut,
+    EquipmentManualErrorCodeOut,
+    EquipmentManualExtractionOut,
+    EquipmentManualUploadOut,
 )
 from app.services.catalog_duplicate import find_catalog_duplicate
+from app.services.catalog_merge import fill_catalog_entry_gaps
 from app.services.category_field_definitions import (
+    active_field_definitions,
     parse_field_definitions,
     sync_legacy_catalog_columns,
     validate_technical_data,
@@ -33,6 +39,7 @@ from app.services.equipment_category_fields import (
     is_split_ac_category,
     normalize_catalog_technical_fields,
 )
+from app.services.ac_technical_normalize import normalize_ac_technical_data
 from app.services.platform_catalog import resolve_catalog_list_tenant_id, resolve_catalog_write_tenant_id
 from app.services.equipment_catalog_form import (
     has_manual_pdf_upload,
@@ -45,6 +52,7 @@ from app.services.equipment_label_catalog_resolve import (
     suggested_identificacao_from_extraction,
     _parse_btu as parse_label_btu,
 )
+from app.services.equipment_pending_identification import get_or_create_pending_identification_catalog
 from app.services.equipment_label_vision import (
     classify_equipment_kind_from_images,
     extract_ac_label_from_images,
@@ -55,7 +63,17 @@ from app.services.equipment_manuals import (
     create_equipment_manual_from_pdf,
     get_equipment_manual_or_404,
 )
-from models import EquipmentCatalog, EquipmentCatalogComponentType, EquipmentCategory, User, UserRole
+from app.services.knowledge_base.manual_extraction import schedule_manual_extraction
+from models import (
+    EquipmentCatalog,
+    EquipmentCatalogComponentType,
+    EquipmentCategory,
+    EquipmentManual,
+    EquipmentManualErrorCode,
+    ManualExtractionStatus,
+    User,
+    UserRole,
+)
 
 router = APIRouter(prefix="/equipment-catalog", tags=["equipment-catalog"])
 
@@ -238,10 +256,13 @@ def _apply_catalog_fields(
     model_fallback: str | None = None,
 ) -> None:
     definitions = parse_field_definitions(getattr(category, "field_definitions", None) or [])
+    known_field_keys = {d.key for d in active_field_definitions(definitions)}
     merged_technical: dict = {}
     extra_technical: dict = {}
     if technical_data is not None:
-        payload_for_validation, extra_technical = extract_extra_technical_fields(technical_data)
+        # Unifica nomes livres da IA (cabo_conexao_alimentacao_mm2 → cabo_alimentacao, etc.)
+        technical_data = normalize_ac_technical_data(technical_data)
+        payload_for_validation, extra_technical = extract_extra_technical_fields(technical_data, known_field_keys)
         try:
             merged_technical = validate_technical_data(definitions, payload_for_validation)
         except ValueError as exc:
@@ -492,6 +513,49 @@ async def resolve_equipment_label_from_photos(
     )
 
 
+@router.get(
+    "/pending-identification",
+    response_model=EquipmentLabelResolveOut,
+    dependencies=[
+        Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)),
+    ],
+)
+def get_pending_identification_catalog_entry(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    equipment_kind: Annotated[str, Query()] = "ar_condicionado",
+) -> EquipmentLabelResolveOut:
+    """Retorna (criando se necessário) o item de catálogo placeholder usado
+    quando ainda não se sabe a marca/modelo do equipamento no cadastro
+    (fluxo "Não sei a marca/modelo — identificar depois em campo").
+    """
+    from app.services.platform_catalog import resolve_catalog_write_tenant_id
+
+    kind = "climatizador" if (equipment_kind or "").strip().lower() == "climatizador" else "ar_condicionado"
+    catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
+    catalog, created = get_or_create_pending_identification_catalog(
+        db, tenant_id=catalog_tenant_id, equipment_kind=kind
+    )
+    db.commit()
+    db.refresh(catalog)
+
+    suggested = suggested_identificacao_from_extraction(
+        {}, equipment_kind=kind, brand=catalog.brand, model_display=catalog.model
+    )
+    return EquipmentLabelResolveOut(
+        equipment_kind=kind,
+        extraction=EquipmentLabelExtractionOut(),
+        catalog_id=str(catalog.id),
+        catalog_created=created,
+        category_id=str(catalog.category_id),
+        category_name=catalog.category.name,
+        brand=catalog.brand,
+        model_display=catalog.model,
+        suggested_identificacao=suggested,
+        capacidade_btu=None,
+    )
+
+
 @router.get("/categories", response_model=EquipmentCategoryListOut)
 def list_catalog_categories(
     db: Annotated[Session, Depends(get_db)],
@@ -698,9 +762,10 @@ async def create_equipment_catalog_with_manual_upload(
 )
 async def create_equipment_catalog_with_existing_manual(
     request: Request,
+    response: Response,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> EquipmentCatalog:
+) -> EquipmentCatalogOut:
     form_data = await read_catalog_existing_manual_multipart(request)
 
     catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
@@ -709,6 +774,67 @@ async def create_equipment_catalog_with_existing_manual(
         get_equipment_manual_or_404(db, form_data.manual_id, catalog_tenant_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    incoming_technical = form_data.parsed_technical_data() or {}
+    # Garante capacity/fluid/voltage no JSON mesmo se vierem só nos campos legados do form.
+    for key, val in (
+        ("capacity", form_data.capacity),
+        ("fluid_type", form_data.fluid_type),
+        ("voltage", form_data.voltage),
+    ):
+        if val and key not in incoming_technical:
+            incoming_technical[key] = val
+
+    def _out(
+        row: EquipmentCatalog,
+        *,
+        action: str,
+        filled: list[str] | None = None,
+    ) -> EquipmentCatalogOut:
+        response.headers["X-Catalog-Action"] = action
+        if filled:
+            response.headers["X-Catalog-Filled-Fields"] = ",".join(filled[:40])
+        payload = EquipmentCatalogOut.model_validate(row)
+        return payload.model_copy(
+            update={
+                "catalog_action": action,
+                "catalog_filled_fields": filled or None,
+            }
+        )
+
+    duplicate = find_catalog_duplicate(
+        db,
+        tenant_id=catalog_tenant_id,
+        category=category,
+        brand=form_data.brand,
+        model_evaporator=form_data.model_evaporator,
+        model_condenser=form_data.model_condenser,
+        model_fallback=form_data.model,
+    )
+    if duplicate is not None:
+        if not form_data.merge_if_exists:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Este equipamento já está cadastrado no catálogo: "
+                    f"{duplicate.brand} {duplicate.model} ({category.name}). "
+                    "Não cadastre novamente — edite o registro existente se precisar atualizar dados."
+                ),
+            )
+        changes = fill_catalog_entry_gaps(
+            duplicate,
+            incoming_technical=incoming_technical,
+            manual_id=form_data.manual_id,
+            model_evaporator=form_data.model_evaporator,
+            model_condenser=form_data.model_condenser,
+            model_fallback=form_data.model,
+        )
+        db.add(duplicate)
+        db.commit()
+        # Merge de registro existente: 200 (não é criação).
+        response.status_code = status.HTTP_200_OK
+        row = db.execute(_catalog_query().where(EquipmentCatalog.id == duplicate.id)).scalar_one()
+        return _out(row, action="updated" if changes else "unchanged", filled=changes or None)
 
     entry = EquipmentCatalog(
         tenant_id=catalog_tenant_id,
@@ -727,34 +853,41 @@ async def create_equipment_catalog_with_existing_manual(
             capacity=form_data.capacity,
             fluid_type=form_data.fluid_type,
             voltage=form_data.voltage,
-            technical_data=form_data.parsed_technical_data(),
+            technical_data=incoming_technical or None,
             model_fallback=form_data.model,
         )
     except HTTPException:
         raise
-    duplicate = find_catalog_duplicate(
-        db,
-        tenant_id=catalog_tenant_id,
-        category=category,
-        brand=form_data.brand,
-        model_evaporator=form_data.model_evaporator,
-        model_condenser=form_data.model_condenser,
-        model_fallback=form_data.model,
-    )
-    if duplicate is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Este equipamento já está cadastrado no catálogo: "
-                f"{duplicate.brand} {duplicate.model} ({category.name}). "
-                "Não cadastre novamente — edite o registro existente se precisar atualizar dados."
-            ),
-        )
     db.add(entry)
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        # Corrida: outro request criou o mesmo modelo — tenta merge se autorizado.
+        if form_data.merge_if_exists:
+            raced = find_catalog_duplicate(
+                db,
+                tenant_id=catalog_tenant_id,
+                category=category,
+                brand=form_data.brand,
+                model_evaporator=form_data.model_evaporator,
+                model_condenser=form_data.model_condenser,
+                model_fallback=form_data.model,
+            )
+            if raced is not None:
+                changes = fill_catalog_entry_gaps(
+                    raced,
+                    incoming_technical=incoming_technical,
+                    manual_id=form_data.manual_id,
+                    model_evaporator=form_data.model_evaporator,
+                    model_condenser=form_data.model_condenser,
+                    model_fallback=form_data.model,
+                )
+                db.add(raced)
+                db.commit()
+                response.status_code = status.HTTP_200_OK
+                row = db.execute(_catalog_query().where(EquipmentCatalog.id == raced.id)).scalar_one()
+                return _out(row, action="updated" if changes else "unchanged", filled=changes or None)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -762,7 +895,8 @@ async def create_equipment_catalog_with_existing_manual(
                 "Não cadastre novamente."
             ),
         ) from exc
-    return db.execute(_catalog_query().where(EquipmentCatalog.id == entry.id)).scalar_one()
+    row = db.execute(_catalog_query().where(EquipmentCatalog.id == entry.id)).scalar_one()
+    return _out(row, action="created")
 
 
 @router.patch(
@@ -910,3 +1044,161 @@ async def update_equipment_catalog_entry(
             detail="Já existe um item no catálogo com esta marca, modelos e categoria.",
         ) from exc
     return db.execute(_catalog_query().where(EquipmentCatalog.id == entry.id)).scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# Cadastro via manual (IA): upload avulso de PDF + extração estruturada.
+#
+# Fluxo: upload (S3 + agenda indexação RAG) → "Extrair com IA" (assíncrono, texto do
+# PDF → Claude) → tela de revisão no admin com os equipamentos/specs sugeridos →
+# confirmação cria os itens via POST /equipment-catalog/with-existing-manual (já existente),
+# um por modelo confirmado. Códigos de erro/falha são persistidos automaticamente (dado de
+# referência, sem risco de duplicidade) para consulta rápida da Iris em campo.
+# ---------------------------------------------------------------------------
+
+
+def _get_manual_or_404(db: Session, manual_id: uuid.UUID, tenant_id: int) -> EquipmentManual:
+    manual = db.execute(
+        select(EquipmentManual).where(
+            EquipmentManual.id == manual_id,
+            EquipmentManual.tenant_id == tenant_id,
+        )
+    ).scalar_one_or_none()
+    if manual is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Manual não encontrado.")
+    return manual
+
+
+def _build_extraction_out(manual: EquipmentManual, error_codes: list[EquipmentManualErrorCode]) -> EquipmentManualExtractionOut:
+    result = manual.extraction_result or {}
+    return EquipmentManualExtractionOut(
+        manual_id=str(manual.id),
+        extraction_status=manual.extraction_status,
+        extraction_error=manual.extraction_error,
+        extracted_at=manual.extracted_at,
+        documento=result.get("documento") or {},
+        equipamentos=result.get("equipamentos") or [],
+        avisos=result.get("avisos") or [],
+        error_codes=[EquipmentManualErrorCodeOut.model_validate(row) for row in error_codes],
+    )
+
+
+@router.post(
+    "/manuals/upload",
+    response_model=EquipmentManualUploadOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def upload_standalone_manual(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: Annotated[UploadFile, File()],
+    title: Annotated[str | None, Form(max_length=200)] = None,
+) -> EquipmentManualUploadOut:
+    """Envia um PDF ao S3 sem vincular a um modelo ainda — usado pelo cadastro via IA."""
+    catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
+    manual_title = (title or "").strip()
+    if not manual_title and file.filename:
+        manual_title = file.filename.rsplit(".", 1)[0].strip() or file.filename.strip()
+    if not manual_title:
+        manual_title = "Manual técnico"
+
+    try:
+        manual = await create_equipment_manual_from_pdf(
+            file=file,
+            title=manual_title,
+            tenant_id=catalog_tenant_id,
+            db=db,
+        )
+        db.commit()
+    except ValueError as exc:
+        raise _manual_upload_http_error(exc) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(exc) or "Tempo esgotado ao enviar o manual para o armazenamento.",
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    db.refresh(manual)
+    return EquipmentManualUploadOut.model_validate(manual)
+
+
+@router.post(
+    "/manuals/{manual_id}/extract",
+    response_model=EquipmentManualExtractionOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def trigger_manual_ai_extraction(
+    manual_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentManualExtractionOut:
+    """Dispara (em segundo plano) a leitura do manual pela IA para sugerir equipamentos/specs."""
+    catalog_tenant_id = resolve_catalog_write_tenant_id(db, current_user)
+    manual = _get_manual_or_404(db, manual_id, catalog_tenant_id)
+
+    if manual.extraction_status != ManualExtractionStatus.PROCESSING.value:
+        manual.extraction_status = ManualExtractionStatus.PROCESSING.value
+        manual.extraction_error = None
+        db.commit()
+
+    schedule_manual_extraction(manual_id=manual_id, tenant_id=catalog_tenant_id)
+
+    db.refresh(manual)
+    error_codes = db.execute(
+        select(EquipmentManualErrorCode).where(
+            EquipmentManualErrorCode.manual_id == manual_id,
+            EquipmentManualErrorCode.tenant_id == catalog_tenant_id,
+        )
+    ).scalars().all()
+    return _build_extraction_out(manual, list(error_codes))
+
+
+@router.get(
+    "/manuals/{manual_id}/extraction",
+    response_model=EquipmentManualExtractionOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+def get_manual_ai_extraction(
+    manual_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentManualExtractionOut:
+    """Status/resultado da extração — usado pela tela de revisão (polling)."""
+    catalog_tenant_id = resolve_catalog_list_tenant_id(db, current_user)
+    manual = _get_manual_or_404(db, manual_id, catalog_tenant_id)
+    error_codes = db.execute(
+        select(EquipmentManualErrorCode).where(
+            EquipmentManualErrorCode.manual_id == manual_id,
+            EquipmentManualErrorCode.tenant_id == catalog_tenant_id,
+        )
+    ).scalars().all()
+    return _build_extraction_out(manual, list(error_codes))
+
+
+@router.get(
+    "/manuals/{manual_id}/error-codes",
+    response_model=EquipmentManualErrorCodeListOut,
+    dependencies=[
+        Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST, UserRole.TECHNICIAN)),
+    ],
+)
+def list_manual_error_codes(
+    manual_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> EquipmentManualErrorCodeListOut:
+    """Códigos de erro/falha extraídos do manual — consulta rápida para técnicos e para a Iris."""
+    catalog_tenant_id = resolve_catalog_list_tenant_id(db, current_user)
+    _get_manual_or_404(db, manual_id, catalog_tenant_id)
+    rows = db.execute(
+        select(EquipmentManualErrorCode)
+        .where(
+            EquipmentManualErrorCode.manual_id == manual_id,
+            EquipmentManualErrorCode.tenant_id == catalog_tenant_id,
+        )
+        .order_by(EquipmentManualErrorCode.code)
+    ).scalars().all()
+    return EquipmentManualErrorCodeListOut(items=[EquipmentManualErrorCodeOut.model_validate(row) for row in rows])

@@ -106,7 +106,7 @@ export function PmocScheduleActivitiesModal({
       try {
         const [users, services, acts] = await Promise.all([
           listTenantUsers({ limit: API_MAX_PAGE_LIMIT }),
-          listServices({ limit: API_MAX_PAGE_LIMIT }),
+          listServices({ limit: API_MAX_PAGE_LIMIT, context: "pmoc" }),
           listPmocActivities(plan.id),
         ]);
         if (cancelled) return;

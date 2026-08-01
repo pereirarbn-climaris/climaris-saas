@@ -47,9 +47,13 @@ export function BrandMark({ onDark = false, showName = false }: Props) {
   return (
     <Link href="/" className="inline-flex min-w-0 items-center gap-3" aria-label={name}>
       {hasLogo ? (
+        // width/height explícitos evitam CLS (PageSpeed); exibição via CSS (h-10).
         <img
           src={logoSrcWithCache}
-          alt=""
+          alt={name}
+          width={160}
+          height={40}
+          decoding="async"
           className="h-10 w-auto max-w-[10rem] shrink-0 object-contain"
         />
       ) : (

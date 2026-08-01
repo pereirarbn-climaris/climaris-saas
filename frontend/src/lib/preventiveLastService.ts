@@ -15,14 +15,32 @@ const MONTHS_PT = [
   "dez",
 ] as const;
 
-/** Ex.: "14 mai. de 2026" */
+/** Ex.: "14 mai. de 2026" — interpreta YYYY-MM-DD como data civil (sem deslocar por fuso). */
 export function formatFriendlyDatePt(value: Date | string | null | undefined): string | null {
   if (!value) return null;
-  const d = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(d.getTime())) return null;
-  const day = d.getDate();
-  const month = MONTHS_PT[d.getMonth()] ?? "";
-  const year = d.getFullYear();
+  if (typeof value === "string") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+    if (match) {
+      const year = Number(match[1]);
+      const monthIndex = Number(match[2]) - 1;
+      const day = Number(match[3]);
+      if (
+        Number.isFinite(year) &&
+        monthIndex >= 0 &&
+        monthIndex <= 11 &&
+        day >= 1 &&
+        day <= 31
+      ) {
+        const month = MONTHS_PT[monthIndex] ?? "";
+        return `${day} ${month}. de ${year}`;
+      }
+    }
+  }
+  const local = toLocalCalendarDate(value);
+  if (!local) return null;
+  const day = local.getDate();
+  const month = MONTHS_PT[local.getMonth()] ?? "";
+  const year = local.getFullYear();
   return `${day} ${month}. de ${year}`;
 }
 
@@ -38,6 +56,23 @@ function addCalendarMonths(d: Date, months: number): Date {
 
 /** Normaliza ISO/API para data civil local (evita deslocar dia por fuso). */
 export function toLocalCalendarDate(value: Date | string): Date | null {
+  if (typeof value === "string") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+    if (match) {
+      const year = Number(match[1]);
+      const monthIndex = Number(match[2]) - 1;
+      const day = Number(match[3]);
+      if (
+        Number.isFinite(year) &&
+        monthIndex >= 0 &&
+        monthIndex <= 11 &&
+        day >= 1 &&
+        day <= 31
+      ) {
+        return new Date(year, monthIndex, day);
+      }
+    }
+  }
   const parsed = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(parsed.getTime())) return null;
   return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
