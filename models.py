@@ -426,6 +426,18 @@ class Tenant(Base):
     product_images: Mapped[list["ProductImage"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    product_categories: Mapped[list["ProductCategory"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    product_types: Mapped[list["ProductType"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    product_units: Mapped[list["ProductUnit"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    product_locations: Mapped[list["ProductLocation"]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     mercado_livre_account: Mapped["TenantMercadoLivreAccount | None"] = relationship(
         back_populates="tenant", uselist=False, cascade="all, delete-orphan"
     )
@@ -2483,6 +2495,58 @@ class Product(Base):
             if url:
                 return url
         return None
+
+
+class ProductCategory(Base):
+    __tablename__ = "product_categories"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_product_categories_tenant_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="product_categories")
+
+
+class ProductType(Base):
+    __tablename__ = "product_types"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_product_types_tenant_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="product_types")
+
+
+class ProductUnit(Base):
+    __tablename__ = "product_units"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_product_units_tenant_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="product_units")
+
+
+class ProductLocation(Base):
+    __tablename__ = "product_locations"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_product_locations_tenant_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped["Tenant"] = relationship(back_populates="product_locations")
 
 
 class ProductImage(Base):

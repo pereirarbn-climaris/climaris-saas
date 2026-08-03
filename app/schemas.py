@@ -2536,6 +2536,82 @@ class ProductOut(BaseModel):
     is_active: bool
 
 
+class ProductCategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tenant_id: int
+    name: str
+    is_active: bool
+
+
+class ProductCategoryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    is_active: bool = True
+
+
+class ProductCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_active: bool | None = None
+
+
+class ProductTypeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tenant_id: int
+    name: str
+    is_active: bool
+
+
+class ProductTypeCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    is_active: bool = True
+
+
+class ProductTypeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_active: bool | None = None
+
+
+class ProductUnitOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tenant_id: int
+    name: str
+    is_active: bool
+
+
+class ProductUnitCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    is_active: bool = True
+
+
+class ProductUnitUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_active: bool | None = None
+
+
+class ProductLocationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    tenant_id: int
+    name: str
+    is_active: bool
+
+
+class ProductLocationCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    is_active: bool = True
+
+
+class ProductLocationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_active: bool | None = None
+
+
 class ProductImportRow(BaseModel):
     row_number: int = Field(..., ge=2)
     name: str

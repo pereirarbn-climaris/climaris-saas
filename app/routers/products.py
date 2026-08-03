@@ -12,18 +12,93 @@ from app.dependencies import get_current_user, require_roles
 from app.spreadsheet_rows import header_index, normalize_header_label, normalize_rows_shape, parse_csv_rows, parse_xlsx_rows
 from app.product_media import delete_product_image_if_exists
 from app.schemas import (
+    ProductCategoryCreate,
+    ProductCategoryOut,
+    ProductCategoryUpdate,
     ProductCountOut,
     ProductCreate,
     ProductDetailOut,
     ProductImportErrorOut,
     ProductImportRequest,
     ProductImportResultOut,
+    ProductLocationCreate,
+    ProductLocationOut,
+    ProductLocationUpdate,
     ProductOut,
+    ProductTypeCreate,
+    ProductTypeOut,
+    ProductTypeUpdate,
+    ProductUnitCreate,
+    ProductUnitOut,
+    ProductUnitUpdate,
     ProductUpdate,
 )
-from models import Product, ProductImage, User, UserRole
+from models import Product, ProductCategory, ProductImage, ProductLocation, ProductType, ProductUnit, User, UserRole
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+def _normalize_catalog_name(value: str) -> str:
+    name = value.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nome é obrigatório.")
+    return name[:120]
+
+
+def _catalog_query(model, tenant_id: int):
+    return select(model).where(model.tenant_id == tenant_id).order_by(model.name.asc(), model.id.asc())
+
+
+def _get_catalog_or_404(db: Session, model, tenant_id: int, item_id: int, not_found_detail: str):
+    row = db.execute(select(model).where(model.tenant_id == tenant_id, model.id == item_id)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
+    return row
+
+
+def _catalog_create(
+    db: Session,
+    model,
+    tenant_id: int,
+    name: str,
+    is_active: bool,
+    exists_error: str,
+):
+    existing = db.execute(select(model).where(model.tenant_id == tenant_id, func.lower(model.name) == name.lower())).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exists_error)
+    row = model(tenant_id=tenant_id, name=name, is_active=is_active)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _catalog_update(
+    db: Session,
+    model,
+    row,
+    tenant_id: int,
+    name: str | None,
+    is_active: bool | None,
+    exists_error: str,
+):
+    if name is not None:
+        existing = db.execute(
+            select(model).where(
+                model.tenant_id == tenant_id,
+                func.lower(model.name) == name.lower(),
+                model.id != row.id,
+            )
+        ).scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exists_error)
+        row.name = name
+    if is_active is not None:
+        row.is_active = is_active
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def _set_physical_stock(product: Product, quantity: float) -> None:
@@ -100,6 +175,278 @@ def _apply_product_list_order(query, sort: ProductListSort):
             return query.order_by(Product.is_active.asc(), Product.name.asc(), Product.id.asc())
         case _:
             return query.order_by(Product.name.asc(), Product.id.asc())
+
+
+@router.get("/categories", response_model=list[ProductCategoryOut])
+def list_product_categories(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ProductCategory]:
+    return db.execute(_catalog_query(ProductCategory, current_user.tenant_id)).scalars().all()
+
+
+@router.post(
+    "/categories",
+    response_model=ProductCategoryOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_product_category(
+    payload: ProductCategoryCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductCategory:
+    return _catalog_create(
+        db=db,
+        model=ProductCategory,
+        tenant_id=current_user.tenant_id,
+        name=_normalize_catalog_name(payload.name),
+        is_active=payload.is_active,
+        exists_error="Já existe uma categoria com este nome.",
+    )
+
+
+@router.patch(
+    "/categories/{category_id}",
+    response_model=ProductCategoryOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_product_category(
+    category_id: int,
+    payload: ProductCategoryUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductCategory:
+    tenant_id = current_user.tenant_id
+    row = _get_catalog_or_404(db, ProductCategory, tenant_id, category_id, "Categoria não encontrada.")
+    return _catalog_update(
+        db=db,
+        model=ProductCategory,
+        row=row,
+        tenant_id=tenant_id,
+        name=_normalize_catalog_name(payload.name) if payload.name is not None else None,
+        is_active=payload.is_active,
+        exists_error="Já existe uma categoria com este nome.",
+    )
+
+
+@router.delete(
+    "/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_product_category(
+    category_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    row = _get_catalog_or_404(db, ProductCategory, current_user.tenant_id, category_id, "Categoria não encontrada.")
+    db.delete(row)
+    db.commit()
+
+
+@router.get("/types", response_model=list[ProductTypeOut])
+def list_product_types(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ProductType]:
+    return db.execute(_catalog_query(ProductType, current_user.tenant_id)).scalars().all()
+
+
+@router.post(
+    "/types",
+    response_model=ProductTypeOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_product_type(
+    payload: ProductTypeCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductType:
+    return _catalog_create(
+        db=db,
+        model=ProductType,
+        tenant_id=current_user.tenant_id,
+        name=_normalize_catalog_name(payload.name),
+        is_active=payload.is_active,
+        exists_error="Já existe um tipo com este nome.",
+    )
+
+
+@router.patch(
+    "/types/{type_id}",
+    response_model=ProductTypeOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_product_type(
+    type_id: int,
+    payload: ProductTypeUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductType:
+    tenant_id = current_user.tenant_id
+    row = _get_catalog_or_404(db, ProductType, tenant_id, type_id, "Tipo não encontrado.")
+    return _catalog_update(
+        db=db,
+        model=ProductType,
+        row=row,
+        tenant_id=tenant_id,
+        name=_normalize_catalog_name(payload.name) if payload.name is not None else None,
+        is_active=payload.is_active,
+        exists_error="Já existe um tipo com este nome.",
+    )
+
+
+@router.delete(
+    "/types/{type_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_product_type(
+    type_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    row = _get_catalog_or_404(db, ProductType, current_user.tenant_id, type_id, "Tipo não encontrado.")
+    db.delete(row)
+    db.commit()
+
+
+@router.get("/units", response_model=list[ProductUnitOut])
+def list_product_units(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ProductUnit]:
+    return db.execute(_catalog_query(ProductUnit, current_user.tenant_id)).scalars().all()
+
+
+@router.post(
+    "/units",
+    response_model=ProductUnitOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_product_unit(
+    payload: ProductUnitCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductUnit:
+    return _catalog_create(
+        db=db,
+        model=ProductUnit,
+        tenant_id=current_user.tenant_id,
+        name=_normalize_catalog_name(payload.name),
+        is_active=payload.is_active,
+        exists_error="Já existe uma unidade com este nome.",
+    )
+
+
+@router.patch(
+    "/units/{unit_id}",
+    response_model=ProductUnitOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_product_unit(
+    unit_id: int,
+    payload: ProductUnitUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductUnit:
+    tenant_id = current_user.tenant_id
+    row = _get_catalog_or_404(db, ProductUnit, tenant_id, unit_id, "Unidade não encontrada.")
+    return _catalog_update(
+        db=db,
+        model=ProductUnit,
+        row=row,
+        tenant_id=tenant_id,
+        name=_normalize_catalog_name(payload.name) if payload.name is not None else None,
+        is_active=payload.is_active,
+        exists_error="Já existe uma unidade com este nome.",
+    )
+
+
+@router.delete(
+    "/units/{unit_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_product_unit(
+    unit_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    row = _get_catalog_or_404(db, ProductUnit, current_user.tenant_id, unit_id, "Unidade não encontrada.")
+    db.delete(row)
+    db.commit()
+
+
+@router.get("/locations", response_model=list[ProductLocationOut])
+def list_product_locations(
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ProductLocation]:
+    return db.execute(_catalog_query(ProductLocation, current_user.tenant_id)).scalars().all()
+
+
+@router.post(
+    "/locations",
+    response_model=ProductLocationOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def create_product_location(
+    payload: ProductLocationCreate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductLocation:
+    return _catalog_create(
+        db=db,
+        model=ProductLocation,
+        tenant_id=current_user.tenant_id,
+        name=_normalize_catalog_name(payload.name),
+        is_active=payload.is_active,
+        exists_error="Já existe uma localização com este nome.",
+    )
+
+
+@router.patch(
+    "/locations/{location_id}",
+    response_model=ProductLocationOut,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def update_product_location(
+    location_id: int,
+    payload: ProductLocationUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ProductLocation:
+    tenant_id = current_user.tenant_id
+    row = _get_catalog_or_404(db, ProductLocation, tenant_id, location_id, "Localização não encontrada.")
+    return _catalog_update(
+        db=db,
+        model=ProductLocation,
+        row=row,
+        tenant_id=tenant_id,
+        name=_normalize_catalog_name(payload.name) if payload.name is not None else None,
+        is_active=payload.is_active,
+        exists_error="Já existe uma localização com este nome.",
+    )
+
+
+@router.delete(
+    "/locations/{location_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.RECEPTIONIST))],
+)
+def delete_product_location(
+    location_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    row = _get_catalog_or_404(db, ProductLocation, current_user.tenant_id, location_id, "Localização não encontrada.")
+    db.delete(row)
+    db.commit()
 
 
 @router.get("", response_model=list[ProductOut])

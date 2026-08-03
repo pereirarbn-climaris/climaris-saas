@@ -176,6 +176,22 @@
   gap: 0.35rem;
 }
 
+.inlineActionBtn {
+  margin-top: 0.05rem;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.inlineActionBtn:hover {
+  color: #1d4ed8;
+}
+
 .label {
   font-size: 13px;
   font-weight: 500;

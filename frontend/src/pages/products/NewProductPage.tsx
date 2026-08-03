@@ -1,5 +1,19 @@
-import { useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useOutletContext } from "react-router-dom";
+import {
+  createProductCategory,
+  createProductLocation,
+  createProductType,
+  createProductUnit,
+  listProductCategories,
+  listProductLocations,
+  listProductTypes,
+  listProductUnits,
+  type ProductCategory,
+  type ProductLocation,
+  type ProductType,
+  type ProductUnit,
+} from "../../api/productCatalogs";
 import { createProduct } from "../../api/products";
 import { uploadProductImage } from "../../api/productImages";
 import { formatBrlInputFromDigits, numberToBrlInput, parseBrlInputToNumber } from "../../lib/currencyBrInput";
@@ -244,6 +258,10 @@ export function NewProductPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [categoryOptions, setCategoryOptions] = useState<ProductCategory[]>([]);
+  const [typeOptions, setTypeOptions] = useState<ProductType[]>([]);
+  const [unitOptions, setUnitOptions] = useState<ProductUnit[]>([]);
+  const [locationOptions, setLocationOptions] = useState<ProductLocation[]>([]);
 
   const [main, setMain] = useState<MainState>({
     name: "",
@@ -277,6 +295,31 @@ export function NewProductPage() {
 
   const parsedPurchase = useMemo(() => parseBrlInputToNumber(main.purchasePrice), [main.purchasePrice]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [categories, types, units, locations] = await Promise.all([
+          listProductCategories(),
+          listProductTypes(),
+          listProductUnits(),
+          listProductLocations(),
+        ]);
+        if (cancelled) return;
+        setCategoryOptions(categories.filter((item) => item.is_active));
+        setTypeOptions(types.filter((item) => item.is_active));
+        setUnitOptions(units.filter((item) => item.is_active));
+        setLocationOptions(locations.filter((item) => item.is_active));
+      } catch (error) {
+        if (cancelled) return;
+        toast.error(error instanceof Error ? error.message : "Não foi possível carregar catálogos de produto.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function setMainField<K extends keyof MainState>(field: K, value: MainState[K]) {
     setMain((prev) => ({ ...prev, [field]: value }));
   }
@@ -288,6 +331,74 @@ export function NewProductPage() {
   function generateSku() {
     const generated = `${normalizeSkuBase(main.name)}-${randomSkuSuffix()}`;
     setMainField("sku", generated);
+  }
+
+  async function handleCreateCategory() {
+    const typed = window.prompt("Digite o nome da nova categoria:");
+    if (!typed) return;
+    try {
+      const created = await createProductCategory({ name: typed.trim(), is_active: true });
+      setCategoryOptions((prev) => {
+        const next = [...prev.filter((item) => item.id !== created.id), created];
+        next.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+        return next;
+      });
+      setAuxField("category", created.name);
+      toast.success("Categoria cadastrada.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível cadastrar a categoria.");
+    }
+  }
+
+  async function handleCreateType() {
+    const typed = window.prompt("Digite o nome do novo tipo:");
+    if (!typed) return;
+    try {
+      const created = await createProductType({ name: typed.trim(), is_active: true });
+      setTypeOptions((prev) => {
+        const next = [...prev.filter((item) => item.id !== created.id), created];
+        next.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+        return next;
+      });
+      setAuxField("type", created.name);
+      toast.success("Tipo cadastrado.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível cadastrar o tipo.");
+    }
+  }
+
+  async function handleCreateUnit() {
+    const typed = window.prompt("Digite o nome da nova unidade:");
+    if (!typed) return;
+    try {
+      const created = await createProductUnit({ name: typed.trim(), is_active: true });
+      setUnitOptions((prev) => {
+        const next = [...prev.filter((item) => item.id !== created.id), created];
+        next.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+        return next;
+      });
+      setAuxField("unit", created.name);
+      toast.success("Unidade cadastrada.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível cadastrar a unidade.");
+    }
+  }
+
+  async function handleCreateLocation() {
+    const typed = window.prompt("Digite o nome da nova localização:");
+    if (!typed) return;
+    try {
+      const created = await createProductLocation({ name: typed.trim(), is_active: true });
+      setLocationOptions((prev) => {
+        const next = [...prev.filter((item) => item.id !== created.id), created];
+        next.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+        return next;
+      });
+      setAuxField("location", created.name);
+      toast.success("Localização cadastrada.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível cadastrar a localização.");
+    }
   }
 
   function recalculateSaleFromMargin(nextMarginInput: string) {
@@ -317,7 +428,12 @@ export function NewProductPage() {
   function onAutoPriceChange(checked: boolean) {
     setMainField("autoPrice", checked);
     if (checked) {
-      recalculateSaleFromMargin(main.margin);
+      const purchase = parseBrlInputToNumber(main.purchasePrice);
+      const sale = parseBrlInputToNumber(main.salePrice);
+      const margin = purchase > 0 ? ((sale - purchase) / purchase) * 100 : 0;
+      const nextMargin = percentToInput(Math.max(0, margin));
+      setMainField("margin", nextMargin);
+      recalculateSaleFromMargin(nextMargin);
     }
   }
 
@@ -376,6 +492,8 @@ export function NewProductPage() {
         purchase_price: parseBrlInputToNumber(main.purchasePrice),
         sale_price: parseBrlInputToNumber(main.salePrice),
         stock_quantity: main.controlStock ? Number(main.stockQuantity.replace(",", ".")) : 0,
+        compatible_equipment_tags: aux.category.trim() || null,
+        application_scope: aux.type.trim() || null,
         is_active: true,
       });
       if (selectedImage) {
@@ -445,22 +563,30 @@ export function NewProductPage() {
                       onChange={(event) => setAuxField("category", event.target.value)}
                     >
                       <option value="">Selecione a categoria</option>
-                      <option value="ar-condicionado">Ar-condicionado</option>
-                      <option value="pecas">Peças</option>
-                      <option value="material-instalacao">Material instalação</option>
-                      <option value="ferramentas">Ferramentas</option>
-                      <option value="limpeza">Limpeza</option>
+                      {categoryOptions.map((item) => (
+                        <option key={item.id} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
                     </SelectInput>
+                    <button type="button" className={styles.inlineActionBtn} onClick={() => void handleCreateCategory()}>
+                      + Nova categoria
+                    </button>
                     {errors.category ? <span className={styles.errorText}>{errors.category}</span> : null}
                   </div>
                   <div className={styles.field}>
                     <FieldLabel label="Tipo" required htmlFor="np-type" />
                     <SelectInput id="np-type" value={aux.type} onChange={(event) => setAuxField("type", event.target.value)}>
                       <option value="">Selecione o tipo</option>
-                      <option value="fisico">Produto físico</option>
-                      <option value="equipamento">Equipamento</option>
-                      <option value="consumo">Material consumo</option>
+                      {typeOptions.map((item) => (
+                        <option key={item.id} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
                     </SelectInput>
+                    <button type="button" className={styles.inlineActionBtn} onClick={() => void handleCreateType()}>
+                      + Novo tipo
+                    </button>
                     {errors.type ? <span className={styles.errorText}>{errors.type}</span> : null}
                   </div>
                 </div>
@@ -594,13 +720,15 @@ export function NewProductPage() {
                   disabled={!main.controlStock}
                 >
                   <option value="">Selecione a unidade</option>
-                  <option value="un">Unidade</option>
-                  <option value="m">Metro</option>
-                  <option value="kg">Kg</option>
-                  <option value="l">Litro</option>
-                  <option value="cx">Caixa</option>
-                  <option value="pc">Peça</option>
+                  {unitOptions.map((item) => (
+                    <option key={item.id} value={item.name}>
+                      {item.name}
+                    </option>
+                  ))}
                 </SelectInput>
+                <button type="button" className={styles.inlineActionBtn} onClick={() => void handleCreateUnit()}>
+                  + Nova unidade
+                </button>
                 {errors.unit ? <span className={styles.errorText}>{errors.unit}</span> : null}
               </div>
 
@@ -613,10 +741,15 @@ export function NewProductPage() {
                   disabled={!main.controlStock}
                 >
                   <option value="">Selecione a localização no estoque</option>
-                  <option value="A1">A1 - Prateleira frontal</option>
-                  <option value="A2">A2 - Prateleira superior</option>
-                  <option value="B1">B1 - Almoxarifado principal</option>
+                  {locationOptions.map((item) => (
+                    <option key={item.id} value={item.name}>
+                      {item.name}
+                    </option>
+                  ))}
                 </SelectInput>
+                <button type="button" className={styles.inlineActionBtn} onClick={() => void handleCreateLocation()}>
+                  + Nova localização
+                </button>
               </div>
             </div>
           </CardSection>
