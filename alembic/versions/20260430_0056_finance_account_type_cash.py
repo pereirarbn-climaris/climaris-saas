@@ -16,23 +16,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM pg_enum e
-                JOIN pg_type t ON e.enumtypid = t.oid
-                WHERE t.typname = 'finance_account_type'
-                  AND e.enumlabel = 'cash'
-            ) THEN
-                ALTER TYPE finance_account_type ADD VALUE 'cash';
-            END IF;
-        END
-        $$;
-        """
-    )
+    # PostgreSQL exige commit entre ADD VALUE e uso do novo valor.
+    with op.get_context().autocommit_block():
+        op.execute(
+            """
+            ALTER TYPE finance_account_type ADD VALUE IF NOT EXISTS 'cash';
+            """
+        )
+
     op.execute(
         """
         UPDATE finance_bank_accounts

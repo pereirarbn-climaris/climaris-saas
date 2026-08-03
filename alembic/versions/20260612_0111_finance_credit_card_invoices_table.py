@@ -2,13 +2,20 @@
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 revision = "20260612_0111"
 down_revision = "20260611_0110"
 branch_labels = None
 depends_on = None
 
-invoice_status = sa.Enum("open", "closed", "paid", name="finance_credit_card_invoice_status")
+invoice_status = postgresql.ENUM(
+    "open",
+    "closed",
+    "paid",
+    name="finance_credit_card_invoice_status",
+    create_type=False,
+)
 
 
 def upgrade() -> None:
@@ -34,7 +41,7 @@ def upgrade() -> None:
         sa.Column("due_date", sa.Date(), nullable=False),
         sa.Column(
             "status",
-            sa.Enum("open", "closed", "paid", name="finance_credit_card_invoice_status", create_type=False),
+            invoice_status,
             nullable=False,
             server_default="open",
         ),
