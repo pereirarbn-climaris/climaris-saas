@@ -1,0 +1,17 @@
+# Checagem mais pesada (leitura amostral de dados no repositório). Agendar 1x/semana.
+[Unit]
+Description=Verificação profunda do repositório restic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/system-backup/backup.env
+ExecStart=/usr/local/lib/system-backup/03-deep-check.sh
+TimeoutStartSec=0
+TimeoutStopSec=24h
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

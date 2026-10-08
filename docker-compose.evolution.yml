@@ -1,0 +1,20 @@
+# Overlay opcional: conecta a API à rede do Evolution (WhatsApp).
+# Pré-requisito: stack Evolution já rodando (`bash scripts/deploy-evolution.sh`),
+# para existir a rede externa evolution_evolution_net.
+#
+# Uso:
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.evolution.yml
+#   docker compose up -d
+#
+# Ou uma vez:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.evolution.yml docker compose up -d
+
+services:
+  api:
+    networks:
+      - evolution_bridge
+
+networks:
+  evolution_bridge:
+    external: true
+    name: evolution_evolution_net

@@ -1,0 +1,100 @@
+.wrap {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.ctaBlock {
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.1rem;
+  border-radius: 10px;
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+  background: var(--color-surface, #fff);
+}
+
+.lead {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--color-text, #111);
+}
+
+.primaryCta {
+  display: inline-block;
+  padding: 0.65rem 1.15rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--color-primary, #2563eb);
+  color: var(--color-on-primary, #fff);
+  border: none;
+  cursor: pointer;
+}
+
+.primaryCta:hover {
+  filter: brightness(1.05);
+}
+
+.hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  line-height: 1.45;
+}
+
+.ctaBlock .hint {
+  margin-top: 0.85rem;
+}
+
+.iframeSection {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.toggleIframe {
+  justify-self: start;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.15));
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #111);
+  cursor: pointer;
+}
+
+.toggleIframe:hover {
+  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 40%, var(--color-border, #ccc));
+}
+
+.frameWrap {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  min-height: 70vh;
+}
+
+.frame {
+  display: block;
+  width: 100%;
+  min-height: 70vh;
+  border: 0;
+}
+
+.error {
+  color: #b00020;
+  font-size: 0.9rem;
+}

@@ -1,0 +1,22 @@
+/* Pilha e grupos de campo — tokens em index.css (--form-field-gap, --form-label-to-control, …). */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--form-field-gap);
+  min-width: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--form-label-to-control);
+  min-width: 0;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--form-group-inner-gap);
+  min-width: 0;
+}

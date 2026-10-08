@@ -1,0 +1,61 @@
+.pendingSection {
+  margin-bottom: 1.75rem;
+}
+
+.pendingTitle {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text, #1a1d24);
+}
+
+.pendingLead {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted, #5c6470);
+  line-height: 1.5;
+}
+
+.releaseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.95rem;
+  border-radius: 10px;
+  border: none;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.35);
+}
+
+.releaseBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.badgePending {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.emptyPending {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px dashed var(--color-border, #e4e6eb);
+  background: var(--color-surface, #f8f9fb);
+  font-size: 0.875rem;
+  color: var(--color-text-muted, #5c6470);
+}

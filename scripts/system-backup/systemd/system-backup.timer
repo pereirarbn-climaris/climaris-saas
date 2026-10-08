@@ -1,0 +1,14 @@
+[Unit]
+Description=Executar backup do sistema diariamente às 03:00
+Requires=system-backup.service
+
+[Timer]
+# Calendário local (timezone do anfitrião, ver timedatectl)
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+# Se o servidor estava desligado às 3:00, corre ao subir
+RandomizedDelaySec=5m
+Unit=system-backup.service
+
+[Install]
+WantedBy=timers.target

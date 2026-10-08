@@ -1,0 +1,1196 @@
+.page {
+  display: grid;
+  gap: 1rem;
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.header p {
+  margin: 0.35rem 0 0;
+  color: #5b6472;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+}
+
+.cards article {
+  border: 1px solid #dde3ec;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.issueForm {
+  border: 1px solid #dde3ec;
+  border-radius: 10px;
+  background: #fff;
+  padding: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.issueForm h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+}
+
+.grid label,
+.filters label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.grid input,
+.grid select,
+.grid textarea,
+.filters select {
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+}
+
+.grid textarea {
+  resize: vertical;
+  min-height: 4rem;
+  font-family: inherit;
+}
+
+.typeaheadWrap {
+  position: relative;
+}
+
+.typeaheadMenu {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  background: #fff;
+  max-height: 220px;
+  overflow: auto;
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(12, 24, 44, 0.12);
+}
+
+.typeaheadItem {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.typeaheadItem:hover {
+  background: #edf2ff;
+}
+
+.typeaheadItemActive {
+  background: #edf2ff;
+}
+
+.xmlField {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.92rem;
+}
+
+.xmlField textarea {
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  padding: 0.55rem;
+  min-height: 140px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+}
+
+.weekdayLike {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.issueForm button {
+  width: fit-content;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  background: #1349c5;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filters {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.searchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.searchField {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  min-width: min(280px, 100%);
+}
+
+.searchField input {
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+}
+
+.searchButton,
+.searchClear {
+  border: 1px solid #cdd6e4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.searchButton {
+  background: #1349c5;
+  color: #fff;
+  border-color: #1349c5;
+  font-weight: 600;
+}
+
+.ok {
+  margin: 0;
+  color: #0f7a2f;
+}
+
+.err {
+  margin: 0;
+  color: #b42318;
+}
+
+.tableWrap {
+  border: 1px solid #dde3ec;
+  border-radius: 10px;
+  overflow: auto;
+  background: #fff;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid #edf1f7;
+  padding: 0.55rem;
+  text-align: left;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.actions button {
+  border: 1px solid #cdd6e4;
+  background: #fff;
+  border-radius: 7px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.linkButton {
+  border: 0;
+  background: transparent;
+  color: #1349c5;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.88rem;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 20, 32, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal {
+  width: min(860px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #d8e0ec;
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.modalHeaderActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.modalHeaderActions button {
+  border: 1px solid #cdd6e4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.modalHeaderActions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.modalNfseDetail .modalBody {
+  max-height: min(78vh, 900px);
+  overflow: auto;
+}
+
+.printAreaWrap {
+  margin: 0.5rem 0 1rem;
+}
+
+.modalHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.modalHeader button {
+  border: 1px solid #cdd6e4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+}
+
+.modalBody {
+  padding: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.modalBody p {
+  margin: 0;
+  color: #2a3444;
+}
+
+.payloadBlock {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.payloadBlock span {
+  font-size: 0.9rem;
+  color: #556172;
+}
+
+.payloadBlock textarea {
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  padding: 0.55rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+  resize: vertical;
+}
+
+.importDisplay {
+  display: grid;
+  gap: 0.75rem;
+  max-height: 320px;
+  overflow: auto;
+  padding: 0.35rem 0;
+}
+
+.importSection {
+  border: 1px solid #e8ecf4;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  background: #fafbfd;
+}
+
+.importSection h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.88rem;
+  color: #3d4a5c;
+}
+
+.kvList {
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.kvRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 34%) 1fr;
+  gap: 0.5rem;
+  align-items: start;
+  font-size: 0.84rem;
+}
+
+.kvRow dt {
+  margin: 0;
+  color: #6b7788;
+  font-weight: 500;
+}
+
+.kvRow dd {
+  margin: 0;
+  color: #1e2633;
+  word-break: break-word;
+}
+
+.preTiny {
+  margin: 0;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.nfPrintDoc {
+  border: 2px solid #1a2744;
+  border-radius: 4px;
+  padding: 1.25rem 1.5rem;
+  background: #fff;
+  color: #1a2744;
+  max-width: 210mm;
+  margin: 0 auto;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.nfPrintHeader {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 2px solid #1a2744;
+  padding-bottom: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.nfPrintTitle {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.nfPrintSubtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  color: #4a5568;
+}
+
+.nfPrintMeta {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.nfPrintMeta > div {
+  display: grid;
+  gap: 0.15rem;
+  text-align: right;
+}
+
+.nfPrintMeta span {
+  font-size: 0.75rem;
+  color: #5b6472;
+  text-transform: uppercase;
+}
+
+.nfPrintMeta strong {
+  font-size: 1.1rem;
+}
+
+.nfPrintBlock {
+  margin-bottom: 1rem;
+}
+
+.nfPrintBlock h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #3d4a5c;
+  border-bottom: 1px solid #d8dee9;
+  padding-bottom: 0.2rem;
+}
+
+.nfPrintBlock p {
+  margin: 0.2rem 0;
+}
+
+.nfPrintStrong {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.nfPrintDiscrim {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.nfPrintSmall {
+  font-size: 0.82rem;
+  color: #4a5568;
+}
+
+.nfPrintTotal {
+  border-top: 2px solid #1a2744;
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.nfPrintValor {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 0.35rem 0 0;
+}
+
+@media print {
+  /* Só a área da nota aparece na impressão (evita menu e restante da página). */
+  body * {
+    visibility: hidden;
+  }
+
+  .printAreaWrap,
+  .printAreaWrap * {
+    visibility: visible;
+  }
+
+  .printAreaWrap {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+  }
+
+  .nfPrintDoc,
+  .nfseProofDoc {
+    border: 1px solid #000;
+    max-width: none;
+    page-break-inside: avoid;
+  }
+}
+
+/* Pré-visualização da NFS-e para conferência (tela + impressão; não substitui o XML autorizado nem o portal nacional) */
+.nfseProofDoc {
+  font-family: Arial, Helvetica, "Liberation Sans", sans-serif;
+  border: 1px solid #222;
+  padding: 0.85rem 1rem 1rem;
+  background: #fff;
+  color: #111;
+  max-width: 210mm;
+  margin: 0 auto;
+  font-size: 10pt;
+  line-height: 1.35;
+  box-sizing: border-box;
+}
+
+.nfseProofHeader {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-bottom: 2px solid #222;
+  padding-bottom: 0.65rem;
+  margin-bottom: 0.65rem;
+}
+
+.nfseProofHeaderLeft {
+  flex: 1;
+  min-width: 200px;
+}
+
+.nfseProofSigla {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin: 0;
+}
+
+.nfseProofTituloOficial {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0.2rem 0 0;
+  line-height: 1.25;
+}
+
+.nfseProofSubtitulo {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  color: #444;
+}
+
+.nfseProofQr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.nfseProofQr img {
+  display: block;
+}
+
+.nfseProofQrLegenda {
+  font-size: 0.62rem;
+  text-align: center;
+  max-width: 140px;
+  color: #333;
+  line-height: 1.2;
+}
+
+.nfseProofAvisoLegal {
+  margin: 0 0 0.65rem;
+  font-size: 0.68rem;
+  color: #333;
+  text-align: justify;
+}
+
+.nfseProofBloco {
+  border: 1px solid #bbb;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.55rem;
+  background: #fff;
+}
+
+.nfseProofBlocoCinza {
+  border: 1px solid #999;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.55rem;
+  background: #f0f0f0;
+}
+
+.nfseProofRotulo {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #222;
+  margin: 0 0 0.15rem;
+}
+
+.nfseProofRotuloBarra {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: #e8e8e8;
+  border: 1px solid #bbb;
+  margin: -0.5rem -0.65rem 0.45rem;
+  padding: 0.3rem 0.5rem;
+  color: #111;
+}
+
+.nfseProofChave {
+  font-family: ui-monospace, "Courier New", Courier, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.nfseProofLinhaMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.25rem;
+  margin-bottom: 0.45rem;
+}
+
+.nfseProofLinhaMeta > div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.nfseProofDestaque {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.nfseProofTexto {
+  margin: 0.15rem 0 0;
+}
+
+.nfseProofTextoSec {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  color: #333;
+}
+
+.nfseProofDuasColunas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-bottom: 0.55rem;
+}
+
+@media (max-width: 640px) {
+  .nfseProofDuasColunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.nfseProofNomeRazao {
+  margin: 0 0 0.2rem;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.nfseProofDiscriminacao {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+}
+
+.nfseProofListaTrib {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.78rem;
+}
+
+.nfseProofTotal {
+  border: 2px solid #222;
+  padding: 0.55rem 0.65rem;
+  margin-top: 0.35rem;
+  background: #fafafa;
+}
+
+.nfseProofValorTotal {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0.2rem 0 0;
+}
+
+.nfseProofRodape {
+  margin-top: 0.65rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid #bbb;
+  font-size: 0.68rem;
+}
+
+.nfseProofRodape p {
+  margin: 0.2rem 0 0;
+}
+
+.helperText {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #5b6472;
+  line-height: 1.4;
+}
+
+.heroBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.statCards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.statCard {
+  min-width: 5.5rem;
+  padding: 0.55rem 0.85rem;
+  background: #fff;
+  border: 1px solid #e8ecf4;
+  border-radius: 10px;
+  display: grid;
+  gap: 0.15rem;
+  text-align: center;
+}
+
+.statValue {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.1;
+}
+
+.statLabel {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.toolBtn,
+.toolBtnPrimary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #cdd6e4;
+  background: #fff;
+  color: #1e293b;
+}
+
+.toolBtn:hover {
+  background: #f1f5f9;
+  border-color: #b8c4d8;
+}
+
+.toolBtnPrimary {
+  background: #1349c5;
+  border-color: #1349c5;
+  color: #fff;
+}
+
+.toolBtnPrimary:hover {
+  background: #0f3ba3;
+  border-color: #0f3ba3;
+}
+
+.toolbarIcon {
+  flex-shrink: 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pageHint {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #475569;
+  padding: 0.5rem 0.75rem;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 10px;
+  line-height: 1.45;
+}
+
+/** Bloco informativo dentro do modal Emitir (prioridade cTribNac / NBS na NFS-e). */
+.nfseEmitTaxHint {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.82rem;
+  color: #475569;
+  padding: 0.45rem 0.65rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  line-height: 1.45;
+}
+
+.invoiceTableWrap {
+  border-radius: 12px;
+  border-color: #e2e8f0;
+}
+
+.invoiceRow {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.invoiceRow:hover,
+.invoiceRow:focus-visible {
+  background: #f0f7ff;
+  outline: none;
+}
+
+.numeroCell {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.chaveHint {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chavePanel {
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.85rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.chavePanel strong {
+  display: block;
+  font-size: 0.8rem;
+  color: #475569;
+  margin-bottom: 0.35rem;
+}
+
+.chaveFormatted {
+  margin: 0 0 0.55rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: #0f172a;
+  word-break: break-all;
+}
+
+.chaveLinks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+}
+
+.chaveLinks a {
+  font-size: 0.85rem;
+  color: #1349c5;
+  font-weight: 600;
+}
+
+.chaveLinks button {
+  border: 1px solid #cdd6e4;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.pendingNfseBanner {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid #c7d4ee;
+  background: #f0f6ff;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #1e293b;
+}
+
+.pendingNfseBanner > strong:first-of-type {
+  display: block;
+  margin-bottom: 0.45rem;
+  font-size: 0.92rem;
+}
+
+.pendingAdnStrip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.65rem 1rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 1px solid #93b4f0;
+  background: linear-gradient(135deg, #eef4ff 0%, #e8f0fe 100%);
+}
+
+.pendingAdnStripHint {
+  margin: 0;
+  flex: 1 1 220px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #334155;
+}
+
+.pendingAdnPrimary {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  background: #1349c5;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(19, 73, 197, 0.25);
+}
+
+.pendingAdnPrimary:hover:not(:disabled) {
+  background: #0f3ca3;
+}
+
+.pendingAdnPrimary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.refreshAdnErr {
+  margin: 0 0 1rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #fecdca;
+  background: #fff5f4;
+  color: #b42318;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.pendingSummary {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid #dbe4f5;
+}
+
+.pendingSummaryTitle {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pendingSummaryDl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) 1fr;
+  gap: 0.35rem 0.85rem;
+  font-size: 0.85rem;
+  align-items: baseline;
+}
+
+.pendingSummaryDl dt {
+  margin: 0;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.pendingSummaryDl dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.errCell {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: #b42318;
+}
+
+.detailMeta {
+  margin-bottom: 0.75rem;
+}
+
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.detailActions button {
+  border: 1px solid #cdd6e4;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.detailActions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vinculosPanel {
+  margin-bottom: 1rem;
+  padding: 0.85rem;
+  background: #fafbfd;
+  border: 1px solid #e8ecf4;
+  border-radius: 10px;
+}
+
+.vinculosTitle {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.vinculosSave {
+  margin-top: 0.65rem;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  background: #1349c5;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.vinculosSave:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modalFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #edf1f7;
+}
+
+.modalPrimaryBtn {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  background: #1349c5;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.modalPrimaryBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.batchForm {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.batchResult {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #edf1f7;
+}
+
+.batchResult h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.emitModeSwitch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  padding: 0.25rem;
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.emitModeBtn,
+.emitModeBtnActive {
+  flex: 1;
+  min-width: 140px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  color: #475569;
+}
+
+.emitModeBtn:hover {
+  background: #e2e8f0;
+}
+
+.emitModeBtnActive {
+  background: #fff;
+  border-color: #cbd5e1;
+  color: #1349c5;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.fullWidthLabel {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .fullWidthLabel {
+    grid-column: auto;
+  }
+}

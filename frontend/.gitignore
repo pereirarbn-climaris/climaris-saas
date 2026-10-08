@@ -1,0 +1,9 @@
+node_modules
+dist
+*.local
+.env
+.DS_Store
+android
+.env.production
+playwright-report
+test-results
